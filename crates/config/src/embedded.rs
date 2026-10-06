@@ -116,6 +116,14 @@ pub static EMBEDDED_DEVICES: &[(&[&str], &str)] = &[
         include_str!("../../../configs/devices/sn74hc165.yaml"),
     ),
     (
+        &["lsm303agr_accel"],
+        include_str!("../../../configs/devices/lsm303agr_accel.yaml"),
+    ),
+    (
+        &["lsm303agr_mag"],
+        include_str!("../../../configs/devices/lsm303agr_mag.yaml"),
+    ),
+    (
         &["pybadge_buttons"],
         include_str!("../../../configs/devices/pybadge_buttons.yaml"),
     ),
@@ -307,6 +315,14 @@ pub static EMBEDDED_DEVICES: &[(&[&str], &str)] = &[
     (
         &["sim800l"],
         include_str!("../../../configs/devices/sim800l.yaml"),
+    ),
+    (
+        &["max485"],
+        include_str!("../../../configs/devices/max485.yaml"),
+    ),
+    (
+        &["xy-md02"],
+        include_str!("../../../configs/devices/xy-md02.yaml"),
     ),
     (
         &["neo6m-gps"],

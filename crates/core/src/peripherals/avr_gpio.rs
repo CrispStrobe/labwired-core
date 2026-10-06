@@ -22,6 +22,21 @@ pub struct AvrGpioPort {
     pin: u8,
     ddr: u8,
     port: u8,
+    /// `Some` while the logic analyzer watches pads on this port in push mode
+    /// (installed via `install_logic_tap`). Not snapshot state.
+    tap: Option<PortTap>,
+    /// Pads that belong to a world `gpio_net`: only they report a drive.
+    net_isolated: u8,
+    /// Level cells kept equal to a pad (see `Peripheral::watch_pad_level`).
+    cells: Vec<(u8, std::sync::Arc<std::sync::atomic::AtomicBool>)>,
+}
+
+/// Push-capture state: the shared tap, the watched `(pin, channel)` pairs and
+/// the pad levels as of the last report, so only real changes are pushed.
+#[derive(Debug)]
+struct PortTap {
+    tap: crate::logic_capture::LogicTap,
+    watched: Vec<(u8, u32)>,
 }
 
 impl Default for AvrGpioPort {
@@ -36,6 +51,77 @@ impl AvrGpioPort {
             pin: 0,
             ddr: 0,
             port: 0,
+            tap: None,
+            net_isolated: 0,
+            cells: Vec::new(),
+        }
+    }
+
+    /// Pad level as `read_gpio_pad` reports it: PORT when DDR drives the
+    /// bit, otherwise the externally held PIN bit.
+    #[inline]
+    fn pad_bits(&self) -> u8 {
+        (self.port & self.ddr) | (self.pin & !self.ddr)
+    }
+
+    /// Publish the pad level into every watching cell.
+    fn sync_cells(&self) {
+        let bits = self.pad_bits();
+        for (pin, cell) in &self.cells {
+            cell.store(
+                bits & (1u8 << pin) != 0,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+        }
+    }
+
+    /// Which net pads the chip itself drives: DDR bit set on a pad that
+    /// belongs to a world `gpio_net`. Only those report a drive.
+    #[inline]
+    fn net_drive_bits(&self) -> u8 {
+        self.ddr & self.net_isolated
+    }
+
+    /// Run `mutate`, then push every watched pad whose level changed. A pad
+    /// that belongs to a world `gpio_net` also reports its drive, and reports
+    /// when only the drive moved (an input released to high-Z keeps its level).
+    #[inline]
+    fn with_tap(&mut self, mutate: impl FnOnce(&mut Self)) {
+        if self.tap.is_none() {
+            mutate(self);
+            if !self.cells.is_empty() {
+                self.sync_cells();
+            }
+            return;
+        }
+        let before = self.pad_bits();
+        let drive_before = self.net_drive_bits();
+        mutate(self);
+        if !self.cells.is_empty() {
+            self.sync_cells();
+        }
+        let after = self.pad_bits();
+        let changed = (before ^ after) | (drive_before ^ self.net_drive_bits());
+        if changed == 0 {
+            return;
+        }
+        if let Some(t) = &self.tap {
+            for &(pin, ch) in &t.watched {
+                let bit = 1u8 << (pin & 7);
+                if pin >= 8 || changed & bit == 0 {
+                    continue;
+                }
+                if self.net_isolated & bit != 0 {
+                    let drive = if self.ddr & bit != 0 {
+                        crate::logic_capture::PadDrive::Driven
+                    } else {
+                        crate::logic_capture::PadDrive::HighZ
+                    };
+                    t.tap.push_with_drive(ch, after & bit != 0, drive);
+                } else if (before ^ after) & bit != 0 {
+                    t.tap.push(ch, after & bit != 0);
+                }
+            }
         }
     }
 }
@@ -70,12 +156,10 @@ impl Peripheral for AvrGpioPort {
 
     fn write(&mut self, offset: u64, value: u8) -> SimResult<()> {
         match offset {
-            OFF_PIN => {
-                // Writing 1 to PIN toggles PORT (AVR toggle-on-write-1).
-                self.port ^= value;
-            }
-            OFF_DDR => self.ddr = value,
-            OFF_PORT => self.port = value,
+            // Writing 1 to PIN toggles PORT (AVR toggle-on-write-1).
+            OFF_PIN => self.with_tap(|s| s.port ^= value),
+            OFF_DDR => self.with_tap(|s| s.ddr = value),
+            OFF_PORT => self.with_tap(|s| s.port = value),
             _ => {}
         }
         Ok(())
@@ -132,6 +216,34 @@ impl Peripheral for AvrGpioPort {
         self.read_gpio_pad(pin)
     }
 
+    /// A net pad: an output (`DDRx` bit set) drives `PORTx`; an input drives
+    /// nothing, whatever the net holds on it. The ATmega model keeps no
+    /// internal pull-up, so a pad that is not a net member says nothing about
+    /// its drive (`None`, as before).
+    fn read_gpio_pad_drive(&self, pin: u8) -> Option<crate::logic_capture::PadDrive> {
+        use crate::logic_capture::PadDrive;
+        if pin >= 8 || self.net_isolated & (1u8 << pin) == 0 {
+            return None;
+        }
+        Some(if self.ddr & (1u8 << pin) != 0 {
+            PadDrive::Driven
+        } else {
+            PadDrive::HighZ
+        })
+    }
+
+    fn set_gpio_net_isolated(&mut self, pin: u8, isolated: bool) -> bool {
+        if pin >= 8 {
+            return false;
+        }
+        if isolated {
+            self.net_isolated |= 1u8 << pin;
+        } else {
+            self.net_isolated &= !(1u8 << pin);
+        }
+        true
+    }
+
     /// Drive the externally controlled level for `pin` into PINx.
     ///
     /// PINx IS the input latch on this family — the register `digitalRead`
@@ -149,11 +261,44 @@ impl Peripheral for AvrGpioPort {
             return false;
         }
         let bit = 1u8 << pin;
-        if level {
-            self.pin |= bit;
-        } else {
-            self.pin &= !bit;
+        self.with_tap(|s| {
+            if level {
+                s.pin |= bit;
+            } else {
+                s.pin &= !bit;
+            }
+        });
+        true
+    }
+
+    fn watch_pad_level(
+        &mut self,
+        pin: u8,
+        cell: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> bool {
+        if pin >= 8 {
+            return false;
         }
+        cell.store(
+            self.pad_bits() & (1u8 << pin) != 0,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        self.cells.push((pin, cell));
+        true
+    }
+
+    /// Push-instrumented: every PORT/DDR/PIN write and external input change
+    /// reports watched pad-level changes through the tap, so watched AVR pins
+    /// need no per-cycle polling.
+    fn install_logic_tap(
+        &mut self,
+        tap: &crate::logic_capture::LogicTap,
+        watched: &[(u8, u32)],
+    ) -> bool {
+        self.tap = (!watched.is_empty()).then(|| PortTap {
+            tap: tap.clone(),
+            watched: watched.to_vec(),
+        });
         true
     }
 

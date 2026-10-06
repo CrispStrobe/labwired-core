@@ -1,0 +1,34 @@
+schema_version: "1.0"
+name: "diagram"
+nodes:
+  - id: "mcu"
+    system: "mcu/system.yaml"
+    firmware: "mcu/firmware.bin"
+  - id: "avr"
+    system: "avr/system.yaml"
+    firmware: "avr/firmware.bin"
+interconnects:
+  - type: "gpio_net"
+    nodes: ["mcu", "avr"]
+    config:
+      name: "mcu.PB0"
+      pull: down
+      members:
+        - { node: "mcu", peripheral: "gpiob", pin: 0 }
+        - { node: "avr", peripheral: "portd", pin: 2 }
+  - type: "gpio_net"
+    nodes: ["mcu", "avr"]
+    config:
+      name: "mcu.PB1"
+      pull: down
+      members:
+        - { node: "mcu", peripheral: "gpiob", pin: 1 }
+        - { node: "avr", peripheral: "portd", pin: 3 }
+  - type: "gpio_net"
+    nodes: ["mcu", "avr"]
+    config:
+      name: "mcu.PB4"
+      pull: up
+      members:
+        - { node: "mcu", peripheral: "gpiob", pin: 4 }
+        - { node: "avr", peripheral: "portd", pin: 4 }

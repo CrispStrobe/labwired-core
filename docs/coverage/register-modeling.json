@@ -20,7 +20,7 @@
     "total": 1690
   },
   "nrf52840": {
-    "modeled": 975,
+    "modeled": 974,
     "total": 2142
   },
   "rp2040": {
@@ -62,6 +62,10 @@
   "stm32l476": {
     "modeled": 737,
     "total": 1485
+  },
+  "stm32u545": {
+    "modeled": 554,
+    "total": 3923
   },
   "stm32u575": {
     "modeled": 408,

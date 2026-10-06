@@ -230,9 +230,13 @@ fn nrf_uart_smoke(jit: bool) -> (Machine<CortexM>, Arc<Mutex<Vec<u8>>>) {
     let mut bus = SystemBus::from_config(&chip, &manifest).expect("nrf52 bus");
     let sink = Arc::new(Mutex::new(Vec::new()));
     bus.attach_uart_tx_sink(sink.clone(), false);
+    // ENABLE=4 and STARTTX, or TXD is ignored. Both stores are 'K' because a
+    // second write while the byte is shifting is dropped.
+    bus.write_u32(0x4000_2500, 4).unwrap();
+    bus.write_u32(0x4000_2008, 1).unwrap();
     let code = [
         0x02u8, 0x48, // ldr r0, [pc, #8]
-        0x4F, 0x21, // movs r1, #79 'O'
+        0x4B, 0x21, // movs r1, #75 'K'
         0x01, 0x60, // str r1, [r0]
         0x4B, 0x21, // movs r1, #75 'K'
         0x01, 0x60, // str r1, [r0]
@@ -256,8 +260,9 @@ fn nrf_uart_smoke(jit: bool) -> (Machine<CortexM>, Arc<Mutex<Vec<u8>>>) {
 fn nrf52_uart_txd_matches_with_jit() {
     let (mut off, sink_off) = nrf_uart_smoke(false);
     let (mut on, sink_on) = nrf_uart_smoke(true);
-    off.run(Some(32)).unwrap();
-    on.run(Some(32)).unwrap();
+    // One 8N1 frame at the reset baud (250000) is 2560 cycles.
+    off.run(Some(8_000)).unwrap();
+    on.run(Some(8_000)).unwrap();
     let a = sink_off.lock().unwrap().clone();
     let b = sink_on.lock().unwrap().clone();
     assert_eq!(a, b, "UART TX bytes JIT vs interpreter");
@@ -343,6 +348,11 @@ fn nrf52840_timer0_compare_cycle_matches_with_jit() {
     }
 }
 
+/// Instruction ceiling for the Zephyr hello marker. The UART driver polls
+/// through each stop bit, so the 44-byte boot banner plus `LW_Z0_OK` no
+/// longer fits in 80_000 instructions (that stopped inside `*** Booting`).
+const ZEPHYR_HELLO_INSN_BUDGET: u64 = 1_200_000;
+
 fn zephyr_hello(jit: bool) -> (Machine<CortexM>, Arc<Mutex<Vec<u8>>>) {
     let (chip, mut manifest) = load_system(
         "configs/chips/nrf52840.yaml",
@@ -425,10 +435,9 @@ fn nrf52840_zephyr_hello_uart_and_cycles_match_at_tick_512() {
     let (mut off, sink_off) = zephyr_hello(false);
     let (mut on, sink_on) = zephyr_hello(true);
     const MARKER: &[u8] = b"LW_Z0_OK";
-    const MAX: u64 = 80_000;
     let mut chunks = 0u32;
-    while off.step_profile().cpu_instructions < MAX
-        && on.step_profile().cpu_instructions < MAX
+    while off.step_profile().cpu_instructions < ZEPHYR_HELLO_INSN_BUDGET
+        && on.step_profile().cpu_instructions < ZEPHYR_HELLO_INSN_BUDGET
         && (!has_marker(&sink_off, MARKER) || !has_marker(&sink_on, MARKER))
     {
         off.run(Some(64)).expect("interp chunk");
@@ -532,10 +541,9 @@ fn nrf52840_zephyr_hello_matches_at_min_block_4() {
     on.config.cortex_m_jit_min_block_instrs = 4;
     on.bus.config.cortex_m_jit_min_block_instrs = 4;
     const MARKER: &[u8] = b"LW_Z0_OK";
-    const MAX: u64 = 80_000;
     let mut chunks = 0u32;
-    while off.step_profile().cpu_instructions < MAX
-        && on.step_profile().cpu_instructions < MAX
+    while off.step_profile().cpu_instructions < ZEPHYR_HELLO_INSN_BUDGET
+        && on.step_profile().cpu_instructions < ZEPHYR_HELLO_INSN_BUDGET
         && (!has_marker(&sink_off, MARKER) || !has_marker(&sink_on, MARKER))
     {
         off.run(Some(64)).expect("interp chunk");

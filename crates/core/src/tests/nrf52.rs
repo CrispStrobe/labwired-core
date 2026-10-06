@@ -26,10 +26,18 @@ fn test_nrf52_full_smoke() {
     let sink = Arc::new(Mutex::new(Vec::new()));
     bus.attach_uart_tx_sink(sink.clone(), false);
 
+    // Legacy UART transmits only after ENABLE=4 and TASKS_STARTTX. Both
+    // stores are 'K': a second TXD while the shifter is busy is dropped, so
+    // the scheduler path emits the first byte and the feature-off path emits
+    // both. Either way the last captured byte is 'K'.
+    const UART0: u64 = 0x4000_2000;
+    bus.write_u32(UART0 + 0x500, 4).unwrap();
+    bus.write_u32(UART0 + 0x008, 1).unwrap();
+
     // Thumb-1 Code for Cortex-M4F (nRF52)
     let code = vec![
         0x02, 0x48, // ldr r0, [pc, #8]  (loads 0x4000251C)
-        0x4F, 0x21, // movs r1, #79 ('O')
+        0x4B, 0x21, // movs r1, #75 ('K')
         0x01, 0x60, // str r1, [r0, #0]
         0x4B, 0x21, // movs r1, #75 ('K')
         0x01, 0x60, // str r1, [r0, #0]
@@ -50,7 +58,9 @@ fn test_nrf52_full_smoke() {
 
     let mut machine = Machine::new(cpu, bus);
 
-    for _ in 0..20 {
+    // Reset baud is 250000: one 8N1 frame is 2560 core cycles. Feature-off
+    // completes on the next tick; the scheduler waits the frame out.
+    for _ in 0..8_000 {
         machine.step().expect("Simulation failed");
     }
 

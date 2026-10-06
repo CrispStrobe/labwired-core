@@ -1941,11 +1941,17 @@
     {
       "device_type": "lsm303agr_accel",
       "label": "LSM303AGR accelerometer",
-      "summary": "Polled LSM303AGR motion slave with physical inputs and simulated ODR.",
-      "detail": "Fixed silicon address; byte-pointer I2C with SUB7 auto-increment, ODR-gated samples and persistent per-axis BDU. No FIFO, filters, temperature, self-test or interrupt wiring.",
+      "summary": "ST LSM303AGR accelerometer half over I2C (address 0x19).",
+      "detail": "micro:bit V2 motion sensor. Stimulus channels x/y/z in g, reported as left-justified 16-bit two's complement at the full scale CTRL_REG4_A selects. Sub-address bit 7 (auto-increment) is accepted. Data-ready paces at 100 Hz while ODR is non-zero (the ODR value is not decoded); BDU, FIFO, interrupts and temperature are not modelled.",
       "transport": "i2c",
       "category": "i2c",
-      "config_keys": [],
+      "config_keys": [
+        {
+          "name": "i2c_address",
+          "ty": "int",
+          "doc": "7-bit slave address. Defaults to 0x19."
+        }
+      ],
       "labs": [],
       "inputs": [
         {
@@ -1974,11 +1980,17 @@
     {
       "device_type": "lsm303agr_mag",
       "label": "LSM303AGR magnetometer",
-      "summary": "Polled LSM303AGR motion slave with physical inputs and simulated ODR.",
-      "detail": "Fixed silicon address; byte-pointer I2C with SUB7 auto-increment, ODR-gated samples and persistent per-axis BDU. No FIFO, filters, temperature, self-test or interrupt wiring.",
+      "summary": "ST LSM303AGR magnetometer half over I2C (address 0x1E).",
+      "detail": "micro:bit V2 compass. Stimulus channels x/y/z in µT, reported as 16-bit two's complement at 0.15 µT/LSB. Data-ready paces at 100 Hz while MD selects continuous or single mode (ODR is not decoded); BDU, offset cancellation and interrupts are not modelled.",
       "transport": "i2c",
       "category": "i2c",
-      "config_keys": [],
+      "config_keys": [
+        {
+          "name": "i2c_address",
+          "ty": "int",
+          "doc": "7-bit slave address. Defaults to 0x1E."
+        }
+      ],
       "labs": [],
       "inputs": [
         {
@@ -3526,6 +3538,75 @@
       "config_keys": [],
       "labs": [],
       "inputs": []
+    },
+    {
+      "device_type": "max485",
+      "label": "MAX485 RS-485 transceiver",
+      "summary": "Half-duplex RS-485 transceiver between a UART and a shared A/B pair.",
+      "detail": "UART pass-through gated by DE and /RE. A byte the MCU sends reaches the bus only while DE is high; with DE high and /RE low the MCU hears its own frame, as on hardware. A slave byte reaches the MCU only while /RE is low. A slave answering while DE is still high, or two slaves answering together, is reported as bus contention and the colliding bytes are not delivered. Every slave on the A/B pair is one more peer on the UART behind the transceiver. NOT modelled: line levels, termination, bias, reflections and driver turn-around time.",
+      "transport": "uart",
+      "category": "uart",
+      "config_keys": [
+        {
+          "name": "de",
+          "ty": "str",
+          "doc": "Pad on the driver-enable pin (`PD2`), or `high` / `low` when tied to a rail."
+        },
+        {
+          "name": "re",
+          "ty": "str",
+          "doc": "Pad on the active-low receiver-enable pin /RE, or `high` / `low` when tied to a rail."
+        }
+      ],
+      "labs": [],
+      "inputs": []
+    },
+    {
+      "device_type": "xy-md02",
+      "label": "XY-MD02",
+      "summary": "SHT20 RS-485 temperature and humidity transmitter speaking Modbus RTU.",
+      "detail": "XY-MD02 Modbus RTU slave on a UART, modelled from the manufacturer manual. Input registers 0x0001 (temperature, signed tenths of a degree C) and 0x0002 (humidity, tenths of %RH) for function 04; holding registers 0x0101 (address 1..247), 0x0102 (baud), 0x0103 (temperature correction) and 0x0104 (humidity correction), both -10.0..10.0 in tenths, for functions 03, 06 and 10. Defaults are address 1 and 9600 8N1. Frames end after 3.5 character times of line silence, and a frame with a bad CRC-16/MODBUS or another slave's address gets no answer. The manual lists no exception codes; the standard ones 01, 02 and 03 are used. NOT modelled: the ordinary UART text protocol (READ, AUTO, BR:, TC:, HC:, HZ:), parity, and range checks beyond the first two registers of a function-10 write.",
+      "transport": "uart",
+      "category": "uart",
+      "config_keys": [
+        {
+          "name": "address",
+          "ty": "int",
+          "doc": "Modbus slave address, 1..247. Default 1."
+        },
+        {
+          "name": "baud",
+          "ty": "int",
+          "doc": "Line rate in bit/s: 9600, 14400 or 19200. Default 9600. The master must be set to the same rate."
+        },
+        {
+          "name": "temp_correction",
+          "ty": "int",
+          "doc": "Initial temperature correction in tenths of a degree, -100..100. Default 0."
+        },
+        {
+          "name": "hum_correction",
+          "ty": "int",
+          "doc": "Initial humidity correction in tenths of %RH, -100..100. Default 0."
+        }
+      ],
+      "labs": [],
+      "inputs": [
+        {
+          "key": "temperature",
+          "label": "Temperature",
+          "unit": "C",
+          "min": -40.0,
+          "max": 60.0
+        },
+        {
+          "key": "humidity",
+          "label": "Humidity",
+          "unit": "%RH",
+          "min": 0.0,
+          "max": 100.0
+        }
+      ]
     },
     {
       "device_type": "74hc04",

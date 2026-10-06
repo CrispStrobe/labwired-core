@@ -939,7 +939,8 @@ pub struct ZeroWhen {
 /// Lifecycle (`name` is for diagnostics only):
 ///  1. **idle** at power-on — the status bit reads clear.
 ///  2. A master write to `start_register` that leaves any `start_mask` bit set
-///     starts a conversion; the status bit reads clear for `conversion_us` of
+///     (or, with `start_value`, leaves the masked bits equal to it) starts a
+///     conversion; the status bit reads clear for `conversion_us` of
 ///     simulated wall-clock.
 ///  3. **ready** — the status bit reads set (OR'd over whatever the register
 ///     stores), and the result registers hold the current measurement.
@@ -968,6 +969,13 @@ pub struct DataReady {
     /// starts a conversion (level, not edge — drivers re-issue the same
     /// on-demand bit for every reading).
     pub start_mask: u32,
+    /// When set, the start condition is `stored & start_mask == start_value`
+    /// instead of "any `start_mask` bit set". For parts whose running mode is
+    /// an all-zero field: the LSM303AGR magnetometer measures while
+    /// CFG_REG_A_M.MD[1] is clear (MD = 00 continuous, 01 single) and idles
+    /// while it is set, so `start_mask: 0x02, start_value: 0x00`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_value: Option<u32>,
     /// Register carrying the sim-driven status bit (often the same register).
     pub ready_register: String,
     /// The status bit(s) within `ready_register`, OR'd into every read of it.
@@ -2149,10 +2157,32 @@ pub struct EmitConfig {
     /// Presence of this field selects the string emission path.
     #[serde(default)]
     pub default_str: Option<String>,
+    /// Source: a pin's alternate-function peripheral (e.g. the timer that owns
+    /// it). The first wired part-pin supplies the pad label, which resolves
+    /// through the board's pin map; unresolved emits nothing and does NOT
+    /// suppress the device (the timer is optional).
+    #[serde(default)]
+    pub from_pin_function: Option<EmitPinFunction>,
+    /// Same resolution as [`Self::from_pin_function`], emitting the function's
+    /// numeric `channel` instead of its peripheral name.
+    #[serde(default)]
+    pub from_pin_function_channel: Option<EmitPinFunction>,
     /// Whether a missing pin binding suppresses the whole device. Defaults to
     /// true; optional feedback signals such as encoder index set this false.
     #[serde(default = "default_true")]
     pub required: bool,
+}
+
+/// The `pin`/`type` operand of [`EmitConfig::from_pin_function`] and
+/// [`EmitConfig::from_pin_function_channel`]: candidate part-pin names plus the
+/// alternate-function type to look up (`timer` today).
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct EmitPinFunction {
+    /// Candidate part-pin names; the first wired one wins.
+    pub pin: Vec<String>,
+    /// The `findPinFunction` type to match (e.g. `timer`).
+    #[serde(rename = "type")]
+    pub function_type: String,
 }
 
 /// One auxiliary `board_io` entry emitted alongside the device (e.g. a rotary
@@ -2329,6 +2359,38 @@ pub enum ScheduleBitOrder {
     LsbFirst,
 }
 
+/// Level at which a transceiver enable pin is active.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EnableLevel {
+    High,
+    Low,
+}
+
+/// One enable pin of a transceiver: the `config:` key whose value names the pad
+/// (or `high` / `low` for a pin tied to a rail), and the level that enables.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct EnablePin {
+    /// `config:` key on the placement (`de`, `re`).
+    pub config: String,
+    /// Level on the pin at which the function is enabled.
+    pub active: EnableLevel,
+}
+
+/// The `transceiver:` block of a `uart_transceiver` descriptor: a part that sits
+/// between a UART and a shared line and passes bytes only as its enable pins
+/// allow (an RS-485 transceiver). The driver passes the UART's bytes onto the
+/// line while enabled, the receiver passes the line's bytes to the UART while
+/// enabled, and with both enabled the UART hears its own frame. A pin the
+/// descriptor omits is tied enabled (receiver) or disabled (driver).
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct TransceiverSpec {
+    #[serde(default)]
+    pub driver_enable: Option<EnablePin>,
+    #[serde(default)]
+    pub receiver_enable: Option<EnablePin>,
+}
+
 /// The runtime half of a descriptor: primitive, pin bindings and rules.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DeviceBehavior {
@@ -2401,6 +2463,11 @@ pub struct DeviceBehavior {
     /// other primitive.
     #[serde(default)]
     pub uart: Option<UartSpec>,
+    /// For the `uart_transceiver` primitive: which `config:` keys name the pads
+    /// on the driver-enable and receiver-enable pins, and the level at which
+    /// each is active. See [`TransceiverSpec`]. Absent for every other primitive.
+    #[serde(default)]
+    pub transceiver: Option<TransceiverSpec>,
     /// For the `logic_gate` primitive: a 74-series part's truth table, its
     /// enables, its direction/select control and its propagation delay. See
     /// [`LogicSpec`]. Absent for every other primitive.

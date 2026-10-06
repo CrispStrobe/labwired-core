@@ -307,6 +307,7 @@ fn default_environment_limits() -> TestLimits {
         stop_when_assertions_pass: false,
         stop_when_assertions_pass_settle_steps: 0,
         stop_when_assertions_pass_min_steps: 0,
+        peripheral_tick_interval: None,
     }
 }
 
@@ -574,6 +575,9 @@ fn run_world(
         uart_network: world
             .uart_network_report(0)
             .and_then(|report| serde_json::to_value(report).ok()),
+        gpio_nets: Some(world.gpio_net_reports())
+            .filter(|nets| !nets.is_empty())
+            .and_then(|nets| serde_json::to_value(nets).ok()),
     };
     // Silent-path census (measurement only; empty fn without the
     // `silent-census` feature). The multi-node environment runner has its own
@@ -894,6 +898,7 @@ fn write_config_error(
         fidelity: labwired_core::fidelity::take().to_gaps(),
         config: config.clone(),
         uart_network: None,
+        gpio_nets: None,
     };
     // Silent-path census (measurement only; empty fn without the
     // `silent-census` feature). The multi-node environment runner has its own

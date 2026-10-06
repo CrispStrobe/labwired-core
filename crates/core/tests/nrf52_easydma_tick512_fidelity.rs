@@ -8,10 +8,11 @@
 //! `peripheral_tick_interval = 512` that lag could reach ~511 instructions —
 //! a fidelity defect for busy-wait drivers.
 //!
-//! After promotion these models schedule delay-0 events on STARTTX / SAMPLE /
-//! SEQSTART / TASKS_START so completion lands on the **next cycle** under
-//! Machine + walk-free + tick 512 (not at the 512-cycle peripheral tick
-//! quantum).
+//! After promotion SAADC and PWM schedule delay-0 events so completion lands
+//! on the next cycle, not at the peripheral-tick quantum. UARTE waits one
+//! frame per byte at the reset baud (250000 → 2560 cycles, 8N1). Both tick
+//! intervals must still agree within one cycle: the wait is the frame, not
+//! the quantum.
 //!
 //! Requires `--features event-scheduler`.
 
@@ -221,33 +222,33 @@ fn uarte_complete(m: &Machine<CycleCpu>) -> bool {
         && m.bus.read_u32(UARTE_EVENTS_TXSTOPPED).unwrap_or(0) != 0
 }
 
-/// Machine + walk-free + interval 512: UARTE EasyDMA TX must complete within
-/// a handful of device cycles (delay-0 scheduler), not after a 512-cycle
-/// bus_tick quantum.
+/// Machine + walk-free: two bytes at the reset baud finish after one frame
+/// each, well after a handful of cycles and not on the tick quantum.
 #[test]
-fn uarte_easydma_completes_within_8_cycles_at_tick_512() {
+fn uarte_easydma_completes_one_frame_per_byte_at_tick_512() {
     let mut machine = machine_at_interval(RECOMMENDED_TICK_INTERVAL);
     let buf = 0x2000_1000u64;
     let payload = b"Hi";
     arm_uarte_tx(&mut machine, buf, payload);
 
-    // Without the scheduler path, completion waited for the next 512-cycle
-    // peripheral tick. With delay-0, ≤ 8 cycles (one small batch) is ample.
-    const CYCLE_BUDGET: u64 = 8;
+    // 2 bytes × 2560-cycle frames, plus the scheduler's +1. Far past the
+    // tick quantum, and far past the old delay-0 budget of 8.
+    const CYCLE_BUDGET: u64 = 8_000;
     let at = advance_until(&mut machine, CYCLE_BUDGET, 1, uarte_complete);
     assert!(
         at.is_some(),
         "UARTE ENDTX/TXSTOPPED never set within {CYCLE_BUDGET} cycles under \
          Machine + peripheral_tick_interval={RECOMMENDED_TICK_INTERVAL} \
-         (total_cycles={}, legacy_walk_disabled={}). Delay-0 scheduler path \
-         must complete EasyDMA without waiting for the bus_tick quantum.",
+         (total_cycles={}, legacy_walk_disabled={}). The frame wait must \
+         complete without waiting out an extra bus_tick quantum.",
         machine.total_cycles,
         machine.bus.legacy_walk_disabled,
     );
     let at = at.unwrap();
     assert!(
-        at <= CYCLE_BUDGET,
-        "UARTE TX completed at cycle {at}, beyond budget {CYCLE_BUDGET}"
+        at > u64::from(RECOMMENDED_TICK_INTERVAL) && at <= CYCLE_BUDGET,
+        "UARTE TX completed at cycle {at}; expected one frame per byte, \
+         not the tick quantum and not an instant completion"
     );
     assert_eq!(
         machine.bus.read_u32(UARTE_TXD_AMOUNT).unwrap(),
@@ -355,24 +356,24 @@ fn pwm_easydma_completes_within_8_cycles_at_tick_512() {
 
 // ── Walk@1 vs sched@512 UARTE TX completion identity ────────────────────────
 
-/// Lane A: tick_interval=1 (bus_tick every cycle + scheduler).
-/// Lane B: walk-free + interval 512 + scheduler delay-0.
-/// Same STARTTX / buffer; ENDTX+TXSTOPPED must raise and completion cycles
-/// must agree within 1 absolute cycle.
+/// Lane A: tick_interval=1. Lane B: the recommended interval.
+/// Same STARTTX / buffer. Both wait one frame per byte, and the completion
+/// cycles agree within 1. A quantum-sized lag on lane B fails that.
 #[test]
 fn uarte_tx_walk1_vs_sched512_completion_cycle_identity() {
     let payload = b"ID";
     let buf = 0x2000_1300u64;
+    const CYCLE_BUDGET: u64 = 8_000;
 
     let mut lane_a = machine_at_interval(1);
     arm_uarte_tx(&mut lane_a, buf, payload);
-    let at_a = advance_until(&mut lane_a, 16, 1, uarte_complete)
+    let at_a = advance_until(&mut lane_a, CYCLE_BUDGET, 1, uarte_complete)
         .expect("lane A (interval=1) must complete UARTE TX");
 
     let mut lane_b = machine_at_interval(RECOMMENDED_TICK_INTERVAL);
     arm_uarte_tx(&mut lane_b, buf, payload);
-    let at_b = advance_until(&mut lane_b, 16, 1, uarte_complete)
-        .expect("lane B (interval=512) must complete UARTE TX via scheduler");
+    let at_b = advance_until(&mut lane_b, CYCLE_BUDGET, 1, uarte_complete)
+        .expect("lane B must complete UARTE TX via the frame wake");
 
     assert!(
         uarte_complete(&lane_a) && uarte_complete(&lane_b),
@@ -389,8 +390,13 @@ fn uarte_tx_walk1_vs_sched512_completion_cycle_identity() {
 
     let delta = at_a.abs_diff(at_b);
     assert!(
+        at_a > u64::from(RECOMMENDED_TICK_INTERVAL) && at_b > u64::from(RECOMMENDED_TICK_INTERVAL),
+        "both lanes must wait out the frame, not finish inside one tick \
+         quantum: walk@1 at={at_a}, sched at={at_b}"
+    );
+    assert!(
         delta <= 1,
         "UARTE TX completion cycle must agree within 1: \
-         walk@1 at={at_a}, sched@512 at={at_b}, delta={delta}"
+         walk@1 at={at_a}, sched at={at_b}, delta={delta}"
     );
 }

@@ -116,6 +116,11 @@ impl NativeSession {
             },
             OpenOptions {
                 coverage,
+                // A model's relative `model:` path resolves beside the system file.
+                cosim_base_dir: system_path
+                    .as_ref()
+                    .and_then(|p| p.parent())
+                    .map(std::path::Path::to_path_buf),
                 ..OpenOptions::default()
             },
         )
@@ -130,6 +135,10 @@ impl NativeSession {
     #[getter]
     fn time(&self) -> PyResult<f64> {
         Ok(self.get()?.time().as_secs_f64())
+    }
+    #[getter]
+    fn cpu_hz(&self) -> PyResult<u64> {
+        Ok(self.get()?.cpu_hz())
     }
     #[getter]
     fn cycles(&self) -> PyResult<u64> {
@@ -181,6 +190,16 @@ impl NativeSession {
         serde_json::to_string(&self.get_mut()?.list_inputs())
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
+    /// Set a co-simulation signal (`ui.touch.pressed`, a source a model's
+    /// `inputs:` reads) to a number; a logic input takes any non-zero as true.
+    fn set_signal(&mut self, path: &str, value: f64) -> PyResult<()> {
+        self.get_mut()?
+            .set_signal(path, value)
+            .map_err(|e| match e {
+                SessionError::Other(msg) => PyValueError::new_err(msg),
+                other => error(other),
+            })
+    }
     fn set_pin(&mut self, binding: &str, active: bool) -> PyResult<()> {
         self.get_mut()?.set_pin(binding, active).map_err(error)
     }
@@ -202,6 +221,40 @@ impl NativeSession {
             AddrOrSymbol::Symbol(address.extract::<&str>()?)
         };
         self.get_mut()?.write_u32(at, value).map_err(error)
+    }
+    /// Arm the logic analyzer on GPIO pads `(peripheral id, pin)` and return
+    /// each pad's level now. Channel `n` of `logic_edges` is `pads[n]`.
+    fn watch_logic(&mut self, pads: Vec<(String, u8)>) -> PyResult<Vec<Option<bool>>> {
+        let refs: Vec<(&str, u8)> = pads.iter().map(|(p, n)| (p.as_str(), *n)).collect();
+        self.get_mut()?.watch_logic(&refs).map_err(error)
+    }
+    /// Edges newer than `cursor` as JSON: `{cursor, dropped, now_cycle, edges:
+    /// [{ch, cycle, value}]}`.
+    fn logic_edges(&mut self, cursor: u64) -> PyResult<String> {
+        let session = self.get_mut()?;
+        let batch = session.logic(cursor);
+        let edges: Vec<_> = batch
+            .edges
+            .iter()
+            .map(|e| serde_json::json!({"ch": e.ch, "cycle": e.cycle, "value": e.value}))
+            .collect();
+        Ok(serde_json::json!({
+            "cursor": batch.cursor,
+            "dropped": batch.dropped,
+            "now_cycle": session.cycles(),
+            "edges": edges,
+        })
+        .to_string())
+    }
+    /// The analog island's trace as CSV, byte for byte the file
+    /// `labwired test --analog-trace x.csv` writes.
+    fn analog_trace(&self) -> PyResult<String> {
+        let mut out = Vec::new();
+        self.get()?
+            .analog_trace(0)
+            .write_csv(&mut out)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        String::from_utf8(out).map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
     fn symbol(&self, name: &str) -> PyResult<Option<u64>> {
         Ok(self.get()?.symbol(name))

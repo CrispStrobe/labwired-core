@@ -11,6 +11,7 @@ This is NOT a pad-binding board. Binding answers the static question "what could
 Chips that cannot yet produce edges for a bus are listed here with a reason — never silently skipped.
 
 * **atmega328p**
+  * UART: USART0 registers live on the AVR CPU and are forwarded to the bus-side host; this harness drives bus MMIO, not the CPU, so no bring-up exists here
   * I2C: AVR from_config I2C is generic type:i2c without PadLines cell
   * SPI: AVR from_config SPI is generic type:spi without PadLines cell
 * **atsamd21**
@@ -93,11 +94,13 @@ Chips that cannot yet produce edges for a bus are listed here with a reason — 
 | stm32f746 | — | — | ✓ |
 | stm32f767 | ✓ | ✓ | ✓ |
 | stm32g071 | ✓ | ✓ | ✓ |
+| stm32g0b1re | — | — | ✓ |
 | stm32g474re | ✓ | ✓ | ✓ |
 | stm32h563 | ✓ | ✓ | ✓ |
 | stm32h735 | ✓ | ✓ | ✓ |
 | stm32l073 | ✓ | ✓ | ✓ |
 | stm32l476 | ✓ | ✓ | ✓ |
+| stm32u545 | ✓ | ✓ | ✓ |
 | stm32u575 | ✓ | ✓ | ✓ |
 | stm32wb55 | ✓ | ✓ | ✓ |
 | stm32wba52 | ✓ | ✓ | ✓ |

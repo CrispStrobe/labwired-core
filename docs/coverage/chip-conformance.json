@@ -154,6 +154,13 @@
     "reg_match": 0
   },
   {
+    "behavior": false,
+    "excluded": 0,
+    "level": 0,
+    "name": "stm32g0b1re",
+    "reg_match": 0
+  },
+  {
     "behavior": true,
     "excluded": 0,
     "level": 1,
@@ -172,6 +179,13 @@
     "excluded": 0,
     "level": 1,
     "name": "stm32u575",
+    "reg_match": 0
+  },
+  {
+    "behavior": true,
+    "excluded": 0,
+    "level": 1,
+    "name": "stm32u545",
     "reg_match": 0
   },
   {

@@ -1,0 +1,144 @@
+{
+  "version": 1,
+  "board": "atmega328p",
+  "parts": [
+    {
+      "id": "mcu",
+      "type": "arduino-uno",
+      "x": 100,
+      "y": 100,
+      "rotate": 0,
+      "attrs": {}
+    },
+    {
+      "id": "R1",
+      "type": "resistor",
+      "x": 330,
+      "y": 80,
+      "rotate": 0,
+      "attrs": {
+        "value": "10k"
+      }
+    },
+    {
+      "id": "R2",
+      "type": "resistor",
+      "x": 330,
+      "y": 200,
+      "rotate": 0,
+      "attrs": {
+        "value": "10k"
+      }
+    },
+    {
+      "id": "dmm",
+      "type": "multimeter",
+      "x": 520,
+      "y": 140,
+      "rotate": 0,
+      "attrs": {
+        "mode": "vdc"
+      }
+    },
+    {
+      "id": "R3",
+      "type": "resistor",
+      "x": 330,
+      "y": 320,
+      "rotate": 0,
+      "attrs": {
+        "value": "330"
+      }
+    },
+    {
+      "id": "led1",
+      "type": "led",
+      "x": 470,
+      "y": 320,
+      "rotate": 0,
+      "attrs": {}
+    }
+  ],
+  "wires": [
+    {
+      "from": {
+        "part": "mcu",
+        "pin": "5V"
+      },
+      "to": {
+        "part": "R1",
+        "pin": "1"
+      }
+    },
+    {
+      "from": {
+        "part": "R1",
+        "pin": "2"
+      },
+      "to": {
+        "part": "R2",
+        "pin": "1"
+      }
+    },
+    {
+      "from": {
+        "part": "R2",
+        "pin": "2"
+      },
+      "to": {
+        "part": "mcu",
+        "pin": "GND"
+      }
+    },
+    {
+      "from": {
+        "part": "dmm",
+        "pin": "V"
+      },
+      "to": {
+        "part": "R1",
+        "pin": "2"
+      }
+    },
+    {
+      "from": {
+        "part": "dmm",
+        "pin": "COM"
+      },
+      "to": {
+        "part": "mcu",
+        "pin": "GND"
+      }
+    },
+    {
+      "from": {
+        "part": "mcu",
+        "pin": "D2"
+      },
+      "to": {
+        "part": "R3",
+        "pin": "1"
+      }
+    },
+    {
+      "from": {
+        "part": "R3",
+        "pin": "2"
+      },
+      "to": {
+        "part": "led1",
+        "pin": "A"
+      }
+    },
+    {
+      "from": {
+        "part": "led1",
+        "pin": "K"
+      },
+      "to": {
+        "part": "mcu",
+        "pin": "GND"
+      }
+    }
+  ]
+}

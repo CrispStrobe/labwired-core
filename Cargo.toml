@@ -17,6 +17,7 @@ members = [
     "crates/firmware",
     "crates/firmware-atsamd21-demo",
     "crates/firmware-atsamd51-demo",
+    "crates/firmware-atsamd51-pybadge-demo",
     "crates/firmware-ra4m1-demo",
     "crates/firmware-imxrt1064-demo",
     "crates/firmware-itm-smoke",
@@ -40,6 +41,7 @@ members = [
     "crates/firmware-hil-showcase",
     "crates/firmware-l073-demo",
     "crates/firmware-stm32g0-demo",
+    "crates/firmware-stm32g0b1-demo",
     "crates/firmware-l476-demo",
     "crates/firmware-mg26-deck",
     "crates/firmware-mg26-demo",
@@ -49,7 +51,9 @@ members = [
     "crates/firmware-mg26-spi",
     "crates/firmware-mg26-bootloader",
     "crates/firmware-nrf51822-demo",
+    "crates/firmware-nrf52-dk-demo",
     "crates/firmware-nrf52832-demo",
+    "crates/firmware-nrf51822-demo",
     "crates/firmware-nrf52833-demo",
     "crates/firmware-nrf52840-ble-collector",
     "crates/firmware-nrf52840-ble-rx",
@@ -68,10 +72,18 @@ members = [
     "crates/firmware-semihost-smoke",
     "crates/firmware-nrf52840-secure-boot",
     "crates/firmware-nrf52840-timer-blinky",
+    "crates/firmware-nrf5340-dk-demo",
+    "crates/firmware-nucleo-f407-demo",
+    "crates/firmware-nucleo-wb55rg-demo",
+    "crates/firmware-nucleo-wba52cg-demo",
+    "crates/firmware-feather-f405-demo",
+    "crates/firmware-stm32h735-dk-demo",
+    "crates/firmware-xiao-nrf52840-sense-demo",
     "crates/firmware-perf-spin",
     "crates/firmware-perf-spin-riscv",
     "crates/firmware-rp2040-demo",
     "crates/firmware-samd21-demo",
+    "crates/firmware-arduino-zero-demo",
     "crates/firmware-rp2350-demo",
     "crates/firmware-kw41z-demo",
     "crates/firmware-kw41z-lcd",
@@ -101,6 +113,7 @@ members = [
     "examples/max31855-thermocouple-lab",
     "examples/ssd1306-hello-lab",
     "examples/neo6m-gps-lab",
+    "examples/uart-framed-peer-lab",
     "examples/ydlidar-scan-lab",
     "examples/quectel-bg770a-lab",
     "examples/h735-telematics-lab",
@@ -171,6 +184,14 @@ ureq = { version = "2.12", features = ["json"] }
 
 [profile.dev]
 panic = "abort"
+# Line tables, not full DWARF. `cargo test --workspace` links ~300 integration-
+# test binaries that each embed the whole core; at the default `debug = 2` each
+# is ~220 MB, which put the PR workspace shards within a fraction of a GB of the
+# runner's disk, so a PR that merely grew crates/core by a few thousand lines
+# died with "No space left on device" (measured on h563_conformance: 218 MB ->
+# 87 MB). Line tables keep file:line in panic backtraces and profiles; only
+# local-variable debugger info is dropped.
+debug = "line-tables-only"
 # The simulator is an interpreter: its hot loop is thousands of tiny generic
 # calls (HashMap<u64,u32> register lookups, `Option`/iterator adapters, `Any`
 # downcasts) that cost nothing once inlined and cost a call each when not.
@@ -396,6 +417,11 @@ debug = true
 opt-level = "s"
 
 [profile.release.package.neo6m-gps-lab]
+codegen-units = 1
+debug = true
+opt-level = "s"
+
+[profile.release.package.uart-framed-peer-lab]
 codegen-units = 1
 debug = true
 opt-level = "s"

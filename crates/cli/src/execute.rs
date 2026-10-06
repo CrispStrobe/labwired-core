@@ -124,15 +124,30 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
     // tap, and keep the per-channel identity so the drained edges can be shaped
     // into `result.json`'s `logic_edges` block after the run. An empty watch set
     // is a no-op (no channels installed → zero-overhead capture path).
+    //
+    // A `gpio_edges` assertion names pads it needs watched, so those pins are
+    // armed here too: the assertion cannot observe a pad nobody watches, and a
+    // script author should not have to repeat every pin as a flag. Same ref
+    // grammar as `--watch-gpio` (`peripheral:pin`).
+    let watch_specs: Vec<String> = {
+        let mut specs = ctx.args.watch_gpio.clone();
+        for assertion in ctx.assertions {
+            if let TestAssertion::GpioEdges(a) = assertion {
+                let pin = a.gpio_edges.pin.trim().to_string();
+                if !pin.is_empty() && !specs.iter().any(|s| s.eq_ignore_ascii_case(&pin)) {
+                    specs.push(pin);
+                }
+            }
+        }
+        specs
+    };
     let logic_watch_meta: Vec<labwired_core::logic_capture::LogicChannelMeta> = {
-        let refs: Vec<(String, u8)> = ctx
-            .args
-            .watch_gpio
+        let refs: Vec<(String, u8)> = watch_specs
             .iter()
             .filter_map(|spec| parse_watch_gpio_ref(spec))
             .collect();
-        if refs.len() != ctx.args.watch_gpio.len() {
-            for spec in &ctx.args.watch_gpio {
+        if refs.len() != watch_specs.len() {
+            for spec in &watch_specs {
                 if parse_watch_gpio_ref(spec).is_none() {
                     error!("--watch-gpio: ignoring malformed ref {spec:?} (want `peripheral:pin`)");
                 }
@@ -219,6 +234,15 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
             .unwrap_or(labwired_core::bus::RECOMMENDED_TICK_INTERVAL);
         ctx.machine.config.peripheral_tick_interval = interval;
         ctx.machine.bus.config.peripheral_tick_interval = interval;
+    }
+
+    // An explicit script limit sets the peripheral tick for this run.
+    // Absent leaves the interval set above: one tick per cycle, or the JIT widen.
+    if let Some(interval) = ctx.resolved_limits.peripheral_tick_interval {
+        if interval > 0 {
+            ctx.machine.config.peripheral_tick_interval = interval;
+            ctx.machine.bus.config.peripheral_tick_interval = interval;
+        }
     }
 
     let otherwise_batch_eligible = ctx.machine.config.batch_mode_enabled
@@ -1089,6 +1113,7 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
                             &rtt_text,
                             &itm_text,
                             ctx.machine,
+                            &logic_watch_meta,
                         ),
                         _ => false,
                     };
@@ -1119,6 +1144,7 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
                             &rtt_text,
                             &itm_text,
                             ctx.machine,
+                            &logic_watch_meta,
                         )
                 });
             }
@@ -1254,13 +1280,15 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
             | TestAssertion::SemihostingContains(_)
             | TestAssertion::ItmContains(_)
             | TestAssertion::MotorState(_)
-            | TestAssertion::MqttFabric(_) => (
+            | TestAssertion::MqttFabric(_)
+            | TestAssertion::GpioEdges(_) => (
                 assertion_currently_passes(
                     assertion,
                     &uart_text,
                     &rtt_text,
                     &itm_text,
                     ctx.machine,
+                    &logic_watch_meta,
                 ),
                 None,
             ),
@@ -1272,6 +1300,7 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
                         &rtt_text,
                         &itm_text,
                         ctx.machine,
+                        &logic_watch_meta,
                     ),
                 None,
             ),
@@ -1683,6 +1712,7 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
         &ctx.fault_evidence,
         Some(inspect_block),
         logic_edges,
+        ctx.machine.bus.motor_snapshots(),
         stimulus_outcomes,
         footprint,
         Some(memory),

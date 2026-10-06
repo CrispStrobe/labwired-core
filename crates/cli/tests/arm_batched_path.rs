@@ -50,7 +50,12 @@ const BOARDS: &[(&str, &str)] = &[
     ("rp2040", "configs/chips/rp2040.yaml"),
 ];
 
-const STEPS: u64 = 300_000;
+/// Enough fuel for every fixture that prints `TIER1 done` to print it on both
+/// loops, so the transcripts compare whole. At 300_000 the cut landed inside
+/// the rebuilt nRF52840 fixture's `TIER1 adc` UART write (its ADC section now
+/// takes four samples), and the two loops had flushed different prefixes of
+/// the same bytes.
+const STEPS: u64 = 1_000_000;
 
 struct RunOut {
     stdout: String,
@@ -186,6 +191,11 @@ fn default_run_keeps_diagnostics_opt_in() {
 /// Keep the list and its two-directional check. This is the seam where a CPU
 /// batch loop and a lazily-advanced peripheral disagree about what time it is,
 /// and it has gone wrong once already.
+///
+/// `nrf52840` returned once (2026-10-05 fork sync): a write that armed a
+/// delay-0 wake did not end the running batch, so EasyDMA completions waited
+/// for the batch boundary. Fixed by porting RISC-V's Gap #1 cut to
+/// `CortexM::step_batch` (`pending_wake_due` / `pending_wake_budget`).
 const KNOWN_DIVERGENT: &[&str] = &[];
 
 #[test]

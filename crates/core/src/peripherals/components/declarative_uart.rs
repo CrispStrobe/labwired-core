@@ -56,7 +56,8 @@ use std::collections::{BTreeMap, VecDeque};
 
 use anyhow::{anyhow, Context, Result};
 use labwired_config::{
-    DeviceDescriptor, Event, Template, TemplateWrap, UartResponse, UartSpec, UartUnsolicited,
+    ByteTemplate, Checksum, DeviceDescriptor, Event, Template, TemplateWrap, UartMatch,
+    UartResponse, UartSpec, UartUnsolicited,
 };
 
 use super::declarative_regs::{apply_timing_action, TimerBank};
@@ -64,6 +65,48 @@ use super::rule_machine::{PinOnlyCtx, RuleMachine};
 use crate::peripherals::device::UartStreamDevice;
 use crate::peripherals::noise::ChannelNoise;
 use crate::sim_input::{InputChannel, SimInput, SimInputError};
+
+/// Where one register-table word comes from.
+enum RegSrc {
+    /// An expression: `input(KEY)` (so the channel's `expr_scale` applies), a
+    /// computed value, or `var(NAME)` for a var-backed register.
+    Expr(labwired_config::expr::Expr),
+    Const(i64),
+}
+
+/// A compiled `write_regs:` entry: first register, word count, body offset.
+struct WriteRegs {
+    first: labwired_config::expr::Expr,
+    count: labwired_config::expr::Expr,
+    data_at: usize,
+}
+
+/// The descriptor with every response-pattern capture declared as a rule
+/// variable, so `var(addr)` names resolve exactly like any other variable. A
+/// borrow when the part has no captures, which is every part written before
+/// binary frames.
+pub(crate) fn with_capture_vars(
+    desc: &DeviceDescriptor,
+) -> Result<std::borrow::Cow<'_, DeviceDescriptor>> {
+    let Some(spec) = desc.behavior.uart.as_ref() else {
+        return Ok(std::borrow::Cow::Borrowed(desc));
+    };
+    let captures = spec.capture_names();
+    if captures.is_empty() {
+        return Ok(std::borrow::Cow::Borrowed(desc));
+    }
+    let mut out = desc.clone();
+    for name in captures {
+        anyhow::ensure!(
+            !desc.behavior.vars.contains_key(&name),
+            "uart_device '{}': the byte-pattern capture `{name}` has the same name as a declared \
+             var; rename one of them",
+            desc.r#type
+        );
+        out.behavior.vars.insert(name, 0);
+    }
+    Ok(std::borrow::Cow::Owned(out))
+}
 
 /// A stream-only declarative device.
 pub struct DeclarativeUartDevice {
@@ -104,6 +147,37 @@ pub struct DeclarativeUartDevice {
     rx_frame: Vec<u8>,
     /// Device time in µs, credited by the hosting UART.
     elapsed_us: u64,
+    /// `frames.framing: silence`: frames are raw bytes that end on line idle.
+    raw_frames: bool,
+    /// Idle time that ends a silence frame, µs.
+    gap_us: u64,
+    /// Whole polls' worth of idle counted since the last byte arrived. Only
+    /// polls that saw NO byte count, so a frame never ends early: the figure
+    /// is a lower bound on the real idle.
+    idle_us: u64,
+    /// A byte arrived since the last time device time was credited.
+    rx_heard: bool,
+    /// Checksum carried at the end of every silence frame.
+    frame_check: Option<Checksum>,
+    /// Frames dropped for a bad checksum.
+    check_errors: u64,
+    /// Paced by its own baud (`pace: device` or silence framing).
+    paced: bool,
+    /// Nanoseconds one character occupies the line. Only meaningful when paced.
+    char_ns: u64,
+    /// Nanoseconds of line time earned and not yet spent on a byte.
+    tx_credit_ns: u64,
+    /// Pattern-capture names, bound as vars before a frame's rules run.
+    capture_names: Vec<String>,
+    /// Compiled `when:` guard of each response.
+    response_when: Vec<Option<labwired_config::expr::Expr>>,
+    /// The register table behind `regs(first, count)`.
+    reg_srcs: BTreeMap<i64, RegSrc>,
+    /// Registers a request may write, and the var each one stores into.
+    reg_vars: BTreeMap<i64, String>,
+    /// Compiled `write_regs:` of each response, indexed alongside
+    /// `spec.responses`.
+    response_writes: Vec<Option<WriteRegs>>,
 }
 
 impl std::fmt::Debug for DeclarativeUartDevice {
@@ -132,7 +206,8 @@ impl DeclarativeUartDevice {
         // unlike `gpio_device` an absent machine is not an error. It is
         // replaced by an empty one so every code path below has a machine to
         // hold the vars a template might read.
-        let machine = match RuleMachine::from_behavior(&descriptor.behavior)? {
+        let with_caps = with_capture_vars(descriptor)?;
+        let machine = match RuleMachine::from_behavior(&with_caps.behavior)? {
             Some(m) => m,
             None => RuleMachine::from_behavior(&labwired_config::DeviceBehavior {
                 // One declared var, so `from_behavior` returns a machine rather
@@ -174,6 +249,60 @@ impl DeclarativeUartDevice {
             })
             .collect::<Result<Vec<_>>>()?;
 
+        let response_when = spec
+            .responses
+            .iter()
+            .map(|r| match &r.when {
+                None => Ok(None),
+                Some(src) => labwired_config::expr::Expr::parse(src)
+                    .map(Some)
+                    .map_err(|e| anyhow!("uart.responses `when: {src}`: {e}")),
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let mut reg_srcs = BTreeMap::new();
+        let mut reg_vars = BTreeMap::new();
+        for r in &spec.regs {
+            let parse = |text: &str, what: &str| {
+                labwired_config::expr::Expr::parse(text)
+                    .map_err(|e| anyhow!("uart.regs {what} `{text}`: {e}"))
+            };
+            let src = if let Some(key) = &r.input {
+                RegSrc::Expr(parse(&format!("input({key})"), "input")?)
+            } else if let Some(text) = &r.expr {
+                RegSrc::Expr(parse(text, "expr")?)
+            } else if let Some(name) = &r.var {
+                reg_vars.insert(i64::from(r.reg), name.clone());
+                RegSrc::Expr(parse(&format!("var({name})"), "var")?)
+            } else {
+                RegSrc::Const(r.value.unwrap_or(0))
+            };
+            reg_srcs.insert(i64::from(r.reg), src);
+        }
+        let response_writes = spec
+            .responses
+            .iter()
+            .map(|r| {
+                r.write_regs
+                    .as_ref()
+                    .map(|w| {
+                        Ok::<_, anyhow::Error>(WriteRegs {
+                            first: labwired_config::expr::Expr::parse(&w.first)
+                                .map_err(|e| anyhow!("write_regs.first `{}`: {e}", w.first))?,
+                            count: labwired_config::expr::Expr::parse(&w.count)
+                                .map_err(|e| anyhow!("write_regs.count `{}`: {e}", w.count))?,
+                            data_at: usize::from(w.data_at),
+                        })
+                    })
+                    .transpose()
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let paced = spec.paced_by_device();
+        let char_ns = spec.char_time_ns().unwrap_or(0);
+        let gap_us = spec.gap_us().unwrap_or(0);
+        let raw_frames = spec.frames.is_silence();
+        let frame_check = spec.frames.check;
+        let capture_names = spec.capture_names();
+
         let mut slots = BTreeMap::new();
         let mut expr_scale = BTreeMap::new();
         if let Some(meta) = &descriptor.metadata {
@@ -212,7 +341,48 @@ impl DeclarativeUartDevice {
             pending: VecDeque::new(),
             rx_frame: Vec::new(),
             elapsed_us: 0,
+            raw_frames,
+            gap_us,
+            idle_us: 0,
+            rx_heard: false,
+            frame_check,
+            check_errors: 0,
+            paced,
+            char_ns,
+            // The line has been idle since power-up, so the first byte may go
+            // out at once.
+            tx_credit_ns: char_ns,
+            capture_names,
+            response_when,
+            reg_srcs,
+            reg_vars,
+            response_writes,
         })
+    }
+
+    /// Override the part's line rate from a placement's `baud:` config. The
+    /// character time and the silence gap follow it, so a Modbus slave placed at
+    /// 19200 baud ends its frames after 3.5 characters at 19200, not at the
+    /// descriptor's default. Only a part that opted in to its own baud has one.
+    pub fn set_baud(&mut self, baud: u32) {
+        if baud == 0 || !self.paced {
+            return;
+        }
+        self.spec.baud = Some(baud);
+        self.char_ns = self.spec.char_time_ns().unwrap_or(0);
+        self.gap_us = self.spec.gap_us().unwrap_or(0);
+        self.tx_credit_ns = self.char_ns;
+    }
+
+    /// Seed a declared var from a placement's `config:` (a Modbus slave's
+    /// `address`). Returns false when the part declares no such var.
+    pub fn seed_var(&mut self, name: &str, value: i64) -> bool {
+        if self.machine.has_var(name) {
+            self.machine.set_var(name, value);
+            true
+        } else {
+            false
+        }
     }
 
     /// Seed a measurement slot from a `config:` override, like every other
@@ -302,7 +472,11 @@ impl DeclarativeUartDevice {
 
     /// Queue a rendered answer, honouring `delay_us`.
     fn emit(&mut self, text: &str, wrap: TemplateWrap, delay_us: Option<u64>) {
-        let bytes = wrap.apply(text).into_bytes();
+        self.emit_bytes(wrap.apply(text).into_bytes(), delay_us);
+    }
+
+    /// Queue already-rendered bytes, honouring `delay_us`.
+    fn emit_bytes(&mut self, bytes: Vec<u8>, delay_us: Option<u64>) {
         if bytes.is_empty() {
             return;
         }
@@ -365,6 +539,9 @@ impl DeclarativeUartDevice {
         }
         self.elapsed_us = self.elapsed_us.saturating_add(us);
         self.machine.advance_time_us(us);
+        if self.raw_frames {
+            self.check_silence(us);
+        }
         if !self.timers.is_empty() {
             let mut scratch = std::collections::HashMap::new();
             for (name, actions) in self.timers.due_by_timer(self.elapsed_us) {
@@ -455,17 +632,274 @@ impl DeclarativeUartDevice {
     }
 }
 
+impl DeclarativeUartDevice {
+    /// Evaluate against the machine and the (possibly noisy) slots, the same
+    /// environment a text template renders in.
+    fn eval_with<R>(&mut self, f: impl FnOnce(&RuleMachine, &PinOnlyCtx<'_>) -> R) -> R {
+        if self.noise.is_empty() {
+            let ctx = PinOnlyCtx {
+                expr_precision: &BTreeMap::new(),
+                slots: &mut self.slots,
+                expr_scale: &self.expr_scale,
+            };
+            return f(&self.machine, &ctx);
+        }
+        let mut slots = self.observed_slots();
+        let ctx = PinOnlyCtx {
+            expr_precision: &BTreeMap::new(),
+            slots: &mut slots,
+            expr_scale: &self.expr_scale,
+        };
+        f(&self.machine, &ctx)
+    }
+
+    /// Render a `respond_bytes:` list. Captures are already bound as vars.
+    fn render_bytes(&mut self, t: &ByteTemplate) -> Vec<u8> {
+        let regs = std::mem::take(&mut self.reg_srcs);
+        let out = self.eval_with(|machine, ctx| {
+            let mut eval = |e: &labwired_config::expr::Expr| machine.eval_expr(e, ctx);
+            let mut reg = |n: i64| match regs.get(&n) {
+                Some(RegSrc::Expr(e)) => machine.eval_expr(e, ctx),
+                Some(RegSrc::Const(v)) => *v,
+                None => 0,
+            };
+            t.render(&mut eval, &mut reg)
+        });
+        self.reg_srcs = regs;
+        out
+    }
+
+    /// Bind a frame's captures as rule variables, zeroing the rest.
+    fn bind_captures(&mut self, caps: &[(String, i64)]) {
+        for name in &self.capture_names {
+            self.machine.set_var(name, 0);
+        }
+        for (name, v) in caps {
+            self.machine.set_var(name, *v);
+        }
+    }
+
+    /// End a silence frame once the line has been idle long enough.
+    ///
+    /// `us` is the real device time just credited. A poll in which a byte
+    /// arrived restarts the count and contributes nothing, so the count is a
+    /// lower bound on the true idle and a frame can end late by at most one
+    /// poll, never early.
+    fn check_silence(&mut self, us: u64) {
+        if self.rx_frame.is_empty() || self.rx_heard {
+            self.rx_heard = false;
+            self.idle_us = 0;
+            return;
+        }
+        self.idle_us = self.idle_us.saturating_add(us);
+        if self.idle_us >= self.gap_us {
+            self.idle_us = 0;
+            let frame = std::mem::take(&mut self.rx_frame);
+            self.on_raw_frame(&frame);
+        }
+    }
+
+    /// A binary frame closed by silence: verify its checksum, match it against
+    /// the table, bind captures, and answer.
+    ///
+    /// Captures are bound from the FIRST entry whose pattern matches before the
+    /// frame's rules fire, so a `rules:` entry on `frame` sees them. Entries
+    /// are then tried in order and the first whose pattern matches and whose
+    /// `when:` holds answers; a later entry's captures are bound just before
+    /// its own guard is read.
+    fn on_raw_frame(&mut self, frame: &[u8]) {
+        if frame.is_empty() {
+            return;
+        }
+        let mut body = frame;
+        if let Some(ck) = self.frame_check {
+            let w = ck.width();
+            if frame.len() <= w {
+                self.check_errors += 1;
+                return;
+            }
+            let (head, tail) = frame.split_at(frame.len() - w);
+            if ck.wire_bytes(head) != tail {
+                // What a Modbus slave does: no answer to a corrupt frame.
+                self.check_errors += 1;
+                return;
+            }
+            body = head;
+        }
+        let text: String = body.iter().map(|&b| b as char).collect();
+        let mut hits: Vec<(usize, Vec<(String, i64)>)> = Vec::new();
+        for (i, r) in self.spec.responses.iter().enumerate() {
+            match &r.r#match {
+                UartMatch::Bytes(p) => {
+                    if let Some(caps) = p.matches(body) {
+                        hits.push((
+                            i,
+                            caps.into_iter().map(|(n, v)| (n.to_string(), v)).collect(),
+                        ));
+                    }
+                }
+                other => {
+                    if other.matches(&text, false) {
+                        hits.push((i, Vec::new()));
+                    }
+                }
+            }
+        }
+        match hits.first() {
+            Some((_, caps)) => {
+                let caps = caps.clone();
+                self.bind_captures(&caps);
+            }
+            None => self.bind_captures(&[]),
+        }
+        self.fire(Event::Frame);
+        let mut chosen = None;
+        for (i, caps) in hits {
+            self.bind_captures(&caps);
+            if let Some(guard) = self.response_when[i].clone() {
+                let pass = self.eval_with(|machine, ctx| machine.eval_expr(&guard, ctx)) != 0;
+                if !pass {
+                    continue;
+                }
+            }
+            chosen = Some(i);
+            break;
+        }
+        let Some(i) = chosen else {
+            return;
+        };
+        let actions = std::mem::take(&mut self.response_actions[i]);
+        if !actions.is_empty() {
+            let mut ctx = PinOnlyCtx {
+                expr_precision: &BTreeMap::new(),
+                slots: &mut self.slots,
+                expr_scale: &self.expr_scale,
+            };
+            self.machine.run_actions(&actions, &mut ctx);
+        }
+        self.response_actions[i] = actions;
+        self.drain_timer_requests();
+        self.apply_write_regs(i, body);
+        let entry: &UartResponse = &self.spec.responses[i];
+        let (respond, bytes, wrap, delay) = (
+            entry.respond.clone(),
+            entry.respond_bytes.clone(),
+            entry.wrap,
+            entry.delay_us,
+        );
+        if let Some(t) = bytes {
+            let out = self.render_bytes(&t);
+            self.emit_bytes(out, delay);
+        } else if let Some(t) = respond {
+            let text = self.render(&t);
+            self.emit(&text, wrap, delay);
+        }
+    }
+
+    /// Store the words a `write_regs:` entry names. Words are read big-endian
+    /// from `body` and stored, truncated to 16 bits, into the var behind each
+    /// register. A register with no var behind it is skipped.
+    fn apply_write_regs(&mut self, response: usize, body: &[u8]) {
+        let Some(w) = &self.response_writes[response] else {
+            return;
+        };
+        let (data_at, first_e, count_e) = (w.data_at, w.first.clone(), w.count.clone());
+        let (first, count) =
+            self.eval_with(|m, c| (m.eval_expr(&first_e, c), m.eval_expr(&count_e, c)));
+        let count = count.clamp(0, labwired_config::uart_binary::MAX_REG_WORDS);
+        for k in 0..count {
+            let at = data_at + 2 * k as usize;
+            let Some(word) = body.get(at..at + 2) else {
+                break;
+            };
+            let value = i64::from(u16::from_be_bytes([word[0], word[1]]));
+            if let Some(var) = self.reg_vars.get(&first.wrapping_add(k)).cloned() {
+                self.machine.set_var(&var, value);
+            }
+        }
+    }
+
+    /// Frames dropped so far for a bad checksum.
+    pub fn check_errors(&self) -> u64 {
+        self.check_errors
+    }
+
+    /// Release one byte if the line has had time to carry it. The credit never
+    /// banks more than one character while nothing is queued, so a response
+    /// that follows a long idle starts at once but then runs at the part's
+    /// baud, not in a burst.
+    fn paced_pop(&mut self, elapsed_us: u32) -> Option<u8> {
+        if self.out_queue.is_empty() && self.pending.is_empty() {
+            self.tx_credit_ns = self.tx_credit_ns.min(self.char_ns);
+        }
+        self.tx_credit_ns = self
+            .tx_credit_ns
+            .saturating_add(u64::from(elapsed_us) * 1000);
+        if self.out_queue.is_empty() {
+            self.tx_credit_ns = self.tx_credit_ns.min(self.char_ns);
+            return None;
+        }
+        if self.tx_credit_ns < self.char_ns {
+            return None;
+        }
+        self.tx_credit_ns -= self.char_ns;
+        self.out_queue.pop_front()
+    }
+}
+
 impl UartStreamDevice for DeclarativeUartDevice {
+    fn paced_by_device(&self) -> bool {
+        self.paced
+    }
+
+    /// A silence-framed part speaks raw binary frames, so its link must stay off
+    /// the console capture sink: request bytes such as `01 03 … C4 0B` are not
+    /// console text and would splice into whatever the firmware prints.
+    fn carries_protocol_octets(&self) -> bool {
+        self.raw_frames
+    }
+
+    fn device_id(&self) -> Option<&str> {
+        Some(&self.id)
+    }
+
+    fn declared_baud(&self) -> Option<u32> {
+        if self.paced {
+            self.spec.baud
+        } else {
+            None
+        }
+    }
+
+    fn max_bytes_per_tick(&self) -> usize {
+        if self.paced && self.char_ns > 0 {
+            // One bus tick is nominally 1 ms: as many characters as fit in it.
+            ((1_000_000 / self.char_ns) as usize + 1).min(256)
+        } else {
+            1
+        }
+    }
+
     fn poll(&mut self, elapsed_us: u32) -> Option<u8> {
         // Time is credited FIRST and unconditionally — including while the
         // queue is draining. The hand-written NEO-6M did the opposite (it only
         // accumulated when its queue was empty), which is what made its "1 Hz"
         // stream really run at one sentence per 500 ms PLUS the drain time.
         self.advance(u64::from(elapsed_us));
+        if self.paced {
+            return self.paced_pop(elapsed_us);
+        }
         self.out_queue.pop_front()
     }
 
     fn on_tx_byte(&mut self, byte: u8) {
+        if self.raw_frames {
+            self.rx_heard = true;
+            if self.rx_frame.len() < usize::from(self.spec.frames.max_bytes) {
+                self.rx_frame.push(byte);
+            }
+            return;
+        }
         let frames = &self.spec.frames;
         if let Some(length) = frames.length.filter(|n| *n > 0) {
             self.rx_frame.push(byte);
@@ -583,8 +1017,9 @@ pub(crate) fn validate_descriptor(desc: &DeviceDescriptor) -> Result<()> {
                 desc.r#type
             )
         })?;
-    super::declarative_gpio::validate_rule_names(desc)?;
-    let vars: Vec<String> = desc.behavior.vars.keys().cloned().collect();
+    let with_caps = with_capture_vars(desc)?;
+    super::declarative_gpio::validate_rule_names(&with_caps)?;
+    let vars: Vec<String> = with_caps.behavior.vars.keys().cloned().collect();
     let fifos: Vec<String> = desc.behavior.fifos.iter().map(|f| f.name.clone()).collect();
     labwired_config::validate_rule_names(
         &action_rules,
@@ -611,6 +1046,24 @@ pub(crate) fn validate_descriptor(desc: &DeviceDescriptor) -> Result<()> {
     labwired_config::compile_rules(&desc.behavior.rules)
         .map_err(|e| anyhow!("{e}"))
         .with_context(|| format!("uart_device '{}' has an invalid rule", desc.r#type))?;
+    for r in &spec.regs {
+        if let Some(name) = &r.var {
+            anyhow::ensure!(
+                desc.behavior.vars.contains_key(name),
+                "uart_device '{}': register {} is backed by var `{name}`, which is not declared \
+                 in `vars:`",
+                desc.r#type,
+                r.reg
+            );
+        }
+    }
+    anyhow::ensure!(
+        !spec.responses.iter().any(|r| r.write_regs.is_some())
+            || spec.regs.iter().any(|r| r.var.is_some()),
+        "uart_device '{}' has a `write_regs:` entry but no register declared with `var:`, so \
+         nothing a request writes could be stored",
+        desc.r#type
+    );
     Ok(())
 }
 
@@ -691,6 +1144,17 @@ impl crate::peripherals::kit::PeripheralKit for DeclarativeUartKit {
                         device.set_channel_noise_sigma(&input.key, sigma);
                     }
                 }
+            }
+        }
+        // A placement's `baud:` sets the line rate of a part that is paced by
+        // its own baud, and a `config:` key named like a declared var seeds that
+        // var (a Modbus slave's `address:`).
+        if let Some(baud) = ctx.config_i64("baud").and_then(|b| u32::try_from(b).ok()) {
+            device.set_baud(baud);
+        }
+        for name in self.descriptor.behavior.vars.keys() {
+            if let Some(v) = ctx.config_i64(name) {
+                device.seed_var(name, v);
             }
         }
         let uart = ctx.uart()?;
