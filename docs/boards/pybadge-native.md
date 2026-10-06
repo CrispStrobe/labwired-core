@@ -1,7 +1,7 @@
 # PyBadge native panel/runtime contract — 2026-10-05
 
 Buttons are merged in [PR151](https://github.com/CrispStrobe/labwired-core/pull/151).
-Blocking SAM SPI has passed enabled final-head CI but remains unmerged in
+Blocking SAM SPI landed in
 [PR152](https://github.com/CrispStrobe/labwired-core/pull/152).
 Native display, DMA and production Arcade are not yet qualified. Work contracts
 and pass criteria: [engine lanes](../engineering/target-next-lanes.md).
