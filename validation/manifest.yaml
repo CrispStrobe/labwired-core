@@ -518,7 +518,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 2c2f85ba90afac3e3781c824bf148bf2f02881e06277b7e3fae8e7dc555414b5
+    drift_ack_digest: 8f807f1a952779cfa688be4d640565774f8358f554c29e6596eebd5dc4ca2e58
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
@@ -1059,7 +1059,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 2c2f85ba90afac3e3781c824bf148bf2f02881e06277b7e3fae8e7dc555414b5
+    drift_ack_digest: 8f807f1a952779cfa688be4d640565774f8358f554c29e6596eebd5dc4ca2e58
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
@@ -1740,7 +1740,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: 6bb3a5898d5d0e7892fa629fcb02fe37b453fa76ff828ad84d90ca1f654d0b8e
+    drift_ack_digest: fa6d5406b266004cd02bab2bf293c6cbdb5f9e9bda74caa4530c610034690ec7
     # 2026-10-01 G0 CI repair: shared RCC reports its UART AF override through
     # a capability instead of a bus downcast; only G0 returns AF1. Shared EXTI
     # receives the same explicit GPIO edge through a capability. Captured
@@ -3566,7 +3566,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: 7516669f6a8b38ca039af5b684ed9536e93e97a2b78a809c7c0974f893ba7512
+    drift_ack_digest: 67ac423a993cd2a78a2bec719db917f3328596b812749012b15830822fcd65ea
     # 2026-10-01 G0 CI repair: shared RCC reports its UART AF override through
     # a capability instead of a bus downcast; only G0 returns AF1. Shared EXTI
     # receives the same explicit GPIO edge through a capability. Captured
@@ -4427,7 +4427,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: 477942cef59c59e9e77167739b6fd6371488a7f9ef9b282077c2fa1e51555f83
+    drift_ack_digest: 8a7319ac57db32cbf00504e6c61ec5e68f2a47fd403ad75d54a71d0fa1ae19c1
     # 2026-10-01 G0 CI repair: shared RCC reports its UART AF override through
     # a capability instead of a bus downcast; only G0 returns AF1. Shared EXTI
     # receives the same explicit GPIO edge through a capability. Captured
@@ -5293,7 +5293,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: a95568701089f7c1fbab000cbb51b94a0e03dc821ecd489062d117a0361ebcef
+    drift_ack_digest: 3580ac9f084611d5690a1c2a49df8050952db33979561536015f955a679a1ad2
     # 2026-10-01 G0 CI repair: shared RCC reports its UART AF override through
     # a capability instead of a bus downcast; only G0 returns AF1. Shared EXTI
     # receives the same explicit GPIO edge through a capability. Captured
@@ -6176,7 +6176,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: fa355e54b60ede4d12844c21a19023efe9b8428717849387706844c753114b4f
+    drift_ack_digest: 5d79510d53e8c600c776d91f6f780ab406a16922468a183482d8b83595032e6a
     # 2026-10-01 G0 CI repair: shared RCC reports its UART AF override through
     # a capability instead of a bus downcast; only G0 returns AF1. Shared EXTI
     # receives the same explicit GPIO edge through a capability. Captured
