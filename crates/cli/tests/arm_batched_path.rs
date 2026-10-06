@@ -50,7 +50,12 @@ const BOARDS: &[(&str, &str)] = &[
     ("rp2040", "configs/chips/rp2040.yaml"),
 ];
 
-const STEPS: u64 = 300_000;
+/// Enough fuel for every fixture that prints `TIER1 done` to print it on both
+/// loops, so the transcripts compare whole. At 300_000 the cut landed inside
+/// the rebuilt nRF52840 fixture's `TIER1 adc` UART write (its ADC section now
+/// takes four samples), and the two loops had flushed different prefixes of
+/// the same bytes.
+const STEPS: u64 = 1_000_000;
 
 struct RunOut {
     stdout: String,
