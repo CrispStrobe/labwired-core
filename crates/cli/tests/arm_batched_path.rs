@@ -187,19 +187,11 @@ fn default_run_keeps_diagnostics_opt_in() {
 /// batch loop and a lazily-advanced peripheral disagree about what time it is,
 /// and it has gone wrong once already.
 ///
-/// 2026-10-05, fork sync with w1ne/main 92bdc5f3: `nrf52840` is back, for a
-/// DIFFERENT seam. An MMIO write that schedules a delay-0 wake (SAADC
-/// EasyDMA SAMPLE here) does not end the running batch, so the completion
-/// waits for the batch boundary and firmware polling EVENTS_END spins up to a
-/// tick interval (1024 instructions) per sample. Measured as instructions to
-/// reach each transcript line (stepped vs batched): pre-sync fork main
-/// `spi PASS` 14 891 vs 32 812, `adc PASS` 15 136 vs 41 649 — it already
-/// lagged, but both finished inside STEPS so the transcripts matched. After
-/// the sync the lag before `spi` is gone and `adc PASS` is 309 618 vs 315 331
-/// (+5 713, all in the ADC phase); upstream's timed legacy UART stretched the
-/// run so that lag now lands on the cutoff. Fix: end a batch when a write
-/// schedules a wake earlier than its planned end; then delete this entry.
-const KNOWN_DIVERGENT: &[&str] = &["nrf52840"];
+/// `nrf52840` returned once (2026-10-05 fork sync): a write that armed a
+/// delay-0 wake did not end the running batch, so EasyDMA completions waited
+/// for the batch boundary. Fixed by porting RISC-V's Gap #1 cut to
+/// `CortexM::step_batch` (`pending_wake_due` / `pending_wake_budget`).
+const KNOWN_DIVERGENT: &[&str] = &[];
 
 #[test]
 fn batching_does_not_change_what_the_firmware_does() {
