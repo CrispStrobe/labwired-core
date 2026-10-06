@@ -237,11 +237,14 @@ impl SystemBus {
     fn service_edge_driven_gpio_devices_cold(&mut self, idx: usize) {
         // Cheap gate: almost every bus has no edge-driven device at all, and
         // this runs on every MMIO write.
-        if !self
+        #[cfg(any(target_arch = "wasm32", test))]
+        let has_edges = self.gpio_devices.iter().any(|d| d.has_edge_service_addrs());
+        #[cfg(not(any(target_arch = "wasm32", test)))]
+        let has_edges = self
             .gpio_devices
             .iter()
-            .any(|d| !d.edge_service_addrs().is_empty())
-        {
+            .any(|d| !d.edge_service_addrs().is_empty());
+        if !has_edges {
             return;
         }
         let now = self.current_cycle;
