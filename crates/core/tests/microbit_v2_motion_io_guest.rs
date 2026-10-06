@@ -175,7 +175,9 @@ fn guest_reads_changing_motion_through_production_twim_easydma() {
 #[test]
 #[ignore = "explicit release-mode active-motion performance qualification"]
 fn active_motion_display_button_workload_throughput() {
-    assert!(!cfg!(debug_assertions), "requires --release");
+    if cfg!(debug_assertions) {
+        panic!("requires --release");
+    }
     let mut m = machine();
     pose(&mut m, FIRST.0, FIRST.1);
     m.run(Some(8_000_000)).unwrap();

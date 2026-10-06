@@ -1,67 +1,6 @@
 # LabWired board validation manifest — the source of truth for what is actually
 # validated, and against which silicon, on what date.
 #
-# CP13 review, 2026-09-30: nRF52833 P1 now uses silicon register addresses;
-# GPIOTE's engine-private pad latch fits compact windows. Shared GPIO changes
-# are restricted to that nRF52 internal latch and documentation: no STM32
-# register path/reset behavior changes. Existing drift acknowledgements are
-# re-stamped for the reviewed content, not represented as new silicon captures.
-# CP13 CPU review, 2026-09-30: Cortex-M fast-block discovery now rejects only
-# structurally impossible T16 candidates and stops at instruction-width/type or
-# decode-cache tag barriers; candidate payloads are constructed only after a
-# successful immutable shape check. No instruction execution, guest cycle
-# accounting, MMIO behavior, IRQ timing, or peripheral register model changes. Eleven new
-# discovery regressions and the existing Cortex-M/guest suites must pass before
-# merge. The seven existing silicon-tier acknowledgements below are renewed
-# for this source optimization only; their live re-capture debt remains owed.
-# ACK, NOT A CAPTURE.
-# CP13 discovery-miss review, 2026-09-30: bounded PC/generation memo skips only
-# repeated structural discovery failures. Every decode insertion/collision and
-# reset/code-invalidation/snapshot flush advances its generation; wrap clears
-# all misses. Dynamic RAM/MMIO execution failures are never memoized. Explicit
-# code invalidation also drops the positive block cache, fixing stale code
-# after debugger edits. Raw mutable decode-cache access is now private; public
-# inspection is read-only. Eighteen targeted discovery regressions and the
-# unchanged actual ARM motion throughput gate await hosted qualification.
-# Existing silicon acknowledgements are re-stamped, not new captures.
-# CP13 countdown review, 2026-09-30: only tagged cached Thumb SUBS Rd,#1;
-# BNE back to SUBS pairs are arithmetically retired within the existing batch
-# budget/observer/debug/IRQ/IT/scheduler guards. Final registers, PC, NZCV,
-# instruction counts and modeled cycle accounting are preserved, including
-# initial-zero wrap and odd budgets. Nine hosted full-crate regressions await
-# qualification; actual-source arithmetic standalone comparisons passed locally.
-# CPU content-watch acknowledgements only; no peripheral/hardware capture.
-# CP13 GPIO performance review, 2026-09-30: Nordic weak-pull masks are derived
-# on valid PIN_CNF writes instead of rescanning every pin on each IN read.
-# Direction, external drivers, latched pad inputs, reserved encodings, physical
-# bank sizes and snapshot register schema retain their existing semantics.
-# Seven loop-reference/subword/schema regressions qualify this source change;
-# content-bound existing acknowledgements are renewed, not silicon captures.
-# 2026-09-30 formatting repair: moved an existing SAADC test comment above
-# its assertions so rustfmt no longer treats it as a trailing-comment block.
-# No executable/test assertion or conversion semantics changed. Content-bound
-# nRF acknowledgements are re-stamped only; no silicon re-capture is claimed.
-# CP13 WASM scalar review, 2026-10-01: user approved updating exactly the
-# seven existing silicon-tier content acknowledgements for core PR 145.
-# The production selector/helper are WASM-only; native dispatch is unchanged.
-# All halfwords under three flag states passed interpreter/state/RAM/access
-# comparison, and all 101 actual WASM integration tests passed with zero skips.
-# Hosted ordinary median gains were +6.94%, +1.23% and +4.85%; one repeat's
-# minimum worsened. Fresh WASM realtime qualification still FAILED; no floor
-# waiver or app artifact promotion. Existing 2026-10-01 ack dates and
-# 2026-10-31 expiry are unchanged. Physical capture dates/results/digests are
-# unchanged. ACK, NOT A CAPTURE; live re-capture remains owed.
-# CP13 WASM bounded-run review, 2026-10-01: user approved re-stamping these
-# same seven content-bound acknowledgements for core PR 146 after verification.
-# Native production dispatch is unchanged; the checked executor now retires
-# at most 16 tagged T16 entries within the existing scheduler/debug/IRQ guards.
-# Fixed-head local suite: 4,234 passed, zero failed, three existing ignored.
-# Independent WASM builds, determinism and 101 actual integration tests passed.
-# Ordinary gains: +8.24%, +7.15%, then +9.65% on the exact fixed artifact.
-# Fresh fixed-artifact qualification FAILED (0.834235x median / 0.808772x min).
-# Existing ack dates/2026-10-31 expiry and physical evidence remain unchanged;
-# no floor waiver, deployed pin update or silicon re-capture is claimed.
-#
 # WHY THIS FILE EXISTS
 #   The board docs (docs/boards/*.md) used to be hand-written and drifted out of
 #   sync with the models and tests (some claimed less than was true, some more).
@@ -518,15 +457,9 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 8f807f1a952779cfa688be4d640565774f8358f554c29e6596eebd5dc4ca2e58
+    drift_ack_digest: 2bb2dee03e2a9e42c0d0ccad594f5f4cca1ac0204977a8a349972435b8c8711a
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
-    # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
-    # decode cache / fetch window / JIT blocks; only the wasm debugger's
-    # write_memory calls it (so a poke into code takes effect), never a firmware
-    # run. No firmware-visible behaviour, register map or reset value changed.
-    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
-    drift_ack: 2026-09-28
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/cpu/cortex_m/exec
@@ -570,51 +503,6 @@ boards:
     # programming model on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
-    # 2026-09-25 (fork PR #86): Cortex-M decode fixes for CODAL on nRF52833 —
-    # LDREXH/STREXH execute (were silent no-ops), VCMP/VCMPE.F32 + VMRS/VMSR,
-    # VABS/VNEG/VSQRT/VNMUL.F32 decoded, ADR.W T2 subtracts. Watched cortex_m.rs,
-    # cortex_m/exec and the decoder moved; each fix pinned by a unit test. No
-    # register map, reset value or peripheral programming model on this board
-    # 2026-09-25 (fork PR #87): nRF52 UICR byte access now programs/reads the
-    # containing word (a hex image's UICR record survives load), and the nRF52
-    # UARTE publishes its interrupt as a level (EVENTS_x && INTEN) and raises
-    # it on EasyDMA completion. Watched nrf52 peripheral models moved; pinned by
-    # uicr/uarte unit tests and nrf52833_config. No register map or reset value
-    # changed. ACK, NOT A CAPTURE.
-    drift_ack: 2026-09-25
-    # 2026-09-26 (fork PR #94): Cortex-M adds a guarded closed-form executor
-    # for rustc's exact STR/MOV/ADDS/back-edge RAM spin loop. It is reachable
-    # only with decode caching and the existing no-observer, no-debug,
-    # no-pending-interrupt, no-IT-state and ordinary-RAM gates; non-RAM,
-    # self-modifying and register-aliasing shapes are refused. Differential
-    # tests cover every entry phase and budgets 8..19 and match PC, registers,
-    # NZCV, RAM and access counts against single stepping. No architectural or
-    # peripheral behavior changes. ACK, NOT A CAPTURE; re-capture remains owed.
-    drift_ack: 2026-09-26
-    # 2026-09-26 (fork PR #92, nrf-softdevice-hle): cortex_m.rs gains
-    # hle_exception_return (called only when a SoftDevice HLE is attached);
-    # lib.rs/machine boundary+advance gain an Option<SdHleSlot> test that is
-    # None on every board here; nRF RADIO: DISABLE aborts an armed receive and
-    # a named radio skips its own frames (pinned by a unit test). No register
-    # map, reset value or peripheral programming model on this board changed.
-    # ACK, NOT A CAPTURE.
-    drift_ack: 2026-09-26
-    # 2026-09-27 (fork PR #92, nrf-softdevice-hle round 2): nvmc.rs gains a
-    # per-chip erase page size (`page_size`, default 4 KiB = unchanged here;
-    # only nrf51822.yaml sets 1024) and factory.rs reads it; the erase drain
-    # blanks that many bytes. Pinned by nrf52_nvmc::erasepage_honours_page_size
-    # at both sizes. ALSO, unwatched by this entry's `models` but this chip's
-    # GPIO: gpio.rs's nRF port now derives an undriven input's level from
-    # PIN_CNF.PULL (pull-up reads 1, pull-down 0; an external driver still
-    # wins), a real input-semantics change on nRF52840 that no capture here
-    # pinned (nrf_pull_tests; firmware_survival 85/85 and --lib 3808/3808
-    # unchanged). No register map or reset value changed. ACK, NOT A CAPTURE.
-    # Also (same PR, same day): lib.rs/cortex_m.rs — the Cpu trait gains three
-    # default-declining SoftDevice-HLE hooks (set_vector_table_base,
-    # svcall_frame_at, hle_return_from_exception) replacing as_any_mut()
-    # downcasts; CortexM implements them with its existing set_vtor and
-    # hle_exception_return, and nothing calls them unless an HLE is attached.
-    drift_ack: 2026-09-27
     # 2026-09-28: Cortex-M fixes found running NXP i.MX RT1052 firmware. 16-bit
     # ADD/MOV with a high register read PC as insn+4 (the ARMv7-M PC read rule;
     # an old lockstep test asserted the wrong value), ADD PC,Rm branches, IT state
@@ -635,21 +523,6 @@ boards:
     # No register map, reset value, or peripheral programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
-    # 2026-09-28 (merge of fork main #114/#116 into fork PR #92): digest
-    # re-stamped over the merged tree; both sides' acks above describe it.
-    # 2026-09-28 (fork PR #117, cdd2f1fa): speed only. An unconditional Thumb
-    # `b .` (T16 B whose target is its own address) is retired as one
-    # scheduler-bounded chunk instead of one decode per cycle. Same bounds as
-    # the existing T16 fast paths: the chunk stops at the next scheduler /
-    # peripheral observation point, and pending exceptions, debug halt, IT
-    # state, observers and logic taps are excluded; decode cache only. The PC,
-    # registers and flags a `b .` leaves are unchanged (it only branches to
-    # itself); pinned by cortex_m_tests.rs
-    # coalesced_t16_self_branch_matches_repeated_interpretation.
-    # Watched cortex_m.rs moved. No register map, reset value, or peripheral
-    # programming model on this board changed.
-    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
-    drift_ack: 2026-09-28
     # 2026-09-29: GPIOTE fidelity (nRF52 GPIOTE PS §6.9). A CONFIG write in
     # Task mode now drives the pin to OUTINIT at once, and a Task-mode channel
     # owns its pad through the nRF pin-claim table (wire_nrf52_pads), so the pad
@@ -661,53 +534,6 @@ boards:
     # tests/microbit_v2_led_matrix.rs (real CODAL V2 LED matrix checked by a
     # local probe). ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-29
-    # 2026-09-29 (later): nRF52 TIMER scheduling only. A compare retargeted
-    # LATER while an earlier wake is in flight no longer arms a second wake —
-    # the in-flight one re-arms on arrival under the same token — so stale wakes
-    # no longer pile up (CODAL's TIMER3 walked past
-    # MAX_LIVE_EVENTS_PER_PERIPHERAL). Register map, reset values, counter and
-    # compare timing unchanged; pinned by nrf52840_timer_machine_gate (fires
-    # not early, within one interval) and nrf52_timer_walk_differential.
-    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
-    # 2026-09-30: compact nRF52833 GPIO windows required translating GPIOTE's
-    # engine-internal per-pin latch through reg_offset and moving that private
-    # latch to reserved offset 0x7f0. nRF52840 keeps its existing port windows;
-    # register/reset and physical pad semantics are unchanged. Simulator
-    # regression checks are separate from the outstanding silicon re-capture.
-    # 2026-09-30: shared SAADC now accepts held AIN inputs, applies configured
-    # channel selection/gain/reference/differential conversion, and delivers
-    # enabled event IRQ levels. Follow-up now requires START, latches PTR/MAXCNT,
-    # appends one scan per SAMPLE and cancels stale scheduler entries. No
-    # synthetic 3V source remains; fixture firmware selects explicit VDD.
-    # Full engine qualification of this scan revision awaits hosted CI. This acknowledgment is
-    # NOT a silicon capture and does not qualify microphone audio acquisition.
-    drift_ack: 2026-09-30
-    # 2026-10-01 user-approved, content-bound review; ACK, NOT A CAPTURE.
-    # Evidence and remaining hardware obligation: docs/performance/2026-10-01-cortex-m-dispatch-drift-review.md
-    drift_ack: 2026-10-01
-    # 2026-09-30: Cortex-M PC-relative literal loads (VLDR.F32, VLDR.F64,
-    # LDRD with Rn = PC) now read from Align(PC, 4) with PC = instruction + 4;
-    # they read the word 4 bytes early. Every hard-float literal constant was
-    # wrong (found via codal NRF52PWM::setPeriodUs: 1e6 read as -0.5035, PWM
-    # COUNTERTOP 0). Other instruction semantics, register maps and reset
-    # values unchanged. Pinned by cortex_m_tests *_literal_base_is_aligned_pc_plus_4.
-    # ACK, NOT A CAPTURE. Any live re-capture owed above is still owed.
-    drift_ack: 2026-09-30
-    # 2026-09-30: nRF52 PWM pad waveform. After a sequence plays, the outputs
-    # hold its last step (CODAL setAnalogValue relies on this) and each
-    # connected PSEL.OUT[n] owns its pad through the nRF pin-claim table
-    # (wire_nrf52_pads) while playing, publishing edges at their exact cycle
-    # (16 MHz / 2^PRESCALER via cpu_hz; MODE Up/UpAndDown; DECODER.LOAD
-    # Common/Grouped/Individual/WaveForm; new values at the period boundary).
-    # STOP / ENABLE=0 release the pad to the GPIO port. Before this the pad
-    # read the port's OUT and duty never left the register file. PSEL.OUT[n]
-    # now resets to 0xFFFFFFFF (Disconnected, as every nRF PSEL) instead of 0,
-    # which named P0.00. Register map and the SEQSTARTED/SEQEND/PWMPERIODEND
-    # events unchanged. Pinned by pwm.rs unit tests and tests/nrf52_pwm_pad.rs.
-    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
-    drift_ack: 2026-09-30
-    drift_ack_expires: 2026-10-31
-
     # 2026-09-30: undriven nRF inputs follow PIN_CNF.PULL (an external driver
     # and an output still win). load_firmware keeps a UICR record that was
     # already programmed. UARTE raises ENDTX and TXSTOPPED. NVMC erase uses
@@ -739,17 +565,36 @@ boards:
     # changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-30
-    # 2026-10-05 (fork sync with w1ne/main 92bdc5f3): digest re-stamped over the
-    # merged tree; the fork's and upstream's acks above describe every model
-    # change it carries. Duplicate fixes resolved to upstream's code (VLDR
-    # literal base, STM32H5 PLL dividers). ACK, NOT A CAPTURE.
+    # 2026-10-05: Cortex-M LDRD (literal) — `ldrd rt, rt2, [pc, #imm]` now reads
+    # from Align(PC + 4, 4) + imm (A7.7.50) instead of the bare instruction
+    # address, the rule vfp_literal_base already applies to VLDR. No other
+    # instruction, register map or reset value changed. Pinned by
+    # test_ldrd_literal_base_is_aligned_pc_plus_4. ACK, NOT A CAPTURE.
+    drift_ack: 2026-10-05
+    # 2026-10-05 (later): fork intake (micro:bit V2 / PyBadge). Cortex-M T16
+    # fast-block discovery stops searching backward at the first entry that
+    # cannot join a block; a miss falls back to the interpreter, so only
+    # discovery cost changes (t16_discovery_tests). nRF52 GPIO's private pad
+    # latch moves 0xFF0 -> 0x7F0 (reserved space, also inside the compact
+    # nRF52833 P1 window); nRF52 PWM drives its duty onto the pad and
+    # PSEL.OUT resets Disconnected; SAADC scan appends per START. Review fixes
+    # on top: PWM COUNTERTOP resets 0x3FF and SEQ[n].REFRESH 1, STOP cancels a
+    # SEQSTART not yet serviced; SAADC samples VDDHDIV5 and completes
+    # CALIBRATEOFFSET; feature-off PWM ticks a playing waveform only when pad
+    # lines are wired. Then the fork's Cortex-M speed work (#134 discovery
+    # memo, #136 countdown coalescing, #143 probe selection) and its Nordic
+    # GPIO pull/snapshot fast paths (#137), each with unit tests asserting
+    # identical retirement; full core lib green in both scheduler modes. No
+    # STM32 peripheral model changed. ACK, NOT A CAPTURE.
     drift_ack: 2026-10-05
     # 2026-10-06: Cortex-M widened batches now end once an event armed by a
     # write in the batch is due (RISC-V's Gap #1 cut), and T16 fast-path chunks
-    # stop before it. Instruction semantics, register maps and reset values are
-    # unchanged; only WHEN a batch returns to the scheduler moves (earlier, to
-    # the event's own cycle). Pinned by arm_batched_path (nrf52840 back to
-    # byte-identical; KNOWN_DIVERGENT empty). ACK, NOT A CAPTURE.
+    # stop before it (fork #155, cfg-free SystemBus::pending_wake_left).
+    # Instruction semantics, register maps and reset values are unchanged; only
+    # WHEN a batch returns to the scheduler moves (earlier, to the event's own
+    # cycle). Pinned by arm_batched_path. ACK, NOT A CAPTURE.
+    # 2026-10-06 (fork sync with w1ne/main dac35094): digest re-stamped over
+    # the merged tree; upstream's fork-intake acks above describe the rest.
     drift_ack: 2026-10-06
   - id: seeed-xiao-nrf52840-sense
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -1059,15 +904,9 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 8f807f1a952779cfa688be4d640565774f8358f554c29e6596eebd5dc4ca2e58
+    drift_ack_digest: 2bb2dee03e2a9e42c0d0ccad594f5f4cca1ac0204977a8a349972435b8c8711a
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
-    # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
-    # decode cache / fetch window / JIT blocks; only the wasm debugger's
-    # write_memory calls it (so a poke into code takes effect), never a firmware
-    # run. No firmware-visible behaviour, register map or reset value changed.
-    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
-    drift_ack: 2026-09-28
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/cpu/cortex_m/exec
@@ -1111,51 +950,6 @@ boards:
     # value, or peripheral programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
-    # 2026-09-25 (fork PR #86): Cortex-M decode fixes for CODAL on nRF52833 —
-    # LDREXH/STREXH execute (were silent no-ops), VCMP/VCMPE.F32 + VMRS/VMSR,
-    # VABS/VNEG/VSQRT/VNMUL.F32 decoded, ADR.W T2 subtracts. Watched cortex_m.rs,
-    # cortex_m/exec and the decoder moved; each fix pinned by a unit test. No
-    # register map, reset value or peripheral programming model on this board
-    # 2026-09-25 (fork PR #87): nRF52 UICR byte access now programs/reads the
-    # containing word (a hex image's UICR record survives load), and the nRF52
-    # UARTE publishes its interrupt as a level (EVENTS_x && INTEN) and raises
-    # it on EasyDMA completion. Watched nrf52 peripheral models moved; pinned by
-    # uicr/uarte unit tests and nrf52833_config. No register map or reset value
-    # changed. ACK, NOT A CAPTURE.
-    drift_ack: 2026-09-25
-    # 2026-09-26 (fork PR #94): Cortex-M adds a guarded closed-form executor
-    # for rustc's exact STR/MOV/ADDS/back-edge RAM spin loop. It is reachable
-    # only with decode caching and the existing no-observer, no-debug,
-    # no-pending-interrupt, no-IT-state and ordinary-RAM gates; non-RAM,
-    # self-modifying and register-aliasing shapes are refused. Differential
-    # tests cover every entry phase and budgets 8..19 and match PC, registers,
-    # NZCV, RAM and access counts against single stepping. No architectural or
-    # peripheral behavior changes. ACK, NOT A CAPTURE; re-capture remains owed.
-    drift_ack: 2026-09-26
-    # 2026-09-26 (fork PR #92, nrf-softdevice-hle): cortex_m.rs gains
-    # hle_exception_return (called only when a SoftDevice HLE is attached);
-    # lib.rs/machine boundary+advance gain an Option<SdHleSlot> test that is
-    # None on every board here; nRF RADIO: DISABLE aborts an armed receive and
-    # a named radio skips its own frames (pinned by a unit test). No register
-    # map, reset value or peripheral programming model on this board changed.
-    # ACK, NOT A CAPTURE.
-    drift_ack: 2026-09-26
-    # 2026-09-27 (fork PR #92, nrf-softdevice-hle round 2): nvmc.rs gains a
-    # per-chip erase page size (`page_size`, default 4 KiB = unchanged here;
-    # only nrf51822.yaml sets 1024) and factory.rs reads it; the erase drain
-    # blanks that many bytes. Pinned by nrf52_nvmc::erasepage_honours_page_size
-    # at both sizes. ALSO, unwatched by this entry's `models` but this chip's
-    # GPIO: gpio.rs's nRF port now derives an undriven input's level from
-    # PIN_CNF.PULL (pull-up reads 1, pull-down 0; an external driver still
-    # wins), a real input-semantics change on nRF52840 that no capture here
-    # pinned (nrf_pull_tests; firmware_survival 85/85 and --lib 3808/3808
-    # unchanged). No register map or reset value changed. ACK, NOT A CAPTURE.
-    # Also (same PR, same day): lib.rs/cortex_m.rs — the Cpu trait gains three
-    # default-declining SoftDevice-HLE hooks (set_vector_table_base,
-    # svcall_frame_at, hle_return_from_exception) replacing as_any_mut()
-    # downcasts; CortexM implements them with its existing set_vtor and
-    # hle_exception_return, and nothing calls them unless an HLE is attached.
-    drift_ack: 2026-09-27
     # 2026-09-28: Cortex-M fixes found running NXP i.MX RT1052 firmware. 16-bit
     # ADD/MOV with a high register read PC as insn+4 (the ARMv7-M PC read rule;
     # an old lockstep test asserted the wrong value), ADD PC,Rm branches, IT state
@@ -1176,21 +970,6 @@ boards:
     # No register map, reset value, or peripheral programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
-    # 2026-09-28 (merge of fork main #114/#116 into fork PR #92): digest
-    # re-stamped over the merged tree; both sides' acks above describe it.
-    # 2026-09-28 (fork PR #117, cdd2f1fa): speed only. An unconditional Thumb
-    # `b .` (T16 B whose target is its own address) is retired as one
-    # scheduler-bounded chunk instead of one decode per cycle. Same bounds as
-    # the existing T16 fast paths: the chunk stops at the next scheduler /
-    # peripheral observation point, and pending exceptions, debug halt, IT
-    # state, observers and logic taps are excluded; decode cache only. The PC,
-    # registers and flags a `b .` leaves are unchanged (it only branches to
-    # itself); pinned by cortex_m_tests.rs
-    # coalesced_t16_self_branch_matches_repeated_interpretation.
-    # Watched cortex_m.rs moved. No register map, reset value, or peripheral
-    # programming model on this board changed.
-    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
-    drift_ack: 2026-09-28
     # 2026-09-29: GPIOTE fidelity (nRF52 GPIOTE PS §6.9). A CONFIG write in
     # Task mode now drives the pin to OUTINIT at once, and a Task-mode channel
     # owns its pad through the nRF pin-claim table (wire_nrf52_pads), so the pad
@@ -1202,49 +981,6 @@ boards:
     # tests/microbit_v2_led_matrix.rs (real CODAL V2 LED matrix checked by a
     # local probe). ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-29
-    # 2026-09-29 (later): nRF52 TIMER scheduling only. A compare retargeted
-    # LATER while an earlier wake is in flight no longer arms a second wake —
-    # the in-flight one re-arms on arrival under the same token — so stale wakes
-    # no longer pile up (CODAL's TIMER3 walked past
-    # MAX_LIVE_EVENTS_PER_PERIPHERAL). Register map, reset values, counter and
-    # compare timing unchanged; pinned by nrf52840_timer_machine_gate (fires
-    # not early, within one interval) and nrf52_timer_walk_differential.
-    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
-    # 2026-09-30: shares the nRF52840 GPIOTE internal-latch translation change
-    # described above. Existing silicon evidence is not refreshed by this ack;
-    # the outstanding live re-capture remains required.
-    # 2026-09-30: shared SAADC held-input/configured-conversion/IRQ behavior
-    # and START-latched scan append/cancellation changed as described in the
-    # nrf52840 acknowledgment. Scan revision engine proof awaits hosted CI;
-    # this is NOT a silicon capture or
-    # microphone audio qualification. The existing re-capture remains owed.
-    drift_ack: 2026-09-30
-    # 2026-10-01 user-approved, content-bound review; ACK, NOT A CAPTURE.
-    # Evidence and remaining hardware obligation: docs/performance/2026-10-01-cortex-m-dispatch-drift-review.md
-    drift_ack: 2026-10-01
-    # 2026-09-30: Cortex-M PC-relative literal loads (VLDR.F32, VLDR.F64,
-    # LDRD with Rn = PC) now read from Align(PC, 4) with PC = instruction + 4;
-    # they read the word 4 bytes early. Every hard-float literal constant was
-    # wrong (found via codal NRF52PWM::setPeriodUs: 1e6 read as -0.5035, PWM
-    # COUNTERTOP 0). Other instruction semantics, register maps and reset
-    # values unchanged. Pinned by cortex_m_tests *_literal_base_is_aligned_pc_plus_4.
-    # ACK, NOT A CAPTURE. Any live re-capture owed above is still owed.
-    drift_ack: 2026-09-30
-    # 2026-09-30: nRF52 PWM pad waveform. After a sequence plays, the outputs
-    # hold its last step (CODAL setAnalogValue relies on this) and each
-    # connected PSEL.OUT[n] owns its pad through the nRF pin-claim table
-    # (wire_nrf52_pads) while playing, publishing edges at their exact cycle
-    # (16 MHz / 2^PRESCALER via cpu_hz; MODE Up/UpAndDown; DECODER.LOAD
-    # Common/Grouped/Individual/WaveForm; new values at the period boundary).
-    # STOP / ENABLE=0 release the pad to the GPIO port. Before this the pad
-    # read the port's OUT and duty never left the register file. PSEL.OUT[n]
-    # now resets to 0xFFFFFFFF (Disconnected, as every nRF PSEL) instead of 0,
-    # which named P0.00. Register map and the SEQSTARTED/SEQEND/PWMPERIODEND
-    # events unchanged. Pinned by pwm.rs unit tests and tests/nrf52_pwm_pad.rs.
-    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
-    drift_ack: 2026-09-30
-    drift_ack_expires: 2026-10-31
-
     # 2026-09-30: undriven nRF inputs follow PIN_CNF.PULL (an external driver
     # and an output still win). load_firmware keeps a UICR record that was
     # already programmed. UARTE raises ENDTX and TXSTOPPED. NVMC erase uses
@@ -1276,17 +1012,36 @@ boards:
     # changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-30
-    # 2026-10-05 (fork sync with w1ne/main 92bdc5f3): digest re-stamped over the
-    # merged tree; the fork's and upstream's acks above describe every model
-    # change it carries. Duplicate fixes resolved to upstream's code (VLDR
-    # literal base, STM32H5 PLL dividers). ACK, NOT A CAPTURE.
+    # 2026-10-05: Cortex-M LDRD (literal) — `ldrd rt, rt2, [pc, #imm]` now reads
+    # from Align(PC + 4, 4) + imm (A7.7.50) instead of the bare instruction
+    # address, the rule vfp_literal_base already applies to VLDR. No other
+    # instruction, register map or reset value changed. Pinned by
+    # test_ldrd_literal_base_is_aligned_pc_plus_4. ACK, NOT A CAPTURE.
+    drift_ack: 2026-10-05
+    # 2026-10-05 (later): fork intake (micro:bit V2 / PyBadge). Cortex-M T16
+    # fast-block discovery stops searching backward at the first entry that
+    # cannot join a block; a miss falls back to the interpreter, so only
+    # discovery cost changes (t16_discovery_tests). nRF52 GPIO's private pad
+    # latch moves 0xFF0 -> 0x7F0 (reserved space, also inside the compact
+    # nRF52833 P1 window); nRF52 PWM drives its duty onto the pad and
+    # PSEL.OUT resets Disconnected; SAADC scan appends per START. Review fixes
+    # on top: PWM COUNTERTOP resets 0x3FF and SEQ[n].REFRESH 1, STOP cancels a
+    # SEQSTART not yet serviced; SAADC samples VDDHDIV5 and completes
+    # CALIBRATEOFFSET; feature-off PWM ticks a playing waveform only when pad
+    # lines are wired. Then the fork's Cortex-M speed work (#134 discovery
+    # memo, #136 countdown coalescing, #143 probe selection) and its Nordic
+    # GPIO pull/snapshot fast paths (#137), each with unit tests asserting
+    # identical retirement; full core lib green in both scheduler modes. No
+    # STM32 peripheral model changed. ACK, NOT A CAPTURE.
     drift_ack: 2026-10-05
     # 2026-10-06: Cortex-M widened batches now end once an event armed by a
     # write in the batch is due (RISC-V's Gap #1 cut), and T16 fast-path chunks
-    # stop before it. Instruction semantics, register maps and reset values are
-    # unchanged; only WHEN a batch returns to the scheduler moves (earlier, to
-    # the event's own cycle). Pinned by arm_batched_path (nrf52840 back to
-    # byte-identical; KNOWN_DIVERGENT empty). ACK, NOT A CAPTURE.
+    # stop before it (fork #155, cfg-free SystemBus::pending_wake_left).
+    # Instruction semantics, register maps and reset values are unchanged; only
+    # WHEN a batch returns to the scheduler moves (earlier, to the event's own
+    # cycle). Pinned by arm_batched_path. ACK, NOT A CAPTURE.
+    # 2026-10-06 (fork sync with w1ne/main dac35094): digest re-stamped over
+    # the merged tree; upstream's fork-intake acks above describe the rest.
     drift_ack: 2026-10-06
   - id: stm32h563
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -1737,15 +1492,12 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
-    # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
-    drift_ack: 2026-09-30
-    drift_ack_digest: fa6d5406b266004cd02bab2bf293c6cbdb5f9e9bda74caa4530c610034690ec7
     # 2026-10-01 G0 CI repair: shared RCC reports its UART AF override through
     # a capability instead of a bus downcast; only G0 returns AF1. Shared EXTI
     # receives the same explicit GPIO edge through a capability. Captured
     # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
     # physical re-capture remains pending.
+    drift_ack_digest: 960dd20c40dc433ce507faf45067c74bbb8fc4fb213faa3945bb5d2e97eead34
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -1813,12 +1565,6 @@ boards:
     # `--test h563_conformance` (6/6) on this branch; no live re-capture.
     # This is an ACK, NOT A CAPTURE — a live re-capture is owed.
     drift_ack: 2026-09-19
-    # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
-    # decode cache / fetch window / JIT blocks; only the wasm debugger's
-    # write_memory calls it (so a poke into code takes effect), never a firmware
-    # run. No firmware-visible behaviour, register map or reset value changed.
-    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
-    drift_ack: 2026-09-28
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/cpu/cortex_m/exec
@@ -1997,52 +1743,6 @@ boards:
     # programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
-    # 2026-09-25 (fork PR #86): Cortex-M decode fixes for CODAL on nRF52833 —
-    # LDREXH/STREXH execute (were silent no-ops), VCMP/VCMPE.F32 + VMRS/VMSR,
-    # VABS/VNEG/VSQRT/VNMUL.F32 decoded, ADR.W T2 subtracts. Watched cortex_m.rs,
-    # cortex_m/exec and the decoder moved; each fix pinned by a unit test. No
-    # register map, reset value or peripheral programming model on this board
-    # changed. ACK, NOT A CAPTURE.
-    drift_ack: 2026-09-25
-    # 2026-09-26 (fork PR #94): Cortex-M adds a guarded closed-form executor
-    # for rustc's exact STR/MOV/ADDS/back-edge RAM spin loop. It is reachable
-    # only with decode caching and the existing no-observer, no-debug,
-    # no-pending-interrupt, no-IT-state and ordinary-RAM gates; non-RAM,
-    # self-modifying and register-aliasing shapes are refused. Differential
-    # tests cover every entry phase and budgets 8..19 and match PC, registers,
-    # NZCV, RAM and access counts against single stepping. No architectural or
-    # peripheral behavior changes. ACK, NOT A CAPTURE; re-capture remains owed.
-    drift_ack: 2026-09-26
-    # 2026-09-26 (fork PR #92, nrf-softdevice-hle): cortex_m.rs gains
-    # hle_exception_return (called only when a SoftDevice HLE is attached);
-    # lib.rs/machine boundary+advance gain an Option<SdHleSlot> test that is
-    # None on every board here; nRF RADIO: DISABLE aborts an armed receive and
-    # a named radio skips its own frames (pinned by a unit test). No register
-    # map, reset value or peripheral programming model on this board changed.
-    # ACK, NOT A CAPTURE.
-    # 2026-09-26 (fork PR #104): the walk-deleted peripheral tick recommendation
-    # moves from 512 to 1024. No register layout or reset value changes. The H563
-    # GPDMA mem2mem and RTC second/alarm differentials now run at BOTH the old
-    # 512 interval and the recommendation; scheduler and walk lanes remain
-    # byte-identical, including destination memory, IRQ count, calendar TR and
-    # total cycles (5/5 stm32h563_walk_differential tests pass). The full fleet
-    # RTx/Callgrind gate has no regression, and ESP32-S3 firmware stdout plus
-    # cycle-stamped GPIO are byte-identical before/after. ACK, NOT A CAPTURE;
-    # the live re-capture already owed above remains owed.
-    drift_ack: 2026-09-26
-    # 2026-09-27 (fork PR #92, nrf-softdevice-hle round 2): the watched
-    # gpio.rs moved, in the nRF port only: Nrf52Gpio derives an undriven
-    # input's level from PIN_CNF.PULL and records external drivers. The STM32
-    # F1/V2 ports, their registers and their pull logic are untouched (same
-    # code, same tests: --lib 3808/3808, firmware_survival 85/85). No register
-    # map, reset value or programming model on this board changed. ACK, NOT A
-    # CAPTURE.
-    # Also (same PR, same day): lib.rs/cortex_m.rs — the Cpu trait gains three
-    # default-declining SoftDevice-HLE hooks (set_vector_table_base,
-    # svcall_frame_at, hle_return_from_exception) replacing as_any_mut()
-    # downcasts; CortexM implements them with its existing set_vtor and
-    # hle_exception_return, and nothing calls them unless an HLE is attached.
-    drift_ack: 2026-09-27
     # 2026-09-27 (supply-aware MCU, feat/analog-regulators-supply-aware-mcu):
     # watched rcc.rs moved. It gains `Peripheral::on_supply_reset`, which only
     # a routed `board.power.vdd_volts` ever calls (no committed board routes it),
@@ -2100,19 +1800,6 @@ boards:
     # or peripheral programming model on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
-    # 2026-09-28 (merge of fork main #114/#116 into fork PR #92): digest
-    # re-stamped over the merged tree; both sides' acks above describe it.
-    # 2026-09-28 (fork PR #117, cdd2f1fa): speed only. An unconditional Thumb
-    # `b .` (T16 B whose target is its own address) is retired as one
-    # scheduler-bounded chunk instead of one decode per cycle. Same bounds as
-    # the existing T16 fast paths: the chunk stops at the next scheduler /
-    # peripheral observation point, and pending exceptions, debug halt, IT
-    # state, observers and logic taps are excluded; decode cache only. The PC,
-    # registers and flags a `b .` leaves are unchanged (it only branches to
-    # itself); pinned by cortex_m_tests.rs
-    # coalesced_t16_self_branch_matches_repeated_interpretation.
-    # Watched cortex_m.rs moved. No register map, reset value, or peripheral
-    # programming model on this board changed.
     # 2026-09-28: UART stream peers. `UartStreamDevice` gained optional hooks
     # (device_id, inject_remote, next_wake_us, logs) with no-op defaults, and
     # `UartStreamHost` gained peer_ids / inject_peer_remote; uart.rs forwards
@@ -2126,27 +1813,6 @@ boards:
     # register map, reset value or byte path on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-29
-    # 2026-10-01 user-approved, content-bound review; ACK, NOT A CAPTURE.
-    # Evidence and remaining hardware obligation: docs/performance/2026-10-01-cortex-m-dispatch-drift-review.md
-    drift_ack: 2026-10-01
-    # 2026-09-30: Cortex-M PC-relative literal loads (VLDR.F32, VLDR.F64,
-    # LDRD with Rn = PC) now read from Align(PC, 4) with PC = instruction + 4;
-    # they read the word 4 bytes early. Every hard-float literal constant was
-    # wrong (found via codal NRF52PWM::setPeriodUs: 1e6 read as -0.5035, PWM
-    # COUNTERTOP 0). Other instruction semantics, register maps and reset
-    # values unchanged. Pinned by cortex_m_tests *_literal_base_is_aligned_pc_plus_4.
-    # ACK, NOT A CAPTURE. Any live re-capture owed above is still owed.
-    drift_ack: 2026-09-30
-    # 2026-09-30: STM32H5 RCC gains PLL1/2/3 DIVR and FRACR (0x34..0x48), which
-    # were missing: writes were dropped, reads returned 0, and the HAL computed
-    # the programmed 250 MHz PLL as 2 MHz once float literals were correct.
-    # Reset values from the vendored stm32h563.svd (DIVR 0x01010280, FRACR 0).
-    # Pinned by test_rcc_h5_pll_divr_fracr_hold_their_programming and
-    # test_stm32h563_arduino_serial_survival (SystemCoreClock 250000000).
-    # ACK, NOT A CAPTURE. Any live re-capture owed above is still owed.
-    drift_ack: 2026-09-30
-    drift_ack_expires: 2026-10-31
-
     # 2026-09-30: SYSRESETREQ restores the boot VTOR and clears NVIC
     # enable/pending/active/priority, SysTick and SCR/SHPR. Peripheral models
     # are not reset. Cortex-M executes LDREXB/LDREXH, STREXB/STREXH,
@@ -2234,17 +1900,36 @@ boards:
     # Sim-only evidence on this tree: stm32f1/stm32f4/l476/stm32l0/h563 mmio_diff,
     # firmware_survival, motors_hbridge. ACK, NOT A CAPTURE: the live re-capture is owed.
     drift_ack: 2026-10-04
-    # 2026-10-05 (fork sync with w1ne/main 92bdc5f3): digest re-stamped over the
-    # merged tree; the fork's and upstream's acks above describe every model
-    # change it carries. Duplicate fixes resolved to upstream's code (VLDR
-    # literal base, STM32H5 PLL dividers). ACK, NOT A CAPTURE.
+    # 2026-10-05: Cortex-M LDRD (literal) — `ldrd rt, rt2, [pc, #imm]` now reads
+    # from Align(PC + 4, 4) + imm (A7.7.50) instead of the bare instruction
+    # address, the rule vfp_literal_base already applies to VLDR. No other
+    # instruction, register map or reset value changed. Pinned by
+    # test_ldrd_literal_base_is_aligned_pc_plus_4. ACK, NOT A CAPTURE.
+    drift_ack: 2026-10-05
+    # 2026-10-05 (later): fork intake (micro:bit V2 / PyBadge). Cortex-M T16
+    # fast-block discovery stops searching backward at the first entry that
+    # cannot join a block; a miss falls back to the interpreter, so only
+    # discovery cost changes (t16_discovery_tests). nRF52 GPIO's private pad
+    # latch moves 0xFF0 -> 0x7F0 (reserved space, also inside the compact
+    # nRF52833 P1 window); nRF52 PWM drives its duty onto the pad and
+    # PSEL.OUT resets Disconnected; SAADC scan appends per START. Review fixes
+    # on top: PWM COUNTERTOP resets 0x3FF and SEQ[n].REFRESH 1, STOP cancels a
+    # SEQSTART not yet serviced; SAADC samples VDDHDIV5 and completes
+    # CALIBRATEOFFSET; feature-off PWM ticks a playing waveform only when pad
+    # lines are wired. Then the fork's Cortex-M speed work (#134 discovery
+    # memo, #136 countdown coalescing, #143 probe selection) and its Nordic
+    # GPIO pull/snapshot fast paths (#137), each with unit tests asserting
+    # identical retirement; full core lib green in both scheduler modes. No
+    # STM32 peripheral model changed. ACK, NOT A CAPTURE.
     drift_ack: 2026-10-05
     # 2026-10-06: Cortex-M widened batches now end once an event armed by a
     # write in the batch is due (RISC-V's Gap #1 cut), and T16 fast-path chunks
-    # stop before it. Instruction semantics, register maps and reset values are
-    # unchanged; only WHEN a batch returns to the scheduler moves (earlier, to
-    # the event's own cycle). Pinned by arm_batched_path (nrf52840 back to
-    # byte-identical; KNOWN_DIVERGENT empty). ACK, NOT A CAPTURE.
+    # stop before it (fork #155, cfg-free SystemBus::pending_wake_left).
+    # Instruction semantics, register maps and reset values are unchanged; only
+    # WHEN a batch returns to the scheduler moves (earlier, to the event's own
+    # cycle). Pinned by arm_batched_path. ACK, NOT A CAPTURE.
+    # 2026-10-06 (fork sync with w1ne/main dac35094): digest re-stamped over
+    # the merged tree; upstream's fork-intake acks above describe the rest.
     drift_ack: 2026-10-06
   - id: esp32c3
     # 2026-09-15 (#932): SPI edge sampling is opt-in (`SpiSampling::Byte` default). Byte-level golden pins the pre-feature path. Controllers without a bit engine reject opt-in at config time.
@@ -2401,15 +2086,6 @@ boards:
     # before the repair; the optimized RISC-V unit group passes 37/37 after it.
     # IRQ-enabled, observer, logic-tap, and cycle-accurate execution remains
     # interpreted. This acknowledges CPU-source drift, NOT a silicon recapture.
-    # 2026-09-27: the RISC-V fetch-window hit predicate dropped the redundant
-    # `off < fetch_len` half of `off < fetch_len && off + 4 <= fetch_len`.
-    # Arithmetic remains widened to u64, so the retained inequality implies
-    # the removed one even for a wrapped guest-PC subtraction. This changes no
-    # fetched byte, register, reset value, timing, or interrupt route. The 53
-    # focused RISC-V tests pass; the real C3 OLED workload has the same guest
-    # receipt, and its tick-1/tick-1024 1,024-byte framebuffer remains exact.
-    # This acknowledges CPU-source drift, NOT a silicon recapture.
-    drift_ack: 2026-09-27
     # 2026-09-28 (BLE connections + GATT): the RW-BLE baseband model
     # (`peripherals/esp32c3/bt.rs` + new `bt_link.rs`) gained connection events,
     # connectable advertising, active scan and the initiator; the vendored IROM
@@ -2419,12 +2095,6 @@ boards:
     # capture does not cover. This acknowledges model drift, NOT a recapture.
     drift_ack: 2026-09-28
     drift_ack_digest: 0a80eb406b98d7ddda33d4cf569be3f00bf9bd0dfe1b503181dfd1f51200b2bb
-    # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
-    # decode cache / fetch window / JIT blocks; only the wasm debugger's
-    # write_memory calls it (so a poke into code takes effect), never a firmware
-    # run. No firmware-visible behaviour, register map or reset value changed.
-    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
-    drift_ack: 2026-09-28
     models:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs
@@ -3086,27 +2756,6 @@ boards:
     # model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
-    # 2026-09-27: the watched RISC-V core recognizes the C3 mask-ROM's exact
-    # four-instruction UART STATUS poll loop and the shared ESP UART explicitly
-    # reports STATUS as stable within an event-clamped batch only while no
-    # external RX producer has ever been exposed. The first read remains an
-    # ordinary MMIO read, every guest read remains in access accounting, and
-    # interrupt/observer/cycle-accurate configurations refuse the shortcut.
-    # Tick-1 versus tick-1024 execution produces a byte-identical OLED
-    # framebuffer, serial transcript, final PC and instruction count; the UART
-    # unit suite and decoded-loop differential are green. The follow-up merely
-    # avoids virtual idle/deadline queries when CPU/bus state already proves
-    # their answers. No UART register, reset value, interrupt route or byte
-    # path changed. ACK, NOT A CAPTURE; the live re-capture remains owed.
-    drift_ack: 2026-09-27
-    # 2026-09-27: the RISC-V store-spin coalescer in cpu/riscv.rs stops
-    # downcasting the bus to SystemBus and calls Bus::commit_ram_store_spin
-    # instead. Same refusals in the same order (armed PMS, observer, store not
-    # wholly inside flat RAM), same single final RAM write and full write
-    # count, CPU state still written only after the bus commits. The two
-    # riscv store_spin differential tests pass unchanged. No register map,
-    # reset value or programming model changed.
-    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     # 2026-09-27 (four-state pin trace, feat/timer-input-capture-hiz): watched
     # esp32c3/gpio.rs moved, TEST CODE ONLY: `PadEvent` gained a `drive` field,
     # so the `#[cfg(test)]` push-tap assertions spell `drive: None`. No model
@@ -3125,11 +2774,6 @@ boards:
     # assertions pass. Level/NMI/light-sleep remain unsupported.
     # ACK, NOT A CAPTURE: physical re-capture and electrical IO-Link pending.
     drift_ack: 2026-10-01
-    # 2026-10-05 (fork sync with w1ne/main 92bdc5f3): digest re-stamped over the
-    # merged tree; the fork's and upstream's acks above describe every model
-    # change it carries. Duplicate fixes resolved to upstream's code (VLDR
-    # literal base, STM32H5 PLL dividers). ACK, NOT A CAPTURE.
-    drift_ack: 2026-10-05
 
   - id: nucleo-l476rg
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -3563,15 +3207,12 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
-    # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
-    drift_ack: 2026-09-30
-    drift_ack_digest: 67ac423a993cd2a78a2bec719db917f3328596b812749012b15830822fcd65ea
     # 2026-10-01 G0 CI repair: shared RCC reports its UART AF override through
     # a capability instead of a bus downcast; only G0 returns AF1. Shared EXTI
     # receives the same explicit GPIO edge through a capability. Captured
     # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
     # physical re-capture remains pending.
+    drift_ack_digest: caa88d4995c867f97bacec641cb228425065dea9efa715e6c9c35567d47c4ce2
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3620,12 +3261,6 @@ boards:
     # no live re-capture. This is an ACK, NOT A CAPTURE — a live re-capture
     # is owed.
     drift_ack: 2026-09-18
-    # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
-    # decode cache / fetch window / JIT blocks; only the wasm debugger's
-    # write_memory calls it (so a poke into code takes effect), never a firmware
-    # run. No firmware-visible behaviour, register map or reset value changed.
-    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
-    drift_ack: 2026-09-28
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/cpu/cortex_m/exec
@@ -3799,43 +3434,6 @@ boards:
     # programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
-    # 2026-09-25 (fork PR #86): Cortex-M decode fixes for CODAL on nRF52833 —
-    # LDREXH/STREXH execute (were silent no-ops), VCMP/VCMPE.F32 + VMRS/VMSR,
-    # VABS/VNEG/VSQRT/VNMUL.F32 decoded, ADR.W T2 subtracts. Watched cortex_m.rs,
-    # cortex_m/exec and the decoder moved; each fix pinned by a unit test. No
-    # register map, reset value or peripheral programming model on this board
-    # changed. ACK, NOT A CAPTURE.
-    drift_ack: 2026-09-25
-    # 2026-09-26 (fork PR #94): Cortex-M adds a guarded closed-form executor
-    # for rustc's exact STR/MOV/ADDS/back-edge RAM spin loop. It is reachable
-    # only with decode caching and the existing no-observer, no-debug,
-    # no-pending-interrupt, no-IT-state and ordinary-RAM gates; non-RAM,
-    # self-modifying and register-aliasing shapes are refused. Differential
-    # tests cover every entry phase and budgets 8..19 and match PC, registers,
-    # NZCV, RAM and access counts against single stepping. No architectural or
-    # peripheral behavior changes. ACK, NOT A CAPTURE; re-capture remains owed.
-    drift_ack: 2026-09-26
-    # 2026-09-26 (fork PR #92, nrf-softdevice-hle): cortex_m.rs gains
-    # hle_exception_return (called only when a SoftDevice HLE is attached);
-    # lib.rs/machine boundary+advance gain an Option<SdHleSlot> test that is
-    # None on every board here; nRF RADIO: DISABLE aborts an armed receive and
-    # a named radio skips its own frames (pinned by a unit test). No register
-    # map, reset value or peripheral programming model on this board changed.
-    # ACK, NOT A CAPTURE.
-    drift_ack: 2026-09-26
-    # 2026-09-27 (fork PR #92, nrf-softdevice-hle round 2): the watched
-    # gpio.rs moved, in the nRF port only: Nrf52Gpio derives an undriven
-    # input's level from PIN_CNF.PULL and records external drivers. The STM32
-    # F1/V2 ports, their registers and their pull logic are untouched (same
-    # code, same tests: --lib 3808/3808, firmware_survival 85/85). No register
-    # map, reset value or programming model on this board changed. ACK, NOT A
-    # CAPTURE.
-    # Also (same PR, same day): lib.rs/cortex_m.rs — the Cpu trait gains three
-    # default-declining SoftDevice-HLE hooks (set_vector_table_base,
-    # svcall_frame_at, hle_return_from_exception) replacing as_any_mut()
-    # downcasts; CortexM implements them with its existing set_vtor and
-    # hle_exception_return, and nothing calls them unless an HLE is attached.
-    drift_ack: 2026-09-27
     # 2026-09-27 (supply-aware MCU, feat/analog-regulators-supply-aware-mcu):
     # watched rcc.rs moved. It gains `Peripheral::on_supply_reset`, which only
     # a routed `board.power.vdd_volts` ever calls (no committed board routes it),
@@ -3878,19 +3476,6 @@ boards:
     # No register map, reset value, or peripheral programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
-    # 2026-09-28 (merge of fork main #114/#116 into fork PR #92): digest
-    # re-stamped over the merged tree; both sides' acks above describe it.
-    # 2026-09-28 (fork PR #117, cdd2f1fa): speed only. An unconditional Thumb
-    # `b .` (T16 B whose target is its own address) is retired as one
-    # scheduler-bounded chunk instead of one decode per cycle. Same bounds as
-    # the existing T16 fast paths: the chunk stops at the next scheduler /
-    # peripheral observation point, and pending exceptions, debug halt, IT
-    # state, observers and logic taps are excluded; decode cache only. The PC,
-    # registers and flags a `b .` leaves are unchanged (it only branches to
-    # itself); pinned by cortex_m_tests.rs
-    # coalesced_t16_self_branch_matches_repeated_interpretation.
-    # Watched cortex_m.rs moved. No register map, reset value, or peripheral
-    # programming model on this board changed.
     # 2026-09-28: timed UART network. The shared `Uart` model gains a timed mode
     # (peripherals/uart/timed.rs) that is active ONLY when a world's `uart_network`
     # attaches a timed link to the USART; `uart.rs` routes to it behind
@@ -3913,22 +3498,6 @@ boards:
     # register map, reset value or byte path on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-29
-    # 2026-10-01 user-approved, content-bound review; ACK, NOT A CAPTURE.
-    # Evidence and remaining hardware obligation: docs/performance/2026-10-01-cortex-m-dispatch-drift-review.md
-    drift_ack: 2026-10-01
-    # 2026-09-30: Cortex-M PC-relative literal loads (VLDR.F32, VLDR.F64,
-    # LDRD with Rn = PC) now read from Align(PC, 4) with PC = instruction + 4;
-    # they read the word 4 bytes early. Every hard-float literal constant was
-    # wrong (found via codal NRF52PWM::setPeriodUs: 1e6 read as -0.5035, PWM
-    # COUNTERTOP 0). Other instruction semantics, register maps and reset
-    # values unchanged. Pinned by cortex_m_tests *_literal_base_is_aligned_pc_plus_4.
-    # ACK, NOT A CAPTURE. Any live re-capture owed above is still owed.
-    drift_ack: 2026-09-30
-    # 2026-09-30: shared rcc.rs changed only in the STM32H5 model (PLLxDIVR /
-    # PLLxFRACR added); this board's RCC layout is untouched. ACK, NOT A CAPTURE.
-    drift_ack: 2026-09-30
-    drift_ack_expires: 2026-10-31
-
     # 2026-09-30: SYSRESETREQ restores the boot VTOR and clears NVIC
     # enable/pending/active/priority, SysTick and SCR/SHPR. Peripheral models
     # are not reset. Cortex-M executes LDREXB/LDREXH, STREXB/STREXH,
@@ -4021,17 +3590,36 @@ boards:
     # Sim-only evidence on this tree: stm32f1/stm32f4/l476/stm32l0/h563 mmio_diff,
     # firmware_survival, motors_hbridge. ACK, NOT A CAPTURE: the live re-capture is owed.
     drift_ack: 2026-10-04
-    # 2026-10-05 (fork sync with w1ne/main 92bdc5f3): digest re-stamped over the
-    # merged tree; the fork's and upstream's acks above describe every model
-    # change it carries. Duplicate fixes resolved to upstream's code (VLDR
-    # literal base, STM32H5 PLL dividers). ACK, NOT A CAPTURE.
+    # 2026-10-05: Cortex-M LDRD (literal) — `ldrd rt, rt2, [pc, #imm]` now reads
+    # from Align(PC + 4, 4) + imm (A7.7.50) instead of the bare instruction
+    # address, the rule vfp_literal_base already applies to VLDR. No other
+    # instruction, register map or reset value changed. Pinned by
+    # test_ldrd_literal_base_is_aligned_pc_plus_4. ACK, NOT A CAPTURE.
+    drift_ack: 2026-10-05
+    # 2026-10-05 (later): fork intake (micro:bit V2 / PyBadge). Cortex-M T16
+    # fast-block discovery stops searching backward at the first entry that
+    # cannot join a block; a miss falls back to the interpreter, so only
+    # discovery cost changes (t16_discovery_tests). nRF52 GPIO's private pad
+    # latch moves 0xFF0 -> 0x7F0 (reserved space, also inside the compact
+    # nRF52833 P1 window); nRF52 PWM drives its duty onto the pad and
+    # PSEL.OUT resets Disconnected; SAADC scan appends per START. Review fixes
+    # on top: PWM COUNTERTOP resets 0x3FF and SEQ[n].REFRESH 1, STOP cancels a
+    # SEQSTART not yet serviced; SAADC samples VDDHDIV5 and completes
+    # CALIBRATEOFFSET; feature-off PWM ticks a playing waveform only when pad
+    # lines are wired. Then the fork's Cortex-M speed work (#134 discovery
+    # memo, #136 countdown coalescing, #143 probe selection) and its Nordic
+    # GPIO pull/snapshot fast paths (#137), each with unit tests asserting
+    # identical retirement; full core lib green in both scheduler modes. No
+    # STM32 peripheral model changed. ACK, NOT A CAPTURE.
     drift_ack: 2026-10-05
     # 2026-10-06: Cortex-M widened batches now end once an event armed by a
     # write in the batch is due (RISC-V's Gap #1 cut), and T16 fast-path chunks
-    # stop before it. Instruction semantics, register maps and reset values are
-    # unchanged; only WHEN a batch returns to the scheduler moves (earlier, to
-    # the event's own cycle). Pinned by arm_batched_path (nrf52840 back to
-    # byte-identical; KNOWN_DIVERGENT empty). ACK, NOT A CAPTURE.
+    # stop before it (fork #155, cfg-free SystemBus::pending_wake_left).
+    # Instruction semantics, register maps and reset values are unchanged; only
+    # WHEN a batch returns to the scheduler moves (earlier, to the event's own
+    # cycle). Pinned by arm_batched_path. ACK, NOT A CAPTURE.
+    # 2026-10-06 (fork sync with w1ne/main dac35094): digest re-stamped over
+    # the merged tree; upstream's fork-intake acks above describe the rest.
     drift_ack: 2026-10-06
   - id: nucleo-l073rz
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -4424,15 +4012,12 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
-    # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
-    drift_ack: 2026-09-30
-    drift_ack_digest: 8a7319ac57db32cbf00504e6c61ec5e68f2a47fd403ad75d54a71d0fa1ae19c1
     # 2026-10-01 G0 CI repair: shared RCC reports its UART AF override through
     # a capability instead of a bus downcast; only G0 returns AF1. Shared EXTI
     # receives the same explicit GPIO edge through a capability. Captured
     # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
     # physical re-capture remains pending.
+    drift_ack_digest: fa70406163ed878a0d251ed246ddacf0981a75c100f10b54267d0c73a67d7b1c
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4471,12 +4056,6 @@ boards:
     # no live re-capture. This is an ACK, NOT A CAPTURE — a live re-capture
     # is owed.
     drift_ack: 2026-09-18
-    # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
-    # decode cache / fetch window / JIT blocks; only the wasm debugger's
-    # write_memory calls it (so a poke into code takes effect), never a firmware
-    # run. No firmware-visible behaviour, register map or reset value changed.
-    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
-    drift_ack: 2026-09-28
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/cpu/cortex_m/exec
@@ -4618,43 +4197,6 @@ boards:
     # programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
-    # 2026-09-25 (fork PR #86): Cortex-M decode fixes for CODAL on nRF52833 —
-    # LDREXH/STREXH execute (were silent no-ops), VCMP/VCMPE.F32 + VMRS/VMSR,
-    # VABS/VNEG/VSQRT/VNMUL.F32 decoded, ADR.W T2 subtracts. Watched cortex_m.rs,
-    # cortex_m/exec and the decoder moved; each fix pinned by a unit test. No
-    # register map, reset value or peripheral programming model on this board
-    # changed. ACK, NOT A CAPTURE.
-    drift_ack: 2026-09-25
-    # 2026-09-26 (fork PR #94): Cortex-M adds a guarded closed-form executor
-    # for rustc's exact STR/MOV/ADDS/back-edge RAM spin loop. It is reachable
-    # only with decode caching and the existing no-observer, no-debug,
-    # no-pending-interrupt, no-IT-state and ordinary-RAM gates; non-RAM,
-    # self-modifying and register-aliasing shapes are refused. Differential
-    # tests cover every entry phase and budgets 8..19 and match PC, registers,
-    # NZCV, RAM and access counts against single stepping. No architectural or
-    # peripheral behavior changes. ACK, NOT A CAPTURE; re-capture remains owed.
-    drift_ack: 2026-09-26
-    # 2026-09-26 (fork PR #92, nrf-softdevice-hle): cortex_m.rs gains
-    # hle_exception_return (called only when a SoftDevice HLE is attached);
-    # lib.rs/machine boundary+advance gain an Option<SdHleSlot> test that is
-    # None on every board here; nRF RADIO: DISABLE aborts an armed receive and
-    # a named radio skips its own frames (pinned by a unit test). No register
-    # map, reset value or peripheral programming model on this board changed.
-    # ACK, NOT A CAPTURE.
-    drift_ack: 2026-09-26
-    # 2026-09-27 (fork PR #92, nrf-softdevice-hle round 2): the watched
-    # gpio.rs moved, in the nRF port only: Nrf52Gpio derives an undriven
-    # input's level from PIN_CNF.PULL and records external drivers. The STM32
-    # F1/V2 ports, their registers and their pull logic are untouched (same
-    # code, same tests: --lib 3808/3808, firmware_survival 85/85). No register
-    # map, reset value or programming model on this board changed. ACK, NOT A
-    # CAPTURE.
-    # Also (same PR, same day): lib.rs/cortex_m.rs — the Cpu trait gains three
-    # default-declining SoftDevice-HLE hooks (set_vector_table_base,
-    # svcall_frame_at, hle_return_from_exception) replacing as_any_mut()
-    # downcasts; CortexM implements them with its existing set_vtor and
-    # hle_exception_return, and nothing calls them unless an HLE is attached.
-    drift_ack: 2026-09-27
     # 2026-09-27 (supply-aware MCU, feat/analog-regulators-supply-aware-mcu):
     # watched rcc.rs moved. It gains `Peripheral::on_supply_reset`, which only
     # a routed `board.power.vdd_volts` ever calls (no committed board routes it),
@@ -4697,19 +4239,6 @@ boards:
     # No register map, reset value, or peripheral programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
-    # 2026-09-28 (merge of fork main #114/#116 into fork PR #92): digest
-    # re-stamped over the merged tree; both sides' acks above describe it.
-    # 2026-09-28 (fork PR #117, cdd2f1fa): speed only. An unconditional Thumb
-    # `b .` (T16 B whose target is its own address) is retired as one
-    # scheduler-bounded chunk instead of one decode per cycle. Same bounds as
-    # the existing T16 fast paths: the chunk stops at the next scheduler /
-    # peripheral observation point, and pending exceptions, debug halt, IT
-    # state, observers and logic taps are excluded; decode cache only. The PC,
-    # registers and flags a `b .` leaves are unchanged (it only branches to
-    # itself); pinned by cortex_m_tests.rs
-    # coalesced_t16_self_branch_matches_repeated_interpretation.
-    # Watched cortex_m.rs moved. No register map, reset value, or peripheral
-    # programming model on this board changed.
     # 2026-09-28: timed UART network. The shared `Uart` model gains a timed mode
     # (peripherals/uart/timed.rs) that is active ONLY when a world's `uart_network`
     # attaches a timed link to the USART; `uart.rs` routes to it behind
@@ -4732,22 +4261,6 @@ boards:
     # register map, reset value or byte path on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-29
-    # 2026-10-01 user-approved, content-bound review; ACK, NOT A CAPTURE.
-    # Evidence and remaining hardware obligation: docs/performance/2026-10-01-cortex-m-dispatch-drift-review.md
-    drift_ack: 2026-10-01
-    # 2026-09-30: Cortex-M PC-relative literal loads (VLDR.F32, VLDR.F64,
-    # LDRD with Rn = PC) now read from Align(PC, 4) with PC = instruction + 4;
-    # they read the word 4 bytes early. Every hard-float literal constant was
-    # wrong (found via codal NRF52PWM::setPeriodUs: 1e6 read as -0.5035, PWM
-    # COUNTERTOP 0). Other instruction semantics, register maps and reset
-    # values unchanged. Pinned by cortex_m_tests *_literal_base_is_aligned_pc_plus_4.
-    # ACK, NOT A CAPTURE. Any live re-capture owed above is still owed.
-    drift_ack: 2026-09-30
-    # 2026-09-30: shared rcc.rs changed only in the STM32H5 model (PLLxDIVR /
-    # PLLxFRACR added); this board's RCC layout is untouched. ACK, NOT A CAPTURE.
-    drift_ack: 2026-09-30
-    drift_ack_expires: 2026-10-31
-
     # 2026-09-30: SYSRESETREQ restores the boot VTOR and clears NVIC
     # enable/pending/active/priority, SysTick and SCR/SHPR. Peripheral models
     # are not reset. Cortex-M executes LDREXB/LDREXH, STREXB/STREXH,
@@ -4833,17 +4346,36 @@ boards:
     # Sim-only evidence on this tree: stm32f1/stm32f4/l476/stm32l0/h563 mmio_diff,
     # firmware_survival, motors_hbridge. ACK, NOT A CAPTURE: the live re-capture is owed.
     drift_ack: 2026-10-04
-    # 2026-10-05 (fork sync with w1ne/main 92bdc5f3): digest re-stamped over the
-    # merged tree; the fork's and upstream's acks above describe every model
-    # change it carries. Duplicate fixes resolved to upstream's code (VLDR
-    # literal base, STM32H5 PLL dividers). ACK, NOT A CAPTURE.
+    # 2026-10-05: Cortex-M LDRD (literal) — `ldrd rt, rt2, [pc, #imm]` now reads
+    # from Align(PC + 4, 4) + imm (A7.7.50) instead of the bare instruction
+    # address, the rule vfp_literal_base already applies to VLDR. No other
+    # instruction, register map or reset value changed. Pinned by
+    # test_ldrd_literal_base_is_aligned_pc_plus_4. ACK, NOT A CAPTURE.
+    drift_ack: 2026-10-05
+    # 2026-10-05 (later): fork intake (micro:bit V2 / PyBadge). Cortex-M T16
+    # fast-block discovery stops searching backward at the first entry that
+    # cannot join a block; a miss falls back to the interpreter, so only
+    # discovery cost changes (t16_discovery_tests). nRF52 GPIO's private pad
+    # latch moves 0xFF0 -> 0x7F0 (reserved space, also inside the compact
+    # nRF52833 P1 window); nRF52 PWM drives its duty onto the pad and
+    # PSEL.OUT resets Disconnected; SAADC scan appends per START. Review fixes
+    # on top: PWM COUNTERTOP resets 0x3FF and SEQ[n].REFRESH 1, STOP cancels a
+    # SEQSTART not yet serviced; SAADC samples VDDHDIV5 and completes
+    # CALIBRATEOFFSET; feature-off PWM ticks a playing waveform only when pad
+    # lines are wired. Then the fork's Cortex-M speed work (#134 discovery
+    # memo, #136 countdown coalescing, #143 probe selection) and its Nordic
+    # GPIO pull/snapshot fast paths (#137), each with unit tests asserting
+    # identical retirement; full core lib green in both scheduler modes. No
+    # STM32 peripheral model changed. ACK, NOT A CAPTURE.
     drift_ack: 2026-10-05
     # 2026-10-06: Cortex-M widened batches now end once an event armed by a
     # write in the batch is due (RISC-V's Gap #1 cut), and T16 fast-path chunks
-    # stop before it. Instruction semantics, register maps and reset values are
-    # unchanged; only WHEN a batch returns to the scheduler moves (earlier, to
-    # the event's own cycle). Pinned by arm_batched_path (nrf52840 back to
-    # byte-identical; KNOWN_DIVERGENT empty). ACK, NOT A CAPTURE.
+    # stop before it (fork #155, cfg-free SystemBus::pending_wake_left).
+    # Instruction semantics, register maps and reset values are unchanged; only
+    # WHEN a batch returns to the scheduler moves (earlier, to the event's own
+    # cycle). Pinned by arm_batched_path. ACK, NOT A CAPTURE.
+    # 2026-10-06 (fork sync with w1ne/main dac35094): digest re-stamped over
+    # the merged tree; upstream's fork-intake acks above describe the rest.
     drift_ack: 2026-10-06
   - id: stm32f103
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -5290,15 +4822,12 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
-    # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
-    drift_ack: 2026-09-30
-    drift_ack_digest: 3580ac9f084611d5690a1c2a49df8050952db33979561536015f955a679a1ad2
     # 2026-10-01 G0 CI repair: shared RCC reports its UART AF override through
     # a capability instead of a bus downcast; only G0 returns AF1. Shared EXTI
     # receives the same explicit GPIO edge through a capability. Captured
     # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
     # physical re-capture remains pending.
+    drift_ack_digest: 68289617934448fc03728c80ce204a06841cb77823ad28a4c2d09204de42a12c
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5347,12 +4876,6 @@ boards:
     # no live re-capture. This is an ACK, NOT A CAPTURE — a live re-capture
     # is owed.
     drift_ack: 2026-09-18
-    # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
-    # decode cache / fetch window / JIT blocks; only the wasm debugger's
-    # write_memory calls it (so a poke into code takes effect), never a firmware
-    # run. No firmware-visible behaviour, register map or reset value changed.
-    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
-    drift_ack: 2026-09-28
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/cpu/cortex_m/exec
@@ -5528,43 +5051,6 @@ boards:
     # programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
-    # 2026-09-25 (fork PR #86): Cortex-M decode fixes for CODAL on nRF52833 —
-    # LDREXH/STREXH execute (were silent no-ops), VCMP/VCMPE.F32 + VMRS/VMSR,
-    # VABS/VNEG/VSQRT/VNMUL.F32 decoded, ADR.W T2 subtracts. Watched cortex_m.rs,
-    # cortex_m/exec and the decoder moved; each fix pinned by a unit test. No
-    # register map, reset value or peripheral programming model on this board
-    # changed. ACK, NOT A CAPTURE.
-    drift_ack: 2026-09-25
-    # 2026-09-26 (fork PR #94): Cortex-M adds a guarded closed-form executor
-    # for rustc's exact STR/MOV/ADDS/back-edge RAM spin loop. It is reachable
-    # only with decode caching and the existing no-observer, no-debug,
-    # no-pending-interrupt, no-IT-state and ordinary-RAM gates; non-RAM,
-    # self-modifying and register-aliasing shapes are refused. Differential
-    # tests cover every entry phase and budgets 8..19 and match PC, registers,
-    # NZCV, RAM and access counts against single stepping. No architectural or
-    # peripheral behavior changes. ACK, NOT A CAPTURE; re-capture remains owed.
-    drift_ack: 2026-09-26
-    # 2026-09-26 (fork PR #92, nrf-softdevice-hle): cortex_m.rs gains
-    # hle_exception_return (called only when a SoftDevice HLE is attached);
-    # lib.rs/machine boundary+advance gain an Option<SdHleSlot> test that is
-    # None on every board here; nRF RADIO: DISABLE aborts an armed receive and
-    # a named radio skips its own frames (pinned by a unit test). No register
-    # map, reset value or peripheral programming model on this board changed.
-    # ACK, NOT A CAPTURE.
-    drift_ack: 2026-09-26
-    # 2026-09-27 (fork PR #92, nrf-softdevice-hle round 2): the watched
-    # gpio.rs moved, in the nRF port only: Nrf52Gpio derives an undriven
-    # input's level from PIN_CNF.PULL and records external drivers. The STM32
-    # F1/V2 ports, their registers and their pull logic are untouched (same
-    # code, same tests: --lib 3808/3808, firmware_survival 85/85). No register
-    # map, reset value or programming model on this board changed. ACK, NOT A
-    # CAPTURE.
-    # Also (same PR, same day): lib.rs/cortex_m.rs — the Cpu trait gains three
-    # default-declining SoftDevice-HLE hooks (set_vector_table_base,
-    # svcall_frame_at, hle_return_from_exception) replacing as_any_mut()
-    # downcasts; CortexM implements them with its existing set_vtor and
-    # hle_exception_return, and nothing calls them unless an HLE is attached.
-    drift_ack: 2026-09-27
     # 2026-09-27 (supply-aware MCU, feat/analog-regulators-supply-aware-mcu):
     # watched rcc.rs moved. It gains `Peripheral::on_supply_reset`, which only
     # a routed `board.power.vdd_volts` ever calls (no committed board routes it),
@@ -5607,19 +5093,6 @@ boards:
     # No register map, reset value, or peripheral programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
-    # 2026-09-28 (merge of fork main #114/#116 into fork PR #92): digest
-    # re-stamped over the merged tree; both sides' acks above describe it.
-    # 2026-09-28 (fork PR #117, cdd2f1fa): speed only. An unconditional Thumb
-    # `b .` (T16 B whose target is its own address) is retired as one
-    # scheduler-bounded chunk instead of one decode per cycle. Same bounds as
-    # the existing T16 fast paths: the chunk stops at the next scheduler /
-    # peripheral observation point, and pending exceptions, debug halt, IT
-    # state, observers and logic taps are excluded; decode cache only. The PC,
-    # registers and flags a `b .` leaves are unchanged (it only branches to
-    # itself); pinned by cortex_m_tests.rs
-    # coalesced_t16_self_branch_matches_repeated_interpretation.
-    # Watched cortex_m.rs moved. No register map, reset value, or peripheral
-    # programming model on this board changed.
     # 2026-09-28: timed UART network. The shared `Uart` model gains a timed mode
     # (peripherals/uart/timed.rs) that is active ONLY when a world's `uart_network`
     # attaches a timed link to the USART; `uart.rs` routes to it behind
@@ -5642,22 +5115,6 @@ boards:
     # register map, reset value or byte path on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-29
-    # 2026-10-01 user-approved, content-bound review; ACK, NOT A CAPTURE.
-    # Evidence and remaining hardware obligation: docs/performance/2026-10-01-cortex-m-dispatch-drift-review.md
-    drift_ack: 2026-10-01
-    # 2026-09-30: Cortex-M PC-relative literal loads (VLDR.F32, VLDR.F64,
-    # LDRD with Rn = PC) now read from Align(PC, 4) with PC = instruction + 4;
-    # they read the word 4 bytes early. Every hard-float literal constant was
-    # wrong (found via codal NRF52PWM::setPeriodUs: 1e6 read as -0.5035, PWM
-    # COUNTERTOP 0). Other instruction semantics, register maps and reset
-    # values unchanged. Pinned by cortex_m_tests *_literal_base_is_aligned_pc_plus_4.
-    # ACK, NOT A CAPTURE. Any live re-capture owed above is still owed.
-    drift_ack: 2026-09-30
-    # 2026-09-30: shared rcc.rs changed only in the STM32H5 model (PLLxDIVR /
-    # PLLxFRACR added); this board's RCC layout is untouched. ACK, NOT A CAPTURE.
-    drift_ack: 2026-09-30
-    drift_ack_expires: 2026-10-31
-
     # 2026-09-30: SYSRESETREQ restores the boot VTOR and clears NVIC
     # enable/pending/active/priority, SysTick and SCR/SHPR. Peripheral models
     # are not reset. Cortex-M executes LDREXB/LDREXH, STREXB/STREXH,
@@ -5752,17 +5209,36 @@ boards:
     # Sim-only evidence on this tree: stm32f1/stm32f4/l476/stm32l0/h563 mmio_diff,
     # firmware_survival, motors_hbridge. ACK, NOT A CAPTURE: the live re-capture is owed.
     drift_ack: 2026-10-04
-    # 2026-10-05 (fork sync with w1ne/main 92bdc5f3): digest re-stamped over the
-    # merged tree; the fork's and upstream's acks above describe every model
-    # change it carries. Duplicate fixes resolved to upstream's code (VLDR
-    # literal base, STM32H5 PLL dividers). ACK, NOT A CAPTURE.
+    # 2026-10-05: Cortex-M LDRD (literal) — `ldrd rt, rt2, [pc, #imm]` now reads
+    # from Align(PC + 4, 4) + imm (A7.7.50) instead of the bare instruction
+    # address, the rule vfp_literal_base already applies to VLDR. No other
+    # instruction, register map or reset value changed. Pinned by
+    # test_ldrd_literal_base_is_aligned_pc_plus_4. ACK, NOT A CAPTURE.
+    drift_ack: 2026-10-05
+    # 2026-10-05 (later): fork intake (micro:bit V2 / PyBadge). Cortex-M T16
+    # fast-block discovery stops searching backward at the first entry that
+    # cannot join a block; a miss falls back to the interpreter, so only
+    # discovery cost changes (t16_discovery_tests). nRF52 GPIO's private pad
+    # latch moves 0xFF0 -> 0x7F0 (reserved space, also inside the compact
+    # nRF52833 P1 window); nRF52 PWM drives its duty onto the pad and
+    # PSEL.OUT resets Disconnected; SAADC scan appends per START. Review fixes
+    # on top: PWM COUNTERTOP resets 0x3FF and SEQ[n].REFRESH 1, STOP cancels a
+    # SEQSTART not yet serviced; SAADC samples VDDHDIV5 and completes
+    # CALIBRATEOFFSET; feature-off PWM ticks a playing waveform only when pad
+    # lines are wired. Then the fork's Cortex-M speed work (#134 discovery
+    # memo, #136 countdown coalescing, #143 probe selection) and its Nordic
+    # GPIO pull/snapshot fast paths (#137), each with unit tests asserting
+    # identical retirement; full core lib green in both scheduler modes. No
+    # STM32 peripheral model changed. ACK, NOT A CAPTURE.
     drift_ack: 2026-10-05
     # 2026-10-06: Cortex-M widened batches now end once an event armed by a
     # write in the batch is due (RISC-V's Gap #1 cut), and T16 fast-path chunks
-    # stop before it. Instruction semantics, register maps and reset values are
-    # unchanged; only WHEN a batch returns to the scheduler moves (earlier, to
-    # the event's own cycle). Pinned by arm_batched_path (nrf52840 back to
-    # byte-identical; KNOWN_DIVERGENT empty). ACK, NOT A CAPTURE.
+    # stop before it (fork #155, cfg-free SystemBus::pending_wake_left).
+    # Instruction semantics, register maps and reset values are unchanged; only
+    # WHEN a batch returns to the scheduler moves (earlier, to the event's own
+    # cycle). Pinned by arm_batched_path. ACK, NOT A CAPTURE.
+    # 2026-10-06 (fork sync with w1ne/main dac35094): digest re-stamped over
+    # the merged tree; upstream's fork-intake acks above describe the rest.
     drift_ack: 2026-10-06
   - id: stm32f407
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -6173,15 +5649,12 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
-    # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
-    drift_ack: 2026-09-30
-    drift_ack_digest: 5d79510d53e8c600c776d91f6f780ab406a16922468a183482d8b83595032e6a
     # 2026-10-01 G0 CI repair: shared RCC reports its UART AF override through
     # a capability instead of a bus downcast; only G0 returns AF1. Shared EXTI
     # receives the same explicit GPIO edge through a capability. Captured
     # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
     # physical re-capture remains pending.
+    drift_ack_digest: 4a10e4ed6b5dfb9b6a49e26c734988c9cfb847231063e93ace4195839801f15d
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -6223,12 +5696,6 @@ boards:
     # no live re-capture. This is an ACK, NOT A CAPTURE — a live re-capture
     # is owed.
     drift_ack: 2026-09-18
-    # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
-    # decode cache / fetch window / JIT blocks; only the wasm debugger's
-    # write_memory calls it (so a poke into code takes effect), never a firmware
-    # run. No firmware-visible behaviour, register map or reset value changed.
-    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
-    drift_ack: 2026-09-28
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/cpu/cortex_m/exec
@@ -6370,51 +5837,6 @@ boards:
     # programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
-    # 2026-09-25 (fork PR #86): Cortex-M decode fixes for CODAL on nRF52833 —
-    # LDREXH/STREXH execute (were silent no-ops), VCMP/VCMPE.F32 + VMRS/VMSR,
-    # VABS/VNEG/VSQRT/VNMUL.F32 decoded, ADR.W T2 subtracts. Watched cortex_m.rs,
-    # cortex_m/exec and the decoder moved; each fix pinned by a unit test. No
-    # register map, reset value or peripheral programming model on this board
-    # changed. ACK, NOT A CAPTURE.
-    # 2026-09-26: RISC-V store-loop coalescing in cpu/riscv.rs. It recognizes
-    # only the fixture's fixed ordinary-RAM `store; addi; back-edge` loop from
-    # the already permission-vetted fetch window, and refuses PMS, interrupts,
-    # observers, logic capture and cycle-accurate buses. Differential tests
-    # compare every entry phase against single stepping, including CPU state,
-    # RAM and access counters; non-RAM and changing-base cases are refused.
-    # No peripheral register map, reset value, or silicon programming model
-    # changed. ACK, NOT A CAPTURE; the live re-capture owed above remains owed.
-    drift_ack: 2026-09-26
-    # 2026-09-26 (fork PR #94): Cortex-M adds a guarded closed-form executor
-    # for rustc's exact STR/MOV/ADDS/back-edge RAM spin loop. It is reachable
-    # only with decode caching and the existing no-observer, no-debug,
-    # no-pending-interrupt, no-IT-state and ordinary-RAM gates; non-RAM,
-    # self-modifying and register-aliasing shapes are refused. Differential
-    # tests cover every entry phase and budgets 8..19 and match PC, registers,
-    # NZCV, RAM and access counts against single stepping. No architectural or
-    # peripheral behavior changes. ACK, NOT A CAPTURE; re-capture remains owed.
-    drift_ack: 2026-09-26
-    # 2026-09-26 (fork PR #92, nrf-softdevice-hle): cortex_m.rs gains
-    # hle_exception_return (called only when a SoftDevice HLE is attached);
-    # lib.rs/machine boundary+advance gain an Option<SdHleSlot> test that is
-    # None on every board here; nRF RADIO: DISABLE aborts an armed receive and
-    # a named radio skips its own frames (pinned by a unit test). No register
-    # map, reset value or peripheral programming model on this board changed.
-    # ACK, NOT A CAPTURE.
-    drift_ack: 2026-09-26
-    # 2026-09-27 (fork PR #92, nrf-softdevice-hle round 2): the watched
-    # gpio.rs moved, in the nRF port only: Nrf52Gpio derives an undriven
-    # input's level from PIN_CNF.PULL and records external drivers. The STM32
-    # F1/V2 ports, their registers and their pull logic are untouched (same
-    # code, same tests: --lib 3808/3808, firmware_survival 85/85). No register
-    # map, reset value or programming model on this board changed. ACK, NOT A
-    # CAPTURE.
-    # Also (same PR, same day): lib.rs/cortex_m.rs — the Cpu trait gains three
-    # default-declining SoftDevice-HLE hooks (set_vector_table_base,
-    # svcall_frame_at, hle_return_from_exception) replacing as_any_mut()
-    # downcasts; CortexM implements them with its existing set_vtor and
-    # hle_exception_return, and nothing calls them unless an HLE is attached.
-    drift_ack: 2026-09-27
     # 2026-09-27 (supply-aware MCU, feat/analog-regulators-supply-aware-mcu):
     # watched rcc.rs moved. It gains `Peripheral::on_supply_reset`, which only
     # a routed `board.power.vdd_volts` ever calls (no committed board routes it),
@@ -6462,19 +5884,6 @@ boards:
     # No register map, reset value, or peripheral programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
-    # 2026-09-28 (merge of fork main #114/#116 into fork PR #92): digest
-    # re-stamped over the merged tree; both sides' acks above describe it.
-    # 2026-09-28 (fork PR #117, cdd2f1fa): speed only. An unconditional Thumb
-    # `b .` (T16 B whose target is its own address) is retired as one
-    # scheduler-bounded chunk instead of one decode per cycle. Same bounds as
-    # the existing T16 fast paths: the chunk stops at the next scheduler /
-    # peripheral observation point, and pending exceptions, debug halt, IT
-    # state, observers and logic taps are excluded; decode cache only. The PC,
-    # registers and flags a `b .` leaves are unchanged (it only branches to
-    # itself); pinned by cortex_m_tests.rs
-    # coalesced_t16_self_branch_matches_repeated_interpretation.
-    # Watched cortex_m.rs moved. No register map, reset value, or peripheral
-    # programming model on this board changed.
     # 2026-09-28: timed UART network. The shared `Uart` model gains a timed mode
     # (peripherals/uart/timed.rs) that is active ONLY when a world's `uart_network`
     # attaches a timed link to the USART; `uart.rs` routes to it behind
@@ -6497,22 +5906,6 @@ boards:
     # register map, reset value or byte path on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-29
-    # 2026-10-01 user-approved, content-bound review; ACK, NOT A CAPTURE.
-    # Evidence and remaining hardware obligation: docs/performance/2026-10-01-cortex-m-dispatch-drift-review.md
-    drift_ack: 2026-10-01
-    # 2026-09-30: Cortex-M PC-relative literal loads (VLDR.F32, VLDR.F64,
-    # LDRD with Rn = PC) now read from Align(PC, 4) with PC = instruction + 4;
-    # they read the word 4 bytes early. Every hard-float literal constant was
-    # wrong (found via codal NRF52PWM::setPeriodUs: 1e6 read as -0.5035, PWM
-    # COUNTERTOP 0). Other instruction semantics, register maps and reset
-    # values unchanged. Pinned by cortex_m_tests *_literal_base_is_aligned_pc_plus_4.
-    # ACK, NOT A CAPTURE. Any live re-capture owed above is still owed.
-    drift_ack: 2026-09-30
-    # 2026-09-30: shared rcc.rs changed only in the STM32H5 model (PLLxDIVR /
-    # PLLxFRACR added); this board's RCC layout is untouched. ACK, NOT A CAPTURE.
-    drift_ack: 2026-09-30
-    drift_ack_expires: 2026-10-31
-
     # 2026-09-30: SYSRESETREQ restores the boot VTOR and clears NVIC
     # enable/pending/active/priority, SysTick and SCR/SHPR. Peripheral models
     # are not reset. Cortex-M executes LDREXB/LDREXH, STREXB/STREXH,
@@ -6598,17 +5991,36 @@ boards:
     # Sim-only evidence on this tree: stm32f1/stm32f4/l476/stm32l0/h563 mmio_diff,
     # firmware_survival, motors_hbridge. ACK, NOT A CAPTURE: the live re-capture is owed.
     drift_ack: 2026-10-04
-    # 2026-10-05 (fork sync with w1ne/main 92bdc5f3): digest re-stamped over the
-    # merged tree; the fork's and upstream's acks above describe every model
-    # change it carries. Duplicate fixes resolved to upstream's code (VLDR
-    # literal base, STM32H5 PLL dividers). ACK, NOT A CAPTURE.
+    # 2026-10-05: Cortex-M LDRD (literal) — `ldrd rt, rt2, [pc, #imm]` now reads
+    # from Align(PC + 4, 4) + imm (A7.7.50) instead of the bare instruction
+    # address, the rule vfp_literal_base already applies to VLDR. No other
+    # instruction, register map or reset value changed. Pinned by
+    # test_ldrd_literal_base_is_aligned_pc_plus_4. ACK, NOT A CAPTURE.
+    drift_ack: 2026-10-05
+    # 2026-10-05 (later): fork intake (micro:bit V2 / PyBadge). Cortex-M T16
+    # fast-block discovery stops searching backward at the first entry that
+    # cannot join a block; a miss falls back to the interpreter, so only
+    # discovery cost changes (t16_discovery_tests). nRF52 GPIO's private pad
+    # latch moves 0xFF0 -> 0x7F0 (reserved space, also inside the compact
+    # nRF52833 P1 window); nRF52 PWM drives its duty onto the pad and
+    # PSEL.OUT resets Disconnected; SAADC scan appends per START. Review fixes
+    # on top: PWM COUNTERTOP resets 0x3FF and SEQ[n].REFRESH 1, STOP cancels a
+    # SEQSTART not yet serviced; SAADC samples VDDHDIV5 and completes
+    # CALIBRATEOFFSET; feature-off PWM ticks a playing waveform only when pad
+    # lines are wired. Then the fork's Cortex-M speed work (#134 discovery
+    # memo, #136 countdown coalescing, #143 probe selection) and its Nordic
+    # GPIO pull/snapshot fast paths (#137), each with unit tests asserting
+    # identical retirement; full core lib green in both scheduler modes. No
+    # STM32 peripheral model changed. ACK, NOT A CAPTURE.
     drift_ack: 2026-10-05
     # 2026-10-06: Cortex-M widened batches now end once an event armed by a
     # write in the batch is due (RISC-V's Gap #1 cut), and T16 fast-path chunks
-    # stop before it. Instruction semantics, register maps and reset values are
-    # unchanged; only WHEN a batch returns to the scheduler moves (earlier, to
-    # the event's own cycle). Pinned by arm_batched_path (nrf52840 back to
-    # byte-identical; KNOWN_DIVERGENT empty). ACK, NOT A CAPTURE.
+    # stop before it (fork #155, cfg-free SystemBus::pending_wake_left).
+    # Instruction semantics, register maps and reset values are unchanged; only
+    # WHEN a batch returns to the scheduler moves (earlier, to the event's own
+    # cycle). Pinned by arm_batched_path. ACK, NOT A CAPTURE.
+    # 2026-10-06 (fork sync with w1ne/main dac35094): digest re-stamped over
+    # the merged tree; upstream's fork-intake acks above describe the rest.
     drift_ack: 2026-10-06
   - id: esp32s3
     # 2026-09-16 (#jit-xtensa-browser): generic Xtensa BB emit core + browser adapter. `xtensa_lx7.rs` gains only `invalidate_for_data_write` — a public forwarder to the existing `maybe_invalidate_for_write` so JIT-committed stores run the same SMC invalidation the S8i/S32i interpreter arms run (no interpreter behavior change; the existing sub-word rules are reused). Hot-block dispatch and every interpreter arm are untouched; the new shapes are browser-only and refused when unsafe. Native interpreter-identity tests in `xtensa_jit/variable.rs`. No silicon capture pins the browser JIT.
@@ -7179,7 +6591,7 @@ boards:
     # the generic Xtensa BB JIT emit core (#1139) — the merge of the two is one
     # digest, so it is re-stamped once here rather than twice.
     drift_ack: 2026-09-18
-    drift_ack_digest: 771f58fedf7a232f81e99a1ecf5c30ebe883e927101489d95ac26d91808b8d12
+    drift_ack_digest: 999b30947d2256b012e1ebd6021454c08f01b7672b3499307a62d74550c45d0e
     #
     # 2026-09-18 (execute split): no execution change. The arm bodies of
     # `XtensaLx7::execute` moved verbatim into `cpu/xtensa_lx7/exec/*.rs` as
@@ -7221,31 +6633,6 @@ boards:
     # restore all update the armed flag. The crossing test is unchanged.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
-    # 2026-09-26: Xtensa store-loop coalescing in cpu/xtensa_lx7.rs. The
-    # generation-tagged decode cache recognizes only the fixture's fixed
-    # ordinary-RAM `store; address-copy; addi; back-edge` loop; timer compare,
-    # enabled IRQ, zero-overhead-loop, observer, logic-capture and
-    # cycle-accurate states all refuse it. A real final write plus bulk access
-    # accounting preserves the bus-visible result. Differential tests cover
-    # every entry phase, CPU/RAM/CCOUNT/accounting equality, and refusal cases.
-    # No peripheral register map, reset value, source id, or programming model
-    # changed. ACK, NOT A CAPTURE; the live re-capture owed above remains owed.
-    drift_ack: 2026-09-26
-    # 2026-09-27: shared esp_uart.rs gained the batch-stability declaration
-    # described on esp32c3 above. It changes no UART value or side effect: the
-    # declaration is true only for STATUS while the external RX queue has never
-    # been exposed, and the S3 execution engine does not consume the C3-specific
-    # RISC-V poll-loop shortcut. The ESP UART unit suite is green. ACK, NOT A
-    # CAPTURE; the live S3 re-capture remains owed.
-    drift_ack: 2026-09-27
-    # 2026-09-27: that Xtensa store-loop coalescer stops downcasting the bus to
-    # SystemBus and calls Bus::commit_plain_memory_store_spin instead. Same
-    # refusals in the same order (observer, winning route not plain memory),
-    # the same ONE real write_u32 and elided-access accounting, CPU state still
-    # written only after the bus commits. The two xtensa store_spin
-    # differential tests pass unchanged. No peripheral register map, reset
-    # value or programming model changed.
-    # ACK, NOT A CAPTURE; the live re-capture owed above remains owed.
     # 2026-09-27 (four-state pin trace, feat/timer-input-capture-hiz): watched
     # esp32s3/gpio.rs moved. GPIO observers gain an `on_pin_state_change`
     # callback (--gpio-trace-format 4state) and the port reports pad drive
@@ -7255,10 +6642,6 @@ boards:
     # Ran: cargo test -p labwired-core --lib (default and event-scheduler).
     # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
     drift_ack: 2026-09-27
-    # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
-    # decode cache / fetch window / JIT blocks; only the wasm debugger's
-    # write_memory calls it (so a poke into code takes effect), never a firmware
-    # run. No firmware-visible behaviour, register map or reset value changed.
     # 2026-09-28: speed only. The step loop runs the common ALU, load/store
     # and branch variants through execute_hot, inline, and sends the rest to
     # execute (now out of line); the F5 window-overflow check moved verbatim
@@ -7300,6 +6683,7 @@ boards:
       # that deletes a wiring call un-models a peripheral without touching any
       # file the list already watched. Added 2026-08-21 with the IO_MUX pad
       # sharing, whose only wiring call lives here.
+      - crates/core/src/system/xtensa/esp32s3.rs
       - configs/chips/esp32s3.yaml
       # Declarative descriptors the chip yaml wires; the 9-reg reset-state
       # anchor is asserted against their reset_values.
@@ -7310,11 +6694,6 @@ boards:
     # reset value changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-30
-    # 2026-10-05 (fork sync with w1ne/main 92bdc5f3): digest re-stamped over the
-    # merged tree; the fork's and upstream's acks above describe every model
-    # change it carries. Duplicate fixes resolved to upstream's code (VLDR
-    # literal base, STM32H5 PLL dividers). ACK, NOT A CAPTURE.
-    drift_ack: 2026-10-05
 
   - id: esp32s3-zero
     # Board variant of esp32s3: same silicon (LX7), 4 MiB flash / 480 KiB RAM.
@@ -7435,18 +6814,13 @@ boards:
     doc: docs/boards/microbit-v1.md
     chip: configs/chips/nrf51822.yaml
     tier: smoke-manual
-    note: "BBC micro:bit V1, target nRF51822, S110 application region (flash from 0x18000, nothing below). Bare-metal legacy-UART smoke prints OK\\n: PSELTXD=P0.24 / PSELRXD=P0.25 (the interface-MCU bridge), BAUDRATE=115200, ENABLE=4, STARTTX, TXD + EVENTS_TXDRDY per byte, no SoftDevice. Official MakeCode images run with the SoftDevice HLE (crates/core/examples/sd_hle_run.rs), which no gate here runs. LED matrix, sensors and the nRF51 ADC are not modelled. SIM-DERIVED - no silicon diff; no executing-fidelity differential."
+    note: "BBC micro:bit V1, target nRF51822 (QFAA), modelled as the S110 v8 application region: flash from 0x18000, the MBR/SoftDevice range an empty hole. Bare-metal legacy UART smoke prints OK\\n, PSELTXD=P0.24 / PSELRXD=P0.25, BAUDRATE=115200, ENABLE=4. Blocks reuse the nRF52 models (UART0 legacy personality, NVMC page size 1 KiB) plus an nRF51 FICR. The 5x5 matrix is a mux primitive. ADC, LPCOMP, QDEC and the radio protocol are not claimed. SoftDevice API emulation lives in crates/nrf-softdevice-hle and is not this board's PR gate. SIM-DERIVED — no silicon diff; no executing-fidelity differential."
     offline_tests:
       - "firmware_survival::test_nrf51822_microbit_v1_smoke_survival"
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
       - crates/core/src/peripherals/gpio.rs
-      - crates/core/src/peripherals/nrf52
-      - configs/chips/nrf51822.yaml
-      - configs/systems/microbit-v1.yaml
-      # Every model this board REGISTERS (model_paths_drift_gate): the
-      # directory entry above does not count as naming them.
       - crates/core/src/peripherals/nvic.rs
       - crates/core/src/peripherals/nrf52/clock.rs
       - crates/core/src/peripherals/nrf52/ecb.rs
@@ -7466,12 +6840,14 @@ boards:
       - crates/core/src/peripherals/nrf52/wdt.rs
       - crates/core/src/peripherals/stub.rs
       - crates/core/src/peripherals/components/declarative_led_matrix.rs
+      - configs/chips/nrf51822.yaml
+      - configs/systems/microbit-v1.yaml
 
   - id: microbit-v2
     doc: docs/boards/microbit-v2.md
     chip: configs/chips/nrf52833.yaml
     tier: smoke-manual
-    note: "BBC micro:bit v2, target nRF52833. Bare-metal UARTE0 EasyDMA smoke prints OK\\n from a RAM (.data) buffer, PSEL.TXD=P0.06 / PSEL.RXD=P1.08, BAUDRATE=115200, ENABLE=8. A row/column-multiplexed 5x5 matrix is attached to GPIO/GPIOTE pads; a distinct source-built guest scans all five rows and reads both buttons using silicon P0/P1 register addresses. The selected LSM303AGR variant attaches accelerometer/magnetometer to i2c0 at 0x19/0x1e with held live axes; guest qualification is pending, and shared sensor IRQ/FIFO/gestures are unsupported. Radio/BLE stacks, USB protocol, NFC and continuous sensor/audio paths remain unqualified. SIM-DERIVED — no silicon diff; no executing-fidelity differential."
+    note: "BBC micro:bit v2, target nRF52833. Bare-metal UARTE0 EasyDMA smoke prints OK\\n from a RAM (.data) buffer, PSEL.TXD=P0.06 / PSEL.RXD=P1.08 (the interface-MCU bridge; micro:bit schematic labels are interface-side), BAUDRATE=115200, ENABLE=8. Radio/BLE, USB protocol, NFC, the charlieplexed 5x5 LED matrix and all on-board sensors are not modelled. SIM-DERIVED — no silicon diff; no executing-fidelity differential."
     offline_tests:
       - "firmware_survival::test_nrf52833_microbit_v2_smoke_survival"
     models:
@@ -7481,9 +6857,6 @@ boards:
       - crates/core/src/peripherals/nrf52
       - configs/chips/nrf52833.yaml
       - configs/systems/microbit-v2.yaml
-      - crates/core/src/peripherals/components/declarative_led_matrix.rs
-      - crates/core/src/peripherals/components/lsm303agr.rs
-      - configs/peripherals/nrf52833/p1.yaml
       # 2026-09-21, model_paths_drift_gate: models this board REGISTERS that
       # its list omitted, so they were invisible to the drift digest. This
       # board records no silicon capture, so there is no "silicon-verified"

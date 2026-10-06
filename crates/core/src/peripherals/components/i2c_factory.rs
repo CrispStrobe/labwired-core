@@ -335,20 +335,6 @@ pub fn build_i2c_device(
         return build_declarative_i2c_device(canonical, config);
     }
     match canonical {
-        "lsm303agr_accel" | "lsm303agr_mag" => {
-            use crate::peripherals::components::lsm303agr::Lsm303agr;
-            let device = if canonical == "lsm303agr_accel" {
-                Lsm303agr::new_accel()
-            } else {
-                Lsm303agr::new_mag()
-            };
-            if let Some(address) = config.get("i2c_address") {
-                if address.as_u64() != Some(u64::from(device.address())) {
-                    return None;
-                }
-            }
-            Some(Box::new(device))
-        }
         // ── Smart-ring sensor/actuator set ──────────────────────────────────
         "max30102" => {
             use crate::peripherals::components::max30102::{Max30102, MAX30102_ADDR};
@@ -463,7 +449,7 @@ pub fn build_i2c_device(
 #[cfg(test)]
 mod tests {
     #[test]
-    fn lsm303agr_fixed_addresses_and_stimulus_identity() {
+    fn lsm303agr_halves_are_declarative_at_their_silicon_addresses() {
         let config = std::collections::HashMap::new();
         for (kind, address) in [("lsm303agr_accel", 0x19), ("lsm303agr_mag", 0x1e)] {
             let mut device = super::build_external_i2c_device(kind, "motion", &config).unwrap();
@@ -471,16 +457,6 @@ mod tests {
             let input = device.as_sim_input_mut().unwrap();
             assert_eq!(input.component_id(), Some("motion"));
             input.set_input("x", -1.0).unwrap();
-            let mut bad_config = config.clone();
-            bad_config.insert("i2c_address".into(), serde_yaml::Value::from(0x55));
-            assert!(super::build_i2c_device(kind, &bad_config).is_none());
-            bad_config.insert(
-                "i2c_address".into(),
-                serde_yaml::Value::from("not an address"),
-            );
-            assert!(super::build_i2c_device(kind, &bad_config).is_none());
-            bad_config.insert("i2c_address".into(), serde_yaml::Value::from(address));
-            assert!(super::build_i2c_device(kind, &bad_config).is_some());
         }
     }
     use super::*;

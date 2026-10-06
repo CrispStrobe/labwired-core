@@ -192,12 +192,14 @@ const MAX_DOWNCAST_REF: usize = 197;
 /// per-cycle reach; moving it and its siblings onto a capability belongs
 /// together, upstream.
 ///
-/// Tightened 275 -> 274 and 341 -> 340 after the current source scan removed
-/// one mutable type-erased reach. Keep both ceilings at the measured counts.
+/// Raised 341 -> 342 (`downcast_mut` only) when nRF PWM joined the same loop:
+/// a playing `PSEL.OUT[n]` channel owns its pad (duty reaches the circuit),
+/// one more `downcast_mut` arm beside GPIOTE's, same one-time wiring step.
 ///
-/// Raised 340 -> 341 (`downcast_mut` only) when nRF PWM joined the same loop
-/// as GPIOTE: a playing `PSEL.OUT[n]` channel owns its pad (duty reaches the
-/// circuit), one more `downcast_mut` arm, same one-time wiring step.
+/// Lowered 275 -> 274: the wasm held-ADC setters (`set_adc_channel` /
+/// `clear_adc_channel`) ask the generic `set_adc_channel_input` hooks first
+/// and share one STM32 `Adc` fallback, instead of two inline downcasts.
+/// `MAX_DOWNCAST_MUT` 342 -> 341 for the same change.
 const MAX_AS_ANY_MUT: usize = 274;
 const MAX_DOWNCAST_MUT: usize = 341;
 
