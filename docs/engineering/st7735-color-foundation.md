@@ -140,8 +140,8 @@ made by this draft.
    independent vectors to the pinned driver's packed stream.
 3. Determine module
    GM/crop before claiming physical four-corner orientation parity.
-4. Add generic reset/backlight GPIO observation and SAM SPI attachment without
-   controller-specific bus downcasts or new idle polling. Prove mux/clock/CS/DC
+4. Qualify the drafted generic reset/backlight GPIO observation and SAM SPI
+   attachment without controller-specific bus downcasts or new idle polling. Prove mux/clock/CS/DC
    negatives and reset/backlight effects using an owned permissive MMIO guest
    with pixel artifacts on hosted CI. Retain the existing scheduler controls.
 5. Only then complete P3 qualification, followed by the separate IRQ/DMA and
@@ -152,3 +152,41 @@ The pinned [CODAL stream](https://github.com/lancaster-university/codal-core/blo
 is the later integration input. Independent datasheet vectors and actual driver
 bytes must agree before a production-stream claim; no such guest run exists for
 this foundation yet.
+
+## Follow-on lane: rectangular production-stream and panel binding
+
+Start after the GPIO slice passes all enabled exact-head checks. Keep this
+separate from P2/P4's IRQ/DMA implementation and from consumer package adoption.
+
+1. Record the deployed public runtime build's macro configuration, CF2 board ID,
+   `DISPLAY_CFG0`, width and height. The pinned PXT screen source derives MADCTL
+   from CFG0 bits 0..7, offX from 8..15 and offY from 16..23; defaults are not
+   deployed-board evidence. `USE_RGB444`, board-ID gating and doubled images
+   choose distinct paths. Retain an explicit unknown if build evidence is absent.
+2. Extract a small, reviewable input vector from the exact pinned selected
+   CODAL/PXT path, preserving its notices. Stock CODAL's `setAddrWindow` sends
+   CASET from its **y** arguments and RASET from **x**; its palette upload fills
+   the first sixteen entries of each channel block and zeroes the remainder.
+   Match those bytes against independent datasheet expectations before running
+   them in an authored blocking-MMIO guest. A host driver/vector check alone
+   does not qualify the native DMA driver.
+3. Use a non-square, at least 3×2 fixture with distinct corner/adjacent colours,
+   odd pixel and CS chunk boundaries, and every advertised MADCTL orientation.
+   Calculate expected addresses independently of the implementation's mapping
+   helper. The existing symmetric 2×2 proof cannot distinguish an x/y swap.
+   Test retained RAM versus current orientation, LUT replacement and reset.
+4. Establish the public module's aperture/offsets separately from its GM straps.
+   The pinned Arcada PyBadge header specifies INITR_BLACKTAB, rotation 1 and
+   160×128 application dimensions; that does **not** establish physical GM mode
+   or the deployed PXT CF2 values. Do not silently attach the GM00 prototype to
+   PyBadge. Keep controller-memory RGB666/expanded RGB888 distinct from glass
+   BGR/inversion/gamma presentation; do not relabel memory evidence as glass.
+5. Publish exact source/vector hashes, hosted positive/negative results and
+   remaining exclusions. Only qualify the bounded blocking panel path after
+   existing displays and all enabled checks pass; no DMA, physical capture,
+   active-frame RTx, WASM or app adoption claim follows automatically.
+
+Primary inputs are the pinned CODAL and PXT sources in the
+[panel contract](../boards/pybadge-native.md#st7735-is-not-a-renamed-st7789),
+plus the pinned Arcada board header under its wiring definitions. No inferred
+default replaces an observed deployed configuration.
