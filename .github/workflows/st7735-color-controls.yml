@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - crates/core/src/peripherals/components/st7735_color.rs
+      - crates/core/src/peripherals/components/declarative_display.rs
       - .github/workflows/st7735-color-controls.yml
   workflow_dispatch:
 
