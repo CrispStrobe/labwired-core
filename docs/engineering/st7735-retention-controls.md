@@ -1,11 +1,34 @@
-# ST7735 retained RAM and LUT transitions — guest qualification pending
+# ST7735 retained RAM and LUT transitions — authored guest qualified
 
 This test-only P3 slice follows the
 [orientation guest](st7735-orientation-controls.md) and
 [captured CODAL commands](st7735-codal-sam-binding.md). It changes no model,
 production descriptor, app pin, baseline, floor, capture or acknowledgement.
-No passing guest result is claimed until the complete eight-test SAM target
-executes in both feature configurations and all enabled exact-head checks pass.
+The complete eight-test SAM target passed in both feature configurations;
+this qualifies only the bounded authored-guest contract below.
+
+## Landed qualification — 2026-10-07
+
+[PR170](https://github.com/CrispStrobe/labwired-core/pull/170) merged as
+`16b34efbbf6099248e27236d6b67569342939791`, from reviewed source
+`3916fcd453ba04a97b38c4300fab8cdd71bed262`. The tested merge checkout
+`d945375dd0d0236aa5d137e65fbe2569585625c1` and landed main have identical
+tree `7be957aec54a5e8708a1420f68ab0783ee585fdc`.
+All 21 enabled checks passed; four declared full/warm/image jobs skipped.
+Guest SHA256:
+`6087634aefc39846d4238cbf450cbbd1d1f62dada1a200a89858e634ba7764b5`.
+
+[Core run37660587779](https://github.com/CrispStrobe/labwired-core/actions/runs/37660587779)
+executed eight tests, zero failed/ignored/filtered, in both
+[feature-off](https://github.com/CrispStrobe/labwired-core/actions/runs/37660587779/job/112926799861)
+and [feature-on](https://github.com/CrispStrobe/labwired-core/actions/runs/37660587779/job/112926800117).
+The initial workspace shard two timed out in ARM compiler installation before
+its tests ran; the aggregate correctly failed on its missing report. That
+failure remains preserved. One targeted unchanged-source retry completed
+[shard two](https://github.com/CrispStrobe/labwired-core/actions/runs/37660587779/job/112989134611)
+and the dependent aggregate successfully; no gate or source was weakened.
+Live CODAL and PXT-fragment checks also passed. No new performance or
+production-panel result follows from this test-only merge.
 
 ## Authored staged guest
 
