@@ -54,6 +54,36 @@ production stream. Use independent datasheet tests and exact driver inputs:
 Conditional `USE_RGB444` and doubled-image source paths do not establish the
 actual macro configuration/CF2 board ID; verify the deployed build first.
 
+### Pinned PXT package configuration — source review, not guest proof
+
+The consumer's `scripts/sync-makecode-runtime.mjs` pins
+[pxt-arcade 4.2.1](https://registry.npmjs.org/pxt-arcade/-/pxt-arcade-4.2.1.tgz)
+archive SHA256 `d403926da1c96dd71a696f0182dbdd82b97babb9d0de9281b8e2a6b67c57cf32`.
+The archive's `package/built/target.json` and inspected served target match:
+SHA256 `6f35aadf1456436b3318d2f2339cc3d1add6e6c3b0bf8566f86d7f7bb4f7722e`.
+Its bundled `hw---samd51adafruit/pxt.json` sets
+`yotta.config.USE_RGB444 = 1`; the bundled `config.ts` supplies no display
+constants and explicitly takes configuration from the bootloader.
+
+The bundled `screen---st7735/screen.cpp` has SHA256
+`dea9ea175d65d885275eb0715d56353674feae88d64d29a5eb2809f899a0d958`,
+matching the pinned PXT screen source linked above. With SPI and a recognized
+Adafruit board ID, its non-doubled path calls `sendIndexedImage444`: direct
+palette-to-RGB444 bytes, rather than CODAL's RGBSET-indexed image path. Recognized
+IDs have high 16 bits `0x239A`, or equal one of `0x18591AB9`, `0x75FDEB5F`,
+`0x3F05BA69`, `0x2DD7A88C`, `0x2B9E3D05`, `0x7A236324`. Unknown or absent
+IDs retain the stock RGBSET path. Both paths therefore need qualification;
+passing the CODAL RGBSET capture alone cannot qualify known-Adafruit rendering.
+
+This verifies the package's macro request and branch source, **not** generated
+compiler definitions, effective CF2 settings, selected runtime branch, module
+aperture or ARM execution. Next bind the actual generated build request and
+effective board ID/display settings, capture the exact-source direct renderer
+with selected/unknown/absent-ID controls, then prove its bytes through guest SPI.
+Preserve odd-width/height packing, transfer batching and CS/D/C behavior; do not
+replace the production method with an authored equivalent and call that original
+source execution. Full original ARM/DMA completion remains a later requirement.
+
 ## Runtime provenance and DMA dependency
 
 [Lite run36567239929](https://github.com/CrispStrobe/brickwright-lite/actions/runs/36567239929)
