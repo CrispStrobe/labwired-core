@@ -25,6 +25,11 @@ source or workflow changes. The
 [live original CODAL trace](https://github.com/CrispStrobe/labwired-core/actions/runs/37639536493)
 also passed. No new benchmark, panel binding or consumer adoption is claimed.
 
+Guest-file SHA256 at preparation:
+`fe3b87330a27277123d944635f51241c809f97d99c4614a2e61d035b3f52b739`.
+The original driver-capture fixture remains byte-identical; its immutable hash
+and source provenance are in the linked captured-command guide.
+
 ## Independent address vectors
 
 [ST7735R v0.2](https://cdn-shop.adafruit.com/datasheets/ST7735R_V0.2.pdf)
