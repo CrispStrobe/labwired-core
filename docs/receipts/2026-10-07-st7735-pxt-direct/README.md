@@ -4,8 +4,15 @@ Tested source: `c1d03878589b173c51c8d72fb1e7e33719dd6774`,
 submitted in [PR169](https://github.com/CrispStrobe/labwired-core/pull/169).
 The [actual capture run37647759023](https://github.com/CrispStrobe/labwired-core/actions/runs/37647759023)
 and [job112882868540](https://github.com/CrispStrobe/labwired-core/actions/runs/37647759023/job/112882868540)
-passed. This records the focused host check, not completion of all PR gates or
-an already landed merge.
+passed. PR169 subsequently merged as
+`40a01b68c783968b18dfb965d9d63c9208b8b8a1` after all 15 enabled checks
+passed and four declared full/warm/image jobs skipped. The tested merge checkout
+`10f2577dde09aea8e40f26063064d031a2587532` and landed main have identical
+tree `ea584953ff098e59093c425e2ee414805047e3af`.
+The [Core run37647758896](https://github.com/CrispStrobe/labwired-core/actions/runs/37647758896)
+also executed the existing seven SAM guest tests in both feature configurations:
+seven passed, zero failed/ignored/filtered. This does not qualify the separate
+retention guest added after that source.
 
 The original [artifact11494779371](https://api.github.com/repos/CrispStrobe/labwired-core/actions/artifacts/11494779371/zip)
 reported a 2,447-byte ZIP. Its byte-preserved
