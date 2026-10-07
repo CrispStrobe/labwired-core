@@ -204,6 +204,29 @@ fn dma_tx_bus_acceptance_preserves_gates_observers_irqs_and_pump() {
             }
         }
     }
+    #[derive(Debug)]
+    struct OwnerAlias(usize);
+    impl labwired_core::Peripheral for OwnerAlias {
+        fn read(&self, _offset: u64) -> labwired_core::SimResult<u8> {
+            Ok(0)
+        }
+        fn write(&mut self, _offset: u64, _value: u8) -> labwired_core::SimResult<()> {
+            Ok(())
+        }
+        fn scheduler_wake_owner(&self) -> Option<usize> {
+            Some(self.0)
+        }
+        fn dma_tx_request(&self, _offset: u64) -> Option<bool> {
+            Some(true)
+        }
+        fn try_dma_write_tx_u8(
+            &mut self,
+            _offset: u64,
+            _value: u8,
+        ) -> labwired_core::SimResult<bool> {
+            panic!("owner-alias admission must fail before invoking its write hook")
+        }
+    }
     for legacy in [true, false] {
         for interval in [1, 64, 1024] {
             if interval > 1 && (legacy || !event_scheduler_enabled()) {
@@ -322,6 +345,23 @@ fn dma_tx_bus_acceptance_preserves_gates_observers_irqs_and_pump() {
                 assert!(machine.bus.try_dma_write_tx_u8(addr, 0x99).is_err());
                 assert_eq!(writes.0.lock().unwrap().len(), before);
             }
+            let alias_idx = machine
+                .bus
+                .peripherals
+                .iter()
+                .position(|p| p.base == 0x41000000)
+                .unwrap();
+            let owner_idx = machine
+                .bus
+                .peripherals
+                .iter()
+                .position(|p| p.name == "sercom4")
+                .unwrap();
+            machine.bus.peripherals[alias_idx].dev = Box::new(OwnerAlias(owner_idx));
+            let before = writes.0.lock().unwrap().len();
+            assert_eq!(machine.bus.dma_tx_request(0x41000000), None);
+            assert!(machine.bus.try_dma_write_tx_u8(0x41000000, 0x99).is_err());
+            assert_eq!(writes.0.lock().unwrap().len(), before);
             let before = writes.0.lock().unwrap().len();
             machine
                 .bus
@@ -349,7 +389,7 @@ fn dma_tx_bus_acceptance_preserves_gates_observers_irqs_and_pump() {
             assert_eq!(machine.cpu.active_exception, 0);
             assert_eq!(machine.bus.read_u32(0xe000ed28).unwrap(), 0);
             assert_eq!(machine.bus.read_u32(0xe000ed2c).unwrap(), 0);
-            println!("SAM_TX_BUS legacy={legacy} interval={interval} accepted=2 observed=1 reset_dropped=1 blocked=6 refused=10 irq_cleared=true");
+            println!("SAM_TX_BUS legacy={legacy} interval={interval} accepted=2 observed=1 reset_dropped=1 blocked=6 refused=11 irq_cleared=true");
         }
     }
 }

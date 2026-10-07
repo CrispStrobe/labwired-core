@@ -27,15 +27,20 @@ const BUFOVF: u16 = 4;
 /// Board-declared output pads; no hard-coded PyBadge pins in the controller.
 #[derive(Debug, Clone, Copy)]
 pub struct SamSpiPads {
-    pub port_base: u64,
+    /// PORT group of SCK and of MOSI (they may sit on different groups).
+    pub sck_port: u64,
     pub sck: u8,
+    pub mosi_port: u64,
     pub mosi: u8,
     pub mux: u8,
     pub dopo: u8,
-    /// GCLK peripheral channel of the SERCOM core clock (PCHCTRL index).
-    pub core_gclk: Option<u64>,
+    /// Optional MISO pad: (PORT group, pin, DIPO). When declared, a transfer
+    /// also needs this pad muxed and CTRLA.DIPO selecting it.
+    pub miso: Option<(u64, u8, u8)>,
     /// DMAC trigger sources (TX, RX) of this SERCOM, from the chip description.
     pub dma: Option<(u32, u32)>,
+    /// GCLK peripheral channel of the SERCOM core clock (PCHCTRL index).
+    pub core_gclk: Option<u64>,
 }
 
 pub struct SamSercomSpi {
@@ -267,20 +272,18 @@ impl SamSercomSpi {
         if (self.ctrla >> 16) & 3 != self.pads.dopo as u32 {
             return false;
         }
-        [self.pads.sck, self.pads.mosi].iter().all(|&pin| {
-            let cfg = bus
-                .read_u8(self.pads.port_base + 0x40 + u64::from(pin))
-                .ok();
-            let mux = bus
-                .read_u8(self.pads.port_base + 0x30 + u64::from(pin / 2))
-                .ok();
+        let muxed = |port: u64, pin: u8| {
+            let cfg = bus.read_u8(port + 0x40 + u64::from(pin)).ok();
+            let mux = bus.read_u8(port + 0x30 + u64::from(pin / 2)).ok();
             cfg.is_some_and(|v| v & 1 != 0)
                 && mux.is_some_and(|v| (v >> ((pin & 1) * 4)) & 15 == self.pads.mux)
-        })
+        };
+        muxed(self.pads.sck_port, self.pads.sck) && muxed(self.pads.mosi_port, self.pads.mosi)
     }
-}
 
-impl SamSercomSpi {
+    /// A declared MISO pad carries the devices' bits only while it is muxed to
+    /// this SERCOM and CTRLA.DIPO selects it; otherwise nothing drives the
+    /// input and it reads as the idle line, like an absent device.
     /// One byte's duration and its decrement per CPU cycle: 16 * (BAUD + 1)
     /// core-clock cycles, scaled to CPU cycles by f_CPU / f_GCLK when both
     /// resolve, so `left / per` is the duration in CPU cycles.
@@ -296,6 +299,16 @@ impl SamSercomSpi {
             Some((gclk, cpu)) if gclk > 0 && cpu > 0 => (core * cpu, gclk),
             _ => (core, 1),
         }
+    }
+
+    fn miso_routed(&self, bus: &dyn Bus) -> bool {
+        self.pads.miso.is_none_or(|(port, pin, dipo)| {
+            let cfg = bus.read_u8(port + 0x40 + u64::from(pin)).ok();
+            let mux = bus.read_u8(port + 0x30 + u64::from(pin / 2)).ok();
+            (self.ctrla >> 20) & 3 == u32::from(dipo)
+                && cfg.is_some_and(|v| v & 1 != 0)
+                && mux.is_some_and(|v| (v >> ((pin & 1) * 4)) & 15 == self.pads.mux)
+        })
     }
 }
 
@@ -484,10 +497,14 @@ impl Peripheral for SamSercomSpi {
             } else {
                 tx
             };
+            let miso = self.miso_routed(bus);
             let mut rx = 0xff;
             for (dev, selected) in self.devices.iter_mut().zip(&self.selected) {
                 if *selected {
-                    rx &= dev.transfer(tx);
+                    let answer = dev.transfer(tx);
+                    if miso {
+                        rx &= answer;
+                    }
                 }
             }
             if self.ctrla & (1 << 30) != 0 {
