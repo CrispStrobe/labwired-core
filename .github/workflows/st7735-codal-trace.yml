@@ -7,6 +7,7 @@ on:
       - scripts/st7735-codal-trace/**
       - .github/workflows/st7735-codal-trace.yml
       - crates/core/tests/st7735_sam_guest.rs
+      - crates/core/tests/fixtures/st7735-codal-host-trace.json
   workflow_dispatch:
 
 permissions:
@@ -31,6 +32,7 @@ jobs:
           python3 scripts/st7735-codal-trace/run.py
           --work-dir "$RUNNER_TEMP"
           --output "$RUNNER_TEMP/st7735-codal-trace.json"
+          --fixture crates/core/tests/fixtures/st7735-codal-host-trace.json
       - uses: actions/upload-artifact@v4
         with:
           name: st7735-codal-host-trace
