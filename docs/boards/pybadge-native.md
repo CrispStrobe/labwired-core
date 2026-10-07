@@ -92,6 +92,26 @@ colour-transfer behavior and qualify an explicit supported profile; do not seed
 an invented identity LUT or weaken the existing unknown-pixel controls to obtain
 a passing frame.
 
+### Public bootloader candidate — not yet adopted
+
+[Adafruit's PyBadge CF2 source at d4dc9288](https://github.com/adafruit/uf2-samdx1/blob/d4dc92889759c0c551683420e24c5ef535ac303e/boards/arcade_pybadge/board_config.h)
+provides a reproducible candidate input: board ID `0x239A0033`, width 160,
+height 128, `DISPLAY_CFG0=0x80`, `DISPLAY_CFG1=0x12C2D` and
+`DISPLAY_CFG2=0x18`, with reset PA0, backlight PA1 and the SPI wiring above.
+That board ID satisfies the pinned PXT renderer's Adafruit predicate. These
+are source defaults, not evidence that an emulator or installed application
+loaded those values. Qualify their effective selection explicitly; do not inject
+them silently to make an existing guest progress.
+
+The pinned Arcada board source linked above instead calls
+`initR(INITR_BLACKTAB)` and rotation 1 for a 160×128 display. The independently
+[pinned Adafruit driver](https://github.com/adafruit/Adafruit-ST7735-Library/blob/62112b90eddcb2ecc51f474e9fe98b68eb26cb2a/Adafruit_ST7735.cpp)
+uses zero start offsets for BLACKTAB and MY|MV|RGB for rotation 1. This is
+another software initialization convention, not proof of the module's GM straps
+or equivalence to CODAL's swapped coordinate convention. Keep GM00's 132×162
+memory fixture separate from the module aperture/mirroring decision until that
+decision has primary module evidence and independent corner tests.
+
 ## Runtime provenance and DMA dependency
 
 [Lite run36567239929](https://github.com/CrispStrobe/brickwright-lite/actions/runs/36567239929)
