@@ -84,6 +84,14 @@ Preserve odd-width/height packing, transfer batching and CS/D/C behavior; do not
 replace the production method with an authored equivalent and call that original
 source execution. Full original ARM/DMA completion remains a later requirement.
 
+There is also an unresolved model boundary: the current ST7735R prototype's
+RGB444 decoder requires a valid RGBSET table, while the selected direct-renderer
+branch is designed not to upload that table. Capturing its wire bytes alone will
+not establish visible colours in this prototype. Establish the actual module's
+colour-transfer behavior and qualify an explicit supported profile; do not seed
+an invented identity LUT or weaken the existing unknown-pixel controls to obtain
+a passing frame.
+
 ## Runtime provenance and DMA dependency
 
 [Lite run36567239929](https://github.com/CrispStrobe/brickwright-lite/actions/runs/36567239929)
