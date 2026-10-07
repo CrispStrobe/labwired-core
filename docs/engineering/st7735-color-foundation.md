@@ -178,6 +178,10 @@ made by this bounded foundation.
 The first nonzero rectangular literal-layout guest and wrong-axis negative
 subsequently landed in PR164. Read its [bounded qualification](st7735-rectangular-controls.md)
 and the [automatic foundation-main native results](../receipts/2026-10-07-st7735-main/README.md).
+The later [PR167 merged-main native snapshot](../receipts/2026-10-07-st7735-main-d102/README.md)
+also passed 42 chip-spin floors and 82 relative checks; PyBadge spin median was
+61.036527x, minimum 60.630180x. These are native spin results, not active-panel
+or browser-WASM rates or a controlled gain over the earlier snapshot.
 This does not close the actual-driver or all-orientation tasks below.
 
 1. Preserve the landed codec, parser, inspection, GPIO and actual-guest controls;
@@ -191,8 +195,11 @@ This does not close the actual-driver or all-orientation tasks below.
 
 The pinned [CODAL stream](https://github.com/lancaster-university/codal-core/blob/312ae57e0b31f5b9df07a81e9d846945828e3c5a/source/drivers/ST7735.cpp)
 is the later integration input. Independent datasheet vectors and actual driver
-bytes must agree before a production-stream claim; no such guest run exists for
-this foundation yet.
+bytes must agree before a production-stream claim.
+[PR167's captured-stream guest](st7735-codal-sam-binding.md) now qualifies
+the small pinned stock-CODAL palette/RAMWR inputs through authored blocking SAM
+MMIO. It does not qualify deployed PXT configuration, the RGB444 direct path,
+all orientations, production DMA/IRQ or the physical module.
 
 ## Follow-on lane: rectangular production-stream and panel binding
 
