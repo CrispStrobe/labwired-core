@@ -31,10 +31,20 @@ in the engine first, followed by an explicit qualified consumer pin.
   generic ATSAMD51 was **67.97x**, batch **1023.8**. This is a real measured
   regression, not merely missing relative-perf metadata; the relative stage
   did not execute after the RTx failure. Track [issue158](https://github.com/CrispStrobe/labwired-core/issues/158).
-  The SPI model's legacy tick requirement prevents idle batching. The proposed
-  repair gives idle SPI no scheduled work and retains one-cycle active service
-  and shared-bus live clock gating. It is **not yet qualified**; no speedup is
-  claimed until exact-head correctness and repeated throughput receipts pass.
+  This is the pre-repair baseline, not current main's rate.
+- Idle-controller repair [PR159](https://github.com/CrispStrobe/labwired-core/pull/159)
+  merged as `ae127c89b9f60ed8a239f82858859c31ef8255af`, reviewed/tested source
+  `547da6da814afd0375199b192db7e3e2416042a0`; merge tree equals reviewed tree.
+  All 20 enabled correctness checks passed, including all workspace shards;
+  four declared full/warm/image jobs skipped. Two exact-source full runs passed
+  all 42 native chip-spin RTx floors: PyBadge median **61.4713x** and
+  **84.1056x**, batch **1023.8**. Only the second full run passed relative cost;
+  the first's STM32F411 failure and a failed diagnostic harness are preserved.
+  Valid isolated-build repeats also pass the unchanged selected baselines.
+  Read the [source-bound receipts and limitations](../receipts/2026-10-07-sam-spi-p0/README.md).
+  Idle SPI owns no scheduled work; active service remains one-cycle, with live
+  clock-gate freeze. **This is not active display, full-board or WASM proof.**
+  The full PyBadge GPIO resident still legitimately requires interval 1.
 - Native selected micro:bit [qualification37481145769](https://github.com/CrispStrobe/labwired-core/actions/runs/37481145769)
   passed on that main: GPIO median **6.6944x**, motion median **1.2748x**
   (minimum **1.2697x**, all five motion runs above 1x). These are native active
@@ -47,7 +57,7 @@ Performance tasks and original results: [bw-board lanes](https://github.com/Cris
 
 ## Order and invariant acceptance
 
-Repair and qualify the idle-SPI regression first. P1 has landed; P3 blocking
+P0's bounded idle-controller repair and P1 have landed. P3 blocking
 display work comes next, then P2 IRQ routing and P4 DMA as separate changes.
 P5 needs P3/P4. Dynamic clock-rate derivation remains a separately qualified
 part of P2, not a prerequisite for truthful nominal-clock blocking tests.
@@ -59,24 +69,33 @@ workspace shards run. Preserve downcast ceilings, generated-doc checks,
 hardware captures/acknowledgment expiry and unchanged performance floors.
 No invented pixels/completions, waivers or automatic consumer pin movement.
 
-## P0 — restore idle PyBadge batching (in progress; qualification owed)
+## P0 — restore idle controller batching (landed; stability follow-up open)
 
 **Files:** `crates/core/src/peripherals/sam/sercom_spi.rs`, scheduler delivery
 in `crates/core/src/lib.rs`, `crates/core/tests/sam_sercom_spi.rs`.
 
-Move idle SPI off the legacy walk through real scheduler ownership, not a false
-inert declaration. Retain a forced-walk reference. Active service may remain
-one-cycle initially: do not advertise an active display speedup from an idle
+PR159 moves idle SPI off the legacy walk through real scheduler ownership, not
+a false inert declaration. Retain its forced-walk reference. Active service
+remains one-cycle: do not advertise an active display speedup from an idle
 spin improvement. Keep the central clock-gate resolver authoritative and freeze
 the countdown while MCLK or GCLK is disabled. Preserve mux blocking, CS/DC,
 FIFO, peek, W1C, disable/reset cancellation and guest TXC polling.
 
-**Done when:** scheduler/forced-walk and feature-off tests pass, authored guest
+**Preserve:** scheduler/forced-walk and feature-off tests pass, authored guest
 results match at intervals 1/64/1024, both clock gates freeze/resume without
 early/duplicate bytes, and repeated exact-source hosted Core Perf runs recover
 PyBadge >=1x without weakening any other chip's floor or relative baseline.
 All enabled final-head CI checks must finish before merge. A later deadline
 optimization must separately prove clock-pause and GPIO-observation semantics.
+
+**Open measurement follow-up:** the identical final source produced F411 batch
+1.9 Ir/step (failed) and 1.6 (passed) in full runs; valid focused candidate
+repeats produced 1.8 and 1.6 (both passed). Do not erase the red receipt or claim
+its cause resolved. Instrument raw low/high instruction counts and initialization
+versus guest-loop contributions on pinned binaries; prove a stable measurement
+without increasing tolerances, changing baselines or selecting only good runs.
+The invalid shared-target diagnostic must never count as an A/B. This follow-up
+does not qualify active devices or replace P3/P2/P4/P5.
 
 ## P1 — blocking SPI (landed; not native Arcade)
 
