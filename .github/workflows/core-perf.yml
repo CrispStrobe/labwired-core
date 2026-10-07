@@ -47,6 +47,11 @@ jobs:
           sudo apt-get install -y valgrind
           python -m pip install --quiet pyyaml
           mkdir results
+          # The unmodified fixture harness resolves each checkout's target/
+          # directly. Point both at the shared build root, as Cargo does.
+          mkdir -p target
+          ln -s ../target base/target
+          ln -s ../target candidate/target
           uname -a > results/runner.txt
           lscpu >> results/runner.txt
           rustc -vV >> results/runner.txt
