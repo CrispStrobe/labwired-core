@@ -1,8 +1,14 @@
-# PyBadge native panel/runtime contract — 2026-10-05
+# PyBadge native panel/runtime contract — 2026-10-07
 
 Buttons are merged in [PR151](https://github.com/CrispStrobe/labwired-core/pull/151).
 Blocking SAM SPI landed in
 [PR152](https://github.com/CrispStrobe/labwired-core/pull/152).
+Idle-controller batching and clock-freeze repair landed in
+[PR159](https://github.com/CrispStrobe/labwired-core/pull/159).
+Its [native chip-spin receipts](../receipts/2026-10-07-sam-spi-p0/README.md)
+do not qualify active display, full-board batching or WASM. The full board's
+DATA-driving GPIO resident still requires per-cycle service. Active SPI retains
+one-cycle service; no active-display performance gain is claimed.
 Native display, DMA and production Arcade are not yet qualified. Work contracts
 and pass criteria: [engine lanes](../engineering/target-next-lanes.md).
 

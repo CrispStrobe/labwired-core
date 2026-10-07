@@ -1,0 +1,44 @@
+{
+  "contract_failures": [],
+  "matched": {
+    "atsamd51-pybadge": {
+      "fixture": "nrf",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "stm32f401": {
+      "fixture": "stm32",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "stm32f411ceu6": {
+      "fixture": "stm32",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    }
+  },
+  "measured": {
+    "atsamd51-pybadge": {
+      "batch": 1.4
+    },
+    "stm32f401": {
+      "batch": 1.5
+    },
+    "stm32f411ceu6": {
+      "batch": 1.6
+    }
+  },
+  "never_measured": [],
+  "ok": true,
+  "regressions": [],
+  "skipped": {},
+  "stale": [],
+  "unmeasurable": [],
+  "waived": {}
+}
