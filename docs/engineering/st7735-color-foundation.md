@@ -175,6 +175,11 @@ made by this bounded foundation.
 
 ## Next implementation slice
 
+The first nonzero rectangular literal-layout guest and wrong-axis negative
+subsequently landed in PR164. Read its [bounded qualification](st7735-rectangular-controls.md)
+and the [automatic foundation-main native results](../receipts/2026-10-07-st7735-main/README.md).
+This does not close the actual-driver or all-orientation tasks below.
+
 1. Preserve the landed codec, parser, inspection, GPIO and actual-guest controls;
    do not repeat their implementation. Partial-table silicon contents and
    external net-only GPIO notifications remain outside this boundary.
