@@ -6,6 +6,11 @@ production model, panel descriptor, consumer pin, capture or performance floor.
 The seven-test target has not yet been executed at this source; no passing guest
 result or production-panel qualification is claimed.
 
+Guest-file SHA256 at preparation:
+`fe3b87330a27277123d944635f51241c809f97d99c4614a2e61d035b3f52b739`.
+The original driver-capture fixture remains byte-identical; its immutable hash
+and source provenance are in the linked captured-command guide.
+
 ## Independent address vectors
 
 [ST7735R v0.2](https://cdn-shop.adafruit.com/datasheets/ST7735R_V0.2.pdf)
