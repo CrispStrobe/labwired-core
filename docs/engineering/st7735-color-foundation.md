@@ -20,6 +20,11 @@ pixel discard, table invalidation/replacement and reset/depth changes. These
 controls are not evidence of a working native screen. Hosted checks must pass
 on the exact source before adopting the codec.
 
+`.github/workflows/st7735-color-controls.yml` compiles this dependency-free
+module directly with Rust 1.95.0 and requires all eleven controls to be listed
+before execution. This focused hosted check supplements, not replaces, the
+normal crate/workspace checks; it does not execute a guest or measure RTx.
+
 ## Next implementation slice
 
 1. Add an opt-in serial-colour extension to the generic display descriptor and
