@@ -105,10 +105,9 @@ use std::path::PathBuf;
 /// as a declarative GPIO scan. New part, no Rust model to delete.
 /// 87 → 89: `lsm303agr_accel.yaml` / `lsm303agr_mag.yaml`, the micro:bit V2
 /// motion sensor. The fork's hand-written `lsm303agr.rs` was not taken.
-/// 89 → 90: `st7735r.yaml`, an unregistered controller-memory prototype on the
-/// existing display primitive. This counts a descriptor file, NOT shipped
-/// PyBadge/module/native-Arcade qualification. No Rust part is added.
-const YAML_DEVICES_BASELINE: usize = 90;
+// The unregistered ST7735 controller-memory prototype is a test fixture,
+// not a production device descriptor. Keep main's production baseline.
+const YAML_DEVICES_BASELINE: usize = 89;
 
 /// Device models still hand-written in Rust
 /// (`crates/core/src/peripherals/components/*.rs`, minus [`EXCLUDED`]).
