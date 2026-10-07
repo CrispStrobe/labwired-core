@@ -71,6 +71,7 @@ pub mod seven_seg_font;
 pub mod shm_i2c;
 pub mod sps30;
 pub mod step_dir_motor;
+pub mod st7735_color;
 pub mod supply;
 pub mod tca9548a;
 pub mod unipolar_stepper;
