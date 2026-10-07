@@ -105,6 +105,8 @@ use std::path::PathBuf;
 /// as a declarative GPIO scan. New part, no Rust model to delete.
 /// 87 → 89: `lsm303agr_accel.yaml` / `lsm303agr_mag.yaml`, the micro:bit V2
 /// motion sensor. The fork's hand-written `lsm303agr.rs` was not taken.
+// The unregistered ST7735 controller-memory prototype is a test fixture,
+// not a production device descriptor. Keep main's production baseline.
 const YAML_DEVICES_BASELINE: usize = 89;
 
 /// Device models still hand-written in Rust
@@ -237,6 +239,10 @@ const EXCLUDED: &[(&str, &str)] = &[
     (
         "sensirion.rs",
         "the shared Sensirion CRC-8 helper, not a part",
+    ),
+    (
+        "st7735_color.rs",
+        "pure serial byte/LUT codec used by the declarative display engine; no bus attachment, framebuffer, geometry or device identity, not a separate hand-written display model",
     ),
     (
         "iolink_native.rs",
