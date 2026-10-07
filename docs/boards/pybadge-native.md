@@ -116,6 +116,14 @@ or equivalence to CODAL's swapped coordinate convention. Keep GM00's 132×162
 memory fixture separate from the module aperture/mirroring decision until that
 decision has primary module evidence and independent corner tests.
 
+There is also an unresolved model boundary: the current ST7735R prototype's
+RGB444 decoder requires a valid RGBSET table, while the selected direct-renderer
+branch is designed not to upload that table. Capturing its wire bytes alone will
+not establish visible colours in this prototype. Establish the actual module's
+colour-transfer behavior and qualify an explicit supported profile; do not seed
+an invented identity LUT or weaken the existing unknown-pixel controls to obtain
+a passing frame.
+
 ## Runtime provenance and DMA dependency
 
 The [PR177 original-map receipt](../receipts/2026-10-08-pybadge-link-map/README.md)
