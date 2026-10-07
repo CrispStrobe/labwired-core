@@ -1,10 +1,14 @@
-# Rectangular ST7735 blocking controls — qualification pending
+# Rectangular ST7735 blocking controls — bounded guest qualification passed
 
 This next P3 slice extends `crates/core/tests/st7735_sam_guest.rs`, not the
 production model or PyBadge wiring. The existing four tests remain; a fifth
 authored Cortex-M test adds a nonzero, non-square controller-memory window and
 an intentionally wrong-axis negative, in ordinary and forced-legacy SPI paths.
-No local emulator execution or hosted passing result is claimed yet.
+Hosted qualification passed in [PR164](https://github.com/CrispStrobe/labwired-core/pull/164),
+merge `077055e133eb3db102adafd2bbf654e5054b578e`. All five guest tests executed
+and passed in both feature configurations; all 19 enabled checks passed.
+The tested/landed trees match. Read the [exact-source receipts](../receipts/2026-10-07-st7735-main/README.md).
+No local emulator execution was needed.
 
 ## Literal vector and independent expectations
 
@@ -33,9 +37,9 @@ injection, completion seeding or guest-controller replacement is used.
 
 ## Acceptance and still-open work
 
-Require all five guest tests to execute and pass in the hosted feature-on and
-feature-off jobs, plus all enabled exact-head checks. Record source and guest
-hashes, original failed results and tested/landed tree identities before merge.
+Preserve all five guest tests passing in hosted feature-on and feature-off jobs,
+plus all enabled exact-head checks for each affected change. Record source and
+guest hashes, original failures and tested/landed tree identities before merge.
 No floor, catalogue allowance, production descriptor, app pin or capture moves.
 
 This source review and literal authored trace do **not** execute the compiled
