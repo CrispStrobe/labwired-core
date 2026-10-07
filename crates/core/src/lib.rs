@@ -1650,6 +1650,16 @@ pub trait Peripheral: std::fmt::Debug + Send {
         sched::EventResult::default()
     }
 
+    /// Opt in when service represents ONE clocked peripheral tick, rather
+    /// than an absolute deadline. Both walk and event delivery check the bus's
+    /// live clock gate. While gated, an event retries after one CPU cycle
+    /// without calling the model, so work freezes without losing its wake.
+    /// Deadline-driven models must not opt in: they need their own elapsed-time
+    /// accounting. Default preserves existing scheduler delivery semantics.
+    fn requires_clocked_tick(&self) -> bool {
+        false
+    }
+
     /// Phase 2B.1: synchronously notified when a subscribed clock domain
     /// changes rate. Implementations typically cancel in-flight events and
     /// reschedule at the new cadence. Default no-op.
@@ -1666,6 +1676,14 @@ pub trait Peripheral: std::fmt::Debug + Send {
     /// the scheduler to drive it. Default `false` preserves existing per-cycle
     /// tick behaviour.
     fn uses_scheduler(&self) -> bool {
+        false
+    }
+
+    /// Diagnostic capability: pin a model to its retained legacy reference.
+    /// Returns false when unsupported. Use only before execution, then call
+    /// `SystemBus::recompute_walk_deletable` and `refresh_peripheral_index`.
+    /// This avoids concrete-type reaches in differential harnesses.
+    fn force_legacy_walk(&mut self) -> bool {
         false
     }
 
@@ -4026,6 +4044,13 @@ impl<C: Cpu> Machine<C> {
         for ev in due.drain(..) {
             let idx = ev.peripheral_idx as usize;
             if idx >= self.bus.peripherals.len() {
+                continue;
+            }
+            if self.bus.peripherals[idx].dev.requires_clocked_tick()
+                && !self.bus.is_peripheral_clocked(idx)
+            {
+                self.sched
+                    .schedule(now + 1, ev.peripheral_idx, ev.event_token);
                 continue;
             }
             // Swap the peripheral out so we can pass `&mut self.bus` into

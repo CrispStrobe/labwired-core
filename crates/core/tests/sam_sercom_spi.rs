@@ -5,9 +5,10 @@ use labwired_config::{ChipDescriptor, SystemManifest};
 use labwired_core::{
     bus::SystemBus,
     cpu::cortex_m::CortexM,
+    cycle_clock::event_scheduler_enabled,
     memory::ProgramImage,
     peripherals::spi::{SpiDevice, SpiSampling},
-    Arch, Bus, Machine,
+    AdvanceRequest, Arch, Bus, Machine,
 };
 use std::sync::{Arc, Mutex};
 
@@ -67,10 +68,25 @@ impl SpiDevice for Slave {
     }
 }
 fn board() -> (SystemBus, Arc<Mutex<Seen>>) {
+    board_with_drive(true)
+}
+
+fn board_with_drive(legacy: bool) -> (SystemBus, Arc<Mutex<Seen>>) {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let chip = ChipDescriptor::from_file(root.join("configs/chips/atsamd51-pybadge.yaml")).unwrap();
     let manifest = SystemManifest::from_file(root.join("configs/systems/pybadge.yaml")).unwrap();
     let mut bus = SystemBus::from_config(&chip, &manifest).unwrap();
+    if legacy {
+        assert!(bus
+            .peripherals
+            .iter_mut()
+            .find(|p| p.name == "sercom4")
+            .unwrap()
+            .dev
+            .force_legacy_walk());
+        bus.recompute_walk_deletable();
+        bus.refresh_peripheral_index();
+    }
     let seen = Arc::new(Mutex::new(Seen::default()));
     bus.attach_spi_device(
         "sercom4",
@@ -174,16 +190,39 @@ fn missing_clock_mux_or_master_mode_never_reaches_slave() {
 
 #[test]
 fn pending_completion_freezes_when_clock_is_removed() {
-    let (mut bus, seen) = board();
-    enable(&mut bus);
-    bus.write_u8(SPI + 0x28, 0x51).unwrap();
-    bus.tick_peripherals();
-    bus.write_u32(MCLK, 0).unwrap();
-    settle(&mut bus);
-    assert!(seen.lock().unwrap().bytes.is_empty());
-    bus.write_u32(MCLK, 1).unwrap();
-    settle(&mut bus);
-    assert_eq!(seen.lock().unwrap().bytes, [0x51]);
+    for forced in [false, true] {
+        for gate in [MCLK, GCLK] {
+            let (mut bus, seen) = board();
+            let tick = |bus: &mut SystemBus| {
+                if forced {
+                    let _ = bus.tick_peripherals_fully_forced();
+                } else {
+                    bus.tick_peripherals();
+                }
+            };
+            enable(&mut bus);
+            bus.write_u8(SPI + 0x28, 0x51).unwrap();
+            tick(&mut bus);
+            bus.write_u32(gate, 0).unwrap();
+            for _ in 0..100 {
+                tick(&mut bus);
+            }
+            assert!(seen.lock().unwrap().bytes.is_empty());
+            bus.write_u32(gate, if gate == MCLK { 1 } else { 1 << 6 })
+                .unwrap();
+            for _ in 0..10 {
+                tick(&mut bus);
+            }
+            assert!(
+                seen.lock().unwrap().bytes.is_empty(),
+                "gated countdown advanced: forced={forced}, gate={gate:#x}"
+            );
+            for _ in 0..100 {
+                tick(&mut bus);
+            }
+            assert_eq!(seen.lock().unwrap().bytes, [0x51]);
+        }
+    }
 }
 
 #[test]
@@ -339,4 +378,172 @@ fn cortex_m_guest_polls_real_spi_completion_and_wrong_mux_cannot_complete() {
             assert!(seen.lock().unwrap().bytes.is_empty());
         }
     }
+}
+
+#[test]
+fn polling_guest_matches_legacy_with_auto_batches_and_scheduler() {
+    for legacy in [true, false] {
+        for interval in [1, 64, 1024] {
+            if interval > 1 && !event_scheduler_enabled() {
+                continue;
+            }
+            for correct_mux in [true, false] {
+                let (mut bus, seen) = board_with_drive(legacy);
+                bus.config.peripheral_tick_interval = if legacy { 1 } else { interval };
+                let mut machine = Machine::new(CortexM::new(), bus);
+                machine.config.peripheral_tick_interval = if legacy { 1 } else { interval };
+                machine.load_firmware(&polling_guest(correct_mux)).unwrap();
+                machine.advance(AdvanceRequest::run(Some(2000))).unwrap();
+                let marker = machine.bus.read_u32(0x20000000).unwrap();
+                let seen = seen.lock().unwrap();
+                if correct_mux {
+                    assert_eq!(marker, 0xcafebabe, "legacy={legacy}, interval={interval}");
+                    assert_eq!(seen.bytes, [0x51, 0x42]);
+                    assert_eq!(seen.dc, [false, true]);
+                    assert_eq!(machine.bus.read_u8(SPI + 0x18).unwrap() & 7, 7);
+                    assert_eq!(machine.bus.read_u8(SPI + 0x28).unwrap(), 0x51 ^ 0x5a);
+                    assert_eq!(machine.bus.read_u8(SPI + 0x28).unwrap(), 0x42 ^ 0x5a);
+                } else {
+                    assert_ne!(marker, 0xcafebabe);
+                    assert!(seen.bytes.is_empty());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn scheduler_clock_gate_freezes_inflight_frame_and_resumes_once() {
+    for gate in [MCLK, GCLK] {
+        let (bus, seen) = board_with_drive(false);
+        let mut machine = Machine::new(CortexM::new(), bus);
+        machine.load_firmware(&polling_guest(true)).unwrap();
+        // Wait for ENABLE, then execute DATA setup and the beginning of polling.
+        // This also works for the walk reference, which consumes the holding
+        // byte before the host can observe DRE=0 at the next boundary.
+        let mut enabled = false;
+        for _ in 0..200 {
+            machine.step().unwrap();
+            if machine.bus.read_u32(SPI).unwrap() & 2 != 0 {
+                enabled = true;
+                break;
+            }
+        }
+        assert!(enabled, "guest did not enable SPI");
+        for _ in 0..5 {
+            machine.step().unwrap();
+        }
+        assert!(seen.lock().unwrap().bytes.is_empty());
+        machine.bus.write_u32(gate, 0).unwrap();
+        for _ in 0..100 {
+            machine.step().unwrap();
+        }
+        assert!(
+            seen.lock().unwrap().bytes.is_empty(),
+            "unclocked frame escaped"
+        );
+        machine
+            .bus
+            .write_u32(gate, if gate == MCLK { 1 } else { 1 << 6 })
+            .unwrap();
+        for _ in 0..10 {
+            machine.step().unwrap();
+        }
+        assert!(
+            seen.lock().unwrap().bytes.is_empty(),
+            "gated time consumed BAUD countdown"
+        );
+        for _ in 0..2000 {
+            machine.step().unwrap();
+        }
+        assert_eq!(seen.lock().unwrap().bytes, [0x51, 0x42]);
+        assert_eq!(machine.bus.read_u32(0x20000000).unwrap(), 0xcafebabe);
+    }
+}
+
+#[test]
+fn idle_spi_does_not_arm_events_or_force_the_legacy_walk() {
+    let (board_bus, _) = board_with_drive(false);
+    // The full board has a GPIO shift register that drives DATA from the
+    // resident service pass. That independent contract must still pin ticks
+    // to one, even when every controller is scheduler-driven.
+    assert!(board_bus
+        .gpio_devices
+        .iter()
+        .any(|device| device.needs_per_cycle_service()));
+    assert_eq!(board_bus.max_safe_tick_interval(), 1);
+
+    // Isolate controller walk deletion from the board residents. This is the
+    // chip-level perf fleet boundary, not a claim about full-board batching.
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let chip = ChipDescriptor::from_file(root.join("configs/chips/atsamd51-pybadge.yaml")).unwrap();
+    let mut manifest =
+        SystemManifest::from_file(root.join("configs/systems/pybadge.yaml")).unwrap();
+    manifest.external_devices.clear();
+    let bus = SystemBus::from_config(&chip, &manifest).unwrap();
+    let spi = &bus
+        .peripherals
+        .iter()
+        .find(|p| p.name == "sercom4")
+        .unwrap()
+        .dev;
+    assert_eq!(spi.uses_scheduler(), event_scheduler_enabled());
+    assert_eq!(spi.needs_legacy_walk(), !event_scheduler_enabled());
+    assert!(!spi.needs_bus_tick());
+    if event_scheduler_enabled() {
+        assert_eq!(bus.max_safe_tick_interval(), 1024);
+    }
+    let mut machine = Machine::new(CortexM::new(), bus);
+    // Wrong mux guest would arm an event; idle setup must not.
+    machine.load_firmware(&polling_guest(true)).unwrap();
+    machine.step().unwrap();
+    assert!(machine.sched.is_empty());
+}
+
+#[test]
+fn reset_cancels_pending_wake_without_reselecting_slave_and_next_frame_works() {
+    let (bus, seen) = board_with_drive(false);
+    let mut machine = Machine::new(CortexM::new(), bus);
+    let mut bytes = vec![0u8; 0x100];
+    bytes[0..4].copy_from_slice(&0x20004000u32.to_le_bytes());
+    bytes[4..8].copy_from_slice(&0x4101u32.to_le_bytes());
+    bytes.extend(0xe7feu16.to_le_bytes()); // authored idle branch, no MMIO setup
+    let mut image = ProgramImage::new(0x4101, Arch::Arm);
+    image.add_segment(0x4000, bytes);
+    machine.load_firmware(&image).unwrap();
+    // Explicit host-MMIO cancellation adversary; not native firmware proof.
+    enable(&mut machine.bus);
+    machine.bus.write_u8(SPI + 0x28, 0x81).unwrap();
+    for _ in 0..5 {
+        machine.step().unwrap();
+    }
+    assert_eq!(seen.lock().unwrap().selects, 1);
+    machine.bus.write_u32(SPI, 1).unwrap();
+    assert_eq!(machine.bus.read_u8(SPI + 0x18).unwrap(), 0);
+    // Cancellation is clock-independent: a stale wake must retire even if
+    // the guest turns the clock off before the next scheduler boundary.
+    machine.bus.write_u32(MCLK, 0).unwrap();
+    for _ in 0..100 {
+        machine.step().unwrap();
+    }
+    {
+        let seen = seen.lock().unwrap();
+        assert!(seen.bytes.is_empty());
+        assert_eq!(seen.selects, 1);
+        assert_eq!(seen.releases, 1);
+    }
+    assert!(machine.sched.is_empty(), "stale reset wake stayed armed");
+    assert_eq!(machine.bus.read_u8(SPI + 0x18).unwrap(), 0);
+    enable(&mut machine.bus);
+    machine.bus.write_u8(SPI + 0x28, 0x42).unwrap();
+    for _ in 0..100 {
+        machine.step().unwrap();
+    }
+    assert_eq!(seen.lock().unwrap().bytes, [0x42]);
+    machine.bus.write_u32(PORT + 0x18, 1 << 7).unwrap();
+    for _ in 0..5 {
+        machine.step().unwrap();
+    }
+    assert_eq!(seen.lock().unwrap().releases, 2);
+    assert!(machine.sched.is_empty());
 }
