@@ -18,7 +18,6 @@ jobs:
     timeout-minutes: 45
     env:
       CARGO_INCREMENTAL: '0'
-      CARGO_TARGET_DIR: ${{ github.workspace }}/target
     steps:
       - uses: actions/checkout@v5
         with:
@@ -33,11 +32,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           targets: thumbv6m-none-eabi
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: sam-spi-focused-pair
-          workspaces: |
-            base -> ../target
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
@@ -47,11 +41,6 @@ jobs:
           sudo apt-get install -y valgrind
           python -m pip install --quiet pyyaml
           mkdir results
-          # The unmodified fixture harness resolves each checkout's target/
-          # directly. Point both at the shared build root, as Cargo does.
-          mkdir -p target
-          ln -s ../target base/target
-          ln -s ../target candidate/target
           uname -a > results/runner.txt
           lscpu >> results/runner.txt
           rustc -vV >> results/runner.txt
@@ -59,14 +48,16 @@ jobs:
           git -C candidate rev-parse HEAD > results/candidate-source.txt
       - name: Build base CLI
         working-directory: base
-        run: cargo build --release --locked -p labwired-cli --features event-scheduler
+        run: |
+          cargo build --release --locked -p labwired-cli --features event-scheduler
+          sha256sum target/release/labwired > ../results/base-binary.sha256
       - name: Measure base twice (preserve baseline failures)
         working-directory: base
         run: |
           for repeat in 1 2; do
             set +e
             python3 scripts/perf/board_perf.py \
-              --cli "$CARGO_TARGET_DIR/release/labwired" \
+              --cli target/release/labwired \
               --boards stm32f411ceu6,stm32f401,atsamd51-pybadge --modes batch \
               --require-all --status-json "../results/base-${repeat}.json" \
               > "../results/base-${repeat}.txt" 2>&1
@@ -75,16 +66,18 @@ jobs:
             echo "$result" > "../results/base-${repeat}.exit"
             test -s "../results/base-${repeat}.json"
           done
-      - name: Build candidate CLI (same runner and target directory)
+      - name: Build candidate CLI (same runner, isolated target directory)
         working-directory: candidate
-        run: cargo build --release --locked -p labwired-cli --features event-scheduler
+        run: |
+          cargo build --release --locked -p labwired-cli --features event-scheduler
+          sha256sum target/release/labwired > ../results/candidate-binary.sha256
       - name: Measure candidate twice (preserve baseline failures)
         working-directory: candidate
         run: |
           for repeat in 1 2; do
             set +e
             python3 scripts/perf/board_perf.py \
-              --cli "$CARGO_TARGET_DIR/release/labwired" \
+              --cli target/release/labwired \
               --boards stm32f411ceu6,stm32f401,atsamd51-pybadge --modes batch \
               --require-all --status-json "../results/candidate-${repeat}.json" \
               > "../results/candidate-${repeat}.txt" 2>&1
@@ -92,6 +85,7 @@ jobs:
             set -e
             echo "$result" > "../results/candidate-${repeat}.exit"
             test -s "../results/candidate-${repeat}.json"
+            python -c 'import json,sys; r=json.load(open(sys.argv[1])); assert not any(r[k] for k in ("contract_failures", "unmeasurable", "never_measured", "skipped")), r' "../results/candidate-${repeat}.json"
           done
       - name: Upload raw diagnostic reports (not executable artifacts)
         if: always()
