@@ -9,7 +9,11 @@ Its [native chip-spin receipts](../receipts/2026-10-07-sam-spi-p0/README.md)
 do not qualify active display, full-board batching or WASM. The full board's
 DATA-driving GPIO resident still requires per-cycle service. Active SPI retains
 one-cycle service; no active-display performance gain is claimed.
-Native display, DMA and production Arcade are not yet qualified. Work contracts
+The [ST7735 colour/GPIO foundation](../engineering/st7735-color-foundation.md)
+landed in [PR161](https://github.com/CrispStrobe/labwired-core/pull/161), with
+four authored blocking SAM guest tests passing in both feature configurations.
+Its test-only 2×2 crop is not the deployed panel. Production panel binding,
+DMA and native Arcade are not yet qualified. Work contracts
 and pass criteria: [engine lanes](../engineering/target-next-lanes.md).
 
 ## Wiring and primary definitions
@@ -29,7 +33,8 @@ The existing five NeoPixels are PA15.
 
 `configs/devices/st7789.yaml` is 240x320 fixed RGB565; consuming a COLMOD
 argument is not ST7735 format support. Generic display reset/backlight GPIO
-observation also needs qualification. ST7735R RAM is 132x162; GM=11 uses 128x160
+observation now has bounded write-driven guest qualification; external net-only
+notifications and physical timing remain excluded. ST7735R RAM is 132x162; GM=11 uses 128x160
 address bounds, GM=00 full bounds. Verify actual module mode/visible offsets
 before mirror/crop formulas, with four corners tested in all orientations.
 

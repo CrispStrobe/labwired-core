@@ -49,7 +49,15 @@ in the engine first, followed by an explicit qualified consumer pin.
   passed on that main: GPIO median **6.6944x**, motion median **1.2748x**
   (minimum **1.2697x**, all five motion runs above 1x). These are native active
   guest results, not browser RTx or whole-board qualification.
-- ST7735, DMA-driven native Arcade, QSPI, USB and audio are not qualified by
+- ST7735 colour/parser/GPIO foundation landed in
+  [PR161](https://github.com/CrispStrobe/labwired-core/pull/161), merge
+  `f77110d4646cab67cb12be9a19fc787afe3a650b`, with 20 enabled checks passing.
+  All four authored SAM guest tests passed with and without scheduler features.
+  Fresh selected native micro:bit medians were **5.6307x** GPIO/display/buttons
+  and **1.1656x** motion/display/buttons (minimum **1.1487x** motion).
+  Read the [exact-source qualification and remaining P3 contract](st7735-color-foundation.md).
+  These rates are not an A/B, PyBadge or WASM result; no app pin moved.
+- The actual ST7735 production panel, DMA-driven native Arcade, QSPI, USB and audio are not qualified by
   buttons/controller tests. CP13 and CP14 remain open.
 
 Consumer tasks: [Lite lanes](https://github.com/CrispStrobe/brickwright-lite/blob/main/docs/TARGET-NEXT-LANES.md).
@@ -124,7 +132,16 @@ handlers, pending-on-enable/reset/clock-off behavior is tested, rate changes
 preserve order/deadlines, and scheduler/feature-off regressions pass. Functional
 countdowns do not establish wire or silicon-cycle accuracy.
 
-## P3 — ST7735 stream, panel and GPIO observation (after P1)
+## P3 — ST7735 stream, panel and GPIO observation (foundation landed; open)
+
+PR161 completed the codec, opt-in parser/memory/inspection, write-driven GPIO
+and bounded 2×2 authored blocking guest foundation. Preserve those controls;
+do not recreate them or register their test-only fixture as a production kit.
+Next execute the [rectangular production-stream and panel-binding contract](st7735-color-foundation.md#follow-on-lane-rectangular-production-stream-and-panel-binding):
+deployed public build configuration, independent non-square address vectors,
+actual driver bytes, module aperture/GM evidence and presentation semantics.
+The requirements below describe the full P3 boundary, not already reached
+physical-panel or native-runtime qualification.
 
 **Files:** `crates/core/src/peripherals/components/declarative_display.rs`,
 generic GPIO-observation seam, new `configs/devices/` ST7735 descriptor,
