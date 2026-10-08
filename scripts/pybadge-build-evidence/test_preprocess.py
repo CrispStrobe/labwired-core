@@ -1,9 +1,16 @@
 import unittest
 
-from preprocess import flags_from_make, require_rgb444
+from preprocess import compiler_from_record, flags_from_make, require_rgb444
 
 
 class Admission(unittest.TestCase):
+    def test_generated_compiler_identity(self):
+        good = 'set(CMAKE_CXX_COMPILER "/usr/bin/arm-none-eabi-g++")\n'
+        self.assertEqual(compiler_from_record(good), "/usr/bin/arm-none-eabi-g++")
+        for mutant in ("", good + good, good.replace("arm-none-eabi-g++", "g++"), good.replace("/usr/bin/", "")):
+            with self.assertRaises(ValueError):
+                compiler_from_record(mutant)
+
     def test_generated_flags_preserve_quoted_arguments(self):
         raw = 'CXX_DEFINES = -DFOO=1\nCXX_INCLUDES = -I"a b"\nCXX_FLAGS = -include /public/config.h -O2\n'
         self.assertEqual(flags_from_make(raw), [

@@ -30,6 +30,13 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def compiler_from_record(text):
+    matches = re.findall(r'^set\(CMAKE_CXX_COMPILER "([^"]+)"\)$', text, re.MULTILINE)
+    if len(matches) != 1 or not Path(matches[0]).is_absolute() or Path(matches[0]).name != "arm-none-eabi-g++":
+        raise ValueError("unexpected generated C++ compiler")
+    return matches[0]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
@@ -50,10 +57,7 @@ def main():
     if len(compiler_records) != 1:
         raise ValueError("ambiguous generated C++ compiler record")
     compiler_record = compiler_records[0].read_bytes()
-    compilers = re.findall(r'^set\(CMAKE_CXX_COMPILER "([^"]+)"\)$', compiler_record.decode(), re.MULTILINE)
-    if len(compilers) != 1 or Path(compilers[0]).name != "arm-none-eabi-g++":
-        raise ValueError("unexpected generated C++ compiler")
-    compiler = compilers[0]
+    compiler = compiler_from_record(compiler_record.decode())
     # Separate preprocessing with the actual target's generated flags; not a
     # claim that we captured the original compiler invocation or ran the guest.
     result = subprocess.run(
