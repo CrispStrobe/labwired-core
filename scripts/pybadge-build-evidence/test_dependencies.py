@@ -3,10 +3,25 @@ import json
 import tempfile
 import unittest
 
-from dependencies import capture_discovery, origin, parse_dependencies
+from dependencies import capture_discovery, origin, parse_dependencies, select_rules
 
 
 class Admission(unittest.TestCase):
+    def test_shared_rule_requires_actual_generated_recipe_and_names_gap(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory)
+            shared = build / "DEPFILE"
+            shared.write_text("last.cpp.o: /public/last.cpp\n")
+            with self.assertRaises(ValueError):
+                select_rules(build)
+            (build / "build.make").write_text("compiler -MF DEPFILE -c /public/last.cpp\n")
+            rules, mode = select_rules(build)
+            self.assertEqual(rules, [shared])
+            self.assertIn("overwritten units unqualified", mode)
+            per_object = build / "screen.cpp.o.d"
+            per_object.write_text("screen.cpp.o: /public/screen.cpp\n")
+            self.assertEqual(select_rules(build), ([per_object], "per-object GCC rules"))
+
     def test_discovery_preserves_generated_metadata_not_objects(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

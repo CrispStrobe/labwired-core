@@ -30,7 +30,7 @@ def origin(path, root):
 
 def capture_discovery(build, root, out):
     """Retain generated dependency recipes even when the assumed format is absent."""
-    names = {"depend.make", "compiler_depend.make", "depend.internal",
+    names = {"DEPFILE", "depend.make", "compiler_depend.make", "depend.internal",
              "DependInfo.cmake", "build.make"}
     inventory, captured = [], []
     total = 0
@@ -64,6 +64,20 @@ def capture_discovery(build, root, out):
         output.write("\n")
 
 
+def select_rules(build):
+    rules = sorted(build.rglob("*.o.d"))
+    if rules:
+        return rules, "per-object GCC rules"
+    # Actual CMake recipes from run37787234826 use -MF DEPFILE literally.
+    # Each shared file can represent only its last compiler invocation.
+    rules = sorted(build.rglob("DEPFILE"))
+    for rule in rules:
+        recipes = list(rule.parent.rglob("build.make"))
+        if not any(" -MF DEPFILE " in recipe.read_text() for recipe in recipes):
+            raise ValueError("shared DEPFILE lacks observed generated recipe binding")
+    return rules, "shared literal DEPFILE; overwritten units unqualified"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
@@ -73,7 +87,7 @@ def main():
     build = root / "build"
     out.mkdir(parents=True, exist_ok=True)
     capture_discovery(build, root, out)
-    rules = sorted(build.rglob("*.o.d"))
+    rules, mode = select_rules(build)
     if not 0 < len(rules) <= 2048:
         raise ValueError(f"missing or excessive GCC dependency files ({len(rules)}); generated discovery retained")
     files, units = {}, []
@@ -99,7 +113,7 @@ def main():
         for dependency in dependencies:
             path = Path(dependency)
             if not path.is_absolute():
-                path = build / path
+                path = (rule.parent if rule.name == "DEPFILE" else build) / path
             category, name = origin(path, root)
             key = category + "/" + name
             unit["dependencies"].append(key)
@@ -117,10 +131,12 @@ def main():
                           "sha256": hashlib.sha256(data).hexdigest(),
                           "containsVendorUsePhrase": b"Atmel microcontroller product" in data}
         units.append(unit)
-    if not any("pxtapp/screen---st7735/screen.cpp.o" in unit["target"] for unit in units):
+    screen_observed = any("pxtapp/screen---st7735/screen.cpp.o" in unit["target"] for unit in units)
+    if mode == "per-object GCC rules" and not screen_observed:
         raise ValueError("original screen translation unit missing from inventory")
-    report = {"schema": 1, "units": units, "files": files,
-              "boundary": "Observed GCC .o.d rules, including discarded code; missing rules/assembly and retained headers/inline bytes remain unqualified; not licence decisions or complete source-to-binary proof"}
+    report = {"schema": 2, "mode": mode, "completeCompiledCoverage": False,
+              "screenTranslationUnitObserved": screen_observed, "units": units, "files": files,
+              "boundary": "Surviving original GCC rules only, including discarded code; shared DEPFILE overwrites, missing rules/assembly and retained headers/inline bytes remain unqualified; not licence decisions or complete source-to-binary proof"}
     with (out / "compiled-dependencies.json").open("x") as output:
         json.dump(report, output, indent=2)
         output.write("\n")
