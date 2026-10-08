@@ -118,6 +118,10 @@ decision has primary module evidence and independent corner tests.
 
 ## Runtime provenance and DMA dependency
 
+The [PR177 original-map receipt](../receipts/2026-10-08-pybadge-link-map/README.md)
+records the qualified build/preprocessor/map boundary and bounded retained ASF4
+input contributions. It does not establish runtime admission or execution.
+
 **Runtime admission prerequisite:** current Lite classifies both historical
 PyBadge bases as chip-restricted/ASF4. Reproducing their build is not emulator
 clearance. Follow the [permissive simulation-runtime lanes R0–R3](../engineering/samd-permissive-runtime-lanes.md)

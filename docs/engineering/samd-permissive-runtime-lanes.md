@@ -27,11 +27,18 @@ effective compiler settings. Loaded CF2/constructor selection remains separate.
 
 ## R0 — capture actual linked provenance
 
+**Reached:** PR177 captured and independently audited the original map; see the
+[source-bound receipt and six-member retained inventory](../receipts/2026-10-08-pybadge-link-map/README.md).
+Do not repeat acquisition to obtain an already retained map. Remaining R0 work
+includes complete component/header/inline/transitive-script provenance, not
+reimplementing the collector. The zero-count members are not clearance claims.
+
 Inputs: exact original build request, immutable dependency commits, compiler
 identity and the clean hosted build. Retain the actual link command, linker map,
 linker scripts, generated configuration, binary hash and dependency notices.
-The first build-evidence artifact lacks a linker map; do not manufacture one
-from source lists. If diagnostic relinking is required, name it separately and
+The first build-evidence artifact lacked a linker map; PR177 now retains the
+original clean build's existing map without relinking. Do not manufacture maps
+from source lists. If a future diagnostic relink is required, name it separately and
 verify the output identity rather than calling it the original invocation.
 
 The pinned [codal-samd build list](https://github.com/lancaster-university/codal-samd/blob/5bd6b93c219c7e784e885ba2d6812809fb6289a8/CMakeLists.txt)
