@@ -3,9 +3,10 @@
 This extends the [original-map receipt](../2026-10-08-pybadge-link-map/README.md).
 It distinguishes surviving original dependency output from separately generated
 diagnostic rules. Neither is licence clearance or retained-inline attribution.
-PR179 and PR180's remaining merge checks are separate from focused results;
-refresh their state before integration. No engine/app pin or image classification
-changes are authorized by these results.
+PR179 and PR180 are merged after all 15 enabled exact-head checks passed for
+each. No engine/app pin or image classification changes are authorized by these
+results. The [subsequent origin receipt](../2026-10-08-pybadge-origins/README.md)
+records the separate pinned-source identity check and remaining review boundary.
 
 ## Original-rule discovery and preserved failures
 
@@ -69,8 +70,12 @@ This is separate audit code, not a claim of a second independent author.
 
 ## Remaining R0 work and handoff
 
-1. Finish every enabled exact-head check and merge PR179 before PR180. Compare
-   reviewed/tested/landed trees; later documentation is not an executable change.
+1. PR179 landed at `3b0e1537c96df30cd8cde7a768c2ff292767902b`, tree
+   `6b48605f51654a932c7dff55582c2be5754a345f`; PR180 then landed at
+   `9402ea6788ddca21e1e265d301e7e389675d5a68`, tree
+   `606214380f504182dc1a4141a3a1062440b1d325`. Both matched reviewed merge
+   predictions. Differences from tested source trees are only PR178's three
+   Markdown paths, not executable/workflow changes. Merged-main CI is separate.
 2. Review the 542 dependency records against exact immutable component origins
    and notices, including generated headers and toolchain obligations. Directory
    names or vendor-phrase absence never grant permission; keep unknowns explicit.

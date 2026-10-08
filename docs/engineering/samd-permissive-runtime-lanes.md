@@ -39,7 +39,13 @@ preserves two collector failures, the four surviving shared original rules and
 the successful separate `-M` probes of all 172 observed C/C++ commands. The
 diagnostic inventory has 542 unique dependencies; one assembly command remains
 explicitly excluded. Do not mistake this for recovered original invocations,
-retained-inline attribution, merged source, or completed component review.
+retained-inline attribution or completed component review. PR179/180 are now
+merged; the [origin receipt](../receipts/2026-10-08-pybadge-origins/README.md)
+records PR182's separate hosted source-identity result: 438 pinned Git blobs,
+67 original-request files and one captured generated header. All 438 blob IDs
+also match the six official pinned Git trees in a separate read-only audit.
+Toolchain, notices, generated derivation and assembly remain open; PR182's
+remaining exact-head merge checks are separate from its focused result.
 
 Inputs: exact original build request, immutable dependency commits, compiler
 identity and the clean hosted build. Retain the actual link command, linker map,
