@@ -96,11 +96,12 @@ async function main() {
     fs.writeFileSync(path.join(out, 'builder-manifest.json'), manifest, {flag: 'wx'});
     const root = path.join(work, 'samd51adafruit');
     const files = collectFiles(root, path.join(out, 'generated'), name =>
-        /(?:^|\/)(?:flags\.make|CMakeCache\.txt|compile_commands\.json|codal\.json)$/.test(name) ||
-        /(?:config|defines).*\.h$/i.test(path.basename(name)) ||
+        /(?:^|\/)(?:flags\.make|CMakeCache\.txt|CMakeCXXCompiler\.cmake|compile_commands\.json|codal\.json)$/.test(name) ||
+        /(?:config|defines|definitions).*\.h$/i.test(path.basename(name)) ||
         /(?:^|\/)(?:LICENSE|LICENCE)(?:\.[^/]*)?$/i.test(name));
     if (!files.some(f => f.path.endsWith('/flags.make')) ||
-        !files.some(f => f.path.endsWith('CMakeCache.txt'))) {
+        !files.some(f => f.path.endsWith('CMakeCache.txt')) ||
+        !files.some(f => f.path === 'build/codal_extra_definitions.h')) {
         throw new Error('missing generated compiler configuration');
     }
     fs.writeFileSync(path.join(out, 'build-evidence.json'), JSON.stringify({

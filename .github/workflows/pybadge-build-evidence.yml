@@ -25,7 +25,11 @@ jobs:
         with:
           node-version: 22
       - name: Evidence admission controls (no worker or compiler)
-        run: node --test scripts/pybadge-build-evidence/test.mjs
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          node --test scripts/pybadge-build-evidence/test.mjs
+          python3 -m unittest discover -s scripts/pybadge-build-evidence -p 'test_*.py' -v
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: CrispStrobe/brickwright-lite
@@ -33,8 +37,7 @@ jobs:
           path: public-consumer
           persist-credentials: false
       - name: Fetch immutable consumer runtime inputs
-        working-directory: public-consumer
-        run: node scripts/sync-makecode-runtime.mjs
+        run: python3 scripts/pybadge-build-evidence/acquire.py --lite public-consumer --out "$RUNNER_TEMP/pybadge-evidence"
       - name: Retain and verify original generated request
         run: node scripts/pybadge-build-evidence/evidence.mjs request public-consumer "$RUNNER_TEMP/codal" "$RUNNER_TEMP/pybadge-evidence"
       - name: Install historical ARM toolchain
@@ -47,6 +50,8 @@ jobs:
         run: node scripts/build-makecode-arcade-bases.mjs --variant samd51adafruit --work "$RUNNER_TEMP/codal" --out "$RUNNER_TEMP/codal/bases"
       - name: Verify build identity and retain generated configuration
         run: node scripts/pybadge-build-evidence/evidence.mjs collect public-consumer "$RUNNER_TEMP/codal" "$RUNNER_TEMP/pybadge-evidence"
+      - name: Preprocess original screen with generated ARM target flags
+        run: python3 scripts/pybadge-build-evidence/preprocess.py --root "$RUNNER_TEMP/codal/samd51adafruit" --out "$RUNNER_TEMP/pybadge-evidence"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: ${{ !cancelled() }}
         with:
