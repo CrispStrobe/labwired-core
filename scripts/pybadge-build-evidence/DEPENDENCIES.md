@@ -1,5 +1,14 @@
 # Compiled header/source dependencies — qualification pending
 
+The first hosted attempt, [run37785853900](https://github.com/CrispStrobe/labwired-core/actions/runs/37785853900)
+at source `dc495bbf74244d654dfeb9a27791bcec92d55318`, failed because the
+collector found no `*.o.d` rules after the original build and map capture passed.
+It remains a collector failure, not dependency qualification or firmware failure.
+The follow-up retains bounded generated CMake dependency metadata plus a build
+file-name/size inventory before requiring GCC rules. Inspect that actual discovery
+before adding support for another format; no synthetic dependency list substitutes
+for evidence. No object, ELF, HEX or source bodies are copied by discovery.
+
 The original-map qualification in PR177 establishes a bounded object-level
 inventory, not the provenance of headers or inlined code. This follow-up captures
 the clean build's original GCC `.o.d` rules and inventories their dependency

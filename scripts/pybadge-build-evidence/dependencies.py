@@ -28,6 +28,42 @@ def origin(path, root):
     raise ValueError("dependency outside reviewed build/toolchain roots")
 
 
+def capture_discovery(build, root, out):
+    """Retain generated dependency recipes even when the assumed format is absent."""
+    names = {"depend.make", "compiler_depend.make", "depend.internal",
+             "DependInfo.cmake", "build.make"}
+    inventory, captured = [], []
+    total = 0
+    for path in sorted(build.rglob("*")):
+        if path.is_symlink():
+            continue
+        if not path.is_file():
+            continue
+        if len(inventory) >= 16384:
+            raise ValueError("build discovery file count exceeds bound")
+        relative = path.relative_to(root).as_posix()
+        size = path.stat().st_size
+        inventory.append({"path": relative, "bytes": size})
+        if path.name not in names:
+            continue
+        if size > 1024 * 1024 or total + size > 8 * 1024 * 1024:
+            raise ValueError("generated dependency discovery exceeds bound")
+        raw = path.read_bytes()
+        if len(raw) != size:
+            raise ValueError("generated dependency discovery changed during capture")
+        total += size
+        destination = out / "dependency-discovery" / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with destination.open("xb") as output:
+            output.write(raw)
+        captured.append({"path": relative, "bytes": size,
+                         "sha256": hashlib.sha256(raw).hexdigest()})
+    with (out / "dependency-discovery.json").open("x") as output:
+        json.dump({"schema": 1, "inventory": inventory, "captured": captured,
+                   "boundary": "Generated metadata and file names/sizes only; no dependency inference or binary capture"}, output, indent=2)
+        output.write("\n")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
@@ -36,9 +72,10 @@ def main():
     root, out = args.root.resolve(), args.out.resolve()
     build = root / "build"
     out.mkdir(parents=True, exist_ok=True)
+    capture_discovery(build, root, out)
     rules = sorted(build.rglob("*.o.d"))
     if not 0 < len(rules) <= 2048:
-        raise ValueError("missing or excessive GCC dependency files")
+        raise ValueError(f"missing or excessive GCC dependency files ({len(rules)}); generated discovery retained")
     files, units = {}, []
     total_bytes = 0
     rule_bytes = 0
