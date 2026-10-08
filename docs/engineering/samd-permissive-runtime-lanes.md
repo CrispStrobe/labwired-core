@@ -44,8 +44,16 @@ merged; the [origin receipt](../receipts/2026-10-08-pybadge-origins/README.md)
 records PR182's separate hosted source-identity result: 438 pinned Git blobs,
 67 original-request files and one captured generated header. All 438 blob IDs
 also match the six official pinned Git trees in a separate read-only audit.
-Toolchain, notices, generated derivation and assembly remain open; PR182's
-remaining exact-head merge checks are separate from its focused result.
+PR182 is merged with tested/landed tree equality. The [notice receipt](../receipts/2026-10-08-pybadge-notices/README.md)
+records merged PR183's 409 unclassified comment candidates, 133 absent comments,
+five repository notices and three installed toolchain package records. Two GCC
+package notices cover packaging only and reference additional notices, which
+remain uncaptured. Toolchain obligations, exact notice review, generated
+derivation, assembly and retained-inline attribution remain open.
+
+The source-bound map-family inventory in that receipt scopes atomic, SPI, ADC,
+I2C, UART-helper, SERCOM-handler and table contributions. It is not a call graph
+or runtime cost profile; replacing SPI alone cannot close whole-image provenance.
 
 Inputs: exact original build request, immutable dependency commits, compiler
 identity and the clean hosted build. Retain the actual link command, linker map,
