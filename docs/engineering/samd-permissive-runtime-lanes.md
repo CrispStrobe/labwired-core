@@ -116,10 +116,13 @@ This is not a complete no-ASF runtime or native Arcade image. Keep the selected
 Timer, MessageBus, driver and buffers alive. Active-token, delivering-callback
 and unconsumed blocking-result destruction deliberately fail-stop; only settled
 idle reconstruction completes new transfers. Do not assume destruction cancels
-safely. Next complete R1a's
-required board/API/header/build closure, R1d's remaining services and R3's exact
-component/notices/map/image/CF2 admission, actual frames/input/debugger and
-consumer qualification. An excluded required service still blocks the image.
+safely. Generated configuration and authored CF2 source/data admission
+subsequently landed through Codal80/83; completed-operation engine-process reopen
+landed through Codal81. These do not qualify a full native image or loaded CF2
+runtime reads. Follow the [remaining no-ASF lanes](https://github.com/CrispStrobe/codal-samd/blob/master/docs/PXT-NO-ASF-NEXT-LANES.md)
+for R1a's full compiler/API/header/build closure, R1d's remaining actual services,
+and R3's component/notices/map/image, actual CF2/HF2/native startup,
+frames/input/debugger and installed consumer qualification. An excluded required service still blocks the image.
 Natural stale IRQs/timeouts, physical behavior and distribution clearance are
 separate. Only after admitted active execution measure repeated native/WASM RTx,
 adopt the exact installed consumer artifact and optimize a measured bottleneck.

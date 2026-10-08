@@ -199,7 +199,12 @@ sequence. Functional DMA is not arbitration/cycle-timing qualification.
 consumer adoption is a separate Lite lane.
 
 First execute an independently authored permissive guest through DMA, display,
-buttons and existing NeoPixels. Then build/run the identified PXT/CODAL runtime
+buttons and existing NeoPixels. Before whole PXT/CODAL runtime execution,
+complete the [SAMD permissive-runtime admission lanes R0–R3](samd-permissive-runtime-lanes.md):
+the historical PyBadge bases are classified chip-restricted/ASF4 by the consumer.
+Reproducible build/configuration evidence is not execution admission. Preserve
+historical classifications; qualify a separate permissible simulation build.
+Then build/run the identified admitted PXT/CODAL runtime
 without patching completion paths. Retain compiler/runtime/guest hash,
 boot/frames/input press-release and actual debugger pause/step/reset evidence.
 Measure active RTx, frame rate and input latency, not terminal idle spin.
