@@ -1,9 +1,20 @@
 import unittest
+from unittest.mock import patch
+import subprocess
 
-from link_map import diagnostic_command
+from link_map import diagnostic_command, invoke_link
 
 
 class Admission(unittest.TestCase):
+    def test_timeout_and_spawn_failure_preserve_failure_state(self):
+        with patch("link_map.subprocess.run", side_effect=subprocess.TimeoutExpired(
+                "owned-link", 120, output=b"partial", stderr=b"diagnostic")):
+            self.assertEqual(invoke_link(["owned-link"], "."),
+                             (None, True, None, b"partial", b"diagnostic"))
+        with patch("link_map.subprocess.run", side_effect=OSError("cannot start")):
+            self.assertEqual(invoke_link(["owned-link"], "."),
+                             (None, False, "cannot start", b"", b""))
+
     def test_only_output_and_map_reporting_change(self):
         source = '/usr/bin/arm-none-eabi-g++ "object with spaces.o" -Wl,--gc-sections -o original.elf lib.a\n'
         original, command = diagnostic_command(source, "/usr/bin/arm-none-eabi-g++", "/owned/diag.elf", "/owned/map")
