@@ -77,12 +77,16 @@ passing the CODAL RGBSET capture alone cannot qualify known-Adafruit rendering.
 
 This verifies the package's macro request and branch source, **not** generated
 compiler definitions, effective CF2 settings, selected runtime branch, module
-aperture or ARM execution. Next bind the actual generated build request and
-effective board ID/display settings, capture the exact-source direct renderer
-with selected/unknown/absent-ID controls, then prove its bytes through guest SPI.
+aperture or ARM execution. Original direct-renderer and caller fragments have
+since passed component host qualification with selected/unknown/absent-ID
+controls; see the [PR172 receipt](../receipts/2026-10-08-st7735-pxt-caller/README.md).
+Next bind the actual generated build request and effective board ID/display
+settings, then prove the justified production path through guest SPI.
 Preserve odd-width/height packing, transfer batching and CS/D/C behavior; do not
 replace the production method with an authored equivalent and call that original
 source execution. Full original ARM/DMA completion remains a later requirement.
+Use the ordered [production evidence lanes S1–S4](../engineering/st7735-production-next-lanes.md)
+without repeating the completed source/package or component-capture work.
 
 There is also an unresolved model boundary: the current ST7735R prototype's
 RGB444 decoder requires a valid RGBSET table, while the selected direct-renderer
