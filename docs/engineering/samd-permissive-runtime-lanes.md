@@ -21,9 +21,10 @@ build or passing preprocessor probe does not make either image emulator-admitted
 [PR174](https://github.com/CrispStrobe/labwired-core/pull/174)'s focused
 [run37745531829](https://github.com/CrispStrobe/labwired-core/actions/runs/37745531829)
 reproduced the historical build; it did not execute or upload the firmware.
-Its remaining merge checks are separate from that focused result. PR175 adds
-configuration capture/preprocessing; inspect its actual result before claiming
-effective compiler settings. Loaded CF2/constructor selection remains separate.
+PR174 and PR175 are merged. The qualified separate ARM preprocessing observed
+`USE_RGB444=1`; the [original-map receipt](../receipts/2026-10-08-pybadge-link-map/README.md)
+records its exact source/configuration boundary. Loaded CF2/constructor selection
+remains separate.
 
 ## R0 — capture actual linked provenance
 
