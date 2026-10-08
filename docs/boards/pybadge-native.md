@@ -118,6 +118,13 @@ decision has primary module evidence and independent corner tests.
 
 ## Runtime provenance and DMA dependency
 
+**Runtime admission prerequisite:** current Lite classifies both historical
+PyBadge bases as chip-restricted/ASF4. Reproducing their build is not emulator
+clearance. Follow the [permissive simulation-runtime lanes R0–R3](../engineering/samd-permissive-runtime-lanes.md)
+before whole-runtime execution or adoption. Keep original source/configuration
+review separate from running restricted images; authored permissive guests can
+continue independently. No existing admission guard is relaxed by this contract.
+
 [Lite run36567239929](https://github.com/CrispStrobe/brickwright-lite/actions/runs/36567239929)
 records samd51adafruit request SHA256
 `19efcdc73769fdfdeb51aa215c528bebad59782cbc538f72f4a194326f1f42b1`,
