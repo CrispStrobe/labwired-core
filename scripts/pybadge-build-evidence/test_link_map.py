@@ -1,35 +1,31 @@
 import unittest
-from unittest.mock import patch
-import subprocess
 
-from link_map import diagnostic_command, invoke_link
+from link_map import original_map_recipe
+
+COMPILER = "/usr/bin/arm-none-eabi-g++"
+RECIPE = COMPILER + ' "object with spaces.o" -T"/public/source/ld/script.ld" -Wl,-Map,ITSYBITSY_M4.map -o ITSYBITSY_M4 lib.a\n'
 
 
 class Admission(unittest.TestCase):
-    def test_timeout_and_spawn_failure_preserve_failure_state(self):
-        with patch("link_map.subprocess.run", side_effect=subprocess.TimeoutExpired(
-                "owned-link", 120, output=b"partial", stderr=b"diagnostic")):
-            self.assertEqual(invoke_link(["owned-link"], "."),
-                             (None, True, None, b"partial", b"diagnostic"))
-        with patch("link_map.subprocess.run", side_effect=OSError("cannot start")):
-            self.assertEqual(invoke_link(["owned-link"], "."),
-                             (None, False, "cannot start", b"", b""))
+    def test_observed_original_map_recipe(self):
+        self.assertEqual(original_map_recipe(RECIPE, COMPILER),
+                         ("ITSYBITSY_M4", "ITSYBITSY_M4.map", "/public/source/ld/script.ld"))
 
-    def test_only_output_and_map_reporting_change(self):
-        source = '/usr/bin/arm-none-eabi-g++ "object with spaces.o" -Wl,--gc-sections -o original.elf lib.a\n'
-        original, command = diagnostic_command(source, "/usr/bin/arm-none-eabi-g++", "/owned/diag.elf", "/owned/map")
-        self.assertEqual(original, "original.elf")
-        self.assertEqual(command, ["/usr/bin/arm-none-eabi-g++", "object with spaces.o",
-                                  "-Wl,--gc-sections", "-o", "/owned/diag.elf", "lib.a",
-                                  "-Wl,-Map=/owned/map"])
-
-    def test_ambiguous_shell_response_and_existing_map_recipes_rejected(self):
-        base = "/usr/bin/arm-none-eabi-g++ a.o -o original.elf"
-        for mutant in (base + "\n" + base, base + " && echo done", base + " @inputs",
-                       base + " -Wl,-Map=old", base + " -o second", base + " $(FLAGS)",
-                       base.replace("arm-none-eabi-g++", "g++"), base.replace("original.elf", "/owned/diag.elf")):
+    def test_ambiguous_shell_response_and_changed_output_rejected(self):
+        for mutant in (RECIPE + RECIPE, RECIPE.strip() + " && echo done", RECIPE.strip() + " @inputs",
+                       RECIPE.replace("-o ITSYBITSY_M4", "-o other"), RECIPE.strip() + " -o second",
+                       RECIPE.strip() + " $(FLAGS)", RECIPE.replace(COMPILER, "/usr/bin/g++")):
             with self.assertRaises(ValueError):
-                diagnostic_command(mutant, "/usr/bin/arm-none-eabi-g++", "/owned/diag.elf", "/owned/map")
+                original_map_recipe(mutant, COMPILER)
+
+    def test_missing_duplicate_and_alternative_map_or_script_rejected(self):
+        for mutant in (RECIPE.replace("-Wl,-Map,ITSYBITSY_M4.map", ""),
+                       RECIPE.replace("-Map,ITSYBITSY_M4.map", "-Map=other.map"),
+                       RECIPE.strip() + " -Wl,-Map,second.map", RECIPE.strip() + " --cref",
+                       RECIPE.replace('-T"/public/source/ld/script.ld"', ""),
+                       RECIPE.strip() + " -Tsecond.ld"):
+            with self.assertRaises(ValueError):
+                original_map_recipe(mutant, COMPILER)
 
 
 if __name__ == "__main__":

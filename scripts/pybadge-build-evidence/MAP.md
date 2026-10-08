@@ -1,26 +1,25 @@
-# Diagnostic linker-map collector — hosted qualification pending
+# Original linker-map collector — revised qualification pending
 
-`link_map.py` is an R0 preparation step. It has not run an ARM linker, captured
-an actual map or established licence clearance. Do not confuse passing pure
-admission controls with successful diagnostic relinking.
+The first [run37759168804](https://github.com/CrispStrobe/labwired-core/actions/runs/37759168804)
+failed admission at source `5f04b8b226e7185968a3be53f346cb65e85f6509`:
+the original command already has `-Wl,-Map,ITSYBITSY_M4.map`. No diagnostic
+linker ran. Preserve that failure and the actual recipe from
+[artifact11542717263](https://api.github.com/repos/CrispStrobe/labwired-core/actions/artifacts/11542717263/zip),
+ZIP 410,994 bytes, SHA256
+`c193480a790d12a91451cdfcaf1f3f02963c71a70980323f7a36df481cca1dda`.
+The recipe member SHA256 is
+`8163427829709d67f4667c35c5ed7e8e8f31cdd701b96cca357246781c90d264`.
+That artifact contains no map; do not invent its bytes from the recipe.
 
-PR175's repaired focused run37752827121 passed original build/configuration and
-effective ARM preprocessing. Its artifact lacks the link recipe/map. This
-follow-up captures the actual generated recipe before admission and accepts
-only one direct original compiler
-command with one output, rejects shell/response/existing-map recipes, and adds
-only map reporting plus a separate diagnostic output. An unsupported recipe
-requires explicit review, not an automatic fallback.
+The revised collector accepts exactly the observed original map/output contract
+and captures the original clean build's existing map, linker script and recipe.
+No relink, firmware execution or disassembly is needed. It hashes the original
+ELF without uploading it, checks it remains unchanged, rejects missing/linked
+outputs, ambiguous recipes and changed map/script/output paths, and retains raw
+evidence without normalization. The first revised hosted result is pending.
 
-The original ELF must remain unchanged and the diagnostic ELF must be
-byte-identical. Preserve the original recipe, linker output, actual map and
-hash report, including any failure. Neither ELF belongs in the uploaded evidence
-directory. No firmware executes or is disassembled. This separate diagnostic
-invocation must not be described as capture of the original build's invocation.
-
-The named hosted step follows effective preprocessing and precedes artifact
-upload. Require all
-enabled exact-head checks and an independent raw-map audit. The current helper
-has no passing hosted result yet. Timeout and spawn failures retain explicit
-failure state and any partial output. It does not inventory headers/inline contributions or decide which
-components are permissible; those remain the separate R0/R1 review boundary.
+Require all enabled exact-head checks and independent raw-map audit before
+landing. Map/image hash observations do not independently reproduce the linker
+or establish complete source provenance: headers, inline code, transitive linker
+script inputs, component obligations and actual retained/discarded sections
+remain separate R0/R1 review work. No licence classification or app pin changes.

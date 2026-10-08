@@ -1,35 +1,36 @@
-"""Prepared diagnostic relink/map capture; never run or disassemble firmware."""
+"""Capture the observed original SAMD link map without relinking or execution."""
 import argparse
 import hashlib
 import json
 from pathlib import Path
 import shlex
-import subprocess
 
 from preprocess import compiler_from_record
 
 
-def diagnostic_command(text, compiler, output, map_file):
+def original_map_recipe(text, compiler):
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if len(lines) != 1 or any(char in lines[0] for char in "$`\n"):
         raise ValueError("unsupported generated link command")
     command = shlex.split(lines[0])
     if not command or command[0] != compiler:
         raise ValueError("link/compiler identity mismatch")
-    if any(token in (";", "&&", "||", "|", ">", "<") for token in command):
-        raise ValueError("shell link recipes are unsupported")
-    indexes = [i for i, token in enumerate(command) if token == "-o"]
-    if len(indexes) != 1 or indexes[0] + 1 == len(command):
-        raise ValueError("ambiguous original link output")
-    if any(token.startswith("@") or "-Map" in token or token == "--cref" for token in command):
-        raise ValueError("response files/existing map options require explicit review")
-    at = indexes[0] + 1
-    original = command[at]
-    if original.startswith("-") or original == str(output):
-        raise ValueError("invalid or colliding diagnostic output")
-    command[at] = str(output)
-    command.append("-Wl,-Map=" + str(map_file))
-    return original, command
+    if any(token in (";", "&&", "||", "|", ">", "<") or token.startswith("@") for token in command):
+        raise ValueError("shell/response link recipes are unsupported")
+    outputs = [i for i, token in enumerate(command) if token == "-o"]
+    if len(outputs) != 1 or outputs[0] + 1 == len(command) or command[outputs[0] + 1] != "ITSYBITSY_M4":
+        raise ValueError("unexpected original link output")
+    maps = [token for token in command if "-Map" in token or token == "--cref"]
+    if maps != ["-Wl,-Map,ITSYBITSY_M4.map"]:
+        raise ValueError("unexpected original map option; explicit review required")
+    scripts = [token[2:] for token in command if token.startswith("-T")]
+    if len(scripts) != 1:
+        raise ValueError("unexpected original linker script")
+    return "ITSYBITSY_M4", "ITSYBITSY_M4.map", scripts[0]
+
+
+def digest(data):
+    return hashlib.sha256(data).hexdigest()
 
 
 def file_digest(path):
@@ -40,17 +41,6 @@ def file_digest(path):
     return result.hexdigest()
 
 
-def invoke_link(command, build):
-    try:
-        result = subprocess.run(command, cwd=build, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, timeout=120, check=False)
-        return result.returncode, False, None, result.stdout, result.stderr
-    except subprocess.TimeoutExpired as error:
-        return None, True, None, error.stdout or b"", error.stderr or b""
-    except OSError as error:
-        return None, False, str(error), b"", b""
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
@@ -59,49 +49,42 @@ def main():
     root, out = args.root.resolve(), args.out.resolve()
     build = root / "build"
     out.mkdir(parents=True, exist_ok=True)
-    command_path = build / "CMakeFiles/ITSYBITSY_M4.dir/link.txt"
-    raw = command_path.read_bytes()
-    # Preserve the observed recipe even when admission rejects it. A later
-    # source correction must not replace the first unsupported recipe.
+    raw = (build / "CMakeFiles/ITSYBITSY_M4.dir/link.txt").read_bytes()
     with (out / "original-link.txt").open("xb") as capture:
         capture.write(raw)
     records = list((build / "CMakeFiles").glob("*/CMakeCXXCompiler.cmake"))
     if len(records) != 1:
         raise ValueError("ambiguous generated compiler record")
     compiler = compiler_from_record(records[0].read_text())
-    diagnostic = build / "pybadge-map-diagnostic.elf"
-    map_file = out / "diagnostic-link.map"
-    report_path = out / "diagnostic-link-evidence.json"
-    for path in (diagnostic, map_file, report_path):
-        if path.exists():
-            raise ValueError("diagnostic evidence already exists; refusing overwrite")
-    original_name, command = diagnostic_command(raw.decode(), compiler, diagnostic, map_file)
-    original = (build / original_name).resolve()
-    if not original.is_relative_to(build) or not original.is_file() or original == diagnostic:
-        raise ValueError("original ELF must be a distinct existing build output")
-    before = file_digest(original)
-    exit_code, timed_out, spawn_error, stdout, stderr = invoke_link(command, build)
-    with (out / "diagnostic-link-stdout.txt").open("xb") as capture:
-        capture.write(stdout)
-    with (out / "diagnostic-link-stderr.txt").open("xb") as capture:
-        capture.write(stderr)
+    elf_name, map_name, script_name = original_map_recipe(raw.decode(), compiler)
+    script = Path(script_name)
+    expected_script = root / "libraries/codal-itsybitsy-m4/ld/samd51g19a_flash.ld"
+    if script != expected_script or script.is_symlink():
+        raise ValueError("unexpected linker script source")
+    elf, map_file = build / elf_name, build / map_name
+    if elf.is_symlink() or map_file.is_symlink() or not elf.is_file() or not map_file.is_file():
+        raise ValueError("missing or linked original outputs")
+    if not 0 < map_file.stat().st_size <= 8 * 1024 * 1024:
+        raise ValueError("map capture size outside bound")
+    elf_sha = file_digest(elf)
+    data, script_data = map_file.read_bytes(), script.read_bytes()
+    for name, body in (("original-link.map", data), ("original-linker-script.ld", script_data)):
+        with (out / name).open("xb") as capture:
+            capture.write(body)
     report = {
-        "schema": 1, "originalLinkSha256": hashlib.sha256(raw).hexdigest(),
-        "compilerSha256": file_digest(Path(compiler)), "exitCode": exit_code,
-        "timedOut": timed_out, "spawnError": spawn_error,
-        "originalElfSha256": before, "originalUnchanged": file_digest(original) == before,
-        "diagnosticElfSha256": file_digest(diagnostic) if diagnostic.is_file() else None,
-        "mapSha256": file_digest(map_file) if map_file.is_file() else None,
-        "boundary": "Diagnostic relink adds map reporting and a separate output; not the original invocation, licence clearance or firmware execution",
+        "schema": 2, "mode": "original-build-map-no-relink",
+        "originalLinkSha256": digest(raw), "originalElfSha256": elf_sha,
+        "mapSha256": digest(data), "mapBytes": len(data),
+        "linkerScript": "libraries/codal-itsybitsy-m4/ld/samd51g19a_flash.ld",
+        "linkerScriptSha256": digest(script_data), "originalUnchanged": file_digest(elf) == elf_sha,
+        "boundary": "Original clean-build recipe/map observation; no relink, firmware execution, independent binary/map replay or licence clearance",
     }
-    with report_path.open("x") as capture:
+    with (out / "original-link-evidence.json").open("x") as capture:
         json.dump(report, capture, indent=2)
         capture.write("\n")
-    if (exit_code != 0 or timed_out or spawn_error or not report["originalUnchanged"] or
-            report["diagnosticElfSha256"] != before or not map_file.is_file() or
-            not 0 < map_file.stat().st_size <= 8 * 1024 * 1024):
-        raise ValueError("diagnostic relink/map identity failed; preserve first result")
-    print("Diagnostic map captured; original and diagnostic ELF byte identity PASS")
+    if not report["originalUnchanged"]:
+        raise ValueError("original ELF changed during read-only capture")
+    print("Original clean-build map captured; no relink or firmware execution")
 
 
 if __name__ == "__main__":
