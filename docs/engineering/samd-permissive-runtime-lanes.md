@@ -21,9 +21,10 @@ build or passing preprocessor probe does not make either image emulator-admitted
 [PR174](https://github.com/CrispStrobe/labwired-core/pull/174)'s focused
 [run37745531829](https://github.com/CrispStrobe/labwired-core/actions/runs/37745531829)
 reproduced the historical build; it did not execute or upload the firmware.
-Its remaining merge checks are separate from that focused result. PR175 adds
-configuration capture/preprocessing; inspect its actual result before claiming
-effective compiler settings. Loaded CF2/constructor selection remains separate.
+PR174 and PR175 are merged. The qualified separate ARM preprocessing observed
+`USE_RGB444=1`; the [original-map receipt](../receipts/2026-10-08-pybadge-link-map/README.md)
+records its exact source/configuration boundary. Loaded CF2/constructor selection
+remains separate.
 
 ## R0 — capture actual linked provenance
 
@@ -32,6 +33,27 @@ effective compiler settings. Loaded CF2/constructor selection remains separate.
 Do not repeat acquisition to obtain an already retained map. Remaining R0 work
 includes complete component/header/inline/transitive-script provenance, not
 reimplementing the collector. The zero-count members are not clearance claims.
+
+**Dependency follow-up:** the [source-bound dependency receipt](../receipts/2026-10-08-pybadge-dependencies/README.md)
+preserves two collector failures, the four surviving shared original rules and
+the successful separate `-M` probes of all 172 observed C/C++ commands. The
+diagnostic inventory has 542 unique dependencies; one assembly command remains
+explicitly excluded. Do not mistake this for recovered original invocations,
+retained-inline attribution or completed component review. PR179/180 are now
+merged; the [origin receipt](../receipts/2026-10-08-pybadge-origins/README.md)
+records PR182's separate hosted source-identity result: 438 pinned Git blobs,
+67 original-request files and one captured generated header. All 438 blob IDs
+also match the six official pinned Git trees in a separate read-only audit.
+PR182 is merged with tested/landed tree equality. The [notice receipt](../receipts/2026-10-08-pybadge-notices/README.md)
+records merged PR183's 409 unclassified comment candidates, 133 absent comments,
+five repository notices and three installed toolchain package records. Two GCC
+package notices cover packaging only and reference additional notices, which
+remain uncaptured. Toolchain obligations, exact notice review, generated
+derivation, assembly and retained-inline attribution remain open.
+
+The source-bound map-family inventory in that receipt scopes atomic, SPI, ADC,
+I2C, UART-helper, SERCOM-handler and table contributions. It is not a call graph
+or runtime cost profile; replacing SPI alone cannot close whole-image provenance.
 
 Inputs: exact original build request, immutable dependency commits, compiler
 identity and the clean hosted build. Retain the actual link command, linker map,
