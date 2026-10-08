@@ -81,6 +81,10 @@ Unknown members fail admission; a filename allowlist alone is insufficient.
 
 ## R1 — choose the smallest justified permissive replacement boundary
 
+The [source-bound replacement plan](samd-runtime-replacement-plan.md) splits
+this lane into reviewable implementation tasks. Its caller observations are
+not a completed ABI inventory or replacement implementation.
+
 Inputs: R0, exact API/ABI and register contracts. The pinned
 [ZSPI](https://github.com/lancaster-university/codal-samd/blob/5bd6b93c219c7e784e885ba2d6812809fb6289a8/src/ZSPI.cpp)
 uses `spi_m_sync_init/enable/disable/set_baudrate`, a SERCOM trigger seam and
