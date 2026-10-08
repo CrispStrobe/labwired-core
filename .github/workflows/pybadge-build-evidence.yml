@@ -37,8 +37,7 @@ jobs:
           path: public-consumer
           persist-credentials: false
       - name: Fetch immutable consumer runtime inputs
-        working-directory: public-consumer
-        run: node scripts/sync-makecode-runtime.mjs
+        run: python3 scripts/pybadge-build-evidence/acquire.py --lite public-consumer --out "$RUNNER_TEMP/pybadge-evidence"
       - name: Retain and verify original generated request
         run: node scripts/pybadge-build-evidence/evidence.mjs request public-consumer "$RUNNER_TEMP/codal" "$RUNNER_TEMP/pybadge-evidence"
       - name: Install historical ARM toolchain

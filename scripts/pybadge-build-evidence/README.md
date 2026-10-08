@@ -16,6 +16,15 @@ This follow-up captures that header and separately preprocesses original
 `screen.cpp` with the generated application's C++ flags and ARM compiler,
 requiring effective `USE_RGB444=1`. The actual follow-up result is pending.
 
+The first follow-up [run37749823765](https://github.com/CrispStrobe/labwired-core/actions/runs/37749823765)
+failed during the consumer's broad runtime sync (`fetch failed`), before any
+request/build/preprocessing; no artifact existed to upload. Preserve that setup
+failure, not a compiler or macro verdict. The revised acquisition fetches only
+the two original SHA-pinned npm packages, selects the required worker/target and
+MIT notices without extracting arbitrary archive paths, and records staged
+member hashes. Bounded network retries do not relax hashes or retry a failed
+compiler assertion. No firmware bases are downloaded by acquisition.
+
 The generated original worker request must reproduce SHA256
 `19efcdc73769fdfdeb51aa215c528bebad59782cbc538f72f4a194326f1f42b1`.
 Serialization is accepted only if it reproduces that hash exactly; a difference
