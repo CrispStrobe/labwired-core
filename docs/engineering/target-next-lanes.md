@@ -1,4 +1,4 @@
-# Board completion lanes — 2026-10-07
+# Board completion lanes — 2026-10-08
 
 These are proposed task contracts, not ownership claims or passing receipts.
 Refresh the default branch and open PRs before starting; shared behavior lands
@@ -57,6 +57,18 @@ in the engine first, followed by an explicit qualified consumer pin.
   and **1.1656x** motion/display/buttons (minimum **1.1487x** motion).
   Read the [exact-source qualification and remaining P3 contract](st7735-color-foundation.md).
   These rates are not an A/B, PyBadge or WASM result; no app pin moved.
+- P3 follow-ups PR164/167/168/170/171 now qualify non-square layout, captured
+  stock-CODAL input, all eight fixture GM00 orientations, RAM/LUT/reset
+  retention and invalid ranges through authored blocking SAM guests. PR169/172
+  add actual host execution of original PXT direct-method/caller fragments.
+  [PR172's exact-source receipt](../receipts/2026-10-08-st7735-pxt-caller/README.md)
+  records both eleven-case caller builds, sixteen admission controls and the
+  independent 93,360-byte audit. All fifteen enabled checks passed; merge
+  `ef6e085b3163200f2e6b49356dc2cc8d5a602a6b` matches the tested tree.
+  The latest archived native spin snapshot is still source `d102b42`, with
+  PyBadge median **61.036527x**, minimum **60.630180x** and 42/82 passing gates;
+  it is not a new current-main, active PyBadge, controlled A/B or WASM result.
+  Read the [production evidence lanes S1–S4](st7735-production-next-lanes.md).
 - The actual ST7735 production panel, DMA-driven native Arcade, QSPI, USB and audio are not qualified by
   buttons/controller tests. CP13 and CP14 remain open.
 
@@ -137,9 +149,12 @@ countdowns do not establish wire or silicon-cycle accuracy.
 PR161 completed the codec, opt-in parser/memory/inspection, write-driven GPIO
 and bounded 2×2 authored blocking guest foundation. Preserve those controls;
 do not recreate them or register their test-only fixture as a production kit.
-Next execute the [rectangular production-stream and panel-binding contract](st7735-color-foundation.md#follow-on-lane-rectangular-production-stream-and-panel-binding):
-deployed public build configuration, independent non-square address vectors,
-actual driver bytes, module aperture/GM evidence and presentation semantics.
+Later bounded stream/orientation/retention/range/caller controls are recorded
+above; do not implement them again. Next execute the
+[production evidence lanes S1–S4](st7735-production-next-lanes.md): deployed
+public build configuration, actual module aperture/GM/LUT evidence, supported
+image/status dimensions and blocking integration. Preserve the
+[full panel-binding contract](st7735-color-foundation.md#follow-on-lane-rectangular-production-stream-and-panel-binding).
 The requirements below describe the full P3 boundary, not already reached
 physical-panel or native-runtime qualification.
 

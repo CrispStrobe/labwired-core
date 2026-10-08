@@ -173,7 +173,7 @@ their propagation remains a separate task. No full-frame, physical module,
 timing, native Arcade, DMA, IRQ, browser, app adoption or performance claim is
 made by this bounded foundation.
 
-## Next implementation slice
+## Reached follow-ups and next implementation slice
 
 The first nonzero rectangular literal-layout guest and wrong-axis negative
 subsequently landed in PR164. Read its [bounded qualification](st7735-rectangular-controls.md)
@@ -182,29 +182,39 @@ The later [PR167 merged-main native snapshot](../receipts/2026-10-07-st7735-main
 also passed 42 chip-spin floors and 82 relative checks; PyBadge spin median was
 61.036527x, minimum 60.630180x. These are native spin results, not active-panel
 or browser-WASM rates or a controlled gain over the earlier snapshot.
-This does not close the actual-driver or all-orientation tasks below.
+Subsequent bounded proofs also landed: [stock-CODAL bytes through SAM](st7735-codal-sam-binding.md)
+(PR167), [all eight GM00 orientations](st7735-orientation-controls.md) (PR168),
+original PXT direct-method capture (PR169), [retention](st7735-retention-controls.md)
+(PR170), [invalid ranges](st7735-address-range-controls.md) (PR171), and
+[original PXT caller fragments](../receipts/2026-10-08-st7735-pxt-caller/README.md)
+(PR172). Do not repeat those implementations. They do not identify a deployed
+module or qualify a complete original ARM runtime.
 
 1. Preserve the landed codec, parser, inspection, GPIO and actual-guest controls;
    do not repeat their implementation. Partial-table silicon contents and
    external net-only GPIO notifications remain outside this boundary.
-2. Execute the rectangular production-stream and panel-binding lane below,
-   including independent BGR/address vectors and deployed build evidence.
+2. Follow the [production evidence lanes S1–S4](st7735-production-next-lanes.md):
+   actual build/configuration, module/LUT binding, supported image dimensions,
+   then blocking integration. The older full contract below remains the
+   acceptance boundary, not a list of wholly unimplemented controls.
 3. Only then complete P3 qualification, followed by the separate IRQ/DMA and
    production-runtime lanes. No app pin, hardware acknowledgement or benchmark
    baseline should move on codec unit tests alone.
 
 The pinned [CODAL stream](https://github.com/lancaster-university/codal-core/blob/312ae57e0b31f5b9df07a81e9d846945828e3c5a/source/drivers/ST7735.cpp)
-is the later integration input. Independent datasheet vectors and actual driver
+is a captured integration input. Independent datasheet vectors and actual driver
 bytes must agree before a production-stream claim.
 [PR167's captured-stream guest](st7735-codal-sam-binding.md) now qualifies
 the small pinned stock-CODAL palette/RAMWR inputs through authored blocking SAM
-MMIO. It does not qualify deployed PXT configuration, the RGB444 direct path,
-all orientations, production DMA/IRQ or the physical module.
+MMIO. Later PR168/169/172 add fixture orientation and host direct-path/caller
+proofs, not deployed PXT configuration, production DMA/IRQ or the physical module.
 
 ## Follow-on lane: rectangular production-stream and panel binding
 
-The GPIO prerequisite landed in PR161; start from refreshed main. Keep this
-separate from P2/P4's IRQ/DMA implementation and from consumer package adoption.
+The GPIO prerequisite and bounded stream/orientation/retention/range/caller
+follow-ups have landed; start from refreshed main. Use S1–S4 above to avoid
+repeating reached work. Keep this full contract separate from P2/P4's IRQ/DMA
+implementation and consumer package adoption.
 
 1. Record the deployed public runtime build's macro configuration, CF2 board ID,
    `DISPLAY_CFG0`, width and height. The pinned PXT screen source derives MADCTL
