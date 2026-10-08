@@ -54,6 +54,8 @@ jobs:
         run: python3 scripts/pybadge-build-evidence/preprocess.py --root "$RUNNER_TEMP/codal/samd51adafruit" --out "$RUNNER_TEMP/pybadge-evidence"
       - name: Retain original clean-build link map without relinking
         run: python3 scripts/pybadge-build-evidence/link_map.py --root "$RUNNER_TEMP/codal/samd51adafruit" --out "$RUNNER_TEMP/pybadge-evidence"
+      - name: Inventory compiled source and header dependencies
+        run: python3 scripts/pybadge-build-evidence/dependencies.py --root "$RUNNER_TEMP/codal/samd51adafruit" --out "$RUNNER_TEMP/pybadge-evidence"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: ${{ !cancelled() }}
         with:
