@@ -15,6 +15,10 @@ restricted firmware to fill gaps. Record immutable runtime/dependency pins,
 compiler and build commands, effective `USE_RGB444`, actual loaded CF2 board ID,
 width/height, `DISPLAY_CFG0/1/2`, and selected display constructor/path. A source
 default or a harness-defined macro is not deployment evidence.
+Do not repeat the completed package review: pxt-arcade 4.2.1's SHA-bound target
+already requests `USE_RGB444=1`, and the pinned public bootloader candidate
+already supplies source CF2 defaults. The missing evidence is their effective
+selection in a specific generated build and loaded runtime.
 
 Files: add a compact build/config receipt under `docs/receipts/`; adjust the
 hosted qualification workflow only if needed to reproduce that exact build.
