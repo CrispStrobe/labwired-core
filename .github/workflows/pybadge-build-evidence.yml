@@ -58,6 +58,8 @@ jobs:
         run: python3 scripts/pybadge-build-evidence/dependencies.py --root "$RUNNER_TEMP/codal/samd51adafruit" --out "$RUNNER_TEMP/pybadge-evidence"
       - name: Separate dependency-only probes of generated C and C++ commands
         run: python3 scripts/pybadge-build-evidence/diagnostic_dependencies.py --root "$RUNNER_TEMP/codal/samd51adafruit" --out "$RUNNER_TEMP/pybadge-evidence"
+      - name: Bind dependency identities to pinned Git blobs and original request
+        run: python3 scripts/pybadge-build-evidence/origins.py --root "$RUNNER_TEMP/codal/samd51adafruit" --out "$RUNNER_TEMP/pybadge-evidence"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: ${{ !cancelled() }}
         with:
