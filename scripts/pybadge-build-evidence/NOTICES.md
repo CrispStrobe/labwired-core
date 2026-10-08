@@ -2,8 +2,9 @@
 
 The qualified origin inventory binds 438 files to pinned Git blobs, 67 to original
 request bytes and one to a captured generated header. The 36 toolchain headers
-remain explicitly unreviewed. Existing evidence captures four repository licence
-files, but no ASF4 root licence; absence is not a licence grant.
+remain explicitly unreviewed. Qualified evidence captures five repository licence
+files (root CODAL plus four library files), but no ASF4 root licence; absence is
+not a licence grant. The earlier four-file draft count omitted root CODAL.
 
 This follow-up collects bounded **leading comment candidates**, preserving exact
 bytes and stopping before implementation/preprocessor text. A comment may be
