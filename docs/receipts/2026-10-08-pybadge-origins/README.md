@@ -8,8 +8,9 @@ Actual checkout: `844deb7228cc0b983a8d64520318055c6c0d4808`, tree
 `b3caafa8c2e59fcbb14670ec93f73fc171667df8`. That tree matches the reviewed
 merge prediction against main `9402ea6788ddca21e1e265d301e7e389675d5a68`;
 the branch source tree differs only by PR178's three already merged Markdown
-paths. PR182's other enabled checks remain required before merging. This is
-source identity evidence, not component licence clearance or runtime admission.
+paths. PR182 is merged at `630e9e6e9a7635c70c7bc1ea6af6b3e8e87e609b` after
+all 15 enabled checks passed; its landed tree equals that tested merge tree.
+This is source identity evidence, not component licence clearance or runtime admission.
 
 Official [artifact11559576651](https://api.github.com/repos/CrispStrobe/labwired-core/actions/artifacts/11559576651/zip):
 948805 B; unchanged ZIP SHA256
@@ -56,8 +57,10 @@ isolated implementation, whole-firmware clean-room origin or training independen
 
 ## Next review lanes
 
-1. Finish all PR182 exact-head checks, merge normally and verify the landed tree.
-   Do not repeat the successful guest-free probe just to read its evidence.
+1. Source identity integration is landed and its tree verified. The subsequent
+   [notice receipt](../2026-10-08-pybadge-notices/README.md) records the qualified
+   capture and remaining notice-chain gaps; do not repeat successful probes just
+   to read their evidence. Merged-main CI remains separate.
 2. Review exact file/component notices and obligations for the 438 repository
    files and 67 request files. Link immutable notice locations; distinguish
    nested component notices, file-specific restrictions and actual attribution.
