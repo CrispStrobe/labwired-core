@@ -33,6 +33,13 @@ Do not repeat acquisition to obtain an already retained map. Remaining R0 work
 includes complete component/header/inline/transitive-script provenance, not
 reimplementing the collector. The zero-count members are not clearance claims.
 
+**Dependency follow-up:** the [source-bound dependency receipt](../receipts/2026-10-08-pybadge-dependencies/README.md)
+preserves two collector failures, the four surviving shared original rules and
+the successful separate `-M` probes of all 172 observed C/C++ commands. The
+diagnostic inventory has 542 unique dependencies; one assembly command remains
+explicitly excluded. Do not mistake this for recovered original invocations,
+retained-inline attribution, merged source, or completed component review.
+
 Inputs: exact original build request, immutable dependency commits, compiler
 identity and the clean hosted build. Retain the actual link command, linker map,
 linker scripts, generated configuration, binary hash and dependency notices.
