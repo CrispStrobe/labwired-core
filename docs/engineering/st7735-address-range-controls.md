@@ -1,9 +1,34 @@
-# ST7735 invalid-address guard — qualification pending
+# ST7735 invalid-address guard — authored guest qualified
 
 This P3 model/fixture/guest slice follows
 [retention controls](st7735-retention-controls.md).
-No execution or landed result is claimed yet. Keep it separate from deployed
-panel binding, Image layout, IRQ/DMA and consumer adoption.
+The bounded model and authored guest controls passed. Keep this separate from
+deployed panel binding, Image layout, IRQ/DMA and consumer adoption.
+
+## Landed qualification — 2026-10-08
+
+[PR171](https://github.com/CrispStrobe/labwired-core/pull/171) merged as
+`98732ec2452fd6d9f5302154ac207e68ae817b89`, from reviewed source
+`53187fb82082b93c54c22081ecf087e460920890`. The tested merge checkout
+`ed99670021db47c83a5f84ccf463f9b5a6aeb573` and landed main have identical
+tree `102a3facb4963f2997a3a4edb7d2d12bd5145ed2`.
+All 21 enabled checks passed; four declared full/warm/image jobs skipped.
+
+[Core run37702186754](https://github.com/CrispStrobe/labwired-core/actions/runs/37702186754)
+passed the new full-RAM/validity unit control and all nine SAM guest tests,
+zero failed/ignored/filtered, in both
+[feature-off](https://github.com/CrispStrobe/labwired-core/actions/runs/37702186754/job/113068021050)
+and [feature-on](https://github.com/CrispStrobe/labwired-core/actions/runs/37702186754/job/113068020846).
+Guest SHA256:
+`588690ff109ab9cb553960172ce7e7cba4c9507a5435963900e151d954610c6f`.
+Fixture SHA256:
+`63dde9c59d4ebaa0472cb272ce00d8e56b827f6ccc70e77fc26a54c4757f85e6`.
+
+The [native micro:bit board job](https://github.com/CrispStrobe/labwired-core/actions/runs/37702186807/job/113068005657)
+also passed selected active display/button and motion/display/button workloads.
+It is not a fresh 42-chip spin sweep, a PyBadge active-panel rate, a controlled
+speedup or a new WASM RTx result. Live CODAL, existing displays, workspace and
+browser gates passed. No app pin, floor, baseline or hardware evidence changed.
 
 ## Contract and narrow change
 
