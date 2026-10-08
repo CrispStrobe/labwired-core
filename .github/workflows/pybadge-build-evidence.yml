@@ -52,6 +52,8 @@ jobs:
         run: node scripts/pybadge-build-evidence/evidence.mjs collect public-consumer "$RUNNER_TEMP/codal" "$RUNNER_TEMP/pybadge-evidence"
       - name: Preprocess original screen with generated ARM target flags
         run: python3 scripts/pybadge-build-evidence/preprocess.py --root "$RUNNER_TEMP/codal/samd51adafruit" --out "$RUNNER_TEMP/pybadge-evidence"
+      - name: Retain original clean-build link map without relinking
+        run: python3 scripts/pybadge-build-evidence/link_map.py --root "$RUNNER_TEMP/codal/samd51adafruit" --out "$RUNNER_TEMP/pybadge-evidence"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: ${{ !cancelled() }}
         with:
