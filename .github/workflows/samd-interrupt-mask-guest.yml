@@ -10,6 +10,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Require receipt source-binding controls
+        run: python3 scripts/samd-interrupt-mask/test_record.py
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: CrispStrobe/codal-samd

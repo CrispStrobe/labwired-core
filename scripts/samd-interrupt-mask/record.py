@@ -13,11 +13,20 @@ def git(*args):
     return subprocess.check_output(['git', *args], text=True).strip()
 
 
+def actual_parents():
+    # Revision traversal hides parents at a shallow boundary. Object headers do
+    # not: retain the actual commit's parents without weakening source binding.
+    headers = git('cat-file', '-p', 'HEAD').split('\n\n', 1)[0]
+    parents = [line[7:] for line in headers.splitlines() if line.startswith('parent ')]
+    assert all(re.fullmatch('[0-9a-f]{40}', parent) for parent in parents)
+    return parents
+
+
 record = {
     'schema': 1,
     'commit': git('rev-parse', 'HEAD'),
     'tree': git('rev-parse', 'HEAD^{tree}'),
-    'parents': git('show', '-s', '--format=%P', 'HEAD').split(),
+    'parents': actual_parents(),
     'head': os.environ['QUALIFICATION_HEAD'],
     'run': int(os.environ['GITHUB_RUN_ID']),
     'attempt': int(os.environ['GITHUB_RUN_ATTEMPT']),

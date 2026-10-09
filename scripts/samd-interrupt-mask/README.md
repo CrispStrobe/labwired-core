@@ -28,3 +28,21 @@ NVIC vector handling, DMA memory ordering, fiber/driver integration, hardware
 behaviour, ASF removal or runtime-image admission. No new performance or
 whole-component licence claim follows. A complete vector/NVIC positive and
 negative fixture is the next separate qualification before atomic integration.
+
+## First execution: results passed, receipt failed
+
+[Run37904852581](https://github.com/CrispStrobe/labwired-core/actions/runs/37904852581)
+at reviewed source `452e6b76ef6cc884e4265bd9c1e26444388f5056` observed
+positive `0x600d` in315 instructions and mutant assertion3 in126, in both
+profiles. Its overall conclusion is **failure**: the receipt's parent query
+used revision traversal, which hides parents at the shallow checkout boundary.
+The original logs and six-member artifact preserve these results; no successful
+qualification receipt exists for that run. The actual merge object's tree
+matched the reviewed source and its second parent matched that source head.
+
+The corrected recorder reads the actual commit object's headers, retaining
+the two-parent and exact reviewed-head requirements without history fetching.
+Synthetic controls cover that shallow boundary, ignore parent-like commit
+message text, and reject wrong/malformed parents, fixture, status, missing
+results and ELF hashes. They are production-script controls, not independent
+guest evidence. The changed recorder/workflow requires fresh hosted validation.
