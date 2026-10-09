@@ -14,9 +14,18 @@ fn authored_irq_waits_for_outer_restore_and_detects_early_delivery() {
         let path = directory.join(case).join("control.elf");
         let bytes = std::fs::read(&path).unwrap();
         let hash = format!("{:x}", Sha256::digest(&bytes));
+        let elf = goblin::elf::Elf::parse(&bytes).expect("owned unstripped ELF");
         let symbol = |name| {
-            labwired_loader::resolve_symbol_in_elf(&bytes, name)
-                .expect("owned unstripped guest symbol") as u64
+            // The general loader helper intentionally rejects zero addresses.
+            // This fixture has a defined vector-table symbol at flash address0.
+            let matches: Vec<_> = elf
+                .syms
+                .iter()
+                .filter(|sym| sym.st_shndx != 0 && elf.strtab.get_at(sym.st_name) == Some(name))
+                .collect();
+            assert_eq!(matches.len(), 1, "unique defined guest symbol {name}");
+            assert!(matches[0].st_value <= u32::MAX as u64);
+            matches[0].st_value
         };
         let status = symbol("control_status");
         let witnesses = [
