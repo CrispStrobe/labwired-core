@@ -39,3 +39,25 @@ build script, workflow or reuse-policy changes require fresh execution.
 Cancelled/failed runs and artifacts recording only reuse cannot supply fresh
 qualification. All unrelated enabled final-head checks remain required.
 The reused result is evidence about the original run, not new guest execution.
+
+### Fresh provenance-bound result — remaining PR gates pending
+
+[Run37900687425](https://github.com/CrispStrobe/labwired-core/actions/runs/37900687425),
+attempt 1, source `15672efdb3b547b6173e8458ea0707626c8c38d7`, passed every
+guest-job step. Its actual checkout `670c7281803d13aeb573a7eb5da41996d74291aa`
+has the reviewed tree `e2524d22211d9fdee39a54cfaedd32f7ac10f37c`.
+Both profiles again observed BSS clearing/probe entry and exact positive
+`0x600d`/1425 instructions, mutant assertion 4/302 instructions.
+Positive ELF SHA256 remains
+`bd539fda7f60b37b82e9e47b96180dff2208718d9e1da8057c5a8a82408ab2d3`;
+mutant is `f2191da7b4214aff866aad4c863b476483f720ff9b1550f1c54c5103a17a3949`.
+
+[Artifact11602762320](https://github.com/CrispStrobe/labwired-core/actions/runs/37900687425/artifacts/11602762320)
+is 5505 bytes, ZIP SHA256
+`2e8a046955140fec36b4687bda1fae25fa579b1d0dbd0ad59f0a58b28077768d`.
+A separate raw ZIP/metadata/hash audit verified the fresh decision, exact
+provenance, both result pairs, successful steps and safe eight-member inventory
+without ELF/object uploads. This is not independent ELF or hardware replay.
+The documentation-only publication of this record should exercise reuse of
+that fresh qualification. Its reuse check and all other enabled final-head
+checks are still required; this paragraph does not claim merge readiness.
