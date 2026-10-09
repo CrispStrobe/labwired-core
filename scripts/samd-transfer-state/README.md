@@ -22,3 +22,20 @@ Its DMA/TXC calls are authored abstract events, not real peripheral observations
 The first actual hosted guest result and every enabled exact-head PR check
 are required before landing this test harness. Preserve any failed result;
 never change the expected marker or invent completion to make it pass.
+
+## Documentation-only source-bound reuse
+
+The first actual [run37889228375](https://github.com/CrispStrobe/labwired-core/actions/runs/37889228375)
+passed both profiles: positive `0x600d`/1425 instructions, premature-success
+mutation assertion 4/302 instructions. It predates the provenance record below,
+so the new gate cannot automatically reuse it. The first run of the new workflow
+must qualify its changed harness once and retain `qualification.json`.
+
+Later runs may reuse an official successful fresh execution only when its run,
+attempt, merge/head/tree, fixture pin, artifact digest and exact results in both
+profiles bind correctly. Compare the entire Git snapshot: only this README
+and `docs/testing/IGNORED_TESTS.md` may differ. Engine, dependency, config, test,
+build script, workflow or reuse-policy changes require fresh execution.
+Cancelled/failed runs and artifacts recording only reuse cannot supply fresh
+qualification. All unrelated enabled final-head checks remain required.
+The reused result is evidence about the original run, not new guest execution.
