@@ -7,7 +7,7 @@ permissions:
 jobs:
   observe:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -34,11 +34,13 @@ jobs:
         run: |
           test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE"
           cargo build --locked --release -p labwired-cli
-      - name: Capture original two-target stdout and stderr
+      - name: Capture bounded execution-mode comparisons
         env:
           EXPECTED_SOURCE: ${{ matrix.source }}
           DIAGNOSTIC_LABEL: ${{ matrix.label }}
-        run: python3 scripts/tier1-diagnostic/capture.py
+        run: |
+          python3 scripts/tier1-diagnostic/test_capture.py
+          python3 scripts/tier1-diagnostic/capture.py
       - name: Preserve bounded diagnostic observations (no ELF)
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
