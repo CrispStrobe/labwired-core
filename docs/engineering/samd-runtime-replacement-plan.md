@@ -130,34 +130,32 @@ Distribution obligations and exact selected component review remain required.
 
 ## Next bounded foundation and integration tasks
 
-Start with the [current landed/pending checkpoint](samd-permissive-runtime-lanes.md#authored-foundations-checkpoint--not-runtime-admission).
+Start with the [landed foundation checkpoint](samd-permissive-runtime-lanes.md#authored-foundations-checkpoint--not-runtime-admission).
 Do not repeat successful original acquisitions or infer runtime integration
 from the small fixture results. Work these tasks in order, with each source
 change separately qualified before the next depends on it.
 
-1. **Finish the new-base IRQ control.** Own-fork LabWired PR191 must pass fresh
-   default/scheduler guest execution, its full ratchet and every enabled
-   exact-head PR check. Independently join the original official run/job/attempt,
-   actual merge tree/parents, fixture pin, closed artifact members and log hashes.
-   Require positive600d/count1/stage2 and mutant6/count1/stage1, with actual
-   exception16 entry/return and valid vectors/BSS/entry. Preserve the original
-   vector-zero resolution failure and old-base success separately. Only then
-   merge the exact reviewed head and verify landed-tree equality.
-2. **Select the runtime foundation base explicitly.** Refresh the stacked
+The new-base IRQ control is complete: LabWired PR191 passed fresh
+default/scheduler execution, full release ratchet, independent original audit
+and all enabled exact-head PR checks before landing with tested-tree equality.
+Preserve its original vector-zero failure and old-base success; do not replay
+successful unchanged fixtures merely to read their receipts.
+
+1. **Select the runtime foundation base explicitly.** Refresh the stacked
    [CODAL source PRs](https://github.com/CrispStrobe/codal-samd/pulls) and own
    default branch; the engine's pinned fixtures do not clear those PRs for
    landing. Review their origin/notices and changed files, choose a declared
    simulation-only source base, and clean-build affected consumers on hosted
    CI. Keep authored abstract transfer events separate from real peripheral
    completions; unsupported services must reject rather than report success.
-3. **Integrate critical sections before peripheral IRQ/DMA.** Bind the
+2. **Integrate critical sections before peripheral IRQ/DMA.** Bind the
    qualified PRIMASK primitive to the actual selected caller/build closure,
    without ASF header fallback. Prove nested/already-disabled restoration,
    meaningful failure controls and the affected real consumer in a clean
    guest. The existing mask fixture is a prerequisite, not this integration's
    acceptance test. No NMI/HardFault, DMA memory-ordering or fiber proof follows
    from PRIMASK alone.
-4. **Return to engine P2, then P4 and R1c.** Use primary SAMD51 definitions
+3. **Return to engine P2, then P4 and R1c.** Use primary SAMD51 definitions
    for separate SERCOM/DMAC vectors and pending/mask/clear/reset behavior.
    After actual peripheral IRQ guests pass, qualify descriptors, triggers,
    writeback, error/abort and final SPI TXC. Only then bridge exactly-once

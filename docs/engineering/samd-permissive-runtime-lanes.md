@@ -54,14 +54,23 @@ prototypes; their use here does not mean their runtime PRs have merged.
   thresholds, drift acknowledgements or dependency pins. Preserve PR190's
   [original failed full run37913923779](https://github.com/CrispStrobe/labwired-core/actions/runs/37913923779);
   the repair does not erase that failure or establish a speed improvement.
-- [PR191](https://github.com/CrispStrobe/labwired-core/pull/191) remains pending.
+- [PR191](https://github.com/CrispStrobe/labwired-core/pull/191) landed as
+  `428ef1a3f965ab3b641e4ee7be5b03c984a505ed`, with reviewed, actual guest
+  and landed tree `7cd052eb5ac39ce7434a0bdf96cb29b796c8067e` equal.
   Its original [IRQ run37939113526](https://github.com/CrispStrobe/labwired-core/actions/runs/37939113526)
   passed on the old base, but is not new-base clearance. After explicit adoption
-  of landed PR190, frozen head `ba979e89889f3e53ffd7068f0ea0a055d01f1fe9`
-  needs the [fresh guest37966274198](https://github.com/CrispStrobe/labwired-core/actions/runs/37966274198),
-  [full Core run37966268148](https://github.com/CrispStrobe/labwired-core/actions/runs/37966268148),
-  independent original audit and every enabled final-head PR check before merge.
-  No new-base pass is claimed here. This fixture is software-pended IRQ0,
+  of landed PR190, reviewed head `ba979e89889f3e53ffd7068f0ea0a055d01f1fe9`
+  passed the [fresh guest37966274198](https://github.com/CrispStrobe/labwired-core/actions/runs/37966274198)
+  and [full Core run37966268148](https://github.com/CrispStrobe/labwired-core/actions/runs/37966268148).
+  Both guest profiles observed positive600d/count1/stage2 in1501 instructions
+  versus exact premature-delivery assertion6/count1/stage1 in868, with vector,
+  BSS, entry and actual exception16 entry/return witnesses. The separate
+  original artifact/metadata audit, all19 enabled PR checks and all13 enabled
+  full-run jobs passed, including the release ratchet. Preserve the
+  [first vector-symbol failure37917350825](https://github.com/CrispStrobe/labwired-core/actions/runs/37917350825)
+  and its test-only defined-address-zero fix. No production loader changed.
+  This fixture pins CODAL source `2a991760339fe89f5272f923baf89dc18fd434d0`
+  and is software-pended IRQ0,
   not actual SAMD peripheral IRQ routing or DMA/fiber completion.
 
 Next execute the ordered foundation/integration tasks in the
