@@ -18,7 +18,7 @@ jobs:
           targets: thumbv7m-none-eabi,thumbv7em-none-eabi
       - name: Reproduce the audited guest inputs, without rerunning an engine
         run: |
-          test "$(git rev-parse HEAD^{tree})" = b477c9530e36188e7bedb8ea0dd5904cdb587c36
+          test "$(git rev-parse 'HEAD^{tree}')" = b477c9530e36188e7bedb8ea0dd5904cdb587c36
           (cd examples/tier1-fixture/nrf52832 && cargo build --locked --release --target thumbv7em-none-eabi)
           (cd examples/tier1-fixture/stm32f103 && cargo build --locked --release --target thumbv7m-none-eabi)
           mkdir fixture-export
