@@ -299,7 +299,7 @@ fn check_adc() -> Result<(), &'static [u8]> {
     wr32(RCC_BASE + 0x18, rd32(RCC_BASE + 0x18) | (1 << 9)); // APB2ENR.ADC1EN
     wr32(ADC1_BASE + 0x08, 1); // CR2.ADON @ 0x08
     spin(100); // converter wake-up
-    // CR2: ADON + EXTSEL=SWSTART (0b111 << 17) + EXTTRIG, then SWSTART (bit 22).
+               // CR2: ADON + EXTSEL=SWSTART (0b111 << 17) + EXTTRIG, then SWSTART (bit 22).
     let cr2 = 1 | (0b111 << 17) | (1 << 20);
     wr32(ADC1_BASE + 0x08, cr2);
     wr32(ADC1_BASE + 0x08, cr2 | (1 << 22));
