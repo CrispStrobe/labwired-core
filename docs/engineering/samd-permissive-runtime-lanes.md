@@ -1,4 +1,4 @@
-# SAMD simulation-runtime admission lanes — 2026-10-08
+# SAMD simulation-runtime admission lanes — 2026-10-09
 
 This is a prerequisite for original native PyBadge runtime execution and app
 adoption, not a prerequisite for authored permissive MMIO guest tests. Keep
@@ -25,6 +25,58 @@ PR174 and PR175 are merged. The qualified separate ARM preprocessing observed
 `USE_RGB444=1`; the [original-map receipt](../receipts/2026-10-08-pybadge-link-map/README.md)
 records its exact source/configuration boundary. Loaded CF2/constructor selection
 remains separate.
+
+## Authored foundations checkpoint — not runtime admission
+
+The following engine-side controls have landed. They qualify small owned
+fixtures, not the historical PyBadge image, an integrated CODAL driver or an
+application package. The fixture sources remain separately pinned own-fork
+prototypes; their use here does not mean their runtime PRs have merged.
+
+- [PR189](https://github.com/CrispStrobe/labwired-core/pull/189) landed the
+  authored abstract transfer-state guest. Its events are software state
+  transitions, not observed SPI, DMA, IRQ or fiber activity.
+- [PR190](https://github.com/CrispStrobe/labwired-core/pull/190) landed as
+  `8e038c11a2a341271e0aeafb8fce7d9da23f2c88`, with reviewed and landed tree
+  equality. The source-bound [new-base guest run37955448231](https://github.com/CrispStrobe/labwired-core/actions/runs/37955448231)
+  passed both default and event-scheduler profiles: positive `0x600d` in315
+  instructions and the restore-always-enabled mutant's exact assertion3 in126.
+  Both observed BSS clearance and fixture entry. An independent original
+  artifact/metadata audit passed; all19 enabled final PR checks and the
+  [full release ratchet37955516120](https://github.com/CrispStrobe/labwired-core/actions/runs/37955516120)
+  passed. This is PRIMASK restoration evidence, not IRQ delivery or DMA ordering.
+- [PR193](https://github.com/CrispStrobe/labwired-core/pull/193) landed the
+  Nordic/F1 Tier1 console-initialization repair and its exact reproduced
+  fixture bytes as `80823eb479e20327d8ecb3f35b4d0aa4912a1a2a`.
+  [Guest run37946576833](https://github.com/CrispStrobe/labwired-core/actions/runs/37946576833)
+  and [full ratchet37946567305](https://github.com/CrispStrobe/labwired-core/actions/runs/37946567305)
+  passed. This repaired stale fixtures without changing the engine, ratchet
+  thresholds, drift acknowledgements or dependency pins. Preserve PR190's
+  [original failed full run37913923779](https://github.com/CrispStrobe/labwired-core/actions/runs/37913923779);
+  the repair does not erase that failure or establish a speed improvement.
+- [PR191](https://github.com/CrispStrobe/labwired-core/pull/191) landed as
+  `428ef1a3f965ab3b641e4ee7be5b03c984a505ed`, with reviewed, actual guest
+  and landed tree `7cd052eb5ac39ce7434a0bdf96cb29b796c8067e` equal.
+  Its original [IRQ run37939113526](https://github.com/CrispStrobe/labwired-core/actions/runs/37939113526)
+  passed on the old base, but is not new-base clearance. After explicit adoption
+  of landed PR190, reviewed head `ba979e89889f3e53ffd7068f0ea0a055d01f1fe9`
+  passed the [fresh guest37966274198](https://github.com/CrispStrobe/labwired-core/actions/runs/37966274198)
+  and [full Core run37966268148](https://github.com/CrispStrobe/labwired-core/actions/runs/37966268148).
+  Both guest profiles observed positive600d/count1/stage2 in1501 instructions
+  versus exact premature-delivery assertion6/count1/stage1 in868, with vector,
+  BSS, entry and actual exception16 entry/return witnesses. The separate
+  original artifact/metadata audit, all19 enabled PR checks and all13 enabled
+  full-run jobs passed, including the release ratchet. Preserve the
+  [first vector-symbol failure37917350825](https://github.com/CrispStrobe/labwired-core/actions/runs/37917350825)
+  and its test-only defined-address-zero fix. No production loader changed.
+  This fixture pins CODAL source `2a991760339fe89f5272f923baf89dc18fd434d0`
+  and is software-pended IRQ0,
+  not actual SAMD peripheral IRQ routing or DMA/fiber completion.
+
+Next execute the ordered foundation/integration tasks in the
+[replacement plan](samd-runtime-replacement-plan.md#next-bounded-foundation-and-integration-tasks).
+None of these results moves an app pin, admits a whole runtime, qualifies a
+physical board or establishes active PyBadge/native/WASM RTx.
 
 ## R0 — capture actual linked provenance
 
