@@ -66,6 +66,32 @@ behavior or excluded input without checking its actual preprocessor branch.
 The census excludes unidentified additional dependency callers, indirect or
 macro-generated calls, and assembly. Those unknowns block a complete ABI closure.
 
+A whole-tree direct-spelling scan of public `codal-core` C/C++ and assembly
+files at `312ae57e0b31f5b9df07a81e9d846945828e3c5a` found the two header
+declarations above and 57 spellings in nine implementation files. This count
+includes source text without preprocessing or comment removal; it is not a
+count of executed calls. No files were compiled or executed for this scan.
+
+| Pinned `codal-core` implementation | Direct spelling count | Integration concern |
+| --- | --- | --- |
+| `source/JACDAC/JACDAC.cpp` | 5 | Service insertion has alternative enable paths. |
+| `source/JACDAC/JDPhysicalLayer.cpp` | 19 | Flag macros, callback early returns and queue updates; expand macros and establish actual callback context. |
+| `source/core/CodalDmesg.cpp` | 2 | Conditional diagnostic logging can itself enter a critical section. |
+| `source/core/CodalFiber.cpp` | 9 | Queue operations and allocation, including allocation failure; actual allocator selection and nested calls matter. |
+| `source/core/CodalHeapAllocator.cpp` | 7 | Conditional heap/debug paths and allocation failure; establish selected configuration. |
+| `source/core/codal_default_target_hal.cpp` | 1 | Weak terminal panic; distinguish it from the selected board definition. |
+| `source/driver-models/Serial.cpp` | 2 | Formatted output masks interrupts; its comment mentions ISR context but does not prove actual invocation there. |
+| `source/driver-models/Timer.cpp` | 8 | Event insertion calls `triggerIn`, which has its own pair: representative nested-source case. |
+| `source/drivers/MessageBus.cpp` | 4 | Event enqueue/dequeue mutation. |
+
+These paths are relative to the [immutable public dependency tree](https://github.com/lancaster-university/codal-core/tree/312ae57e0b31f5b9df07a81e9d846945828e3c5a/source).
+Scheduler, allocator, timer, diagnostics and event delivery therefore belong
+in the integration review, not just board SPI callers. The tree-wide scan
+closes direct source-text discovery for that dependency's scanned extensions,
+not macro expansion, generated callers, selected build configuration or any
+other dependency. Map retention and active preprocessor paths remain separate
+questions; do not admit the whole dependency from this census.
+
 The display step has alternative early/normal returns with paired enable calls,
 so raw token counts cannot establish balance. The panic path explicitly performs
 low-level masking and a target disable without a matching return-path enable;
