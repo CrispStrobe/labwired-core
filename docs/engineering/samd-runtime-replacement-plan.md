@@ -150,6 +150,7 @@ successful unchanged fixtures merely to read their receipts.
    completions; unsupported services must reject rather than report success.
 2. **Integrate critical sections before peripheral IRQ/DMA.** Bind the
    qualified PRIMASK primitive to the actual selected caller/build closure,
+   starting with the [pinned definition, ABI and bounded caller census](samd-critical-section-interface.md).
    without ASF header fallback. Prove nested/already-disabled restoration,
    meaningful failure controls and the affected real consumer in a clean
    guest. The existing mask fixture is a prerequisite, not this integration's
