@@ -92,6 +92,19 @@ not macro expansion, generated callers, selected build configuration or any
 other dependency. Map retention and active preprocessor paths remain separate
 questions; do not admit the whole dependency from this census.
 
+Each of those nine implementation files matches exactly one source unit and
+its source SHA256 in the retained diagnostic dependency report. Their recorded
+probe flags select `SAMDX1` and `__SAMD51J19A__`. The retained generated
+`build/codal_extra_definitions.h` is 1,634 bytes with SHA256
+`1d812a7253fb632cc30537cb34141a1394778c845918172ff5cd36e4953727d8`;
+it selects `SAMD51=1`, `DEVICE_HEAP_ALLOCATOR=1`, `DEVICE_USB=1`,
+`DEVICE_WEBUSB=1`, `CODAL_DEBUG=CODAL_DEBUG_DISABLED` and a 4,000-microsecond
+scheduler tick. These are recorded inputs, not recovered original compiler
+execution or fully expanded effective macros. In particular, a replacement
+profile cannot silently report successful omission of USB/WebUSB required by
+this configuration. Review configuration defaults, forced includes, overrides
+and conditional bodies before deciding which callers are active.
+
 The display step has alternative early/normal returns with paired enable calls,
 so raw token counts cannot establish balance. The panic path explicitly performs
 low-level masking and a target disable without a matching return-path enable;
