@@ -1,0 +1,42 @@
+{
+  "qualifiedBranchHead": "1e7ba0a3575c7df43b2f29a09ec9561ca9fd3b2b",
+  "rebasedSourceHead": "f84a57cd30fcc416068005d2bb2076200ef92e36",
+  "rebasedOntoMain": "8736e1ffa1760ccdfefd48388a56764e9b1fa49c",
+  "sourceComparison": "git diff across crates, configs, examples, .github, validation, scripts, Cargo.toml and Cargo.lock is empty",
+  "native": {
+    "runId": 36733437798,
+    "event": "pull_request",
+    "testedMergeRef": "b9ecefad95105a0b38215f0ef48813272383a417",
+    "runnerCpu": "AMD EPYC 9V74 80-Core Processor",
+    "artifactId": 11110461758,
+    "artifactName": "microbit-active-board-evidence",
+    "artifactDigest": "sha256:77898116c6a7012c58ad154c391be8803bd52411527364e2bc1288a05620b5ec",
+    "motionElfSha256": "a0bf6789443f3e1243a10e629633ee77e842f4295ed79e44094dad8229323784",
+    "adcScanElfSha256": "232fbc378539f8294391aff3861d2d543a8254f46197ccabe38cfe95db8328d3",
+    "functionalPassCountsByInvocation": [1, 4, 1, 4, 3, 11, 1, 4, 5, 8, 26, 75, 3, 8, 16, 13, 1, 9, 153, 3],
+    "functionalSelectedPassTotalIncludingOverlappingFilters": 349,
+    "benchmarkAssertionTestsPassed": 2,
+    "limitations": "Selected test filters overlap; 349 is not a count of unique tests. Native analog-routing tests are not browser motion throughput. Original ELF hashes were checked against downloaded files; ELF binaries are not committed."
+  },
+  "corePerf": {
+    "runId": 36733427626,
+    "event": "workflow_dispatch",
+    "testedSource": "1e7ba0a3575c7df43b2f29a09ec9561ca9fd3b2b",
+    "runnerName": "GitHub Actions 1000301669",
+    "runnerLabel": "ubuntu-24.04",
+    "runnerImageVersion": "20260920.314.1",
+    "runnerCpu": null,
+    "runnerCpuLimitation": "CorePerf workflow did not retain lscpu; do not attribute the separate native runner CPU to this job.",
+    "rustc": "1.95.0 (59807616e 2026-04-14)",
+    "artifactId": 11109759906,
+    "artifactName": "board-throughput-report",
+    "artifactDigest": "sha256:10b6ac0d0a68c07d98558696b05af6081846e15c6db5754882c480ff8643bd4a",
+    "measuredChips": 40,
+    "measuredBoardModes": 78,
+    "memoryMaps": 11,
+    "absoluteRealtimePassed": true,
+    "relativeInstructionGatePassed": true,
+    "thresholdsAndBaselinesChanged": false,
+    "staleImprovementWarning": "nrf51822 step baseline1577.4 measured1297.2 (-17.76%), retained without rebaseline"
+  }
+}

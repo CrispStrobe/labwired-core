@@ -1,0 +1,22 @@
+{
+  "schema": "labwired.microbit.qualified-ab-archive-context.v1",
+  "hostedRun": "https://github.com/CrispStrobe/labwired-core/actions/runs/36715551022",
+  "baselineCommit": "3456c048894f194bbabc9c414932a752d89da999",
+  "candidateHeadCommit": "4ed0de5ce0a0ef003eb201d280bf656ed48208c3",
+  "candidateTestedMergeRef": "db7519127e5e16ddd8d67b702979e0e325c5df1b",
+  "originalWorkflowPassed": true,
+  "originalReceiptParserValid": true,
+  "strictCandidateGatePassed": true,
+  "normalizationApplied": false,
+  "runnerCpu": "AMD EPYC 9V45 96-Core Processor",
+  "candidateToBaselineMedianOfMediansRatio": 1.1494000654538143,
+  "elfArtifacts": [
+    {"invocation": "01-baseline", "sha256": "cd752f47b9b4e38873e0f7cce894c07f2848998c92cd3baac88030226b56ddf4"},
+    {"invocation": "02-candidate", "sha256": "8cb0987547bffd94f9f50eb54a43e518a8077f4081668e1fbc4e002b937cde70"},
+    {"invocation": "03-candidate", "sha256": "d03dccc77e102356bf5248faa7b2ecadfab97015455ea48e34174c448f925c83"},
+    {"invocation": "04-baseline", "sha256": "bbc25bc1d05d4316a8a2c7e4193c33d0d5cc77b02e0c7f258dc0749fa7fb2ad4"}
+  ],
+  "elfRetention": "All four ELF hashes verified against actual files and receipt firmwareSha256. ELF binaries remain in the original GitHub artifact, not this repository.",
+  "qualificationScope": "Controlled sequential B/C/C/B native held-input polled motion workload on this runner; both candidate invocations met the unchanged strict median >=1x gate.",
+  "notQualified": "Different CPU from the earlier AMD EPYC 7763 failure: this does not prove its floor margin. Full 7 GPIO/18 CPU native proof and all-chip performance qualification were pending at archive creation. No landed/current-main, browser-WASM, package-pin, sensor-IRQ, ADC/audio or CP13 completion qualification."
+}

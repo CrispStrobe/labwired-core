@@ -1,0 +1,1275 @@
+{
+  "schema": "labwired.microbit.motion-recovered-same-runner-ab.v1",
+  "hostedRun": "https://github.com/CrispStrobe/labwired-core/actions/runs/36712453588",
+  "originalWorkflowPassed": false,
+  "originalWorkflowReceiptParserValid": false,
+  "recoveryMethod": "Known Rust pretty-harness prefix removed solely from one payload hash line per raw invocation; raw logs untouched; strict parser validation reapplied.",
+  "schedule": [
+    "baseline",
+    "candidate",
+    "candidate",
+    "baseline"
+  ],
+  "invocations": [
+    {
+      "index": 1,
+      "role": "baseline",
+      "commit": "3456c048894f194bbabc9c414932a752d89da999",
+      "exitCode": 0,
+      "medianRtx": 0.8791650576480836,
+      "minimumRtx": 0.8724696049780617,
+      "realtimeTargetMet": false,
+      "samples": [
+        {
+          "accelDma": 393217,
+          "accelInput": [
+            1,
+            -0.5,
+            0.25
+          ],
+          "accelRaw": [
+            16384,
+            -8192,
+            4096
+          ],
+          "accelSamples": 112,
+          "cycles": 64000000,
+          "error": 0,
+          "guestButtonMask": 0,
+          "magDma": 393217,
+          "magInput": [
+            30,
+            -15,
+            7.5
+          ],
+          "magRaw": [
+            200,
+            -100,
+            50
+          ],
+          "magSamples": 112,
+          "pass": 1,
+          "pixels": [
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            157,
+            0,
+            0,
+            0,
+            0,
+            0,
+            158,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            255
+          ],
+          "rtxAt64MHz": 0.8791650576480836,
+          "scans": 2145,
+          "wallSeconds": 1.13744284
+        },
+        {
+          "accelDma": 393217,
+          "accelInput": [
+            -0.25,
+            0.125,
+            -0.75
+          ],
+          "accelRaw": [
+            -4096,
+            2048,
+            -12288
+          ],
+          "accelSamples": 212,
+          "cycles": 64000000,
+          "error": 0,
+          "guestButtonMask": 1,
+          "magDma": 393217,
+          "magInput": [
+            -30,
+            0,
+            60
+          ],
+          "magRaw": [
+            -200,
+            0,
+            400
+          ],
+          "magSamples": 212,
+          "pass": 2,
+          "pixels": [
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            156,
+            0,
+            0,
+            0,
+            0,
+            0,
+            255
+          ],
+          "rtxAt64MHz": 0.8795775395410542,
+          "scans": 4053,
+          "wallSeconds": 1.136909431
+        },
+        {
+          "accelDma": 393217,
+          "accelInput": [
+            1,
+            -0.5,
+            0.25
+          ],
+          "accelRaw": [
+            16384,
+            -8192,
+            4096
+          ],
+          "accelSamples": 312,
+          "cycles": 64000000,
+          "error": 0,
+          "guestButtonMask": 0,
+          "magDma": 393217,
+          "magInput": [
+            30,
+            -15,
+            7.5
+          ],
+          "magRaw": [
+            200,
+            -100,
+            50
+          ],
+          "magSamples": 312,
+          "pass": 3,
+          "pixels": [
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            255
+          ],
+          "rtxAt64MHz": 0.893660581221489,
+          "scans": 5960,
+          "wallSeconds": 1.118993073
+        },
+        {
+          "accelDma": 393217,
+          "accelInput": [
+            -0.25,
+            0.125,
+            -0.75
+          ],
+          "accelRaw": [
+            -4096,
+            2048,
+            -12288
+          ],
+          "accelSamples": 412,
+          "cycles": 64000000,
+          "error": 0,
+          "guestButtonMask": 1,
+          "magDma": 393217,
+          "magInput": [
+            -30,
+            0,
+            60
+          ],
+          "magRaw": [
+            -200,
+            0,
+            400
+          ],
+          "magSamples": 412,
+          "pass": 4,
+          "pixels": [
+            157,
+            0,
+            0,
+            0,
+            0,
+            0,
+            158,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            255
+          ],
+          "rtxAt64MHz": 0.8767312849945867,
+          "scans": 7867,
+          "wallSeconds": 1.140600338
+        },
+        {
+          "accelDma": 393217,
+          "accelInput": [
+            1,
+            -0.5,
+            0.25
+          ],
+          "accelRaw": [
+            16384,
+            -8192,
+            4096
+          ],
+          "accelSamples": 512,
+          "cycles": 64000000,
+          "error": 0,
+          "guestButtonMask": 0,
+          "magDma": 393217,
+          "magInput": [
+            30,
+            -15,
+            7.5
+          ],
+          "magRaw": [
+            200,
+            -100,
+            50
+          ],
+          "magSamples": 512,
+          "pass": 5,
+          "pixels": [
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            156,
+            0,
+            0,
+            0,
+            0,
+            0,
+            159,
+            0,
+            0,
+            0,
+            0,
+            0,
+            255
+          ],
+          "rtxAt64MHz": 0.8724696049780617,
+          "scans": 9774,
+          "wallSeconds": 1.146171734
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "role": "candidate",
+      "commit": "b7bdb4f89ac083238458812bd4e76db0ff9cfc2a",
+      "exitCode": 101,
+      "medianRtx": 0.9973683916355133,
+      "minimumRtx": 0.9913911999883849,
+      "realtimeTargetMet": false,
+      "samples": [
+        {
+          "accelDma": 393217,
+          "accelInput": [
+            1,
+            -0.5,
+            0.25
+          ],
+          "accelRaw": [
+            16384,
+            -8192,
+            4096
+          ],
+          "accelSamples": 112,
+          "cycles": 64000000,
+          "error": 0,
+          "guestButtonMask": 0,
+          "magDma": 393217,
+          "magInput": [
+            30,
+            -15,
+            7.5
+          ],
+          "magRaw": [
+            200,
+            -100,
+            50
+          ],
+          "magSamples": 112,
+          "pass": 1,
+          "pixels": [
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            157,
+            0,
+            0,
+            0,
+            0,
+            0,
+            158,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            255
+          ],
+          "rtxAt64MHz": 0.9913911999883849,
+          "scans": 2145,
+          "wallSeconds": 1.008683555
+        },
+        {
+          "accelDma": 393217,
+          "accelInput": [
+            -0.25,
+            0.125,
+            -0.75
+          ],
+          "accelRaw": [
+            -4096,
+            2048,
+            -12288
+          ],
+          "accelSamples": 212,
+          "cycles": 64000000,
+          "error": 0,
+          "guestButtonMask": 1,
+          "magDma": 393217,
+          "magInput": [
+            -30,
+            0,
+            60
+          ],
+          "magRaw": [
+            -200,
+            0,
+            400
+          ],
+          "magSamples": 212,
+          "pass": 2,
+          "pixels": [
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            156,
+            0,
+            0,
+            0,
+            0,
+            0,
+            255
+          ],
+          "rtxAt64MHz": 0.9937741855941544,
+          "scans": 4053,
+          "wallSeconds": 1.006264818
+        },
+        {
+          "accelDma": 393217,
+          "accelInput": [
+            1,
+            -0.5,
+            0.25
+          ],
+          "accelRaw": [
+            16384,
+            -8192,
+            4096
+          ],
+          "accelSamples": 312,
+          "cycles": 64000000,
+          "error": 0,
+          "guestButtonMask": 0,
+          "magDma": 393217,
+          "magInput": [
+            30,
+            -15,
+            7.5
+          ],
+          "magRaw": [
+            200,
+            -100,
+            50
+          ],
+          "magSamples": 312,
+          "pass": 3,
+          "pixels": [
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            255
+          ],
+          "rtxAt64MHz": 0.9973683916355133,
+          "scans": 5960,
+          "wallSeconds": 1.002638552
+        },
+        {
+          "accelDma": 393217,
+          "accelInput": [
+            -0.25,
+            0.125,
+            -0.75
+          ],
+          "accelRaw": [
+            -4096,
+            2048,
+            -12288
+          ],
+          "accelSamples": 412,
+          "cycles": 64000000,
+          "error": 0,
+          "guestButtonMask": 1,
+          "magDma": 393217,
+          "magInput": [
+            -30,
+            0,
+            60
+          ],
+          "magRaw": [
+            -200,
+            0,
+            400
+          ],
+          "magSamples": 412,
+          "pass": 4,
+          "pixels": [
+            157,
+            0,
+            0,
+            0,
+            0,
+            0,
+            158,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            255
+          ],
+          "rtxAt64MHz": 1.0056417143787344,
+          "scans": 7867,
+          "wallSeconds": 0.994389936
+        },
+        {
+          "accelDma": 393217,
+          "accelInput": [
+            1,
+            -0.5,
+            0.25
+          ],
+          "accelRaw": [
+            16384,
+            -8192,
+            4096
+          ],
+          "accelSamples": 512,
+          "cycles": 64000000,
+          "error": 0,
+          "guestButtonMask": 0,
+          "magDma": 393217,
+          "magInput": [
+            30,
+            -15,
+            7.5
+          ],
+          "magRaw": [
+            200,
+            -100,
+            50
+          ],
+          "magSamples": 512,
+          "pass": 5,
+          "pixels": [
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            156,
+            0,
+            0,
+            0,
+            0,
+            0,
+            159,
+            0,
+            0,
+            0,
+            0,
+            0,
+            255
+          ],
+          "rtxAt64MHz": 1.0087815605028383,
+          "scans": 9774,
+          "wallSeconds": 0.991294884
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "role": "candidate",
+      "commit": "b7bdb4f89ac083238458812bd4e76db0ff9cfc2a",
+      "exitCode": 0,
+      "medianRtx": 1.0146103412269825,
+      "minimumRtx": 0.9965514695155941,
+      "realtimeTargetMet": true,
+      "samples": [
+        {
+          "accelDma": 393217,
+          "accelInput": [
+            1,
+            -0.5,
+            0.25
+          ],
+          "accelRaw": [
+            16384,
+            -8192,
+            4096
+          ],
+          "accelSamples": 112,
+          "cycles": 64000000,
+          "error": 0,
+          "guestButtonMask": 0,
+          "magDma": 393217,
+          "magInput": [
+            30,
+            -15,
+            7.5
+          ],
+          "magRaw": [
+            200,
+            -100,
+            50
+          ],
+          "magSamples": 112,
+          "pass": 1,
+          "pixels": [
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            157,
+            0,
+            0,
+            0,
+            0,
+            0,
+            158,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            255
+          ],
+          "rtxAt64MHz": 1.0288603963012626,
+          "scans": 2145,
+          "wallSeconds": 0.971949162
+        },
+        {
+          "accelDma": 393217,
+          "accelInput": [
+            -0.25,
+            0.125,
+            -0.75
+          ],
+          "accelRaw": [
+            -4096,
+            2048,
+            -12288
+          ],
+          "accelSamples": 212,
+          "cycles": 64000000,
+          "error": 0,
+          "guestButtonMask": 1,
+          "magDma": 393217,
+          "magInput": [
+            -30,
+            0,
+            60
+          ],
+          "magRaw": [
+            -200,
+            0,
+            400
+          ],
+          "magSamples": 212,
+          "pass": 2,
+          "pixels": [
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            156,
+            0,
+            0,
+            0,
+            0,
+            0,
+            255
+          ],
+          "rtxAt64MHz": 1.034546664351848,
+          "scans": 4053,
+          "wallSeconds": 0.966606954
+        },
+        {
+          "accelDma": 393217,
+          "accelInput": [
+            1,
+            -0.5,
+            0.25
+          ],
+          "accelRaw": [
+            16384,
+            -8192,
+            4096
+          ],
+          "accelSamples": 312,
+          "cycles": 64000000,
+          "error": 0,
+          "guestButtonMask": 0,
+          "magDma": 393217,
+          "magInput": [
+            30,
+            -15,
+            7.5
+          ],
+          "magRaw": [
+            200,
+            -100,
+            50
+          ],
+          "magSamples": 312,
+          "pass": 3,
+          "pixels": [
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            255
+          ],
+          "rtxAt64MHz": 1.0146103412269825,
+          "scans": 5960,
+          "wallSeconds": 0.985600047
+        },
+        {
+          "accelDma": 393217,
+          "accelInput": [
+            -0.25,
+            0.125,
+            -0.75
+          ],
+          "accelRaw": [
+            -4096,
+            2048,
+            -12288
+          ],
+          "accelSamples": 412,
+          "cycles": 64000000,
+          "error": 0,
+          "guestButtonMask": 1,
+          "magDma": 393217,
+          "magInput": [
+            -30,
+            0,
+            60
+          ],
+          "magRaw": [
+            -200,
+            0,
+            400
+          ],
+          "magSamples": 412,
+          "pass": 4,
+          "pixels": [
+            157,
+            0,
+            0,
+            0,
+            0,
+            0,
+            158,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            255
+          ],
+          "rtxAt64MHz": 1.0096457241296102,
+          "scans": 7867,
+          "wallSeconds": 0.990446427
+        },
+        {
+          "accelDma": 393217,
+          "accelInput": [
+            1,
+            -0.5,
+            0.25
+          ],
+          "accelRaw": [
+            16384,
+            -8192,
+            4096
+          ],
+          "accelSamples": 512,
+          "cycles": 64000000,
+          "error": 0,
+          "guestButtonMask": 0,
+          "magDma": 393217,
+          "magInput": [
+            30,
+            -15,
+            7.5
+          ],
+          "magRaw": [
+            200,
+            -100,
+            50
+          ],
+          "magSamples": 512,
+          "pass": 5,
+          "pixels": [
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            156,
+            0,
+            0,
+            0,
+            0,
+            0,
+            159,
+            0,
+            0,
+            0,
+            0,
+            0,
+            255
+          ],
+          "rtxAt64MHz": 0.9965514695155941,
+          "scans": 9774,
+          "wallSeconds": 1.003460464
+        }
+      ]
+    },
+    {
+      "index": 4,
+      "role": "baseline",
+      "commit": "3456c048894f194bbabc9c414932a752d89da999",
+      "exitCode": 0,
+      "medianRtx": 0.8908316993869047,
+      "minimumRtx": 0.8768836294496131,
+      "realtimeTargetMet": false,
+      "samples": [
+        {
+          "accelDma": 393217,
+          "accelInput": [
+            1,
+            -0.5,
+            0.25
+          ],
+          "accelRaw": [
+            16384,
+            -8192,
+            4096
+          ],
+          "accelSamples": 112,
+          "cycles": 64000000,
+          "error": 0,
+          "guestButtonMask": 0,
+          "magDma": 393217,
+          "magInput": [
+            30,
+            -15,
+            7.5
+          ],
+          "magRaw": [
+            200,
+            -100,
+            50
+          ],
+          "magSamples": 112,
+          "pass": 1,
+          "pixels": [
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            157,
+            0,
+            0,
+            0,
+            0,
+            0,
+            158,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            255
+          ],
+          "rtxAt64MHz": 0.8908316993869047,
+          "scans": 2145,
+          "wallSeconds": 1.122546493
+        },
+        {
+          "accelDma": 393217,
+          "accelInput": [
+            -0.25,
+            0.125,
+            -0.75
+          ],
+          "accelRaw": [
+            -4096,
+            2048,
+            -12288
+          ],
+          "accelSamples": 212,
+          "cycles": 64000000,
+          "error": 0,
+          "guestButtonMask": 1,
+          "magDma": 393217,
+          "magInput": [
+            -30,
+            0,
+            60
+          ],
+          "magRaw": [
+            -200,
+            0,
+            400
+          ],
+          "magSamples": 212,
+          "pass": 2,
+          "pixels": [
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            156,
+            0,
+            0,
+            0,
+            0,
+            0,
+            255
+          ],
+          "rtxAt64MHz": 0.8939105390083265,
+          "scans": 4053,
+          "wallSeconds": 1.1186801769999999
+        },
+        {
+          "accelDma": 393217,
+          "accelInput": [
+            1,
+            -0.5,
+            0.25
+          ],
+          "accelRaw": [
+            16384,
+            -8192,
+            4096
+          ],
+          "accelSamples": 312,
+          "cycles": 64000000,
+          "error": 0,
+          "guestButtonMask": 0,
+          "magDma": 393217,
+          "magInput": [
+            30,
+            -15,
+            7.5
+          ],
+          "magRaw": [
+            200,
+            -100,
+            50
+          ],
+          "magSamples": 312,
+          "pass": 3,
+          "pixels": [
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            255
+          ],
+          "rtxAt64MHz": 0.8768836294496131,
+          "scans": 5960,
+          "wallSeconds": 1.140402177
+        },
+        {
+          "accelDma": 393217,
+          "accelInput": [
+            -0.25,
+            0.125,
+            -0.75
+          ],
+          "accelRaw": [
+            -4096,
+            2048,
+            -12288
+          ],
+          "accelSamples": 412,
+          "cycles": 64000000,
+          "error": 0,
+          "guestButtonMask": 1,
+          "magDma": 393217,
+          "magInput": [
+            -30,
+            0,
+            60
+          ],
+          "magRaw": [
+            -200,
+            0,
+            400
+          ],
+          "magSamples": 412,
+          "pass": 4,
+          "pixels": [
+            157,
+            0,
+            0,
+            0,
+            0,
+            0,
+            158,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            255
+          ],
+          "rtxAt64MHz": 0.8905911291495,
+          "scans": 7867,
+          "wallSeconds": 1.12284972
+        },
+        {
+          "accelDma": 393217,
+          "accelInput": [
+            1,
+            -0.5,
+            0.25
+          ],
+          "accelRaw": [
+            16384,
+            -8192,
+            4096
+          ],
+          "accelSamples": 512,
+          "cycles": 64000000,
+          "error": 0,
+          "guestButtonMask": 0,
+          "magDma": 393217,
+          "magInput": [
+            30,
+            -15,
+            7.5
+          ],
+          "magRaw": [
+            200,
+            -100,
+            50
+          ],
+          "magSamples": 512,
+          "pass": 5,
+          "pixels": [
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            155,
+            0,
+            0,
+            0,
+            0,
+            0,
+            156,
+            0,
+            0,
+            0,
+            0,
+            0,
+            159,
+            0,
+            0,
+            0,
+            0,
+            0,
+            255
+          ],
+          "rtxAt64MHz": 0.8967399049451397,
+          "scans": 9774,
+          "wallSeconds": 1.115150552
+        }
+      ]
+    }
+  ],
+  "totalSamples": 20,
+  "baselineSamples": 10,
+  "candidateSamples": 10,
+  "baselineMedianAllSamplesRtx": 0.8850843343452771,
+  "candidateMedianAllSamplesRtx": 1.0072116374407862,
+  "candidateToBaselineAllSamplesMedianRatio": 1.137983803753402,
+  "pairedRatios": [
+    1.1344495359081306,
+    1.1389472803058824
+  ],
+  "candidateRealtimeTargetMet": false,
+  "qualification": "FAILED: first strict candidate invocation median below1x and exit101; second candidate median passed, aggregate speedup does not override either candidate gate",
+  "limitations": [
+    "same runner alternating B/C/C/B; no host contention isolation",
+    "native held-input polled motion+display+buttons only; no browser/audio/ADC qualification"
+  ]
+}

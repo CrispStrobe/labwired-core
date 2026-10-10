@@ -1,0 +1,60 @@
+{
+  "schema": "labwired.microbit.composed-isolated-ab-proof.v1",
+  "date": "2026-09-30",
+  "runId": 36731892881,
+  "runUrl": "https://github.com/CrispStrobe/labwired-core/actions/runs/36731892881",
+  "event": "workflow_dispatch",
+  "baselineCommit": "ede33fb4a4778f35cc3398190aaa3d2cf9beb4db",
+  "candidateCommit": "464bd0edcb6b65f7d57db8ec0971d465c7cd9105",
+  "conclusion": "success",
+  "runnerCpu": "AMD EPYC 9V74 80-Core Processor",
+  "runnerFingerprintSha256": "98a8918f194f6d5b1f948415c231129b9abdcdfd21d5b9a5a0f90ca53c618118",
+  "artifact": {
+    "id": 11106287917,
+    "name": "microbit-motion-same-runner-ab",
+    "digest": "sha256:d24fa07015ab6fe4947cb2c80c3765587bab18be07d263027cc63601cd643df8",
+    "sizeBytes": 45425,
+    "actualElfSha256": {
+      "01-baseline-guest-artifacts/motion-bbd4d021819caf73c78b6eef43384045db9a857cb35e8cc64300912e151e8df0.elf": "bbd4d021819caf73c78b6eef43384045db9a857cb35e8cc64300912e151e8df0",
+      "02-candidate-guest-artifacts/motion-fbba18ab939901da4edea6ba29768a6e8968c0d0cc2d33f2475e8cda7615af45.elf": "fbba18ab939901da4edea6ba29768a6e8968c0d0cc2d33f2475e8cda7615af45",
+      "03-candidate-guest-artifacts/motion-504960abd4816f04821f0bf84667da3127e5e81b20d1f3e020bb5f3fc04bce30.elf": "504960abd4816f04821f0bf84667da3127e5e81b20d1f3e020bb5f3fc04bce30",
+      "04-baseline-guest-artifacts/motion-14134e77a711554a09d1029a279c60d40db23e2c65feab72856f9a62bba2f977.elf": "14134e77a711554a09d1029a279c60d40db23e2c65feab72856f9a62bba2f977"
+    },
+    "elfVerification": "All four actual downloaded hosted ELFs were SHA256-verified against the original receipts and artifact filenames. No reconstructed local binary is substituted; ELF binaries remain in the original workflow artifact, not committed here."
+  },
+  "independentAudit": {
+    "allTwentySamplesRevalidatedFromRawLogs": true,
+    "allFourReceiptsRegeneratedExactly": true,
+    "allCyclesPerSample": 64000000,
+    "rtxFormula": "cycles / 64000000 / wallSeconds",
+    "allPoseRawConversionDmaErrorPixelButtonAndProgressAssertionsPassed": true,
+    "schedule": ["baseline", "candidate", "candidate", "baseline"],
+    "baselineRequireRealtime": false,
+    "candidateRequireRealtime": true,
+    "allFourExitCodes": 0,
+    "bothCandidateMediansAtLeastOne": true,
+    "allTenCandidateIndividualSamplesAtLeastOne": true,
+    "candidateMinimumOfAllTenSamplesRtx": 1.057997003606482,
+    "baselineMedianOfMediansRtx": 1.0035145315080594,
+    "candidateMedianOfMediansRtx": 1.0877771001141803,
+    "candidateToBaselineMedianRatio": 1.083967462314166,
+    "improvementPercent": 8.396746231416596,
+    "runnerFingerprintRecomputedExactly": true,
+    "guestAndHarnessSourceHashesVerifiedAgainstBothGitObjects": true,
+    "guestSourceBundleSha256": "e6b8c239dc7ee1aca736671350cda8101f4bf8d6c89d91e2a9e787c85b553939",
+    "isolatedEngineBuilds": "Original build logs identify separate target-baseline and target-candidate directories and distinct source checkouts; both motion-test compiler artifacts report fresh:false."
+  },
+  "sourceIdentityReview": {
+    "laterQualifiedCommit": "1e7ba0a3575c7df43b2f29a09ec9561ca9fd3b2b",
+    "rebasedCommit": "f84a57cd30fcc416068005d2bb2076200ef92e36",
+    "runtimeGuestConfigurationAndValidationByteIdentical": true,
+    "laterNonRuntimeDifference": "An additional 20-line performance-script unit regression verifies issue-tracking mutations are restricted to shipped main, not draft experiments; it changes neither engine nor guest workload. This is source equivalence, not a new A/B measurement at a later documentation head."
+  },
+  "limitations": [
+    "Sequential same-runner ABBA measurements do not isolate all host contention or establish speed on other CPU models.",
+    "The first baseline median is below real time and is preserved honestly; the unchanged harness intentionally requires only candidate invocation medians to meet real time.",
+    "The earlier EPYC7763 candidate-native median 0.995903 failure remains separately preserved; this paired run does not erase it.",
+    "No browser-WASM, microphone/audio acquisition, sensor IRQ, silicon timing or broader CP13 completion is qualified.",
+    "Broad workspace shard timeouts are separate unresolved infrastructure qualification, not all-checks-green evidence."
+  ]
+}

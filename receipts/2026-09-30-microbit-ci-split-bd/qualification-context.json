@@ -1,0 +1,58 @@
+{
+  "runId": 36778919418,
+  "branchHead": "bd05656f9af2f4fa536db8834bccb9aa08b7b400",
+  "testedMergeRef": "a88996f56bc2d83bd950b4908993bb7710ddbfa5",
+  "runnerCpu": "AMD EPYC 7763 64-Core Processor",
+  "artifactId": 11126789779,
+  "artifactName": "microbit-active-board-evidence",
+  "artifactSizeBytes": 8756,
+  "artifactDigest": "sha256:8f8198197ef1339604fbf0b243317acf1b9bf6af9962592aa3629c3a7fbaf01c",
+  "originalElfSha256": {
+    "measuredMotion": "0c43b8ea6fb01976ff33f0a8f3c77c8ef9e6ab9f103a435abb37d8db6b00ea9f",
+    "functionalMotion": "1ff45431bf9b961e53515c352aca188bc4e5f81b6efbddcc2f79ef0d38a8e2b3",
+    "actualAdcScan": "918cd0f75efc1c7de2182e9fd4ca84bc0eb74ebb8b4c72088122cb1cb099e733"
+  },
+  "motionMedianRtx": 1.1267179334518453,
+  "motionMinimumRtx": 1.1174671337969828,
+  "gpioMedianRtx": 5.278344943272967,
+  "gpioMinimumRtx": 4.983698993391979,
+  "functionalPassCountsByInvocation": [
+    1,
+    4,
+    1,
+    4,
+    3,
+    11,
+    1,
+    4,
+    5,
+    8,
+    26,
+    75,
+    3,
+    8,
+    16,
+    13,
+    1,
+    9,
+    153,
+    3
+  ],
+  "functionalSelectedPassTotalIncludingOverlappingFilters": 349,
+  "benchmarkAssertionTestsPassed": 2,
+  "subsequentBroadCoreCi": {
+    "runId": 36778919591,
+    "conclusion": "success"
+  },
+  "subsequentSourceLandingMain": "5fb3d7d44cc1487fdab757906ae62222e8798e93",
+  "landingMeasurementDistinction": "This receipt measured bd at a88996f, not the exact subsequent main landing commit. Exact bd CorePerf run 36779028846 was pending at this update.",
+  "verification": "Both JSON receipts independently regenerated exactly from original logs and current guest source. Five 64000000-cycle samples per workload are individually >=1x. Motion errors are zero, counters increase, DMA amounts/poses/conversions/button inputs/framebuffers validate. All three original artifact ELF hashes match their filenames.",
+  "runtimeComparison": "bd05656f differs from 8c745a68 only in core-ci.yml, test_workspace_test_shard.py, and pre_merge_lane_covers_browser.rs (CI contract test). No production simulator/guest/configuration changes.",
+  "limitations": [
+    "349 selected functional passes include overlapping filters, not unique tests",
+    "Held-input polled native workload; no browser/audio throughput or silicon capture qualification",
+    "Separate hosted executions are not controlled wall-time A/B",
+    "Original artifact ELFs were independently hash-verified; binaries are not committed",
+    "No PR137/main landing or complete broad CI verdict is inferred from this native run"
+  ]
+}
