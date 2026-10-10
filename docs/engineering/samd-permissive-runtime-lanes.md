@@ -40,7 +40,7 @@ prototypes; their use here does not mean their runtime PRs have merged.
   `8e038c11a2a341271e0aeafb8fce7d9da23f2c88`, with reviewed and landed tree
   equality. The source-bound [new-base guest run37955448231](https://github.com/CrispStrobe/labwired-core/actions/runs/37955448231)
   passed both default and event-scheduler profiles: positive `0x600d` in315
-  instructions and the restore-always-enabled mutant's exact assertion3 in126.
+  machine steps and the restore-always-enabled mutant's exact assertion3 in126.
   Both observed BSS clearance and fixture entry. An independent original
   artifact/metadata audit passed; all19 enabled final PR checks and the
   [full release ratchet37955516120](https://github.com/CrispStrobe/labwired-core/actions/runs/37955516120)
@@ -62,7 +62,7 @@ prototypes; their use here does not mean their runtime PRs have merged.
   of landed PR190, reviewed head `ba979e89889f3e53ffd7068f0ea0a055d01f1fe9`
   passed the [fresh guest37966274198](https://github.com/CrispStrobe/labwired-core/actions/runs/37966274198)
   and [full Core run37966268148](https://github.com/CrispStrobe/labwired-core/actions/runs/37966268148).
-  Both guest profiles observed positive600d/count1/stage2 in1501 instructions
+  Both guest profiles observed positive600d/count1/stage2 in1501 machine steps
   versus exact premature-delivery assertion6/count1/stage1 in868, with vector,
   BSS, entry and actual exception16 entry/return witnesses. The separate
   original artifact/metadata audit, all19 enabled PR checks and all13 enabled
