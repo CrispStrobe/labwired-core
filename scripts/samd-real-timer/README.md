@@ -1,9 +1,13 @@
 # Prospective actual Timer guest harness
 
-This is a separate **unexecuted** harness for [CODAL PR13](https://github.com/CrispStrobe/codal-samd/pull/13),
+This is a separate actual-guest qualification lane for [CODAL PR13](https://github.com/CrispStrobe/codal-samd/pull/13),
 not another run of the already qualified five authored paired-policy cases.
-It compiles against current LabWired APIs only after its hosted control job runs.
-No automatic actual guest execution is enabled by this preparation.
+Hosted [control run](https://github.com/CrispStrobe/labwired-core/actions/runs/38163162860)
+compiled the harness and passed three manufactured Rust groups and five Python
+reader groups. The [source ARM build](https://github.com/CrispStrobe/codal-samd/actions/runs/38163094316)
+passed at `d55214588780d737640536b0a58707cd6d69cfce`. The dedicated
+`samd-real-timer-guest.yml` workflow now selects that exact source for both
+scheduler profiles. Enabling the workflow is not an actual guest pass.
 
 The ignored test requires `LABWIRED_TIMER_FIXTURE_DIR` and an explicitly reviewed
 `LABWIRED_TIMER_QUALIFIED_SOURCE`. That source parameter verifies identity, not
@@ -29,8 +33,7 @@ groups with seventeen validation refusals and nine entry-point refusals. The
 entry-point controls also check exclusive receipt creation and no writes after
 rejected source/run/merge context; these tests contain no actual guest result.
 
-Still required: hosted compilation of this harness, the source's ARM build,
-both scheduler-profile actual runs, guest adversaries, a source/log/run-bound
+Still required: both scheduler-profile actual runs, guest adversaries, a source/log/run-bound
 original receipt with manufactured reader controls, and separate packet audit.
 Keep the PR draft until every affected final-head check and actual guest passes.
 Do not move existing consumer pins or overwrite earlier original packets.
