@@ -38,6 +38,7 @@ jobs:
           LABWIRED_PAIRED_FIXTURE_DIR: ${{ runner.temp }}/paired-guests
         run: |
           set -o pipefail
+          cargo test --release -p labwired-core --test samd_paired_irq_guest -- --nocapture
           cargo test --release -p labwired-core --test samd_paired_irq_guest -- --ignored --nocapture | tee paired-guest-default.log
           cargo test --release -p labwired-core --features event-scheduler --test samd_paired_irq_guest -- --ignored --nocapture | tee paired-guest-scheduler.log
       - name: Bind actual source, merge, ELF and execution logs

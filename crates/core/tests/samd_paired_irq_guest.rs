@@ -5,6 +5,85 @@ use labwired_core::{bus::SystemBus, system::cortex_m::configure_cortex_m, Bus, M
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, path::PathBuf};
 
+#[derive(Default)]
+struct RefusalProgress {
+    consecutive: usize,
+    helper_steps: usize,
+    pcs: BTreeSet<u64>,
+}
+
+impl RefusalProgress {
+    fn observe(
+        &mut self,
+        pc: u64,
+        apply: std::ops::Range<u64>,
+        restore: std::ops::Range<u64>,
+    ) -> bool {
+        if restore.contains(&pc) {
+            self.helper_steps += 1;
+            assert!(
+                self.helper_steps <= 32,
+                "mask helper must finish within its bound"
+            );
+            self.consecutive = 0;
+            self.pcs.clear();
+            return false;
+        }
+        assert!(
+            apply.contains(&pc),
+            "refusal cannot escape to caller or unrelated code"
+        );
+        self.consecutive += 1;
+        self.pcs.insert(pc);
+        if self.consecutive == 64 {
+            assert!(self.pcs.len() >= 2, "executed loop, not a stopped CPU");
+            return true;
+        }
+        false
+    }
+}
+
+#[test]
+fn refusal_progress_requires_contiguous_terminal_steps_after_helper() {
+    let mut progress = RefusalProgress::default();
+    for _ in 0..10 {
+        assert!(!progress.observe(0x100, 0x100..0x140, 0x200..0x218));
+    }
+    for pc in [0x200, 0x202, 0x204] {
+        assert!(!progress.observe(pc, 0x100..0x140, 0x200..0x218));
+    }
+    for i in 0..64 {
+        assert_eq!(
+            progress.observe(0x120 + 2 * (i % 2), 0x100..0x140, 0x200..0x218),
+            i == 63
+        );
+    }
+}
+
+#[test]
+#[should_panic(expected = "refusal cannot escape")]
+fn refusal_progress_rejects_caller_escape() {
+    RefusalProgress::default().observe(0x300, 0x100..0x140, 0x200..0x218);
+}
+
+#[test]
+#[should_panic(expected = "mask helper must finish")]
+fn refusal_progress_rejects_stuck_helper() {
+    let mut progress = RefusalProgress::default();
+    for _ in 0..33 {
+        progress.observe(0x200, 0x100..0x140, 0x200..0x218);
+    }
+}
+
+#[test]
+#[should_panic(expected = "executed loop, not a stopped CPU")]
+fn refusal_progress_rejects_stopped_pc() {
+    let mut progress = RefusalProgress::default();
+    for _ in 0..64 {
+        progress.observe(0x120, 0x100..0x140, 0x200..0x218);
+    }
+}
+
 #[test]
 #[ignore = "prospective hosted controls; qualified source and dedicated execution required"]
 fn authored_paired_irq_delivery_and_four_terminal_refusals() {
@@ -69,6 +148,21 @@ fn authored_paired_irq_delivery_and_four_terminal_refusals() {
         let apply_start = apply[0].st_value & !1;
         let apply_end = apply_start.checked_add(apply[0].st_size).unwrap();
         assert!(apply_end > apply_start && apply_end <= 0x10_0000);
+        let restore: Vec<_> = elf
+            .syms
+            .iter()
+            .filter(|sym| {
+                sym.st_shndx != 0
+                    && sym.st_type() == goblin::elf::sym::STT_FUNC
+                    && elf.strtab.get_at(sym.st_name)
+                        == Some("_ZN22brickwright_simulation13InterruptMask7restoreEj")
+            })
+            .collect();
+        assert_eq!(restore.len(), 1, "unique compiled mask restoration helper");
+        let restore_start = restore[0].st_value & !1;
+        let restore_end = restore_start.checked_add(restore[0].st_size).unwrap();
+        assert!(restore_end > restore_start && restore_end <= 0x10_0000);
+        assert!(restore_end <= apply_start || apply_end <= restore_start);
         assert_eq!(symbol("authored_vectors"), 0);
         assert_eq!(symbol("authored_vectors_end"), 1024);
         let handlers = [
@@ -151,8 +245,12 @@ fn authored_paired_irq_delivery_and_four_terminal_refusals() {
                 if mode == 0 {
                     assert!(saw_return);
                 } else {
-                    let mut pcs = BTreeSet::new();
-                    for _ in 0..64 {
+                    // Fault storage precedes the out-of-line Mask::restore(1).
+                    // Permit ONLY that compiled helper, bounded at 32 steps,
+                    // then require 64 consecutive steps inside terminal apply.
+                    let mut progress = RefusalProgress::default();
+                    let mut terminal = false;
+                    for _ in 0..192 {
                         machine
                             .step()
                             .expect("terminal refusal must continue executing");
@@ -164,13 +262,13 @@ fn authored_paired_irq_delivery_and_four_terminal_refusals() {
                         );
                         assert!(machine.cpu.primask && machine.cpu.active_exception == 0);
                         let pc = u64::from(machine.cpu.pc & !1);
-                        assert!(
-                            (apply_start..apply_end).contains(&pc),
-                            "refusal cannot return to caller"
-                        );
-                        pcs.insert(pc);
+                        if progress.observe(pc, apply_start..apply_end, restore_start..restore_end)
+                        {
+                            terminal = true;
+                            break;
+                        }
                     }
-                    assert!(pcs.len() >= 2, "executed loop, not a stopped CPU");
+                    assert!(terminal, "timeout is not terminal refusal qualification");
                 }
                 reached = true;
                 reached_step = step;

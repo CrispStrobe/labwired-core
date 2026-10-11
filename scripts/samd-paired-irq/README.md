@@ -30,7 +30,12 @@ copy, positive IRQ0 delivery only after the outer pair restores the mask, and
 four exact faults: underflow3, changed diagnostic identity5, depth limit4, and
 lost mask6. Each refusal must continue for 64 observed instructions, masked in
 thread mode, with unchanged diagnostics and zero IRQ witnesses, inside the
-actual compiled terminal function. This is a bounded liveness observation, not
+actual compiled terminal function. Fault storage precedes an out-of-line
+`InterruptMask::restore(1)` at the selected `-O0` build; only that exact compiled
+helper is allowed during transition, for at most 32 instructions. The terminal
+64-step count resets across the helper; unrelated code or a caller return
+refuses. Four pure Rust progress controls cover transition, escape, stuck helper
+and stopped PC. This is a bounded liveness observation, not
 proof of indefinite behavior. The diagnostic identity is not a real fiber.
 
 Still owed: hosted compile/format/lint checks, actual source-bound guest results,
