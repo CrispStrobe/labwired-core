@@ -1,7 +1,7 @@
 # SPI and I²C between two chips, over gpio nets
 
-Two STM32G071s in one world whose hardware SPI1 (and, in the second
-environment, I2C1) are wired pin to pin with `gpio_net` interconnects (see
+Pairs of chips in one world whose hardware SPI or I²C are wired pin to pin
+with `gpio_net` interconnects (see
 [GPIO nets](../../docs/howto/gpio-nets.md#buses-over-nets)). Nothing is
 exchanged byte by byte behind the scenes: every bit crosses the nets at the
 pads, so the net reports and a logic analyzer on either board see the real
@@ -9,17 +9,29 @@ waveform, and the bus behaves like wires: ACKs are SDA held low by the other
 chip, a target that is slow to answer holds SCL low, a missing target is the
 pull-up reading 1.
 
-| Environment | Node `a` | Node `b` | Nets |
+| Environment | Node `a` (or `rp`) | Node `b` (or `rp`) | Nets |
 |-------------|----------|----------|------|
-| `env-spi.yaml` | SPI1 master, mode 0, SCK = f/128, CS on a GPIO (PA4) | SPI1 slave, hardware NSS (PA4), RXNE interrupt | `cs` (pull-up), `sck`, `miso`, `mosi` (pull-down) |
-| `env-i2c.yaml` | I2C1 controller (PB6/PB7, open drain) | I2C1 target at 0x42, interrupt driven | `scl`, `sda` (pull-up) |
+| `env-spi.yaml` | STM32G071 SPI1 master, mode 0, SCK = f/128, CS on a GPIO (PA4) | G071 SPI1 slave, hardware NSS (PA4), RXNE interrupt | `cs` (pull-up), `sck`, `miso`, `mosi` (pull-down) |
+| `env-i2c.yaml` | G071 I2C1 controller (PB6/PB7, open drain) | G071 I2C1 target at 0x42, interrupt driven | `scl`, `sda` (pull-up) |
+| `env-spi16.yaml` | STM32F401 SPI1 master, 16-bit frames | F401 SPI1 slave, software select | `sck`, `miso`, `mosi` |
+| `env-i2c-legacy.yaml` | STM32F103 legacy I2C1 master (PB6/PB7) | F401 legacy I2C1 slave at 0x42 | `scl`, `sda` (pull-up) |
+| `env-spi-rp2040.yaml` | RP2040 SPI0 master (GP2-GP5, hardware CSn) | G071 SPI1 slave | `cs`, `sck`, `miso`, `mosi` |
+| `env-spi-rp2040-slave.yaml` | G071 SPI1 master, mode 3 | RP2040 SPI0 slave | `cs`, `sck`, `miso`, `mosi` |
 
 SPI: the master sends `A5 3C 5A C3` and receives `81 82 83 84`, which the
-slave queues from its SPI interrupt.
+slave queues from its SPI interrupt (or preloads in its FIFO, on the RP2040).
+The tests also swap in the frame-shape variants (`spi-*-mode1/2/3`,
+`spi-*-lsb`), a slave that feeds every answer from its TXE interrupt
+(`spi-slave-txe`) and one that underruns (`spi-slave-underrun`).
 
 I²C: the controller writes `10 DE AD` to 0x42 (register pointer 0x10, then two
 bytes), writes the pointer again and reads two bytes back through a repeated
 START (`DE AD`), then writes to 0x50, where nobody answers: NACKF and STOP.
+The legacy pair adds a single-byte read. `i2c-bulk-*` (on the `env-i2c.yaml`
+wiring) moves 300 bytes each way over the 10-bit address 0x2A5 with
+`RELOAD`, then a general call and a write to a masked `OAR2` address. The
+tests also run the legacy pair the other way round (F401 master, F103 slave)
+and a G071 controller against the F103 slave.
 
 Results are left in SRAM at 0x20000100 (see the comment at the top of each
 source). The tests are
