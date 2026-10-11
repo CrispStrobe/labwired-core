@@ -1,7 +1,9 @@
 # Prospective strict paired-IRQ guest harness
 
-Preparation only: no source is pinned or qualified here yet, no workflow is
-installed, and these controls have not compiled or executed. Do not interpret
+Preparation only: no CODAL source is pinned or qualified here yet, no guest
+execution workflow is installed, and these guests have not compiled or
+executed. The separate receipt-control workflow runs manufactured Python tests
+and shell-syntax checks only. Do not interpret
 the presence of the test as runtime admission. Keep historical IRQ fixtures
 unchanged.
 
