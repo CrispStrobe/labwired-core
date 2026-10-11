@@ -24,6 +24,42 @@ VALID = ''.join(
 
 
 class ReaderControls(unittest.TestCase):
+    def test_snapshot_source_and_driver_binding(self):
+        source = Path('synthetic-source')
+        for case in ('valid', 'pin', 'malformed-pin', 'dirty', 'working-bytes', 'compiler'):
+            with self.subTest(case=case):
+                expected = 'not-a-sha' if case == 'malformed-pin' else SOURCE
+
+                def git_output(*args):
+                    if args == ('-C', str(source), 'rev-parse', 'HEAD'):
+                        return '5' * 40 if case == 'pin' else SOURCE
+                    if args == ('-C', str(source), 'status', '--porcelain', '--untracked-files=all'):
+                        return ' M paired-irq/profile.cpp' if case == 'dirty' else ''
+                    raise AssertionError(args)
+
+                def original_bytes(args):
+                    self.assertEqual(args[:5], ['git', '-C', str(source), 'show', args[4]])
+                    self.assertIn(args[4], ['HEAD:' + name for name in SOURCE_FILES])
+                    return b'owned-source'
+
+                def read_bytes(path):
+                    if str(path) == 'synthetic-driver': return b'synthetic-compiler-driver'
+                    self.assertIn(str(path), [str(source / name) for name in SOURCE_FILES])
+                    if case == 'working-bytes' and path == source / SOURCE_FILES[0]: return b'altered'
+                    return b'owned-source'
+
+                with patch.object(record, 'git', git_output), \
+                        patch('subprocess.check_output', original_bytes), \
+                        patch.object(Path, 'read_bytes', read_bytes), \
+                        patch('shutil.which', return_value=None if case == 'compiler' else 'synthetic-driver'):
+                    if case == 'valid':
+                        result = record.snapshot(source, expected)
+                        self.assertEqual(result['source_commit'], SOURCE)
+                        self.assertEqual(set(result['source_files']), set(SOURCE_FILES))
+                        self.assertEqual(result['compiler_sha256'], sha(b'synthetic-compiler-driver'))
+                    else:
+                        with self.assertRaises(ValueError): record.snapshot(source, expected)
+
     def test_recording_entry_point_bindings(self):
         head = '4' * 40
         for case in ('valid', 'parent', 'malformed-parent', 'extra-parent', 'head',
