@@ -68,6 +68,28 @@ absence of own-file spellings is not an absence-of-all-IRQ or whole-image claim.
 
 ## Next actual integration boundary
 
+### Separate read-only assembly source review
+
+The excluded public [CortexContextSwitch.s](https://github.com/lancaster-university/codal-samd/blob/5bd6b93c219c7e784e885ba2d6812809fb6289a8/asm/CortexContextSwitch.s)
+was separately read at the pinned Git tree, not obtained from the preprocessing
+artifact or compiled. Blob `65c05640b95c20f173db5964d66991dd18f665b1` is
+7,872 bytes with SHA256
+`bf8c9b4e9946168138214e3ae27ac248130ffd3325d4c8f8b2064aa378f692d9`.
+Its retained notice identifies MIT terms and BBC attribution. This component
+source observation is not whole-runtime licence clearance.
+
+After removing assembler `@` comments, a case-insensitive token scan found no
+direct `target_disable_irq`, `target_enable_irq`, `cpsid`, `cpsie`, `primask`,
+`basepri` or `faultmask` spellings. The source selects `.cpu cortex-m0` and
+provides register/stack context-switch routines; it does not explicitly save
+PRIMASK with a fiber context. This closes that narrow direct-token observation,
+not assembly execution, instruction decoding, transitive call behavior, context
+ownership or compatibility with a new paired-depth adapter. Decide whether
+scheduling may occur with an outstanding critical section before assuming a
+global nesting state can safely cross fiber contexts.
+
+### Remaining implementation
+
 Use the [interface contract](../../engineering/samd-critical-section-interface.md)
 and [runtime replacement plan](../../engineering/samd-runtime-replacement-plan.md).
 Review effective nested/early-return/terminal behavior and remaining generated,
