@@ -3,8 +3,10 @@
 """Manufactured result-reader controls only; never actual guest testimony."""
 import copy
 import importlib.util
+import json
 from pathlib import Path
 import unittest
+from unittest.mock import mock_open, patch
 
 spec = importlib.util.spec_from_file_location('timer_record', Path(__file__).with_name('record.py'))
 module = importlib.util.module_from_spec(spec)
@@ -59,6 +61,66 @@ class ReaderControls(unittest.TestCase):
                 name = next(iter(before['files'])); before['files'][name]['bytes'] = True
                 build['source'] = copy.deepcopy(before)
             with self.subTest(mode=mode), self.assertRaises(ValueError): module.validate(*args)
+
+    def run_entrypoint(self, mode=None):
+        logs, elf, mapping, build, before, source = self.fixture()
+        head, base = 'c' * 40, 'd' * 40
+        env = {'LABWIRED_TIMER_QUALIFIED_SOURCE': source,
+               'LABWIRED_TIMER_FIXTURE_DIR': '/manufactured/fixture',
+               'LABWIRED_TIMER_SOURCE_DIR': '/manufactured/samd',
+               'LABWIRED_TIMER_CORE_DIR': '/manufactured/core',
+               'QUALIFICATION_HEAD': head, 'GITHUB_REPOSITORY': 'CrispStrobe/labwired-core',
+               'GITHUB_EVENT_NAME': 'pull_request', 'GITHUB_RUN_ID': '123',
+               'GITHUB_RUN_ATTEMPT': '1'}
+        if mode == 'repository': env['GITHUB_REPOSITORY'] = 'other/repository'
+        elif mode == 'event': env['GITHUB_EVENT_NAME'] = 'workflow_dispatch'
+        elif mode == 'run': env['GITHUB_RUN_ID'] = '0'
+        elif mode == 'attempt': env['GITHUB_RUN_ATTEMPT'] = '0'
+        def read_bytes(path):
+            if path.name == 'build-provenance.json': return json.dumps(build).encode()
+            if path.name == 'source-before.json': return json.dumps(before).encode()
+            if path.name == 'control.elf': return elf
+            if path.name == 'control.map': return mapping
+            if path.name.startswith('timer-guest-'): return logs[path.stem.removeprefix('timer-guest-')]
+            if mode == 'live_bytes' and path.name == 'probe.cpp': return b'changed live source'
+            return b'manufactured source'
+        def git(*args):
+            if args[:2] == ('-C', '/manufactured/samd'):
+                return 'b' * 40 if mode == 'live_pin' else source
+            if args[:2] == ('-C', '/manufactured/core'): return module.CORE_PIN
+            if args[0] == 'show':
+                if mode == 'one_parent': return base
+                if mode == 'wrong_head': return base + ' ' + 'e' * 40
+                return base + ' ' + head
+            return 'f' * 40 if args[-1] == 'HEAD' else '9' * 40
+        output = mock_open()
+        if mode == 'existing_receipt': output.side_effect = FileExistsError('existing receipt')
+        with patch.dict(module.os.environ, env, clear=True), \
+                patch.object(Path, 'read_bytes', read_bytes), patch.object(module, 'git', git), \
+                patch.object(module.subprocess, 'check_output', return_value=b'manufactured source'), \
+                patch.object(Path, 'open', output):
+            if mode:
+                with self.assertRaises(FileExistsError if mode == 'existing_receipt' else ValueError):
+                    module.main()
+                output.return_value.write.assert_not_called()
+                if mode != 'existing_receipt': output.assert_not_called()
+                return
+            module.main()
+        output.assert_called_once_with('x')
+        receipt = json.loads(output.return_value.write.call_args.args[0])
+        self.assertEqual(receipt['head'], head)
+        self.assertEqual(receipt['parents'], [base, head])
+        self.assertEqual(receipt['run'], 123)
+        self.assertEqual(receipt['attempt'], 1)
+        self.assertEqual(set(receipt['profiles']), {'default', 'scheduler'})
+
+    def test_manufactured_entrypoint_exclusive_receipt(self):
+        self.run_entrypoint()
+
+    def test_entrypoint_refusals_write_nothing(self):
+        for mode in ('repository', 'event', 'run', 'attempt', 'live_bytes', 'live_pin',
+                     'one_parent', 'wrong_head', 'existing_receipt'):
+            with self.subTest(mode=mode): self.run_entrypoint(mode)
 
 
 if __name__ == '__main__':

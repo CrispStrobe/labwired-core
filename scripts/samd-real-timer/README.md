@@ -24,8 +24,10 @@ build manifest, exact source/header/toolchain inventory and live immutable Git
 source bytes. It refuses source drift, unbound headers, missing/duplicate results,
 wrong source/image, missing witnesses and out-of-bound execution. The CLI binds
 the actual qualification merge/head/tree/parents and official run/attempt, and
-refuses to overwrite a previous receipt. `test_record.py` has three manufactured
-groups with seventeen refusal cases; these tests contain no actual guest result.
+refuses to overwrite a previous receipt. `test_record.py` has five manufactured
+groups with seventeen validation refusals and nine entry-point refusals. The
+entry-point controls also check exclusive receipt creation and no writes after
+rejected source/run/merge context; these tests contain no actual guest result.
 
 Still required: hosted compilation of this harness, the source's ARM build,
 both scheduler-profile actual runs, guest adversaries, a source/log/run-bound
@@ -34,6 +36,6 @@ Keep the PR draft until every affected final-head check and actual guest passes.
 Do not move existing consumer pins or overwrite earlier original packets.
 
 Clock, allocation, component registration and event dispatch remain explicitly
-limited by the [runtime fixture contract](https://github.com/CrispStrobe/codal-samd/blob/5d35c01e331acd83d1adb4854a18ecb027b2557e/timer-caller/README.md).
+limited by the [runtime fixture contract](https://github.com/CrispStrobe/codal-samd/blob/d552145/timer-caller/README.md).
 This does not qualify peripheral timers, real fibers, event bus, full runtime,
 native Arcade boot, physical calibration, licensing or active RTx.
