@@ -1,5 +1,31 @@
 # Authored strict paired-IRQ ARM guests — original qualification
 
+## Corrected final-head guest gate
+
+The generated ignored-test inventory required a correction after the first guest
+pass. [Run38158310794](https://github.com/CrispStrobe/labwired-core/actions/runs/38158310794),
+attempt1, then passed all ten cases at final head
+`b4c986f361079f9a6ffb5eb9446f67ee97252733`. All recorded ELF identities and
+case results match the original pass below; source/policy/bounds are unchanged.
+This was automatic CI after a required gate fix, not a diagnostic replay for
+reading evidence. The original failed default-member index gate remains in
+[run38153786840](https://github.com/CrispStrobe/labwired-core/actions/runs/38153786840).
+
+The sole [artifact11709799464](https://api.github.com/repos/CrispStrobe/labwired-core/actions/artifacts/11709799464)
+is `authored-paired-irq-guest-results`, 16,642 bytes, ZIP SHA256
+`4381f1d0ac7805eb99ed7add47016fac4cbabac16bf5ae55bce1c5b80cd687ff`.
+The [unchanged final-head result](final-head-result.json) is 4,291 bytes, SHA256
+`9a319216f6546080802e3281a23c19105e7661e80186769ce2a73014b28d4117`.
+The same separate no-producer-import packet/source audit passed on its official
+identity, six source files, snapshots and both execution logs. Official Git
+metadata confirms qualification merge `0621e95366b2f55a1369f373f96c3ec639eaa956`,
+tree `539beada886c0fd51425842ac03061a65296e638`, parents
+`78ec4af563b70466d8e33c79193c0e270d513230` and final head `b4c986f...`.
+This remains a bounded authored-control result; broader final-head PR198 CI is
+still a separate pending merge gate. Both original packets/results are preserved.
+
+## Earlier unchanged original pass
+
 [Run38153786907](https://github.com/CrispStrobe/labwired-core/actions/runs/38153786907),
 attempt1, passed at head `e7589656998d3a08cd59670ff09a4f3214310d2e`.
 Qualification merge `f074b54d48cf4381b6832aab7ce5abc4aaea45d3` has tree
