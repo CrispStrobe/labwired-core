@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- ESP32-C3 debug trigger module: `tselect` / `tdata1` / `tdata2` / `tdata3` /
+  `tinfo` / `tcontrol` (CSRs 0x7A0-0x7A5) with 8 `mcontrol` triggers, exact
+  and NAPOT address match on load / store / execute, and action 0 (breakpoint
+  exception, `mcause = 3`, `mtval` = the matched address) raised before the
+  matching instruction retires. `tcontrol.mte` gates M-mode triggers and is
+  saved to `mpte` on trap entry and restored by MRET. esp-hal's default stack
+  guard (a store watchpoint on `__stack_chk_guard`) now arms instead of
+  trapping on its first `csrw tselect`, and a write to the guard traps like
+  silicon. The interpreter's loop-aggregating fast paths and the RV32 JIT
+  stand down while a trigger is armed.
 - Pulls kept outside the GPIO block reach the pad: a GPIO port names its
   pad-control block (`pad_control:` in the chip yaml, `pins::PadControl`)
   and the bus hands it the decoded pull after every write there, bracketed
@@ -84,6 +94,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `World::gpio_net_applied` is ordered by due time, then node id.
 
 ### Fixed
+- ESP32-C3 SYSTIMER is the real timer on every boot path: the chip YAML now
+  declares `esp32c3_systimer` (the shared SYSTIMER model with the C3's matrix
+  sources 37-39, 16 MHz against the 160 MHz core) instead of a register stub,
+  so a bare-ELF fast boot and a world node see the counter advance and the
+  UNITx_OP UPDATE / VALUE_VALID handshake complete -- esp-hal's `Delay` and
+  `Instant` work there. The ROM-boot path replaces that entry in place rather
+  than stacking a second `systimer`.
 - STM32 EXTI (F1, F4, L4, G0, U5): an EXTI interrupt handler runs once per
   edge. The NVIC kept a pend the held EXTI level raised while the handler was
   running after the handler cleared `EXTI_PR` (`RPR1`/`FPR1` on G0/U5), so a
