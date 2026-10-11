@@ -5,6 +5,11 @@ complete caller graph, whole-runtime admission or new guest qualification.
 The [qualified foundations](samd-permissive-runtime-lanes.md#authored-foundations-checkpoint--not-runtime-admission)
 and [replacement plan](samd-runtime-replacement-plan.md) remain authoritative.
 
+Later bounded checkpoint: [original paired-IRQ guest qualification, 2026-10-11](../receipts/2026-10-11-samd-paired-irq/README.md)
+records ten passing authored ARM cases, not actual caller or scheduler
+integration. Its prospective contracts do not replace the real-consumer
+acceptance criteria below.
+
 ## Actual definitions and ABI
 
 The pinned [CODAL core header](https://github.com/lancaster-university/codal-core/blob/312ae57e0b31f5b9df07a81e9d846945828e3c5a/inc/core/codal_target_hal.h)
