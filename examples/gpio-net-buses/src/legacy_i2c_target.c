@@ -6,11 +6,18 @@
  * NACKs stays in DR and is the first one the next read gets. SCL is stretched while
  * ADDR is up and while the handler has not caught up.
  *
+ * Built with -DSLOW=1 its handler waits about 10 us before clearing ADDR,
+ * longer than an SCL low period, so the master must be held by the stretch.
+ *
  * RESULT[0] write transfers ended by STOP (STOPF), RESULT[1..2]
  * regs[0x10..0x11], RESULT[3] bytes received, RESULT[4] bytes loaded into
  * DR, RESULT[5] reads ended by the master's NACK (AF).
  */
 #include "legacy_i2c.h"
+
+#ifndef SLOW
+#define SLOW 0
+#endif
 
 void i2c1_ev_handler(void);
 void i2c1_er_handler(void);
@@ -32,6 +39,9 @@ static uint32_t have_ptr;
 void i2c1_ev_handler(void) {
     uint32_t sr1 = I2C1_SR1;
     if (sr1 & SR1_ADDR) {
+#if SLOW
+        delay(150);
+#endif
         uint32_t sr2 = I2C1_SR2;        /* SR1 then SR2: ADDR cleared */
         if (!(sr2 & SR2_TRA)) {
             have_ptr = 0u;

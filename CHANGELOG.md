@@ -28,6 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     (`SSPCR1.MS`, TX FIFO answers, RX FIFO), with the `SPIn_RX` pads routed
     and the RP2040 SIO handing net levels to routed peripheral lines. Tested
     against an STM32G071 SPI both ways round.
+  - RP2040 DW_apb_i2c as a bit-level master (command FIFO with STOP and
+    RESTART, TX_ABRT on NACK, SCL held while the FIFO is empty) and slave
+    (`IC_SAR`, RX FIFO with `FIRST_DATA_BYTE`, `RD_REQ` with SCL stretched).
+    Tested against an STM32G071 both ways round.
+  - Clock stretching tested end to end on the G071, F401 and RP2040 targets
+    with firmware too slow for the clock.
   - STM32 SPI: end-to-end tests for modes 1-3, LSB-first and 16-bit frames
     (F401 pair), a slave fed from its TXE interrupt, and a slave underrun.
   - Every new exchange is checked for the same results and wire history
@@ -39,6 +45,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of zeros, and is counted (`Spi::net_slave_underruns`) and logged once;
   enabling `TXEIE` while TXE is set interrupts at once; a `DR` write while
   `SPE=0` fills the transmit buffer.
+- A peripheral answering a net edge on the same pad within the cycle (an
+  I²C target starting to stretch the SCL it just saw fall, a master
+  starting on a bus it just saw go free) could have its drive overwritten on
+  the net by the GPIO port's own report of the new input, stamped one cycle
+  later: the stretch was lost. The bus now has the port report the pad's
+  drive again after the owner has answered.
+- A bit-level I²C target that ends a stretch with a new bit on SDA releases
+  SCL a data setup time later instead of in the same cycle, where the
+  change could read as START or STOP.
 - STM32 classic/FIFO SPI: a 32-bit store to `DR` is one frame. It was split
   into four byte writes and clocked up to four frames.
 

@@ -167,6 +167,9 @@ pub(crate) struct BitBus {
     t_await: Option<TAwait>,
     /// This target is holding SCL low.
     t_stretch: bool,
+    /// The cycle the stretch ends: after a data setup time when the answer
+    /// changed SDA, so the change is on the wire before SCL rises.
+    t_release: Option<u64>,
     /// Levels last seen at the pads (`None` before the first one).
     scl: Option<bool>,
     sda: Option<bool>,
@@ -189,7 +192,10 @@ impl BitBus {
 
     /// The cycle of the next timed step, if one is due.
     pub(crate) fn deadline(&self) -> Option<u64> {
-        self.deadline
+        match (self.deadline, self.t_release) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
     }
 
     /// `true` while the controller side owns the bus (START sent, STOP not
@@ -299,13 +305,21 @@ impl BitBus {
 
     /// Run every timed step due by `now`, each at its own cycle.
     pub(crate) fn step(&mut self, now: u64, pads: &PadLines) {
-        while let Some(due) = self.deadline {
+        while let Some(due) = self.deadline() {
             if due > now {
                 break;
             }
-            self.deadline = None;
             pads.set_stamp(Some(due));
-            self.step_at(due, pads);
+            if self.t_release.is_some_and(|t| t <= due) {
+                self.t_release = None;
+                if std::mem::take(&mut self.t_stretch) {
+                    Self::drive(pads, SCL, true);
+                }
+            }
+            if self.deadline.is_some_and(|t| t <= due) {
+                self.deadline = None;
+                self.step_at(due, pads);
+            }
         }
         pads.set_stamp(None);
     }
@@ -396,7 +410,7 @@ impl BitBus {
     // ── target ──────────────────────────────────────────────────────────
 
     /// ACK (`true`) or NACK the address or data byte just reported.
-    pub(crate) fn t_ack(&mut self, ack: bool, pads: &PadLines) {
+    pub(crate) fn t_ack(&mut self, ack: bool, now: u64, pads: &PadLines) {
         match self.t_await {
             Some(TAwait::AddrAck) => {
                 self.t_await = None;
@@ -417,20 +431,20 @@ impl BitBus {
             }
             _ => return,
         }
-        self.release_stretch(pads);
+        self.release_stretch(now, pads);
     }
 
     /// Go on receiving after [`BusEvent::TAddressed`] with `read: false`.
-    pub(crate) fn t_continue(&mut self, pads: &PadLines) {
+    pub(crate) fn t_continue(&mut self, now: u64, pads: &PadLines) {
         if matches!(self.t_await, Some(TAwait::Continue { read: false })) {
             self.t_await = None;
-            self.release_stretch(pads);
+            self.release_stretch(now, pads);
         }
     }
 
     /// Send `byte` next (after [`BusEvent::TAddressed`] with `read: true`, or
     /// after an ACKed [`BusEvent::TByteOut`]).
-    pub(crate) fn t_send(&mut self, byte: u8, pads: &PadLines) {
+    pub(crate) fn t_send(&mut self, byte: u8, now: u64, pads: &PadLines) {
         if !matches!(
             self.t_await,
             Some(TAwait::TxByte | TAwait::Continue { read: true })
@@ -440,7 +454,7 @@ impl BitBus {
         self.t_await = None;
         self.t_tx = byte;
         Self::drive(pads, SDA, byte & 0x80 != 0);
-        self.release_stretch(pads);
+        self.release_stretch(now, pads);
     }
 
     /// `true` while the target waits for its host to decide something.
@@ -449,9 +463,13 @@ impl BitBus {
         self.t_await.is_some()
     }
 
-    fn release_stretch(&mut self, pads: &PadLines) {
-        if std::mem::take(&mut self.t_stretch) {
-            Self::drive(pads, SCL, true);
+    /// End a stretch, a data setup time after the answer went onto SDA:
+    /// SCL must not rise in the cycle SDA changes, or the change would read
+    /// as START or STOP on the wire.
+    fn release_stretch(&mut self, now: u64, pads: &PadLines) {
+        let _ = pads;
+        if self.t_stretch && self.t_release.is_none() {
+            self.t_release = Some(now + self.timing.sda_delay.max(1));
         }
     }
 
@@ -485,6 +503,7 @@ impl BitBus {
         }
         if line == SDA && prev_scl == Some(true) && prev_sda.is_some() && prev_sda != Some(level) {
             self.t_stretch = false;
+            self.t_release = None;
             self.t_await = None;
             if level {
                 self.t = TPhase::Idle;
@@ -648,11 +667,14 @@ mod tests {
                 if !ea.is_empty() || self.b.target_waiting() {
                     return (ea, eb);
                 }
-                let Some(due) = self.a.deadline() else {
-                    return (ea, eb);
+                let due = match (self.a.deadline(), self.b.deadline()) {
+                    (Some(x), Some(y)) => x.min(y),
+                    (Some(x), None) | (None, Some(x)) => x,
+                    (None, None) => return (ea, eb),
                 };
                 self.now = due;
                 self.a.step(due, &self.pa);
+                self.b.step(due, &self.pb);
             }
             panic!("runaway");
         }
@@ -665,7 +687,7 @@ mod tests {
         assert_eq!(p.run(), (vec![BusEvent::MStarted], vec![BusEvent::TStart]));
         assert!(p.a.m_send(0x84, p.now, &p.pa)); // 0x42, write
         assert_eq!(p.run(), (vec![], vec![BusEvent::TAddress(0x84)]));
-        p.b.t_ack(true, &p.pb);
+        p.b.t_ack(true, p.now, &p.pb);
         assert_eq!(
             p.run(),
             (
@@ -678,9 +700,9 @@ mod tests {
         p.a.m_send(0x5A, p.now, &p.pa);
         assert_eq!(p.run(), (vec![], vec![]));
         assert!(!p.level[SCL], "held low by the target");
-        p.b.t_continue(&p.pb);
+        p.b.t_continue(p.now, &p.pb);
         assert_eq!(p.run(), (vec![], vec![BusEvent::TByteIn(0x5A)]));
-        p.b.t_ack(false, &p.pb);
+        p.b.t_ack(false, p.now, &p.pb);
         assert_eq!(p.run(), (vec![BusEvent::MSent { acked: false }], vec![]));
         p.a.m_stop(p.now, &p.pa);
         // The controller's own target side sees the STOP too.
@@ -701,7 +723,7 @@ mod tests {
         p.run();
         p.a.m_send(0x85, p.now, &p.pa); // 0x42, read
         assert_eq!(p.run(), (vec![], vec![BusEvent::TAddress(0x85)]));
-        p.b.t_ack(true, &p.pb);
+        p.b.t_ack(true, p.now, &p.pb);
         assert_eq!(
             p.run(),
             (
@@ -711,7 +733,7 @@ mod tests {
         );
         p.a.m_recv(p.now, &p.pa);
         assert_eq!(p.run(), (vec![], vec![]));
-        p.b.t_send(0xC3, &p.pb);
+        p.b.t_send(0xC3, p.now, &p.pb);
         assert_eq!(p.run(), (vec![BusEvent::MByteIn(0xC3)], vec![]));
         p.a.m_ack(false, p.now, &p.pa);
         assert_eq!(

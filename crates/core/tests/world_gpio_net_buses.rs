@@ -148,6 +148,31 @@ fn assert_order_and_round_independent(
     assert_eq!(fingerprint(&short), want, "{env}: 37 ns rounds");
 }
 
+/// The longest time `pin` of `node` was held low, in that node's cycles, as
+/// the net delivered it there: a stretched clock shows up here.
+fn longest_low(world: &World, node: &str, pin: u8) -> u64 {
+    let mut edges: Vec<_> = world
+        .gpio_net_applied()
+        .iter()
+        .filter(|d| d.node == node && d.pin == pin)
+        .map(|d| (d.cycle, d.level))
+        .collect();
+    edges.sort();
+    let mut fell = None;
+    let mut longest = 0;
+    for (cycle, level) in edges {
+        match (level, fell) {
+            (false, _) => fell = Some(cycle),
+            (true, Some(at)) => {
+                longest = longest.max(cycle - at);
+                fell = None;
+            }
+            _ => {}
+        }
+    }
+    longest
+}
+
 /// Swap the first two node entries of an environment file.
 fn swap_nodes(yaml: &str) -> String {
     let start = yaml.find("  - id: ").expect("first node");
@@ -560,6 +585,29 @@ mod i2c {
     }
 
     #[test]
+    fn a_slow_target_holds_the_controller_by_stretching_scl() {
+        // The target's handler takes several SCL low periods to answer ADDR
+        // and TXIS: the controller must wait on the stretched clock, and
+        // the bytes and the clock count stay what they were.
+        let mut world = build("env-i2c.yaml", |s| {
+            s.replace("firmware/i2c-target.elf", "firmware/i2c-target-slow.elf")
+        });
+        run_us(&mut world, 3000);
+        let a = result(&world, "a", 8);
+        assert_eq!(a[7], 1, "controller finished: {a:x?}");
+        assert_eq!((a[2], a[3], a[4]), (0, 1, 3), "{a:x?}");
+        assert_eq!(&a[..2], &[0xDE, 0xAD], "read back through the stretch");
+        let b = result(&world, "b", 8);
+        assert_eq!(&b[1..4], &[0xDE, 0xAD, 4], "{b:x?}");
+        let reports = world.gpio_net_reports();
+        no_contention(&reports);
+        assert_eq!(net(&reports, "scl").edges, 2 * (9 * 10 + 1 + 3));
+        // The controller's own SCL low period is (SCLL + 1) x 8 = 128 cycles.
+        let held = longest_low(&world, "a", 6);
+        assert!(held > 4 * 128, "SCL held low {held} cycles");
+    }
+
+    #[test]
     fn with_no_target_on_the_bus_every_address_is_nacked() {
         // Node b runs the SPI slave firmware: its I2C1 is never enabled, so
         // nothing ACKs 0x42 or 0x50. The pull-up holds SDA high through every
@@ -723,6 +771,20 @@ mod legacy_i2c {
     }
 
     #[test]
+    fn a_slow_slave_holds_the_master_by_stretching_scl() {
+        // The F401's handler takes about 10 us to clear ADDR, four SCL low
+        // periods of the F103: the F103 must wait on the stretched clock.
+        let mut world = build("env-i2c-legacy.yaml", |s| {
+            s.replace("f4-legacy-i2c-target.elf", "f4-legacy-i2c-target-slow.elf")
+        });
+        run_us(&mut world, 3000);
+        check_register_file_exchange(&world);
+        // The F103's own SCL low period is CCR = 180 cycles.
+        let held = longest_low(&world, "a", 6);
+        assert!(held > 3 * 180, "SCL held low {held} cycles");
+    }
+
+    #[test]
     fn with_no_target_every_address_is_nacked() {
         // Node b's I2C1 is never enabled: the pull-up reads 1 in every ACK
         // slot.
@@ -846,5 +908,107 @@ mod rp2040_spi {
     fn rp2040_exchanges_do_not_depend_on_node_order_or_round_size() {
         assert_order_and_round_independent("env-spi-rp2040.yaml", |s| s, ["rp", "b"], 400, 8);
         assert_order_and_round_independent("env-spi-rp2040-slave.yaml", |s| s, ["a", "rp"], 400, 8);
+    }
+}
+
+/// The RP2040's DW_apb_i2c against the STM32G071's modern I²C, both ways
+/// round (`env-i2c-rp2040.yaml`, `env-i2c-rp2040-target.yaml`): the same
+/// register-file exchange as `env-i2c.yaml`.
+mod rp2040_i2c {
+    use super::*;
+
+    /// Ten bytes of 9 clocks (address + 3; address + 1, address + 2;
+    /// address), one repeated START, three STOPs.
+    const SCL_EDGES: u64 = 2 * (9 * 10 + 1 + 3);
+
+    #[test]
+    fn an_rp2040_controller_writes_and_reads_a_g071_target() {
+        let mut world = build("env-i2c-rp2040.yaml", |s| s);
+        run_us(&mut world, 1500);
+        let rp = result(&world, "rp", 8);
+        assert_eq!(rp[7], 1, "controller finished: {rp:x?}");
+        assert_eq!(rp[2], 0, "0x42 ACKed the write");
+        assert_eq!(
+            &rp[..2],
+            &[0xDE, 0xAD],
+            "read back after a RESTART: {rp:x?} {:x?}",
+            result(&world, "b", 8)
+        );
+        assert_eq!(rp[3], 1, "nobody at 0x50: TX_ABRT");
+        assert_eq!(rp[5] & 1, 1, "ABRT_7B_ADDR_NOACK");
+        assert_eq!(rp[4], 3, "three STOP_DETs");
+
+        let b = result(&world, "b", 8);
+        assert_eq!(b[0], 2, "the target saw its two transfers end");
+        assert_eq!(&b[1..3], &[0xDE, 0xAD]);
+        assert_eq!(b[3], 4, "pointer + 2 data, then the pointer again");
+
+        let reports = world.gpio_net_reports();
+        no_contention(&reports);
+        let scl = net(&reports, "scl");
+        assert!(
+            scl.level && net(&reports, "sda").level,
+            "bus idle at the end"
+        );
+        assert_eq!(scl.edges, SCL_EDGES, "{scl:#?}");
+    }
+
+    #[test]
+    fn a_g071_controller_writes_and_reads_an_rp2040_target() {
+        let mut world = build("env-i2c-rp2040-target.yaml", |s| s);
+        run_us(&mut world, 1500);
+        let a = result(&world, "a", 8);
+        assert_eq!(a[7], 1, "controller finished: {a:x?}");
+        assert_eq!(a[2], 0, "0x42 ACKed the write");
+        assert_eq!(&a[..2], &[0xDE, 0xAD], "read back through a repeated START");
+        assert_eq!(a[3], 1, "nobody at 0x50: NACKF");
+        assert_eq!(a[4], 3);
+
+        let rp = result(&world, "rp", 8);
+        assert_eq!(rp[0], 2, "STOP_DET for its two transfers only: {rp:x?}");
+        assert_eq!(&rp[1..3], &[0xDE, 0xAD]);
+        assert_eq!(rp[3], 4, "pointer + 2 data, then the pointer again");
+        assert_eq!(rp[4], 2, "one RD_REQ per byte read");
+
+        let reports = world.gpio_net_reports();
+        no_contention(&reports);
+        let scl = net(&reports, "scl");
+        assert!(scl.level && net(&reports, "sda").level);
+        assert_eq!(scl.edges, SCL_EDGES, "{scl:#?}");
+    }
+
+    #[test]
+    fn a_slow_rp2040_target_holds_the_controller_by_stretching_scl() {
+        // About 17 us before each read answer, eight G071 SCL low periods:
+        // the RP2040 holds SCL low with RD_REQ until it writes the byte.
+        let mut world = build("env-i2c-rp2040-target.yaml", |s| {
+            s.replace("rp2040-i2c-target.elf", "rp2040-i2c-target-slow.elf")
+        });
+        run_us(&mut world, 1500);
+        let a = result(&world, "a", 8);
+        assert_eq!(a[7], 1, "controller finished: {a:x?}");
+        assert_eq!(&a[..2], &[0xDE, 0xAD], "read back through the stretch");
+        let reports = world.gpio_net_reports();
+        no_contention(&reports);
+        assert_eq!(
+            net(&reports, "scl").edges,
+            SCL_EDGES,
+            "stretching adds no clock"
+        );
+        // The G071's own SCL low period is (SCLL + 1) x 8 = 128 cycles.
+        let held = longest_low(&world, "a", 6);
+        assert!(held > 4 * 128, "SCL held low {held} cycles");
+    }
+
+    #[test]
+    fn rp2040_i2c_does_not_depend_on_node_order_or_round_size() {
+        assert_order_and_round_independent("env-i2c-rp2040.yaml", |s| s, ["rp", "b"], 1500, 8);
+        assert_order_and_round_independent(
+            "env-i2c-rp2040-target.yaml",
+            |s| s,
+            ["a", "rp"],
+            1500,
+            8,
+        );
     }
 }

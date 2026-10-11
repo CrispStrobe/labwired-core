@@ -204,7 +204,7 @@ impl F1I2c {
         if self.net.t_wait == TWait::RxRead && self.rx_shift.get().is_none() {
             // The waiting byte moved into DR; it is ACKed now.
             self.net.t_wait = TWait::None;
-            self.net.bus.t_ack(self.cr1 & CR1_ACK != 0, pads);
+            self.net.bus.t_ack(self.cr1 & CR1_ACK != 0, now, pads);
         }
     }
 
@@ -220,9 +220,9 @@ impl F1I2c {
         } else if let TWait::AddrClear { read } = self.net.t_wait {
             self.net.t_wait = TWait::None;
             if read {
-                self.lnet_slave_need_tx(pads, false);
+                self.lnet_slave_need_tx(now, pads, false);
             } else {
-                self.net.bus.t_continue(pads);
+                self.net.bus.t_continue(now, pads);
             }
         }
     }
@@ -325,7 +325,7 @@ impl F1I2c {
             self.net.dr_full = true;
             if self.net.t_wait == TWait::TxData {
                 self.net.t_wait = TWait::None;
-                self.lnet_slave_need_tx(pads, false);
+                self.lnet_slave_need_tx(now, pads, false);
             }
         }
     }
@@ -479,11 +479,11 @@ impl F1I2c {
     // ── slave ───────────────────────────────────────────────────────────
 
     /// The slave transmitter needs its next byte with SCL low.
-    fn lnet_slave_need_tx(&mut self, pads: &PadLines, after_byte: bool) {
+    fn lnet_slave_need_tx(&mut self, now: u64, pads: &PadLines, after_byte: bool) {
         if self.net.dr_full {
             self.net.dr_full = false;
             self.net.slave_tx_bytes += 1;
-            self.net.bus.t_send(self.dr as u8, pads);
+            self.net.bus.t_send(self.dr as u8, now, pads);
             self.lnet_flag(SR1_TXE);
         } else {
             if after_byte {
@@ -513,7 +513,7 @@ impl F1I2c {
         None
     }
 
-    fn lnet_on_slave_event(&mut self, event: BusEvent, pads: &PadLines) {
+    fn lnet_on_slave_event(&mut self, event: BusEvent, now: u64, pads: &PadLines) {
         match event {
             BusEvent::TStart => {
                 self.sr2 |= SR2_BUSY;
@@ -533,9 +533,9 @@ impl F1I2c {
             BusEvent::TAddress(byte) => match self.lnet_match(byte) {
                 Some(bits) => {
                     self.sr2 = (self.sr2 & !(SR2_DUALF | SR2_GENCALL)) | bits;
-                    self.net.bus.t_ack(true, pads);
+                    self.net.bus.t_ack(true, now, pads);
                 }
-                None => self.net.bus.t_ack(false, pads),
+                None => self.net.bus.t_ack(false, now, pads),
             },
             BusEvent::TAddressed { read } => {
                 self.net.t_reading = read;
@@ -556,9 +556,9 @@ impl F1I2c {
                             self.lnet_flag(SR1_OVR);
                             self.net.dr_full = true;
                         }
-                        self.lnet_slave_need_tx(pads, false);
+                        self.lnet_slave_need_tx(now, pads, false);
                     } else {
-                        self.net.bus.t_continue(pads);
+                        self.net.bus.t_continue(now, pads);
                     }
                 } else {
                     self.net.t_wait = TWait::AddrClear { read };
@@ -569,7 +569,7 @@ impl F1I2c {
                 if self.rx_dr.get().is_none() {
                     self.rx_dr.set(Some(byte));
                     self.lnet_flag(SR1_RXNE);
-                    self.net.bus.t_ack(self.cr1 & CR1_ACK != 0, pads);
+                    self.net.bus.t_ack(self.cr1 & CR1_ACK != 0, now, pads);
                 } else {
                     // DR full: BTF, SCL stretched until DR is read.
                     self.rx_shift.set(Some(byte));
@@ -580,7 +580,7 @@ impl F1I2c {
             }
             BusEvent::TByteOut { acked } => {
                 if acked {
-                    self.lnet_slave_need_tx(pads, true);
+                    self.lnet_slave_need_tx(now, pads, true);
                 } else {
                     // The master's NACK ends a slave transmission: AF.
                     self.net.t_stopf = false;
@@ -607,7 +607,7 @@ impl F1I2c {
                     | BusEvent::MAckDone
                     | BusEvent::MStopped
                     | BusEvent::MArbLost => self.lnet_on_master_event(event, now, pads),
-                    _ => self.lnet_on_slave_event(event, pads),
+                    _ => self.lnet_on_slave_event(event, now, pads),
                 }
             }
         }
@@ -816,9 +816,14 @@ mod tests {
                 if !events.is_empty() {
                     return events;
                 }
-                let due = self.master.deadline().expect("master stalled");
+                let due = match (self.master.deadline(), self.slave.lnet_next_due()) {
+                    (Some(a), Some(b)) => a.min(b),
+                    (Some(a), None) | (None, Some(a)) => a,
+                    (None, None) => panic!("stalled"),
+                };
                 self.now = due;
                 self.master.step(due, &self.pm);
+                self.slave.lnet_step(due);
             }
             panic!("runaway");
         }
