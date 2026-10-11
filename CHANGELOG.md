@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- Buses over `gpio_net`s, more of them (`docs/howto/gpio-nets.md`, "Buses
+  over nets"; `examples/gpio-net-buses`, `tests/world_gpio_net_buses.rs`):
+  - STM32 F1/F2/F4 legacy I²C (`SR1`/`SR2`/`CCR`) as a bit-level master and
+    slave on open-drain nets: SB/ADDR/TXE/BTF/RXNE/AF/STOPF in the RM0008 /
+    RM0368 sequences (POS two-byte reads, STOP after the byte in flight),
+    slave address match on `OAR1`, `OAR2` (`ENDUAL`) and the general call
+    (`ENGC`), SCL stretching while `ADDR` is up and while `DR` is full/empty,
+    `NOSTRETCH`, CCR timing, event and error interrupts. Tested F103 ↔ F401
+    both ways round (write, repeated-START read, single-byte read, NACK) and
+    a G071 (modern) controller against an F103 target. The wire itself is a
+    new shared engine, `peripherals::i2c_bitbus`.
+  - Modern STM32 I²C: `RELOAD` (transfers above 255 bytes, `TCR`), 10-bit
+    addressing as controller (`ADD10`, `HEAD10R`) and target (`OA1MODE`,
+    ADDCODE `11110xx`), `OAR2` with `OA2MSK`, the general call (`GCEN`) and
+    `NOSTRETCH` (OVR on underrun/overrun). Tested with 300 bytes each way
+    over a 10-bit address.
+  - RP2040 PL022 SPI as a bit-level master (TX FIFO clocked at
+    `CPSDVSR × (1 + SCR)`, CSn pulsed between `SPH = 0` frames) and slave
+    (`SSPCR1.MS`, TX FIFO answers, RX FIFO), with the `SPIn_RX` pads routed
+    and the RP2040 SIO handing net levels to routed peripheral lines. Tested
+    against an STM32G071 SPI both ways round.
+  - RP2040 DW_apb_i2c as a bit-level master (command FIFO with STOP and
+    RESTART, TX_ABRT on NACK, SCL held while the FIFO is empty) and slave
+    (`IC_SAR`, RX FIFO with `FIRST_DATA_BYTE`, `RD_REQ` with SCL stretched).
+    Tested against an STM32G071 both ways round.
+  - Clock stretching tested end to end on the G071, F401 and RP2040 targets
+    with firmware too slow for the clock.
+  - STM32 SPI: end-to-end tests for modes 1-3, LSB-first and 16-bit frames
+    (F401 pair), a slave fed from its TXE interrupt, and a slave underrun.
+  - Every new exchange is checked for the same results and wire history
+    with the nodes swapped and with 37 ns rounds.
+
+### Fixed
+- STM32 SPI slave on a net: a frame that starts with nothing written to
+  `DR` shifts out the shift register (the previous frame received) instead
+  of zeros, and is counted (`Spi::net_slave_underruns`) and logged once;
+  enabling `TXEIE` while TXE is set interrupts at once; a `DR` write while
+  `SPE=0` fills the transmit buffer.
+- A peripheral answering a net edge on the same pad within the cycle (an
+  I²C target starting to stretch the SCL it just saw fall, a master
+  starting on a bus it just saw go free) could have its drive overwritten on
+  the net by the GPIO port's own report of the new input, stamped one cycle
+  later: the stretch was lost. The bus now has the port report the pad's
+  drive again after the owner has answered.
+- A bit-level I²C target that ends a stretch with a new bit on SDA releases
+  SCL a data setup time later instead of in the same cycle, where the
+  change could read as START or STOP.
+- STM32 classic/FIFO SPI: a 32-bit store to `DR` is one frame. It was split
+  into four byte writes and clocked up to four frames.
+
+### Added
 - Pulls kept outside the GPIO block reach the pad: a GPIO port names its
   pad-control block (`pad_control:` in the chip yaml, `pins::PadControl`)
   and the bus hands it the decoded pull after every write there, bracketed
