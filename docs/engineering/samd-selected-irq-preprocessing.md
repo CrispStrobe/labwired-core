@@ -1,6 +1,10 @@
 # Selected SAMD IRQ preprocessing diagnostic
 
-Status: prepared diagnostic, not yet a successful hosted result. The
+Status: selected hosted diagnostic passed in
+[run38122098497](https://github.com/CrispStrobe/labwired-core/actions/runs/38122098497)
+and merged through [PR196](https://github.com/CrispStrobe/labwired-core/pull/196).
+The [unchanged original result and audit boundary](../receipts/2026-10-11-samd-irq-preprocessing/README.md)
+bind the exact source, artifact, observed paths and remaining unknowns. The
 [interface boundary](samd-critical-section-interface.md) and
 [runtime lanes](samd-permissive-runtime-lanes.md) remain authoritative.
 

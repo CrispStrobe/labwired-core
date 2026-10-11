@@ -113,9 +113,12 @@ that is intentional terminal behavior, not an automatically repairable imbalance
 ## Next implementation contract
 
 The separately named [selected preprocessing diagnostic](samd-selected-irq-preprocessing.md)
-prepares source-only staging and effective probes for 21 selected units. It
-does not repeat the historical build or complete the caller inventory; review
-its exact hosted conclusion before treating any selected path as observed.
+passed source-only staging and effective probes for 21 selected units in
+[run38122098497](https://github.com/CrispStrobe/labwired-core/actions/runs/38122098497).
+The [original receipt](../receipts/2026-10-11-samd-irq-preprocessing/README.md)
+records narrowed HF2 paths, absent own-file RP2040Flash/jddisplay spellings and
+surviving melody/neopixel inline pairs. It did not repeat the historical build,
+complete the caller inventory, prove dynamic calls or implement ABI integration.
 
 1. Inventory the actual selected definition/header and every direct, transitive,
    inline, macro, assembly and generated caller. Bind immutable source/request
