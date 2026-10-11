@@ -16,7 +16,12 @@ and `--features event-scheduler`, providing `LABWIRED_PAIRED_FIXTURE_DIR`.
 Bind source files, compiler, linked ELF hashes, final qualification head/tree,
 official run identity, and both execution logs in a reviewed receipt. Add
 manufactured positive/refusal controls for that receipt reader before publishing
-a success claim. No timeout, compiler failure, missing result, or unexpected
+a success claim. `test_record.py` contains manufactured reader controls, not
+actual guest results or an independent audit. The builder records the six
+authored source files and cross-compiler driver hash before/after compilation;
+the recorder checks them again, the actual qualification merge/head/parents,
+five linked ELF hashes and both logs. The driver hash alone is not full
+toolchain-component closure. No timeout, compiler failure, missing result, or unexpected
 exception may count as a successful refusal.
 
 The prospective test validates all vector words, startup BSS clearing and .data
@@ -28,7 +33,8 @@ actual compiled terminal function. This is a bounded liveness observation, not
 proof of indefinite behavior. The diagnostic identity is not a real fiber.
 
 Still owed: hosted compile/format/lint checks, actual source-bound guest results,
-source/receipt adversaries, real CODAL caller and scheduler integration,
+full recording-entry-point and guest adversaries, independent receipt review,
+real CODAL caller and scheduler integration,
 peripheral IRQ/DMA, notices and consumer adoption. No ASF-free runtime, native
 Arcade boot, physical safety or performance result is established by these
 authored controls.

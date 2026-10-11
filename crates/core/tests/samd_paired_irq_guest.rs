@@ -181,6 +181,7 @@ fn authored_paired_irq_delivery_and_four_terminal_refusals() {
             saw_zero && saw_entry && reached,
             "timeout is not successful refusal"
         );
-        println!("SAMD_PAIRED_IRQ mode={mode} elf_sha256={hash} status={expected_status:#x} fault={expected_fault} steps={reached_step} bss_clear=true data_copy=true entry=true vectors=true irq_entries={irq_entries} refusal_steps={}", if mode == 0 { 0 } else { 64 });
+        let values = witnesses.map(|address| machine.bus.read_u32(address).unwrap());
+        println!("SAMD_PAIRED_IRQ mode={mode} elf_sha256={hash} status={expected_status:#x} fault={expected_fault} steps={reached_step} bss_clear=true data_copy=true entry=true vectors=true irq_entries={irq_entries} stage={} handler_mask={} handler_exception={} final_mask={} final_exception={} refusal_steps={}", values[1], values[2], values[3], u8::from(machine.cpu.primask), machine.cpu.active_exception, if mode == 0 { 0 } else { 64 });
     }
 }

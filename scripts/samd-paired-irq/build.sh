@@ -8,6 +8,10 @@ qualified_source=${LABWIRED_PAIRED_QUALIFIED_SOURCE:?Set the reviewed, qualified
 [[ "$qualified_source" =~ ^[0-9a-f]{40}$ ]]
 test "$(git -C "$fixture_source" rev-parse HEAD)" = "$qualified_source"
 test -z "$(git -C "$fixture_source" status --porcelain --untracked-files=all)"
+script_directory=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+export LABWIRED_PAIRED_SOURCE_DIR="$fixture_source"
+mkdir -p "$fixture_output"
+python3 "$script_directory/record.py" --snapshot > "$fixture_output/source-before.json"
 for mode in 0 1 2 3 4; do
   fixture_dir="$fixture_output/$mode"
   mkdir -p "$fixture_dir"
@@ -38,3 +42,5 @@ for mode in 0 1 2 3 4; do
   arm-none-eabi-nm -S "$fixture_dir/control.elf" > "$fixture_dir/symbols.txt"
   sha256sum "$fixture_dir/control.elf" "$fixture_dir/control.map"
 done
+python3 "$script_directory/record.py" --snapshot > "$fixture_output/source-after.json"
+cmp "$fixture_output/source-before.json" "$fixture_output/source-after.json"
