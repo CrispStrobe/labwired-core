@@ -124,7 +124,15 @@ pub struct World {
     /// Like a timed UART network they switch [`World::step_all`] to
     /// conservative time rounds.
     gpio: Option<WorldGpio>,
-    /// Round clock shared by the timed UART network and the GPIO nets.
+    /// The world's timed CAN buses, when `can_bus` interconnects asked for
+    /// any whose endpoints all have a timed mode. Like a timed UART network
+    /// they switch [`World::step_all`] to conservative time rounds.
+    can: Option<WorldCan>,
+    /// Every `can_bus` in manifest order: `Ok(index)` into the timed buses,
+    /// or `Err((id, bitrate))` for one left on the untimed fan-out.
+    can_buses: Vec<Result<usize, (String, u64)>>,
+    /// Round clock shared by the timed UART network, the GPIO nets and the
+    /// timed CAN buses.
     round: RoundClock,
     /// Marker pads per node, collected while interconnects are built and
     /// watched together with the net pads once they all are.
@@ -147,6 +155,53 @@ struct RoundClock {
     /// The round in progress, if one has started and not every node has
     /// reached it yet.
     end_ps: Option<u64>,
+}
+
+/// A world's timed CAN buses and their members.
+pub struct WorldCan {
+    buses: Vec<crate::network::timed_can::TimedCanBus>,
+    /// Per bus, per bus node index: `(node id, controller id)`.
+    members: Vec<Vec<(String, String)>>,
+}
+
+impl WorldCan {
+    /// Apply every bus update due at or before `now_ps`.
+    fn apply_due(&mut self, machines: &mut HashMap<String, Box<dyn MachineTrait>>, now_ps: u64) {
+        for (bus, members) in self.buses.iter_mut().zip(&self.members) {
+            for (idx, update) in bus.take_due(now_ps) {
+                let (node, controller) = &members[idx];
+                if let Some(m) = machines.get_mut(node) {
+                    m.can_timed_apply(controller, &update);
+                }
+            }
+        }
+    }
+
+    /// Every node has reached `now_ps`: read the controllers and resolve
+    /// the buses up to then.
+    fn resolve(&mut self, machines: &mut HashMap<String, Box<dyn MachineTrait>>, now_ps: u64) {
+        for (bus, members) in self.buses.iter_mut().zip(&self.members) {
+            for (idx, (node, controller)) in members.iter().enumerate() {
+                let poll = machines
+                    .get_mut(node)
+                    .and_then(|m| m.can_timed_poll(controller));
+                bus.set_poll(idx, poll);
+            }
+            bus.advance_to(now_ps);
+        }
+    }
+
+    fn lookahead_ps(&self) -> u64 {
+        self.buses
+            .iter()
+            .map(|b| b.lookahead_ps())
+            .min()
+            .unwrap_or(u64::MAX)
+    }
+
+    fn next_event_ps(&self) -> Option<u64> {
+        self.buses.iter().filter_map(|b| b.next_event_ps()).min()
+    }
 }
 
 /// Default upper bound of one timed-network round, ps (100 µs). The round is
@@ -458,6 +513,32 @@ pub trait MachineTrait: Send {
             self.name()
         )
     }
+    /// `true` when `can_id` is a CAN controller with a timed mode. Default:
+    /// none, so the bus stays on the untimed fan-out.
+    fn can_timed_capable(&self, _can_id: &str) -> bool {
+        false
+    }
+    /// Put the controller `can_id` on a timed CAN bus.
+    fn attach_timed_can(&mut self, can_id: &str) -> anyhow::Result<()> {
+        anyhow::bail!(
+            "machine '{}' cannot put '{can_id}' on a timed CAN bus",
+            self.name()
+        )
+    }
+    /// The controller `can_id` as the timed bus needs it.
+    fn can_timed_poll(&mut self, _can_id: &str) -> Option<crate::network::timed_can::CanNodePoll> {
+        None
+    }
+    /// Apply a timed-bus update to the controller `can_id`.
+    fn can_timed_apply(
+        &mut self,
+        _can_id: &str,
+        _update: &crate::network::timed_can::CanNodeUpdate,
+    ) {
+    }
+    /// Run with the widest peripheral-tick batch the bus declares safe and
+    /// idle fast-forward, as the single-chip front ends do. Default no-op.
+    fn use_widest_safe_tick(&mut self) {}
 }
 
 impl<C: Cpu + 'static> MachineTrait for Machine<C> {
@@ -583,6 +664,33 @@ impl<C: Cpu + 'static> MachineTrait for Machine<C> {
         rx: std::sync::mpsc::Receiver<crate::network::CanFrame>,
     ) -> anyhow::Result<()> {
         self.bus.attach_can_endpoint_by_id(can_id, tx, rx)
+    }
+
+    fn can_timed_capable(&self, can_id: &str) -> bool {
+        self.bus.can_timed_capable(can_id)
+    }
+
+    fn attach_timed_can(&mut self, can_id: &str) -> anyhow::Result<()> {
+        self.bus.attach_timed_can_by_id(can_id)
+    }
+
+    fn can_timed_poll(&mut self, can_id: &str) -> Option<crate::network::timed_can::CanNodePoll> {
+        self.bus.can_timed_poll(can_id)
+    }
+
+    fn can_timed_apply(&mut self, can_id: &str, update: &crate::network::timed_can::CanNodeUpdate) {
+        self.bus.can_timed_apply(can_id, update);
+    }
+
+    fn use_widest_safe_tick(&mut self) {
+        // What the CLI and the browser's single-chip engine give a Cortex-M
+        // board (and a world's ROM-booted C3 node): `max_safe_tick_interval`
+        // is 1 unless the walk is deleted under the event scheduler, where
+        // scheduler-driven peripherals keep exact timing at any interval.
+        let interval = Machine::max_safe_tick_interval(self);
+        self.config.peripheral_tick_interval = interval;
+        self.bus.config.peripheral_tick_interval = interval;
+        self.config.idle_fast_forward_enabled = true;
     }
 
     fn advance_to_cycle(&mut self, target: u64) -> SimResult<()> {
@@ -718,6 +826,8 @@ impl World {
             ble: None,
             uart_net: None,
             gpio: None,
+            can: None,
+            can_buses: Vec::new(),
             round: RoundClock::default(),
             marker_pins: Default::default(),
             pending_nets: Vec::new(),
@@ -770,6 +880,9 @@ impl World {
     pub fn attach_ble_nodes(&mut self, nodes: &[String]) -> anyhow::Result<()> {
         if self.uart_net.is_some() {
             anyhow::bail!("a world cannot have both a BLE air and a timed uart_network yet");
+        }
+        if self.can.is_some() {
+            anyhow::bail!("a world cannot have both a BLE air and a timed can_bus yet");
         }
         for id in nodes {
             if !self.machines.contains_key(id) {
@@ -849,7 +962,7 @@ impl World {
             self.step_buf = results;
             return map;
         }
-        if self.uart_net.is_some() || self.gpio.is_some() {
+        if self.uart_net.is_some() || self.gpio.is_some() || self.can.is_some() {
             return self.step_all_rounds();
         }
         let mut results = HashMap::new();
@@ -887,7 +1000,7 @@ impl World {
     /// GPIO nets and no timed UART network: `step_all` runs the per-node
     /// scheduler.
     fn gpio_per_node(&self) -> bool {
-        self.gpio.is_some() && self.uart_net.is_none() && !self.gpio_lockstep
+        self.gpio.is_some() && self.uart_net.is_none() && self.can.is_none() && !self.gpio_lockstep
     }
 
     /// One round of a BLE world: step every node that is not more than
@@ -960,8 +1073,9 @@ impl World {
     }
 
     /// One slice of a conservative synchronisation round of a round-based
-    /// world (a timed UART network, GPIO nets, or both): every node advances
-    /// at most [`UART_NET_STEP_CYCLES`] toward the round end, and the round
+    /// world (a timed UART network, GPIO nets, timed CAN buses): every node
+    /// advances at most [`UART_NET_STEP_CYCLES`] toward the round end (the
+    /// whole way in a world whose only medium is timed CAN), and the round
     /// completes when all have reached it.
     ///
     /// Every node runs to the same world time `T + Δ`, where `Δ` is at most
@@ -980,6 +1094,16 @@ impl World {
         let mut ids: Vec<_> = self.machines.keys().cloned().collect();
         ids.sort();
         let mut results = HashMap::new();
+        // A world whose only round-based medium is timed CAN and that has no
+        // other interconnect to tick runs every node to the round end in one
+        // call: nothing passes between nodes inside a round, so slicing it
+        // only costs calls.
+        let budget =
+            if self.uart_net.is_none() && self.gpio.is_none() && self.interconnects.is_empty() {
+                u64::MAX
+            } else {
+                UART_NET_STEP_CYCLES
+            };
         let target = match self.round.end_ps {
             Some(target) => target,
             None => self.start_round(&ids, &mut results),
@@ -1001,7 +1125,7 @@ impl World {
             let r = match self.gpio.as_mut() {
                 None => {
                     if before < cycle {
-                        machine.advance_to_cycle(cycle.min(before + UART_NET_STEP_CYCLES))
+                        machine.advance_to_cycle(cycle.min(before.saturating_add(budget)))
                     } else {
                         Ok(())
                     }
@@ -1022,6 +1146,11 @@ impl World {
         if all_there {
             self.round.now_ps = target;
             self.round.end_ps = None;
+            // Every node has reached the round end: what their CAN
+            // controllers requested in the round is known.
+            if let Some(can) = self.can.as_mut() {
+                can.resolve(&mut self.machines, target);
+            }
         }
         for interconnect in &mut self.interconnects {
             if let Err(e) = interconnect.tick() {
@@ -1101,11 +1230,12 @@ impl World {
     /// stops at the first round end at or after `target_ps`. Stops at the
     /// first round in which a node returns an error.
     pub fn run_until_ps(&mut self, target_ps: u64) -> Option<HashMap<String, SimResult<()>>> {
-        if self.uart_net.is_none() && self.gpio.is_none() {
+        if self.uart_net.is_none() && self.gpio.is_none() && self.can.is_none() {
             return None;
         }
         let fast = self.gpio.is_some()
             && self.uart_net.is_none()
+            && self.can.is_none()
             && !self.gpio_lockstep
             && self.interconnects.is_empty();
         if fast {
@@ -1185,6 +1315,7 @@ impl World {
     fn batchable_round_ps(&self) -> Option<u64> {
         let gpio = self.gpio.as_ref()?;
         if self.uart_net.is_some()
+            || self.can.is_some()
             || self.gpio_lockstep
             || !self.interconnects.is_empty()
             || self.round.end_ps.is_some()
@@ -1245,6 +1376,16 @@ impl World {
         if let Some(g) = self.gpio.as_ref() {
             lookahead = lookahead.min(g.round_ps);
         }
+        // Timed CAN: apply what the buses decided for now, and end the round
+        // no later than a frame could start and cause anything, or than the
+        // next update is due — so each lands at its exact time.
+        if let Some(can) = self.can.as_mut() {
+            can.apply_due(&mut self.machines, t);
+            lookahead = lookahead.min(can.lookahead_ps());
+            if let Some(at) = can.next_event_ps() {
+                next_event = Some(next_event.map_or(at, |e: u64| e.min(at)));
+            }
+        }
         let mut target = t + lookahead.min(quantum).max(1_000);
         if let Some(at) = next_event {
             if at > t {
@@ -1277,7 +1418,8 @@ impl World {
     /// World time a round-based world (timed UART network or GPIO nets) has
     /// reached, ps; `None` for any other world.
     pub fn round_now_ps(&self) -> Option<u64> {
-        (self.uart_net.is_some() || self.gpio.is_some()).then_some(self.round.now_ps)
+        (self.uart_net.is_some() || self.gpio.is_some() || self.can.is_some())
+            .then_some(self.round.now_ps)
     }
 
     /// Every net delivery applied to a pad so far (node, pad, the cycle it
@@ -1327,6 +1469,164 @@ impl World {
         self.uart_net
             .as_ref()
             .map(|n| n.net.report(since, self.round.now_ps))
+    }
+
+    /// Every `can_bus`: nodes, error counters and states, recent frames.
+    /// A bus left on the untimed fan-out (an endpoint without a timed mode)
+    /// is listed with `timed: false` and no nodes or frames.
+    pub fn can_bus_reports(&self) -> Vec<crate::network::timed_can::CanBusReport> {
+        use crate::network::timed_can::{CanBusReport, CanBusTotals};
+        self.can_buses
+            .iter()
+            .map(|entry| match entry {
+                Ok(idx) => self.can.as_ref().expect("timed bus index").buses[*idx]
+                    .report(self.round.now_ps),
+                Err((id, bitrate)) => CanBusReport {
+                    id: id.clone(),
+                    bitrate: *bitrate,
+                    timed: false,
+                    now_ps: self.round.now_ps,
+                    nodes: Vec::new(),
+                    frames: Vec::new(),
+                    frames_dropped: 0,
+                    totals: CanBusTotals::default(),
+                },
+            })
+            .collect()
+    }
+
+    /// Build a `can_bus` interconnect. Its nodes are taken in lexical order,
+    /// so manifest order does not change the topology. When every endpoint
+    /// is an on-chip controller with a timed mode (bxCAN, FDCAN) the bus is
+    /// timed and fault-confined ([`crate::network::timed_can`]); otherwise
+    /// (a CAN device below an SPI controller) it stays the untimed fan-out.
+    fn build_can_bus(&mut self, ic: &labwired_config::InterconnectConfig) -> anyhow::Result<()> {
+        use anyhow::Context;
+        let legacy_peripheral = ic
+            .config
+            .get("peripheral")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        let endpoints = ic
+            .config
+            .get("endpoints")
+            .and_then(|value| value.as_mapping());
+        if legacy_peripheral.is_none() && endpoints.is_none() {
+            anyhow::bail!("can_bus: missing nonblank config.peripheral");
+        }
+        let mut node_ids = ic.nodes.clone();
+        node_ids.sort();
+        if node_ids.len() < 2 || node_ids.windows(2).any(|nodes| nodes[0] == nodes[1]) {
+            anyhow::bail!("can_bus: requires at least two unique nodes");
+        }
+        for node_id in &node_ids {
+            if !self.machines.contains_key(node_id) {
+                anyhow::bail!("can_bus: unknown node '{node_id}'");
+            }
+        }
+        if let Some(endpoints) = endpoints {
+            for key in endpoints.keys() {
+                let Some(key) = key.as_str() else {
+                    anyhow::bail!("can_bus: endpoint node ids must be strings");
+                };
+                if !node_ids.iter().any(|node| node == key) {
+                    anyhow::bail!("can_bus: endpoint map contains unknown node '{key}'");
+                }
+            }
+            if endpoints.len() != node_ids.len() {
+                anyhow::bail!("can_bus: endpoint map must contain every member node");
+            }
+        }
+        let mut members = Vec::with_capacity(node_ids.len());
+        for node_id in &node_ids {
+            let endpoint = if let Some(endpoints) = endpoints {
+                endpoints
+                    .get(serde_yaml::Value::String(node_id.clone()))
+                    .and_then(|value| value.as_str())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .with_context(|| {
+                        format!("can_bus: missing nonblank endpoint for node '{node_id}'")
+                    })?
+                    .to_owned()
+            } else {
+                legacy_peripheral
+                    .clone()
+                    .expect("CAN config source was validated above")
+            };
+            members.push((node_id.clone(), endpoint));
+        }
+        let id = ic
+            .config
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("can{}", self.can_buses.len()));
+        let bitrate = ic
+            .config
+            .get("bitrate")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(crate::network::timed_can::DEFAULT_BITRATE);
+        let timed = members
+            .iter()
+            .all(|(node, endpoint)| self.machines[node].can_timed_capable(endpoint));
+        if !timed {
+            let mut can_bus = crate::network::CanBus::new();
+            for (node_id, endpoint) in &members {
+                let (tx, rx) = can_bus.attach();
+                self.machines
+                    .get_mut(node_id)
+                    .expect("all can_bus nodes were validated above")
+                    .attach_can_bus(endpoint, tx, rx)
+                    .with_context(|| format!("can_bus node '{node_id}'"))?;
+            }
+            self.add_interconnect(Box::new(can_bus));
+            self.can_buses.push(Err((id, bitrate)));
+            return Ok(());
+        }
+        if self.ble.is_some() {
+            anyhow::bail!("a world cannot have both a BLE air and a timed can_bus yet");
+        }
+        let mut nodes = Vec::with_capacity(members.len());
+        for (node_id, endpoint) in &members {
+            let Some(hz) = self.node_hz.get(node_id).copied() else {
+                anyhow::bail!(
+                    "node '{node_id}' has no known CPU clock; a timed CAN bus steps by time"
+                );
+            };
+            self.machines
+                .get_mut(node_id)
+                .expect("all can_bus nodes were validated above")
+                .attach_timed_can(endpoint)
+                .with_context(|| format!("can_bus node '{node_id}'"))?;
+            // The timed controllers leave the walk deleted under the event
+            // scheduler, so the node can run in wide batches; a TX request is
+            // still stamped with its instruction's cycle (the bus clock is
+            // advanced per instruction inside a batch).
+            self.machines
+                .get_mut(node_id)
+                .expect("all can_bus nodes were validated above")
+                .use_widest_safe_tick();
+            nodes.push((node_id.clone(), endpoint.clone(), hz));
+        }
+        let bus = crate::network::timed_can::TimedCanBus::new(&id, bitrate, nodes);
+        let can = self.can.get_or_insert_with(|| WorldCan {
+            buses: Vec::new(),
+            members: Vec::new(),
+        });
+        // The bus sorts its nodes by id, as `members` already is.
+        let members = (0..bus.node_count())
+            .map(|i| {
+                let (node, controller) = bus.node(i);
+                (node.to_string(), controller.to_string())
+            })
+            .collect();
+        can.buses.push(bus);
+        can.members.push(members);
+        self.can_buses.push(Ok(can.buses.len() - 1));
+        Ok(())
     }
 
     /// The timed UART medium itself (tests inject faults through it).
@@ -1787,78 +2087,7 @@ impl World {
                     });
                 }
                 "can_bus" => {
-                    let legacy_peripheral = ic
-                        .config
-                        .get("peripheral")
-                        .and_then(|value| value.as_str())
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                        .map(str::to_owned);
-                    let endpoints = ic
-                        .config
-                        .get("endpoints")
-                        .and_then(|value| value.as_mapping());
-                    if legacy_peripheral.is_none() && endpoints.is_none() {
-                        anyhow::bail!("can_bus: missing nonblank config.peripheral");
-                    }
-                    // A manifest's membership order must not alter the behavior
-                    // of an otherwise identical topology. CanBus drains attached
-                    // endpoints in this order, so use the same lexical ordering
-                    // as World::step_all for validation and attachment.
-                    let mut node_ids = ic.nodes.clone();
-                    node_ids.sort();
-                    if node_ids.len() < 2 || node_ids.windows(2).any(|nodes| nodes[0] == nodes[1]) {
-                        anyhow::bail!("can_bus: requires at least two unique nodes");
-                    }
-                    for node_id in &node_ids {
-                        if !world.machines.contains_key(node_id) {
-                            anyhow::bail!("can_bus: unknown node '{node_id}'");
-                        }
-                    }
-
-                    if let Some(endpoints) = endpoints {
-                        for key in endpoints.keys() {
-                            let Some(key) = key.as_str() else {
-                                anyhow::bail!("can_bus: endpoint node ids must be strings");
-                            };
-                            if !node_ids.iter().any(|node| node == key) {
-                                anyhow::bail!(
-                                    "can_bus: endpoint map contains unknown node '{key}'"
-                                );
-                            }
-                        }
-                        if endpoints.len() != node_ids.len() {
-                            anyhow::bail!("can_bus: endpoint map must contain every member node");
-                        }
-                    }
-
-                    let mut can_bus = crate::network::CanBus::new();
-                    for node_id in &node_ids {
-                        let endpoint = if let Some(endpoints) = endpoints {
-                            endpoints
-                                .get(serde_yaml::Value::String(node_id.clone()))
-                                .and_then(|value| value.as_str())
-                                .map(str::trim)
-                                .filter(|value| !value.is_empty())
-                                .with_context(|| {
-                                    format!(
-                                        "can_bus: missing nonblank endpoint for node '{node_id}'"
-                                    )
-                                })?
-                        } else {
-                            legacy_peripheral
-                                .as_deref()
-                                .expect("CAN config source was validated above")
-                        };
-                        let (tx, rx) = can_bus.attach();
-                        world
-                            .machines
-                            .get_mut(node_id)
-                            .expect("all can_bus nodes were validated above")
-                            .attach_can_bus(endpoint, tx, rx)
-                            .with_context(|| format!("can_bus node '{node_id}'"))?;
-                    }
-                    world.add_interconnect(Box::new(can_bus));
+                    world.build_can_bus(ic)?;
                 }
                 "egress" => {
                     if ic.nodes.len() != 1 {

@@ -1521,7 +1521,7 @@ boards:
     # receives the same explicit GPIO edge through a capability. Captured
     # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
     # physical re-capture remains pending.
-    drift_ack_digest: 46c05d9ed359579671f2d92a0053a0c8a6890884827751b5a6f2d1891584e6e8
+    drift_ack_digest: 6b37235a59936d76ec283ed6a86c92840446063dda0bd82ff2275ef77846c86d
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -1997,6 +1997,18 @@ boards:
     # pinned by the pins conformance suite and new tests. Approved by the
     # maintainer. ACK, NOT A CAPTURE.
     drift_ack: 2026-10-11
+    # 2026-10-11 (timed CAN world): watched fdcan.rs moved. A new timed mode,
+    # entered only when a world puts the controller on a timed can_bus
+    # (attach_timed), keeps TXBAR requests pending until the bus reports the
+    # attempt and mirrors the bus's TEC/REC/state in ECR/PSR/IR. Outside that
+    # mode the only change is that completion moved into one helper
+    # (complete_tx) shared by the old path; register map, reset values and the
+    # capture13 loopback behaviour are unchanged and still pinned by the fdcan
+    # unit tests. Later the same day: in timed mode under the event scheduler
+    # the interrupt level rides the scheduler chain instead of the walk (a
+    # perf change; world CAN reports byte-identical).
+    # Then the bus reaches the controller through Peripheral::timed_can
+    # instead of a downcast (no behaviour change). ACK, NOT A CAPTURE.
     # 2026-10-11 (#1360 gpio-net scheduler): CPU batch loops (Cortex-M, RISC-V,
     # shared loop, AVR fill) now end a batch on a net-pad write so the world
     # scheduler can stop a node at its own drive change; logic capture and
@@ -5078,7 +5090,7 @@ boards:
     # receives the same explicit GPIO edge through a capability. Captured
     # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
     # physical re-capture remains pending.
-    drift_ack_digest: 9390f5a91e0e8f1fbe5f966f5529dd402662fbf660c0900dd83569542d799ffc
+    drift_ack_digest: 3a8e8e7dd7e2ae2b9543b8695b813cec0cbc4506f692fe907b941b5fc7258b23
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5543,6 +5555,17 @@ boards:
     # pinned by the pins conformance suite and new tests. Approved by the
     # maintainer. ACK, NOT A CAPTURE.
     drift_ack: 2026-10-11
+    # 2026-10-11 (timed CAN world): watched bxcan.rs moved. A new timed mode,
+    # entered only when a world puts the controller on a timed can_bus
+    # (attach_timed), keeps TXRQ pending until the bus reports the attempt and
+    # mirrors it in TSR/ESR/MSR.ERRI with the TX/RX0/RX1/SCE lines as levels.
+    # Outside that mode reads, writes, reset values and the captured
+    # degenerate-BTR bus-off ESR are unchanged and still pinned by the bxcan
+    # unit tests. Later the same day: in timed mode under the event scheduler
+    # the four interrupt levels ride a scheduler chain instead of the walk (a
+    # perf change; world CAN reports byte-identical).
+    # Then the bus reaches the controller through Peripheral::timed_can
+    # instead of a downcast (no behaviour change). ACK, NOT A CAPTURE.
     # 2026-10-11 (#1360 gpio-net scheduler): CPU batch loops (Cortex-M, RISC-V,
     # shared loop, AVR fill) now end a batch on a net-pad write so the world
     # scheduler can stop a node at its own drive change; logic capture and
