@@ -21,8 +21,12 @@ identity, six source files, snapshots and both execution logs. Official Git
 metadata confirms qualification merge `0621e95366b2f55a1369f373f96c3ec639eaa956`,
 tree `539beada886c0fd51425842ac03061a65296e638`, parents
 `78ec4af563b70466d8e33c79193c0e270d513230` and final head `b4c986f...`.
-This remains a bounded authored-control result; broader final-head PR198 CI is
-still a separate pending merge gate. Both original packets/results are preserved.
+All 20 enabled final-head checks passed, including both aggregate gates, with
+only the four declared optional jobs skipped. [PR198](https://github.com/CrispStrobe/labwired-core/pull/198)
+merged as `46aed9ba8232b3cceaec8a33e15230f9d973d486`; the predicted, reviewed,
+actual-guest and landed trees all equal `539beada886c0fd51425842ac03061a65296e638`.
+Landed parents are the same base and final head listed above. This remains a
+bounded authored-control result. Both original packets/results are preserved.
 
 ## Earlier unchanged original pass
 
@@ -31,9 +35,8 @@ attempt1, passed at head `e7589656998d3a08cd59670ff09a4f3214310d2e`.
 Qualification merge `f074b54d48cf4381b6832aab7ce5abc4aaea45d3` has tree
 `3c2c12a69ed4abdab301b5528eeb5cd8d462e6a6` and parents
 `78ec4af563b70466d8e33c79193c0e270d513230` and that tested head.
-Broader [PR198](https://github.com/CrispStrobe/labwired-core/pull/198) CI remains
-a separate pending merge gate at publication; the guest workflow's success alone
-is not an all-checks or merged-main claim.
+The earlier pass alone did not satisfy the broader merge gate; that gate was
+subsequently completed at the corrected final head described above.
 
 The guest consumed CODAL source `3c66f0d27c865192a2b22217e71c1f88f2b3fe91`,
 after all eight enabled source checks passed. [CODAL PR10](https://github.com/CrispStrobe/codal-samd/pull/10)
