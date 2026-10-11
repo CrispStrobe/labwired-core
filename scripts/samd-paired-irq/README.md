@@ -1,15 +1,14 @@
 # Prospective strict paired-IRQ guest harness
 
-Preparation only: no CODAL source is pinned or qualified here yet, no guest
-execution workflow is installed, and these guests have not compiled or
-executed. The separate receipt-control workflow runs manufactured Python tests
-and shell-syntax checks only. Do not interpret
-the presence of the test as runtime admission. Keep historical IRQ fixtures
-unchanged.
+Guest qualification pending: the dedicated hosted workflow now pins CODAL
+`3c66f0d27c865192a2b22217e71c1f88f2b3fe91` after all eight enabled source checks
+passed on that exact head. These are source controls/builds, not guest results.
+The separate receipt-control workflow runs manufactured Python tests and shell
+checks only. Neither workflow's presence establishes runtime admission.
+Historical IRQ fixtures remain unchanged.
 
-After every enabled exact-head CODAL integration check passes, select that
-immutable source explicitly, review the build and test, and add a dedicated
-hosted workflow. `build.sh` requires `LABWIRED_PAIRED_QUALIFIED_SOURCE`, a clean
+The dedicated workflow selects that immutable source explicitly. `build.sh`
+requires `LABWIRED_PAIRED_QUALIFIED_SOURCE`, a clean
 source checkout, and builds five controls. This explicit parameter checks
 identity, not GitHub qualification; the workflow/reviewer must verify the latter.
 
@@ -40,3 +39,22 @@ real CODAL caller and scheduler integration,
 peripheral IRQ/DMA, notices and consumer adoption. No ASF-free runtime, native
 Arcade boot, physical safety or performance result is established by these
 authored controls.
+
+## Source gate — 2026-10-11
+
+[CODAL PR10](https://github.com/CrispStrobe/codal-samd/pull/10) remains unmerged
+pending affected guest qualification. The exact pinned source passed these eight
+enabled checks; earlier failures remain in their original runs:
+
+| Checks | Original successful run |
+| --- | --- |
+| Census controls | [38150739080](https://github.com/CrispStrobe/codal-samd/actions/runs/38150739080) |
+| IRQ build | [38150739060](https://github.com/CrispStrobe/codal-samd/actions/runs/38150739060) |
+| Foundation profile | [38150739096](https://github.com/CrispStrobe/codal-samd/actions/runs/38150739096) |
+| Mask build | [38150739093](https://github.com/CrispStrobe/codal-samd/actions/runs/38150739093) |
+| Transfer state controls and build | [38150739068](https://github.com/CrispStrobe/codal-samd/actions/runs/38150739068) |
+| Paired policy/mutation controls and five ARM builds | [38150739139](https://github.com/CrispStrobe/codal-samd/actions/runs/38150739139) |
+
+The pin qualifies only those source checks. Require successful actual guest
+execution, source-bound original receipts and independent review before
+representing these authored controls as guest-qualified or merging their source.
