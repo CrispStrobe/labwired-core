@@ -2185,7 +2185,7 @@ boards:
     # behaviour lives in exchange memory and the radio event path, which that
     # capture does not cover. This acknowledges model drift, NOT a recapture.
     drift_ack: 2026-09-28
-    drift_ack_digest: 7446aac8b6d7258a39e492573d99eeef2ca6e67799211d658bcead492544cf75
+    drift_ack_digest: 5cd2753662bf01fbe2968053c612e9264fe8aadece8d2c7f0f34d88cf4272dd8
     models:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs
@@ -2919,6 +2919,13 @@ boards:
     # machine world hooks gained a read-only idle query. No register map, reset
     # value or instruction semantics changed; pinned by the lockstep-vs-scheduler
     # equivalence tests. Approved by the maintainer. ACK, NOT A CAPTURE.
+    drift_ack: 2026-10-11
+    # 2026-10-11 (C3 trigger CSRs + SYSTIMER): RISC-V debug trigger CSRs
+    # 0x7A0-0x7A5 for the C3 profile (esp-hal stack-guard watchpoint); the C3 YAML
+    # now uses the behavioural SYSTIMER instead of the register stub. VALUE_VALID
+    # reads 0 until the first update, matching the C3 cold-reset capture. Pinned by
+    # esp32c3_trigger_systimer and chip_conformance. Approved by the maintainer.
+    # ACK, NOT A CAPTURE.
     drift_ack: 2026-10-11
 
   - id: nucleo-l476rg
@@ -6986,7 +6993,7 @@ boards:
     # the generic Xtensa BB JIT emit core (#1139) — the merge of the two is one
     # digest, so it is re-stamped once here rather than twice.
     drift_ack: 2026-09-18
-    drift_ack_digest: 2bd458035e83c220facc7eed3500bd65b41e61ff29a064947b8b2d102715140a
+    drift_ack_digest: 67230c859ab46d3638ebd303747ecc660e21f00472ea48fb44291ce1d9a01239
     #
     # 2026-09-18 (execute split): no execution change. The arm bodies of
     # `XtensaLx7::execute` moved verbatim into `cpu/xtensa_lx7/exec/*.rs` as
@@ -7127,6 +7134,11 @@ boards:
     # by the pins::conformance suite and the existing net/EXTI/pin-trace
     # tests. Approved by the maintainer. ACK, NOT A CAPTURE.
     drift_ack: 2026-10-10
+    # 2026-10-11 (C3 trigger CSRs + SYSTIMER): the shared SYSTIMER model now
+    # reads VALUE_VALID as 0 until the first update (C3 cold-reset capture);
+    # snapshot format V3, older snapshots still load. No other S3 register map or
+    # reset value changed. Approved by the maintainer. ACK, NOT A CAPTURE.
+    drift_ack: 2026-10-11
 
   - id: esp32s3-zero
     # Board variant of esp32s3: same silicon (LX7), 4 MiB flash / 480 KiB RAM.

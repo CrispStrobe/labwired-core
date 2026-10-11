@@ -12,13 +12,13 @@ The models column is a content digest over everything that board's `models` list
 | `nrf52840` | 🟢 silicon-verified | 2026-08-09 | `a20b87552bf46754` | ⚠ drift acked 2026-10-11, expires 2026-11-10 (re-capture pending) |
 | `seeed-xiao-nrf52840-sense` | 🟢 silicon-verified | 2026-08-09 | `a20b87552bf46754` | ⚠ drift acked 2026-10-11, expires 2026-11-10 (re-capture pending) |
 | `stm32h563` | 🟢 silicon-verified | 2026-08-10 | `6b37235a59936d76` | ⚠ drift acked 2026-10-11, expires 2026-11-10 (re-capture pending) |
-| `esp32c3` | 🟢 silicon-verified | 2026-08-09 | `7446aac8b6d7258a` | ⚠ drift acked 2026-10-11, expires 2026-11-10 (re-capture pending) |
+| `esp32c3` | 🟢 silicon-verified | 2026-08-09 | `5cd2753662bf01fb` | ⚠ drift acked 2026-10-11, expires 2026-11-10 (re-capture pending) |
 | `nucleo-l476rg` | 🟢 silicon-verified | 2026-08-09 | `4d7ac258bb6c460b` | ⚠ drift acked 2026-10-11, expires 2026-11-10 (re-capture pending) |
 | `nucleo-l073rz` | 🟢 silicon-verified | 2026-08-09 | `d3223a6cc6d9288d` | ⚠ drift acked 2026-10-11, expires 2026-11-10 (re-capture pending) |
 | `stm32f103` | 🟢 silicon-verified | 2026-08-09 | `3a8e8e7dd7e2ae2b` | ⚠ drift acked 2026-10-11, expires 2026-11-10 (re-capture pending) |
 | `stm32f407` | 🟢 silicon-smoke | 2026-06-20 | `755df1dc50475c3b` | ⚠ drift acked 2026-10-11, expires 2026-11-10 (re-capture pending) |
-| `esp32s3` | 🟢 silicon-verified | 2026-08-09 | `2bd458035e83c220` | ⚠ drift acked 2026-10-10, expires 2026-11-09 (re-capture pending) |
-| `esp32s3-zero` | 🔵 sim-validated (deep model, no HW diff) | — | `5be721aa42ab94fd` | no silicon capture |
+| `esp32s3` | 🟢 silicon-verified | 2026-08-09 | `67230c859ab46d36` | ⚠ drift acked 2026-10-11, expires 2026-11-10 (re-capture pending) |
+| `esp32s3-zero` | 🔵 sim-validated (deep model, no HW diff) | — | `4b8cf608d7c4cd0e` | no silicon capture |
 | `stm32f401` | 🟡 smoke-manual | — | `5648ed000320935f` | no silicon capture |
 | `stm32wba52` | 🟡 smoke-manual | — | `2162d5e7a3b45109` | no silicon capture |
 | `nrf52832` | ⚪ structural | — | `e31859dc29d347c5` | no silicon capture |
@@ -41,14 +41,14 @@ The models column is a content digest over everything that board's `models` list
 | `nrf54l15` | 🔵 sim-validated (deep model, no HW diff) | — | `72e95f3ee1c45692` | no silicon capture |
 | `stm32g474re` | 🔵 sim-validated (deep model, no HW diff) | — | `b68a76c156edcaef` | no silicon capture |
 | `stm32wb55` | 🔵 sim-validated (deep model, no HW diff) | — | `2b9d6cabf86ae68c` | no silicon capture |
-| `ci-fixture-riscv` | ⚪ structural | — | `51f96b1c9f955ff4` | no silicon capture |
+| `ci-fixture-riscv` | ⚪ structural | — | `e519faf4d2cb48f0` | no silicon capture |
 | `nano-33-iot` | 🟡 smoke-manual | — | `936edb0830b17e8f` | no silicon capture |
 | `metro-m4` | 🟡 smoke-manual | — | `9de9d780eef6365e` | no silicon capture |
 | `arduino-uno-r4-minima` | 🟡 smoke-manual | — | `9bf22f82b671ffe0` | no silicon capture |
 | `teensy-41` | 🟡 smoke-manual | — | `a8351858ab9da5fc` | no silicon capture |
 | `stm32f7-discovery` | 🟡 smoke-manual | — | `620f02ebafdddb39` | no silicon capture |
 | `nucleo-g071rb` | 🟡 smoke-manual | — | `fe2ce565df7c54a4` | no silicon capture |
-| `esp32c6-devkitc` | 🟡 smoke-manual | — | `f963f5f3c7e159f8` | no silicon capture |
+| `esp32c6-devkitc` | 🟡 smoke-manual | — | `943feafddeba4452` | no silicon capture |
 
 ## `nrf52840` — 🟢 silicon-verified
 
@@ -126,7 +126,7 @@ The models column is a content digest over everything that board's `models` list
 - Silicon: **2026-08-09** on USB-JTAG built-in (USB 303a:1001, openocd-esp32 v0.12.0-esp32-20260703, both Tensilica taps 0x120034e5), board MAC 3c:0f:02:df:f3:c8 (QFN56 rev v0.2) — re-captured live 2026-08-09 on a SECOND physical S3 (MAC 3c:0f:02:df:f3:c8, QFN56 rev v0.2; the 2026-07-15 baseline came from an ESP32-S3-Zero, MAC 9c:13:9e:f4:40:c0, same rev) — cross-board corroboration, not a re-read of the same part. Both Xtensa taps (tap0+tap1) examined. 384 registers read across 10 windows (UART0, GPIO, I2C0, RMT, MCPWM0, TIMG0, SYSTIMER, GDMA, SYSTEM, RTC_CNTL): 9/9 RESET_VALUES matched, 0 mismatched. Scope is unchanged and still thin — this is a 9-register reset-state anchor, NOT a broad register or behavioural diff; see the KNOWN GAPS in `note`. Artifacts: scripts/hw-oracle/captures/esp32s3/recapture-20260809T130700Z/.
   - offline (CI): esp32s3_reset_conformance (9 reset regs vs live silicon, firmware-path bus)
   - offline (CI): e2e_i2c_tmp102 / e2e_hello_world / xtensa_exec / e2e_esp32_epaper (sim)
-- Drift status: **⚠ drift acked 2026-10-10, expires 2026-11-09 (re-capture pending)**
+- Drift status: **⚠ drift acked 2026-10-11, expires 2026-11-10 (re-capture pending)**
 
 ## `esp32s3-zero` — 🔵 sim-validated (deep model, no HW diff)
 
