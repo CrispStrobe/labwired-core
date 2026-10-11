@@ -48,8 +48,8 @@ def main():
     args = parser.parse_args()
     samd, core, positive, out = [p.resolve() for p in (args.samd, args.core, args.positive, args.out)]
     def git(*parts):
-        return subprocess.check_output(['git', '-C', str(samd), *parts]).strip()
-    if git('rev-parse', 'HEAD').decode() != PIN or git('status', '--porcelain', '--untracked-files=no'):
+        return subprocess.check_output(['git', '-C', str(samd), *parts])
+    if git('rev-parse', 'HEAD').decode().strip() != PIN or git('status', '--porcelain', '--untracked-files=no').strip():
         raise ValueError('clean immutable owned source required')
     provenance = json.loads((positive / 'build-provenance.json').read_bytes())
     if provenance['source']['samd_commit'] != PIN:
