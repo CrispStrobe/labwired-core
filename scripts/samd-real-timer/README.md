@@ -13,10 +13,19 @@ it. The builder's source/core/ELF provenance must match the consumed image.
 The harness poisons full diagnostic BSS and data RAM, then checks their reset
 initialization at the actual caller entry, including copied executable data.
 It validates all vector words, nine distinct BSS witnesses, each of six ordered
-caller milestones, exactly two actual IRQ0 entries, closed paired state at IRQ
+caller milestones, exactly two actual IRQ0 entries and returns, closed paired state at IRQ
 delivery, exception16/mask0 in the handler, thread return, fault0 and masked
 terminal `0x600d`. The bound is 250,000 instructions; timeout is never success.
 Three manufactured witness controls are not actual guest qualification.
+
+`record.py` is a prospective receipt producer, not an independent audit. It
+requires both complete execution logs, the consumed ELF/map, the before/after
+build manifest, exact source/header/toolchain inventory and live immutable Git
+source bytes. It refuses source drift, unbound headers, missing/duplicate results,
+wrong source/image, missing witnesses and out-of-bound execution. The CLI binds
+the actual qualification merge/head/tree/parents and official run/attempt, and
+refuses to overwrite a previous receipt. `test_record.py` has three manufactured
+groups with seventeen refusal cases; these tests contain no actual guest result.
 
 Still required: hosted compilation of this harness, the source's ARM build,
 both scheduler-profile actual runs, guest adversaries, a source/log/run-bound

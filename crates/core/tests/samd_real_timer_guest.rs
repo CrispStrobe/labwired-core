@@ -9,7 +9,7 @@ fn require_complete(
     values: [u32; 9],
     entries: u32,
     milestones: u32,
-    returned: bool,
+    returns: u32,
     masked: bool,
     exception: u32,
 ) {
@@ -20,15 +20,13 @@ fn require_complete(
     );
     assert_eq!(entries, 2, "two actual exception entries");
     assert_eq!(milestones, 6, "observe each ordered caller milestone");
-    assert!(
-        returned && masked && exception == 0,
-        "masked thread return required"
-    );
+    assert_eq!(returns, 2, "two actual exception returns");
+    assert!(masked && exception == 0, "masked thread return required");
 }
 
 #[test]
 fn manufactured_complete_timer_witness_accepts() {
-    require_complete([0x600d, 0, 6, 2, 0, 16, 1, 3, 0], 2, 6, true, true, 0);
+    require_complete([0x600d, 0, 6, 2, 0, 16, 1, 3, 0], 2, 6, 2, true, 0);
 }
 
 #[test]
@@ -36,26 +34,24 @@ fn manufactured_missing_timer_witness_refuses() {
     for index in 0..9 {
         let mut values = [0x600d, 0, 6, 2, 0, 16, 1, 3, 0];
         values[index] ^= 1;
-        assert!(
-            std::panic::catch_unwind(|| require_complete(values, 2, 6, true, true, 0)).is_err()
-        );
+        assert!(std::panic::catch_unwind(|| require_complete(values, 2, 6, 2, true, 0)).is_err());
     }
 }
 
 #[test]
 fn manufactured_missing_execution_or_progress_refuses() {
-    for (entries, milestones, returned, masked, exception) in [
-        (1, 6, true, true, 0),
-        (2, 5, true, true, 0),
-        (2, 6, false, true, 0),
-        (2, 6, true, false, 0),
-        (2, 6, true, true, 16),
+    for (entries, milestones, returns, masked, exception) in [
+        (1, 6, 2, true, 0),
+        (2, 5, 2, true, 0),
+        (2, 6, 1, true, 0),
+        (2, 6, 2, false, 0),
+        (2, 6, 2, true, 16),
     ] {
         assert!(std::panic::catch_unwind(|| require_complete(
             [0x600d, 0, 6, 2, 0, 16, 1, 3, 0],
             entries,
             milestones,
-            returned,
+            returns,
             masked,
             exception
         ))
@@ -175,7 +171,7 @@ fn actual_timer_nested_callers_restore_and_deliver_two_irqs() {
     let mut milestones = 0;
     let mut irq_entries = 0;
     let mut previous_exception = 0;
-    let mut returned = false;
+    let mut returns = 0;
     let mut reached = false;
     let mut final_step = 0;
     for step in 1..=250_000 {
@@ -194,7 +190,9 @@ fn actual_timer_nested_callers_restore_and_deliver_two_irqs() {
         if exception == 16 && previous_exception != 16 {
             irq_entries += 1;
         }
-        returned |= previous_exception == 16 && exception == 0;
+        if previous_exception == 16 && exception == 0 {
+            returns += 1;
+        }
         previous_exception = exception;
         if !startup {
             continue;
@@ -215,7 +213,7 @@ fn actual_timer_nested_callers_restore_and_deliver_two_irqs() {
                 values,
                 irq_entries,
                 milestones,
-                returned,
+                returns,
                 machine.cpu.primask,
                 exception,
             );
@@ -225,5 +223,5 @@ fn actual_timer_nested_callers_restore_and_deliver_two_irqs() {
         }
     }
     assert!(startup && reached, "timeout is not caller qualification");
-    println!("SAMD_REAL_TIMER elf_sha256={hash} source={qualified} steps={final_step} bss_clear=true data_copy=true vectors=true milestones=6 irq_entries=2 handler_mask=0 handler_exception=16 paired_closed=true fault=0 status=0x600d final_mask=1 final_exception=0");
+    println!("SAMD_REAL_TIMER elf_sha256={hash} source={qualified} steps={final_step} bss_clear=true data_copy=true vectors=true milestones=6 irq_entries=2 irq_returns=2 handler_mask=0 handler_exception=16 paired_closed=true fault=0 status=0x600d final_mask=1 final_exception=0");
 }
