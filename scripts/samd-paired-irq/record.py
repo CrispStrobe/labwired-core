@@ -59,6 +59,7 @@ def snapshot(directory, expected):
 
 
 def validate(logs, elfs, metadata, expected_source):
+    require(metadata.get('schema') == 1, 'snapshot schema required')
     require(set(logs) == {'default', 'scheduler'}, 'both scheduler profiles required')
     require(set(elfs) == set(range(5)), 'exactly five linked fixtures required')
     require(re.fullmatch('[0-9a-f]{40}', expected_source), 'immutable source required')

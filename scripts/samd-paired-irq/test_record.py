@@ -12,7 +12,7 @@ from record import EXPECTED, SOURCE_FILES, sha, validate
 
 SOURCE = '1' * 40
 ELFS = {mode: f'synthetic-elf-{mode}'.encode() for mode in range(5)}
-METADATA = {'source_commit': SOURCE, 'compiler_sha256': '2' * 64,
+METADATA = {'schema': 1, 'source_commit': SOURCE, 'compiler_sha256': '2' * 64,
             'source_files': {name: {'sha256': '3' * 64, 'bytes': 1} for name in SOURCE_FILES}}
 VALID = ''.join(
     f'SAMD_PAIRED_IRQ mode={mode} elf_sha256={sha(ELFS[mode])} status={status} '
@@ -120,14 +120,15 @@ class ReaderControls(unittest.TestCase):
                             validate(logs, ELFS, METADATA, SOURCE)
 
     def test_source_fixture_and_profile_refusals(self):
-        for case in ('profile', 'source', 'malformed-source', 'file', 'compiler', 'empty-elf',
+        for case in ('schema', 'profile', 'source', 'malformed-source', 'file', 'compiler', 'empty-elf',
                      'missing-elf', 'extra-elf', 'reordered', 'extra-diagnostic'):
             with self.subTest(case=case):
                 logs = {'default': VALID, 'scheduler': VALID}
                 elfs = ELFS.copy()
                 metadata = copy.deepcopy(METADATA)
                 source = SOURCE
-                if case == 'profile': del logs['scheduler']
+                if case == 'schema': metadata['schema'] = 99
+                elif case == 'profile': del logs['scheduler']
                 elif case == 'source': metadata['source_commit'] = '4' * 40
                 elif case == 'malformed-source': source = 'not-a-sha'
                 elif case == 'file': del metadata['source_files'][SOURCE_FILES[0]]
