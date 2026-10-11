@@ -112,6 +112,11 @@ that is intentional terminal behavior, not an automatically repairable imbalance
 
 ## Next implementation contract
 
+The separately named [selected preprocessing diagnostic](samd-selected-irq-preprocessing.md)
+prepares source-only staging and effective probes for 21 selected units. It
+does not repeat the historical build or complete the caller inventory; review
+its exact hosted conclusion before treating any selected path as observed.
+
 1. Inventory the actual selected definition/header and every direct, transitive,
    inline, macro, assembly and generated caller. Bind immutable source/request
    identities, active preprocessor configuration and retained/discarded inputs.
