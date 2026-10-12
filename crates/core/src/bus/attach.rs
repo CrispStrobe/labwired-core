@@ -367,15 +367,13 @@ impl SystemBus {
             (28, 0, LINE_TX, "UART0_TX"),
         ];
 
-        let Some(functions) = self
-            .peripherals
-            .iter()
-            .find_map(|p| {
+        let Some((bank_idx, functions, bank_irq)) =
+            self.peripherals.iter().enumerate().find_map(|(idx, p)| {
                 p.dev
                     .as_any()
                     .and_then(|a| a.downcast_ref::<Rp2040IoBank0>())
+                    .map(|bank| (idx, bank.pad_functions(), bank.bank_irq()))
             })
-            .map(Rp2040IoBank0::pad_functions)
         else {
             return;
         };
@@ -385,13 +383,16 @@ impl SystemBus {
         let Some(sio_idx) = self.find_peripheral_index_by_name("sio") else {
             return;
         };
-        if self.peripherals[sio_idx]
+        // The GPIO interrupt rides on the same pairing: SIO reports every
+        // `GPIO_IN` change to IO_BANK0, which owns INTR/PROC0_INTE and raises
+        // IO_IRQ_BANK0, and arms that block's event chain as its wake owner.
+        match self.peripherals[sio_idx]
             .dev
             .as_any_mut()
             .and_then(|a| a.downcast_mut::<Rp2040Sio>())
-            .is_none()
         {
-            return;
+            Some(sio) => sio.attach_io_bank0(functions.clone(), bank_irq, bank_idx),
+            None => return,
         }
 
         for (instance, name) in ["uart0", "uart1"].iter().enumerate() {
@@ -535,10 +536,21 @@ impl SystemBus {
     pub(crate) fn wire_rp2040_spi_pads(&mut self) {
         use crate::peripherals::rp2040::io_bank0::{Rp2040IoBank0, GPIO_FUNC_SPI};
         use crate::peripherals::rp2040::sio::Rp2040Sio;
-        use crate::peripherals::rp2040::spi::{Rp2040Spi, LINE_CSN, LINE_MOSI, LINE_SCK};
+        use crate::peripherals::rp2040::spi::{Rp2040Spi, LINE_CSN, LINE_MOSI, LINE_RX, LINE_SCK};
 
         /// `(pad, spi instance, line, function name)` — straight from the SVD.
+        /// The RX pads (`SPIn_RX`, FUNCSEL 1 on GP0/4/16/20 and GP8/12/24/28)
+        /// carry the one line the controller only reads: an input, so the
+        /// pad keeps reading what is outside it.
         const PADS: &[(u8, usize, usize, &str)] = &[
+            (0, 0, LINE_RX, "SPI0_RX"),
+            (4, 0, LINE_RX, "SPI0_RX"),
+            (8, 1, LINE_RX, "SPI1_RX"),
+            (12, 1, LINE_RX, "SPI1_RX"),
+            (16, 0, LINE_RX, "SPI0_RX"),
+            (20, 0, LINE_RX, "SPI0_RX"),
+            (24, 1, LINE_RX, "SPI1_RX"),
+            (28, 1, LINE_RX, "SPI1_RX"),
             (1, 0, LINE_CSN, "SPI0_CSn"),
             (2, 0, LINE_SCK, "SPI0_SCK"),
             (3, 0, LINE_MOSI, "SPI0_TX"),
@@ -966,7 +978,117 @@ impl SystemBus {
     /// `Option` tests, and on a bus with neither peripheral all four calls go.
     #[inline]
     pub(crate) fn pad_brackets_present(&self) -> bool {
-        self.esp32c3_io_mux_idx.is_some() || self.rp2040_io_bank0_idx.is_some()
+        self.esp32c3_io_mux_idx.is_some()
+            || self.rp2040_io_bank0_idx.is_some()
+            || !self.pad_control_links.is_empty()
+    }
+
+    /// Resolve every pin port's [`pad_control`](crate::pins::PinPort::pad_control)
+    /// block by name and hand each port the pulls its block holds now (the
+    /// block's reset values on a fresh bus). Called from
+    /// `rebuild_peripheral_ranges`, so the indices follow the peripheral list.
+    pub(crate) fn rebuild_pad_control_links(&mut self) {
+        let mut links = Vec::new();
+        for (port, p) in self.peripherals.iter().enumerate() {
+            let Some((name, control)) = p.dev.pins().and_then(|pins| pins.pad_control()) else {
+                continue;
+            };
+            match self.peripherals.iter().position(|b| b.name == name) {
+                Some(block) => links.push(PadControlLink {
+                    block,
+                    port,
+                    control,
+                }),
+                None => tracing::warn!(
+                    "GPIO port '{}' names pad-control block '{name}', which is not on the \
+                     bus; its pulls stay off",
+                    p.name
+                ),
+            }
+        }
+        self.pad_control_links = links;
+        for k in 0..self.pad_control_links.len() {
+            let link = self.pad_control_links[k];
+            if let Some(port) = self
+                .peripherals
+                .get_mut(link.port)
+                .and_then(|p| p.dev.pins_mut())
+            {
+                crate::pins::watch_begin(port);
+            }
+            self.apply_pad_control(link);
+        }
+    }
+
+    /// Decode every pad's pull from `link`'s block and hand it to the port,
+    /// then close the push-capture bracket the caller opened.
+    fn apply_pad_control(&mut self, link: PadControlLink) {
+        let mut pulls = [crate::pins::Pull::None; 32];
+        let count = {
+            let (Some(block), Some(port)) = (
+                self.peripherals.get(link.block),
+                self.peripherals.get(link.port),
+            ) else {
+                return;
+            };
+            let Some(pins) = port.dev.pins() else {
+                return;
+            };
+            let count = usize::from(pins.pin_count()).min(pulls.len());
+            for (pin, pull) in pulls.iter_mut().enumerate().take(count) {
+                *pull = link.control.pull(&*block.dev, pin as u8);
+            }
+            count
+        };
+        let Some(port) = self
+            .peripherals
+            .get_mut(link.port)
+            .and_then(|p| p.dev.pins_mut())
+        else {
+            return;
+        };
+        for (pin, pull) in pulls.iter().enumerate().take(count) {
+            port.set_config_pull(pin as u8, *pull);
+        }
+        crate::pins::watch_end(port);
+    }
+
+    /// Bracket a write to a pad-control block (Kinetis PORTx, RA PFS, i.MX RT
+    /// IOMUXC): a PE/PCR/PUE write moves the linked port's pads without
+    /// touching the GPIO block. Snapshots every linked port; `true` when
+    /// `idx` is a linked block, for [`Self::finish_pad_control_write`].
+    pub(crate) fn begin_pad_control_write(&mut self, idx: usize) -> bool {
+        let mut hit = false;
+        for k in 0..self.pad_control_links.len() {
+            let link = self.pad_control_links[k];
+            if link.block != idx {
+                continue;
+            }
+            hit = true;
+            if let Some(port) = self
+                .peripherals
+                .get_mut(link.port)
+                .and_then(|p| p.dev.pins_mut())
+            {
+                crate::pins::watch_begin(port);
+            }
+        }
+        hit
+    }
+
+    /// Complete a successful pad-control write started by
+    /// [`Self::begin_pad_control_write`]: hand every linked port its pulls as
+    /// the block now holds them, and push what moved.
+    pub(crate) fn finish_pad_control_write(&mut self, idx: usize, begun: bool) {
+        if !begun {
+            return;
+        }
+        for k in 0..self.pad_control_links.len() {
+            let link = self.pad_control_links[k];
+            if link.block == idx {
+                self.apply_pad_control(link);
+            }
+        }
     }
 
     /// Bracket a C3 IO_MUX write with GPIO push-capture sampling. A `FUN_WPU`
@@ -975,8 +1097,6 @@ impl SystemBus {
     /// otherwise miss the edge. The returned GPIO index is passed to
     /// [`Self::finish_esp32c3_io_mux_write`] after the MMIO write succeeds.
     pub(crate) fn begin_esp32c3_io_mux_write(&mut self, io_mux_idx: usize) -> Option<usize> {
-        use crate::peripherals::esp32c3::gpio::Esp32c3Gpio;
-
         // Called on EVERY peripheral write, so the "not my peripheral" answer
         // has to be a compare rather than a downcast — and on a bus with no
         // C3 IO_MUX at all, `esp32c3_io_mux_idx` is `None` and nothing can
@@ -1001,12 +1121,7 @@ impl SystemBus {
         // `position()`, so a stale one would panic here where the old code
         // simply found nothing. Degrading to "no bracket" matches what
         // `dport_cross_core_pending` does with its cached index.
-        self.peripherals
-            .get_mut(gpio_idx)?
-            .dev
-            .as_any_mut()
-            .and_then(|any| any.downcast_mut::<Esp32c3Gpio>())?
-            .tap_snapshot();
+        crate::pins::watch_begin(self.peripherals.get_mut(gpio_idx)?.dev.pins_mut()?);
         Some(gpio_idx)
     }
 
@@ -1017,13 +1132,12 @@ impl SystemBus {
         let Some(gpio_idx) = gpio_idx else {
             return;
         };
-        if let Some(gpio) = self
+        if let Some(port) = self
             .peripherals
             .get_mut(gpio_idx)
-            .and_then(|p| p.dev.as_any_mut())
-            .and_then(|any| any.downcast_mut::<crate::peripherals::esp32c3::gpio::Esp32c3Gpio>())
+            .and_then(|p| p.dev.pins_mut())
         {
-            gpio.tap_report();
+            crate::pins::watch_end(port);
         }
     }
 
@@ -1036,8 +1150,6 @@ impl SystemBus {
     /// the pad to UART/SPI/I²C — the playground arms before firmware runs, so
     /// that is the normal order. Mirrors [`Self::begin_esp32c3_io_mux_write`].
     pub(crate) fn begin_rp2040_io_bank0_write(&mut self, io_bank0_idx: usize) -> Option<usize> {
-        use crate::peripherals::rp2040::sio::Rp2040Sio;
-
         // See `begin_esp32c3_io_mux_write`: a compare, not a downcast.
         if self.rp2040_io_bank0_idx != Some(io_bank0_idx) {
             return None;
@@ -1056,12 +1168,7 @@ impl SystemBus {
         // `position()`, so a stale one would panic here where the old code
         // simply found nothing. Degrading to "no bracket" matches what
         // `dport_cross_core_pending` does with its cached index.
-        self.peripherals
-            .get_mut(sio_idx)?
-            .dev
-            .as_any_mut()
-            .and_then(|any| any.downcast_mut::<Rp2040Sio>())?
-            .tap_snapshot();
+        crate::pins::watch_begin(self.peripherals.get_mut(sio_idx)?.dev.pins_mut()?);
         Some(sio_idx)
     }
 
@@ -1072,13 +1179,24 @@ impl SystemBus {
         let Some(sio_idx) = sio_idx else {
             return;
         };
-        if let Some(sio) = self
+        if let Some(port) = self
             .peripherals
             .get_mut(sio_idx)
-            .and_then(|p| p.dev.as_any_mut())
-            .and_then(|any| any.downcast_mut::<crate::peripherals::rp2040::sio::Rp2040Sio>())
+            .and_then(|p| p.dev.pins_mut())
         {
-            sio.tap_report();
+            crate::pins::watch_end(port);
+        }
+        // A pad on a world net that FUNCSEL just handed to a peripheral line
+        // gives that line the level the net holds there.
+        if self.wire_inputs_live {
+            if let Some(port) = self
+                .peripherals
+                .get_mut(sio_idx)
+                .and_then(|p| p.dev.pins_mut())
+            {
+                port.routes_changed();
+            }
+            self.deliver_wire_input_edges(sio_idx);
         }
     }
 
@@ -1104,7 +1222,7 @@ impl SystemBus {
     pub(crate) fn wire_stm32_spi_pads(&mut self) {
         use crate::peripherals::gpio::{GpioPort, GpioRegisterLayout};
         use crate::peripherals::spi::{Spi, SpiPadMap, SpiSignal};
-        use SpiSignal::{Miso, Mosi, Sck};
+        use SpiSignal::{Miso, Mosi, Nss, Sck};
 
         // (spi, port, pin, AF, signal, func) — V2 ports, L4 parts (DS10198
         // Table 17: SPI1-3).
@@ -1281,6 +1399,29 @@ impl SystemBus {
             ("spi3", 'g', 11, 6, Mosi, "SPI3_MOSI"),
         ];
 
+        // ── STM32G0 parts ───────────────────────────────────────────────────
+        //
+        // STM32G071 (DS12232, "Port A/Port B alternate function mapping"
+        // tables, AF0 column). The classic register file behind a V2 port
+        // would otherwise pick the F4 table, whose AF5 is not SPI on a G0.
+        // Selected by the chip yaml's `pad_map: stm32g0`. NSS is routed here
+        // (and only here) because a G0 pair on a world `gpio_net` uses it as
+        // the hardware slave select.
+        const G0: &[(&str, char, u8, u8, SpiSignal, &str)] = &[
+            ("spi1", 'a', 4, 0, Nss, "SPI1_NSS"),
+            ("spi1", 'a', 5, 0, Sck, "SPI1_SCK"),
+            ("spi1", 'a', 6, 0, Miso, "SPI1_MISO"),
+            ("spi1", 'a', 7, 0, Mosi, "SPI1_MOSI"),
+            ("spi1", 'a', 15, 0, Nss, "SPI1_NSS"),
+            ("spi1", 'b', 3, 0, Sck, "SPI1_SCK"),
+            ("spi1", 'b', 4, 0, Miso, "SPI1_MISO"),
+            ("spi1", 'b', 5, 0, Mosi, "SPI1_MOSI"),
+            ("spi2", 'b', 12, 0, Nss, "SPI2_NSS"),
+            ("spi2", 'b', 13, 0, Sck, "SPI2_SCK"),
+            ("spi2", 'b', 14, 0, Miso, "SPI2_MISO"),
+            ("spi2", 'b', 15, 0, Mosi, "SPI2_MOSI"),
+        ];
+
         for spi_name in ["spi1", "spi2", "spi3"] {
             let Some(spi_idx) = self.find_peripheral_index_by_name(spi_name) else {
                 continue;
@@ -1331,6 +1472,7 @@ impl SystemBus {
                             (true, SpiPadMap::Stm32Wba) => WBA,
                             (true, SpiPadMap::Stm32U5) => U5,
                             (true, _) => H5,
+                            (false, SpiPadMap::Stm32G0) => G0,
                             (false, _) if fifo => L4,
                             (false, _) => F4,
                         };
@@ -1494,15 +1636,31 @@ impl SystemBus {
             ("i2c2", 'b', 11, LINE_SDA, "I2C2_SDA"),
         ];
 
+        // Modern controller on an STM32G0 (`pad_map: stm32g0`): STM32G071
+        // DS12232 port A/B alternate-function tables, AF6 column. The L4
+        // table's AF4 is not I²C on a G0.
+        const G0: &[I2cPad] = &[
+            ("i2c1", 'a', 9, 6, LINE_SCL, "I2C1_SCL"),
+            ("i2c1", 'a', 10, 6, LINE_SDA, "I2C1_SDA"),
+            ("i2c1", 'b', 6, 6, LINE_SCL, "I2C1_SCL"),
+            ("i2c1", 'b', 7, 6, LINE_SDA, "I2C1_SDA"),
+            ("i2c1", 'b', 8, 6, LINE_SCL, "I2C1_SCL"),
+            ("i2c1", 'b', 9, 6, LINE_SDA, "I2C1_SDA"),
+            ("i2c2", 'b', 10, 6, LINE_SCL, "I2C2_SCL"),
+            ("i2c2", 'b', 11, 6, LINE_SDA, "I2C2_SDA"),
+            ("i2c2", 'b', 13, 6, LINE_SCL, "I2C2_SCL"),
+            ("i2c2", 'b', 14, 6, LINE_SDA, "I2C2_SDA"),
+        ];
+
         for i2c_name in ["i2c1", "i2c2", "i2c3"] {
             let Some(i2c_idx) = self.find_peripheral_index_by_name(i2c_name) else {
                 continue;
             };
-            let Some(layout) = self.peripherals[i2c_idx]
+            let Some((layout, g0)) = self.peripherals[i2c_idx]
                 .dev
                 .as_any()
                 .and_then(|a| a.downcast_ref::<I2c>())
-                .map(I2c::register_layout)
+                .map(|i2c| (i2c.register_layout(), i2c.is_g0_pad_map()))
             else {
                 continue;
             };
@@ -1534,6 +1692,7 @@ impl SystemBus {
                     continue;
                 };
                 let v2_table = match (layout, gpio_layout) {
+                    (I2cRegisterLayout::Stm32L4, GpioRegisterLayout::Stm32V2) if g0 => G0,
                     (I2cRegisterLayout::Stm32L4, GpioRegisterLayout::Stm32V2) => L4,
                     (I2cRegisterLayout::Stm32F1, GpioRegisterLayout::Stm32V2) => F4,
                     (I2cRegisterLayout::Stm32F1, GpioRegisterLayout::Stm32F1) => {

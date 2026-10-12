@@ -28,9 +28,11 @@ pub mod esp32;
 pub mod esp32c3;
 pub mod esp32c6;
 pub mod esp32s3;
+pub mod esp_gpio_net;
 pub mod esp_gpspi_wire;
 pub mod esp_i2c_core;
 pub mod esp_ledc_wave;
+pub mod esp_systimer;
 pub mod esp_uart;
 pub mod esp_xtensa_common;
 pub mod exti;
@@ -46,6 +48,7 @@ pub mod gpio;
 pub mod hc_sr04;
 pub mod hsem;
 pub mod i2c;
+pub(crate) mod i2c_bitbus;
 pub mod i2c_temp_sensor;
 pub mod i2c_waveform;
 pub mod imx_ccm;
@@ -67,6 +70,7 @@ pub mod pio;
 pub mod pwr;
 pub mod quadspi;
 pub mod ra_clock;
+pub mod ra_pfs;
 pub mod radio;
 pub mod rcc;
 pub mod rf_medium;
@@ -90,6 +94,7 @@ pub mod spi;
 pub mod spi_waveform;
 pub mod stm32f4_dma;
 pub mod stub;
+pub mod syscfg;
 pub mod systick;
 pub mod timer;
 pub mod tsc;
@@ -219,4 +224,21 @@ pub fn can_trace_snapshot_all(
             _ => None,
         })
         .collect()
+}
+
+/// Notified when an LEDC (LED PWM) channel commits a new duty via the
+/// `CONF1.DUTY_START` strobe (i.e. on each `ledcWrite`). Lets PWM-driven
+/// actuators — a servo, an ESC, an LED dimmer — react to the live duty without
+/// polling. `duty_fraction` is `duty / 2^DUTY_RES` for the channel's bound
+/// timer. Chip-neutral so every ESP LEDC model can offer it.
+pub trait LedcDutyObserver: Send + Sync + std::fmt::Debug {
+    fn on_duty_change(&self, channel: u64, duty_fraction: f64);
+}
+
+/// Notified when an MCPWM operator commits a new compare-A (duty) value, i.e.
+/// on each `mcpwm_set_duty`. Lets PWM-driven actuators react to the live duty.
+/// `duty_fraction` is `compare_A / timer peak` for the operator's bound timer.
+/// Chip-neutral so every ESP MCPWM model can offer it.
+pub trait McpwmDutyObserver: Send + Sync + std::fmt::Debug {
+    fn on_duty_change(&self, operator: u64, duty_fraction: f64);
 }

@@ -227,6 +227,26 @@ impl PadRoutes {
         Some(self.cells[route.cell].level(line))
     }
 
+    /// The wire and line `pin` carries right now, if it selects one.
+    pub fn active_line<F>(&self, pin: u8, selector_of: F) -> Option<(&Arc<PadLines>, usize)>
+    where
+        F: Fn(u8) -> Option<u32>,
+    {
+        let (route, line, _) = self.active(pin, selector_of)?;
+        Some((&self.cells[route.cell], line))
+    }
+
+    /// Mark every line `pin` can carry (whatever it selects now) as reachable
+    /// from a world `gpio_net`: the pad was put on one.
+    pub fn mark_on_net(&self, pin: u8) {
+        for route in self.routes.iter().filter(|r| r.pin == pin) {
+            // A span route carries one line per selector in its span.
+            for k in 0..route.span_funcs.len().max(1) {
+                self.cells[route.cell].mark_on_net(route.line + k);
+            }
+        }
+    }
+
     /// The datasheet name of the signal currently driving `pin`, for
     /// `gpio_routing().func`.
     pub fn func<F>(&self, pin: u8, selector_of: F) -> Option<&'static str>

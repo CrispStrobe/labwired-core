@@ -92,6 +92,7 @@ pub(crate) enum Op {
     CanBridgeSetPaused(bool),
     CanBridgeDetach(String),
     SetBreakpoints(Vec<u32>),
+    SetDebugCore(u8),
 }
 
 impl Op {
@@ -260,6 +261,7 @@ impl WasmSimulator {
             Op::CanBridgeSetPaused(p) => self.can_bridge_set_paused(*p),
             Op::CanBridgeDetach(id) => self.can_bridge_detach(id),
             Op::SetBreakpoints(addresses) => self.set_breakpoints(addresses.clone()),
+            Op::SetDebugCore(core) => self.set_debug_core(*core),
             Op::ApplyRuntimeSnapshot(b) => self.apply_runtime_snapshot(b),
             Op::WatchLogic(v) => match serde_wasm_bindgen::to_value(v) {
                 Ok(v) => {
@@ -475,7 +477,8 @@ impl WasmSimulator {
         });
         let mut golden = self.rebuild_s(&journal, None)?;
         let mut faulted = self.rebuild_s(&journal, None)?;
-        let isa = labwired_core::vfi::Isa::from_family(self.arch);
+        let isa = labwired_core::vfi::Isa::from_family(self.arch)
+            .ok_or("fault experiments for Cortex-A7 are not implemented")?;
         let report = labwired_core::vfi::run_lockstep(
             &mut Side(&mut golden),
             &mut Side(&mut faulted),

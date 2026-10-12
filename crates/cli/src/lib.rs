@@ -688,6 +688,13 @@ struct TestArgs {
     /// browser logic analyzer uses. No watch → zero overhead, no block emitted.
     #[arg(long = "watch-gpio", value_name = "PERIPHERAL:PIN")]
     watch_gpio: Vec<String>,
+
+    /// Liveness file for a supervisor. While the run loop is alive the CLI
+    /// rewrites `{"steps":N,"cycles":C}` here (atomically, at most once a
+    /// second, and once as the loop starts) so a host can tell a run that is
+    /// advancing from one that is hung. No flag → no writes, no clock reads.
+    #[arg(long = "heartbeat-file", value_name = "PATH")]
+    heartbeat_file: Option<PathBuf>,
 }
 
 /// Unified error response for agent consumption
@@ -1394,6 +1401,8 @@ fn handle_load_error<C: labwired_core::Cpu>(
         &None,
         &[],
         None,
+        None,
+        // Nor any per-pin GPIO state.
         None,
         // Load/reset failed before a machine existed: no motor evidence either.
         Vec::new(),
@@ -2911,6 +2920,7 @@ mod test_outcome_golden_tests {
             fidelity: Vec::new(),
             fault_verdict: None,
             logic_edges: None,
+            gpio_pins: None,
             motors: Vec::new(),
             stimuli: Vec::new(),
             footprint: None,
