@@ -139,6 +139,11 @@ const PAD_COUNT: u8 = 54;
 /// carries 54 (PIN0..53, FUNC0..53_OUT_SEL_CFG); GPIO49..53 have no pad and
 /// no `IO_MUX_GPIOn_REG`, so the pin interface stops at 48.
 const PIN_COUNT: u8 = 49;
+/// The S3 bonds GPIO0..21 and GPIO26..48: GPIO22..25 have register slots but
+/// no pad, so the pad-level interface refuses them like GPIO49..53.
+const fn physical_pin(pin: u8) -> bool {
+    pin <= 21 || (pin >= 26 && pin < PIN_COUNT)
+}
 /// `GPIO_FUNCn_OUT_SEL_CFG.out_sel` field width: bits [8:0] pick which internal
 /// peripheral output signal drives pad `n` (ESP32-S3 TRM §5.4 GPIO matrix).
 const OUT_SEL_MASK: u32 = 0x1FF;
@@ -619,7 +624,7 @@ impl Esp32s3Gpio {
     /// stage is off and `GPIO_IN` / `GPIO_IN1` reads the wire. With nothing
     /// outside the model keeps its old reading (ENABLE alone decides).
     fn released_held_pad(&self, pin: u8) -> bool {
-        if pin >= PIN_COUNT {
+        if !physical_pin(pin) {
             return false;
         }
         let (bank, mask) = Self::bank_bit(pin);
@@ -640,7 +645,7 @@ impl Esp32s3Gpio {
     /// RTC_IO pulls.
     fn pad_driver(&self, pin: u8) -> Option<crate::pins::PadDriver> {
         use crate::pins::{PadDriver, Pull};
-        if pin >= PIN_COUNT {
+        if !physical_pin(pin) {
             return None;
         }
         if let Some(rtc) = self.rtc.as_ref().filter(|_| self.in_rtc(pin)) {
@@ -891,7 +896,7 @@ impl Esp32s3Gpio {
     /// The level the outside holds on pad `pin` (GPIO0..48), if any: bank 1
     /// is bit `pin - 32` of `external_drive_mask[1]` / `external_levels[1]`.
     fn external_level(&self, pin: u8) -> Option<bool> {
-        if pin >= PIN_COUNT {
+        if !physical_pin(pin) {
             return None;
         }
         let (bank, mask) = Self::bank_bit(pin);
@@ -1400,7 +1405,7 @@ impl PinPort for Esp32s3Gpio {
     /// input change latches `GPIO_STATUS` per `INT_TYPE`, and the four-state
     /// observers see it.
     fn set_external(&mut self, pin: u8, ext: External) -> Option<InputChange> {
-        if pin >= PIN_COUNT {
+        if !physical_pin(pin) {
             return None;
         }
         let (bank, mask) = Self::bank_bit(pin);
@@ -1426,7 +1431,7 @@ impl PinPort for Esp32s3Gpio {
     /// `pin` joined a world `gpio_net`: a wire line routed to it (now, or
     /// whenever firmware routes one) shares a wire with other chips.
     fn join_wire(&mut self, pin: u8) {
-        if pin < PIN_COUNT {
+        if physical_pin(pin) {
             self.net_pads |= 1u64 << pin;
             crate::pins::watch_begin(self);
             self.sync_net_routes();
@@ -1508,7 +1513,7 @@ impl Peripheral for Esp32s3Gpio {
     }
 
     fn read_gpio_input(&self, pin: u8) -> Option<bool> {
-        if pin >= PIN_COUNT {
+        if !physical_pin(pin) {
             return None;
         }
         let (bank, mask) = Self::bank_bit(pin);
@@ -1516,7 +1521,7 @@ impl Peripheral for Esp32s3Gpio {
     }
 
     fn read_gpio_output(&self, pin: u8) -> Option<bool> {
-        if pin >= PIN_COUNT {
+        if !physical_pin(pin) {
             return None;
         }
         let (bank, mask) = Self::bank_bit(pin);
@@ -1532,7 +1537,7 @@ impl Peripheral for Esp32s3Gpio {
     }
 
     fn read_gpio_pad(&self, pin: u8) -> Option<bool> {
-        if pin >= PIN_COUNT {
+        if !physical_pin(pin) {
             return None;
         }
         let (bank, mask) = Self::bank_bit(pin);
