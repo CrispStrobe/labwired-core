@@ -33,6 +33,7 @@ pub mod pc_coverage;
 pub mod peripheral_log;
 pub mod peripherals;
 pub mod physics;
+pub mod pins;
 pub mod plugin;
 pub mod power;
 pub mod profile;
@@ -362,6 +363,11 @@ where
         if config.idle_fast_forward_enabled && cpu.idle_fast_forward_budget(bus).is_some() {
             return Ok(i + 1);
         }
+        // A world's net pad changed drive: end the batch on this instruction
+        // (`LogicTap::set_batch_stop_channels`).
+        if tap.as_ref().is_some_and(|t| t.batch_stop_hit()) {
+            return Ok(i + 1);
+        }
     }
     Ok(max_count)
 }
@@ -452,6 +458,19 @@ pub trait Cpu: Send {
     fn invalidate_code_caches(&mut self) {}
     fn snapshot(&self) -> snapshot::CpuSnapshot;
     fn apply_snapshot(&mut self, snapshot: &snapshot::CpuSnapshot);
+
+    /// Application cores start a loaded ELF at e_entry, without the Cortex-M
+    /// vector-table interpretation used by the legacy load path.
+    fn uses_elf_entry_point(&self) -> bool {
+        false
+    }
+
+    /// Fallible restore entry point for machines. Cores with diagnostic-only
+    /// snapshots must override this rather than report a successful resume.
+    fn try_apply_snapshot(&mut self, snapshot: &snapshot::CpuSnapshot) -> SimResult<()> {
+        self.apply_snapshot(snapshot);
+        Ok(())
+    }
 
     /// Full mid-flight CPU state for binary runtime snapshots: the arch tag
     /// plus an opaque blob the matching CPU type knows how to parse, or
@@ -720,6 +739,12 @@ impl Cpu for Box<dyn Cpu> {
     fn apply_snapshot(&mut self, s: &snapshot::CpuSnapshot) {
         (**self).apply_snapshot(s)
     }
+    fn uses_elf_entry_point(&self) -> bool {
+        (**self).uses_elf_entry_point()
+    }
+    fn try_apply_snapshot(&mut self, s: &snapshot::CpuSnapshot) -> SimResult<()> {
+        (**self).try_apply_snapshot(s)
+    }
     fn runtime_snapshot(&self) -> Option<(runtime_snapshot::CpuKind, Vec<u8>)> {
         (**self).runtime_snapshot()
     }
@@ -893,11 +918,38 @@ pub trait Peripheral: std::fmt::Debug + Send {
         Vec::new()
     }
 
-    /// Observe an externally driven GPIO pad transition with its explicit
-    /// previous and current levels. Return true if work was latched that needs
-    /// a scheduler wake. Default no-op; STM32 EXTI uses the port mux here.
-    fn gpio_input_edge(&mut self, _port: u8, _pin: u8, _before: bool, _after: bool) -> bool {
+    /// Edge sink: observe an externally driven GPIO pad transition with its
+    /// explicit previous and current levels. Return true if work was latched
+    /// that needs a scheduler wake. Default no-op; STM32 EXTI uses the port
+    /// mux here.
+    ///
+    /// `port` is the [`PortId`](pins::PortId) the bus gave the GPIO port when
+    /// it was attached (port A = 0); the bus calls every sink from
+    /// [`SystemBus::set_pad_external`](crate::bus::SystemBus::set_pad_external).
+    ///
+    /// `line_source` is the port the chip's EXTI line-source mux selects for
+    /// line `pin` when that mux lives OUTSIDE the EXTI block (AFIO_EXTICRx on
+    /// STM32F1, SYSCFG_EXTICRx on STM32F4), as answered by
+    /// [`exti_line_source`](Self::exti_line_source); `None` when no
+    /// peripheral on the bus owns one. An EXTI with its own mux (G0, U5)
+    /// ignores it.
+    fn gpio_input_edge(
+        &mut self,
+        _port: u8,
+        _pin: u8,
+        _before: bool,
+        _after: bool,
+        _line_source: Option<u8>,
+    ) -> bool {
         false
+    }
+
+    /// EXTI line-source mux: the GPIO port index (0 = A) this peripheral
+    /// routes to EXTI line `line` (0..15), for a mux that sits outside the
+    /// EXTI block (STM32F1 AFIO_EXTICRx, STM32F4 SYSCFG_EXTICRx). `None` for
+    /// every peripheral that is not such a mux.
+    fn exti_line_source(&self, _line: u8) -> Option<u8> {
+        None
     }
 
     /// Cross-peripheral GPIO change hook: bus snapshots GPIO IN registers
@@ -964,6 +1016,26 @@ pub trait Peripheral: std::fmt::Debug + Send {
     /// rather than a silently ungated peripheral).
     fn clock_gate_reg_offset(&self, _name: &str) -> Option<u64> {
         None
+    }
+
+    /// PWM capability: notify `obs` of each duty an LEDC channel commits
+    /// (`ledcWrite`). Implemented by the ESP32-family LEDC models; `false`
+    /// (observer dropped) for every other peripheral.
+    fn add_ledc_duty_observer(
+        &mut self,
+        _obs: Arc<dyn crate::peripherals::LedcDutyObserver>,
+    ) -> bool {
+        false
+    }
+
+    /// PWM capability: notify `obs` of each duty an MCPWM operator commits
+    /// (`mcpwm_set_duty`). Implemented by the ESP32-family MCPWM models;
+    /// `false` (observer dropped) for every other peripheral.
+    fn add_mcpwm_duty_observer(
+        &mut self,
+        _obs: Arc<dyn crate::peripherals::McpwmDutyObserver>,
+    ) -> bool {
+        false
     }
 
     /// GPIO capability: read the firmware-visible input level for `pin`.
@@ -1044,25 +1116,38 @@ pub trait Peripheral: std::fmt::Debug + Send {
         None
     }
 
+    /// Pin capability: this peripheral's pads, through the one pad interface
+    /// ([`pins::PinPort`]). `None` (the default) for a peripheral that owns
+    /// no pads. Every GPIO model answers `Some(self)`; the GPIO methods
+    /// below that predate the interface are shims over it.
+    fn pins(&self) -> Option<&dyn pins::PinPort> {
+        None
+    }
+
+    /// Mutable half of [`pins`](Self::pins).
+    fn pins_mut(&mut self) -> Option<&mut dyn pins::PinPort> {
+        None
+    }
+
     /// GPIO capability: the pad level a logic probe clipped to `pin` would
-    /// see — output-driven pins report the output latch, input pins report
-    /// the input level, pins routed to a peripheral (alternate function)
-    /// report `None` when the model can't know the wire state. GPIO models
-    /// with a direction register override this; the default prefers the
-    /// output latch.
+    /// see. Shim over [`pins::PinPort::level`] (kept because many callers
+    /// only want a level); a peripheral without pins falls back to the output
+    /// latch, then the input level.
     fn read_gpio_pad(&self, pin: u8) -> Option<bool> {
+        if let Some(port) = self.pins() {
+            return port.level(pin);
+        }
         self.read_gpio_output(pin)
             .or_else(|| self.read_gpio_input(pin))
     }
 
-    /// GPIO capability: who drives `pin` right now — the pad's own output
-    /// stage, an external device, both disagreeing, or nothing (high-Z). The
-    /// four-state pin trace (`0`/`1`/`z`/`x`) is built from this plus
-    /// [`read_gpio_pad`](Self::read_gpio_pad). `None` when the model cannot
-    /// say; the trace then has no four-state lane for the pad rather than a
-    /// guessed "driven".
-    fn read_gpio_pad_drive(&self, _pin: u8) -> Option<crate::logic_capture::PadDrive> {
-        None
+    /// GPIO capability: who drives `pin` as a probe sees it — the pad's own
+    /// output stage, an external device, both disagreeing, or nothing
+    /// (high-Z). Shim over [`pins::probe_drive`]. `None` when the model
+    /// cannot say; the trace then has no four-state lane for the pad rather
+    /// than a guessed "driven".
+    fn read_gpio_pad_drive(&self, pin: u8) -> Option<crate::logic_capture::PadDrive> {
+        self.pins().and_then(|port| pins::probe_drive(port, pin))
     }
 
     /// GPIO capability: the routing of `pin` — its direction/`mode` and, when
@@ -1078,20 +1163,14 @@ pub trait Peripheral: std::fmt::Debug + Send {
 
     /// GPIO capability: drive an externally controlled input level for `pin`
     /// (e.g. browser button press). Returns `false` if unsupported.
-    fn set_gpio_input(&mut self, _pin: u8, _level: bool) -> bool {
-        false
-    }
-
-    /// GPIO capability: mark `pin` as a member of a world `gpio_net`
-    /// (`isolated = true`) or release it. A net pad reports only what THIS
-    /// chip drives: [`read_gpio_pad_drive`](Self::read_gpio_pad_drive) ignores
-    /// whatever [`set_gpio_input`](Self::set_gpio_input) holds on the pin, so
-    /// the level the net feeds back into the pad is never mistaken for the
-    /// chip's own output stage (an input that has seen an external level would
-    /// otherwise read as "driven" for ever). Returns `false` when the model
-    /// cannot take part in a net.
-    fn set_gpio_net_isolated(&mut self, _pin: u8, _isolated: bool) -> bool {
-        false
+    ///
+    /// Shim over [`pins::PinPort::set_external`] with
+    /// [`External::Level`](pins::External::Level), kept for the callers that
+    /// only hold a level. It does not raise edge events: a caller with a bus
+    /// goes through [`SystemBus::set_pad_external`](crate::bus::SystemBus::set_pad_external).
+    fn set_gpio_input(&mut self, pin: u8, level: bool) -> bool {
+        self.pins_mut()
+            .is_some_and(|port| pins::set_level(port, pin, level))
     }
 
     /// GPIO capability: drain the level changes on pads the mux currently
@@ -1102,6 +1181,25 @@ pub trait Peripheral: std::fmt::Debug + Send {
     /// [`SystemBus::deliver_timer_input_edges`](crate::bus::SystemBus::deliver_timer_input_edges).
     fn take_timer_input_edges(&mut self) -> Vec<crate::peripherals::gpio::TimerInputEdge> {
         Vec::new()
+    }
+
+    /// GPIO capability: drain the outside levels that reached pads routed to
+    /// a peripheral line (an SPI MISO, an I²C SDA) since the last drain. Each
+    /// names the line cell, which the bus maps back to the peripheral owning
+    /// it; see [`SystemBus::deliver_wire_input_edges`](crate::bus::SystemBus::deliver_wire_input_edges).
+    fn take_wire_input_edges(&mut self) -> Vec<crate::peripherals::pad_lines::WireInputEdge> {
+        Vec::new()
+    }
+
+    /// Wire capability: the level an outside driver holds on the pad routed
+    /// to line `line` of this peripheral's [`Self::wire_lines`] changed to
+    /// `level` at absolute engine cycle `cycle` (a world `gpio_net`
+    /// delivering a peer's edge). The new level is also readable from
+    /// [`PadLines::input`](crate::peripherals::pad_lines::PadLines::input).
+    /// Returns `true` when the peripheral may have work to schedule, so the
+    /// bus collects its scheduled events. Default: not a listener.
+    fn wire_input_edge(&mut self, _line: usize, _level: bool, _cycle: u64) -> bool {
+        false
     }
 
     /// True when a READ of this peripheral can clear the status flag behind
@@ -1339,6 +1437,17 @@ pub trait Peripheral: std::fmt::Debug + Send {
         None
     }
 
+    /// Deliver this console's TX bytes into a merged console stream as channel
+    /// `ch` (see [`crate::console::ConsoleMerge`]). Returns false for a
+    /// peripheral that is not a console that can be merged. Default false.
+    fn set_console_merge(
+        &mut self,
+        _merge: std::sync::Arc<crate::console::ConsoleMerge>,
+        _ch: usize,
+    ) -> bool {
+        false
+    }
+
     /// This peripheral as an inter-chip UART cross-link endpoint, if it is one.
     ///
     /// Named capability rather than a downcast: `attach_uart_stream_by_id` used
@@ -1540,6 +1649,18 @@ pub trait Peripheral: std::fmt::Debug + Send {
     /// A timed USART's next due cycle after `now`, claimed so the caller can
     /// schedule it (see `Machine::timed_uart_sync`). Default: none.
     fn claim_timed_uart_wake(&self, _now: u64) -> Option<u64> {
+        None
+    }
+
+    /// This peripheral as a controller that can join a world's timed CAN bus
+    /// ([`crate::network::timed_can`]). Default: none — a bus with such an
+    /// endpoint stays on the untimed fan-out.
+    fn timed_can(&self) -> Option<&dyn crate::network::timed_can::TimedCanController> {
+        None
+    }
+
+    /// Mutable twin of [`Self::timed_can`].
+    fn timed_can_mut(&mut self) -> Option<&mut dyn crate::network::timed_can::TimedCanController> {
         None
     }
 
@@ -1827,6 +1948,29 @@ pub trait Peripheral: std::fmt::Debug + Send {
         None
     }
 
+    /// Multi-line twin of [`Self::irq_line_level`], for a LEVEL source that
+    /// drives SEVERAL NVIC lines from one model (the STM32 EXTI: EXTI0..4,
+    /// EXTI9_5, EXTI15_10 on F1/F4/L4; EXTI0_1/2_3/4_15 on G0; EXTI0..15 on
+    /// U5). `irq_line_level` keys on the entry's single `irq`, so such a
+    /// model cannot use it; it reports here instead, calling
+    /// `report(nvic_irq, level)` once for EVERY line it owns, asserted or not.
+    ///
+    /// The bus keeps each reported line's NVIC pending bit in step with its
+    /// level exactly as for `irq_line_level`: the walk / event path marks the
+    /// pend it raises (`NvicState::level_pended`), and the MMIO write choke
+    /// drops a marked pend once the line reads low. Without it, the per-cycle
+    /// re-pend raised while the handler was still running survived the
+    /// handler's write-1-to-clear of EXTI_PR, and a handler that clears PR
+    /// without re-checking it ran twice per edge.
+    ///
+    /// Report ONLY lines this model owns exclusively: a deasserted report
+    /// drops any marked pend on that NVIC line, including one another level
+    /// source raised. Lines shared with another peripheral keep pulse
+    /// semantics (deliver them through `explicit_irqs` only).
+    ///
+    /// Default: reports nothing (pulse semantics on every explicit IRQ).
+    fn irq_line_levels(&self, _report: &mut dyn FnMut(u32, bool)) {}
+
     /// True for a device that only stores and serves bytes: it does not use
     /// the scheduler, has no scheduler wake owner, no SPI-attached devices, no
     /// IRQ line level, no bus tick and no legacy tick. `SystemBus`'s MMIO
@@ -2041,6 +2185,13 @@ pub trait Bus {
     fn has_mmio_window(&self, _addr: u64) -> bool {
         false
     }
+
+    /// A CPU-owned switch that disables every internal pull-up of the chip's
+    /// pin ports (AVR `MCUCR.PUD`, ATmega328P datasheet §14.4.1). The CPU
+    /// calls it when the bit changes; the bus hands it to each port
+    /// ([`crate::pins::PinPort::set_pull_ups_disabled`]). Default: a bus with
+    /// no pin ports.
+    fn set_pull_ups_disabled(&mut self, _disabled: bool) {}
 
     /// Is an instruction fetch at `pc` permitted by a memory-protection unit
     /// the bus models? Called by the core only when its 256-byte fetch window
@@ -2501,6 +2652,13 @@ pub struct Machine<C: Cpu> {
     // Debug state
     pub breakpoints: std::collections::HashSet<u32>,
     pub last_breakpoint: Option<u32>,
+    /// `last_breakpoint` for `cpu_secondary`: a dual-core run stops when
+    /// either core reaches a breakpoint (an Arduino-ESP32 sketch's `loop()`
+    /// runs on core 1).
+    pub last_breakpoint_secondary: Option<u32>,
+    /// The core the last breakpoint stop was on: 0 = `cpu`, 1 =
+    /// `cpu_secondary`. Debuggers show and step this core.
+    pub breakpoint_core: u8,
     pub total_cycles: u64,
     /// Cumulative CPU cycles advanced by idle fast-forward (WFI skip), not
     /// interpreted. Lets the browser `?perf=1` HUD prove FF is firing; 0 means
@@ -2675,6 +2833,14 @@ pub struct Machine<C: Cpu> {
     /// Whether [`crate::fidelity::record_unpowered_rail_assumed`] has run for
     /// this machine: once, on the first advance with no routed supply.
     unpowered_rail_noted: bool,
+    /// While a world runs this node until its next net pad drive change
+    /// ([`Machine::advance_to_cycle_or_net_drive_change`]): the four-state
+    /// ring's sequence number at the start, so the advance loop stops once
+    /// it moves. `u64::MAX` otherwise.
+    pub(crate) net_drive_stop_from: u64,
+    /// Set by [`Machine::logic_observe`] once the ring moved past
+    /// `net_drive_stop_from`; the advance loop stops on it.
+    pub(crate) net_drive_stop_hit: bool,
 }
 
 impl<C: Cpu> Machine<C> {
@@ -2782,36 +2948,60 @@ impl<C: Cpu> Machine<C> {
     ) -> Vec<Option<bool>> {
         use logic_capture::LogicSource;
 
-        // Group the PAD half of the watch set per owning peripheral as
-        // (pin, channel) pairs. Wire channels are handled below, and are
-        // deliberately not offered to `install_logic_tap`: that hook is about
-        // pads, and a peripheral answering it must not have to guess which of
-        // its own lines a pin number meant.
-        let mut per_peripheral: std::collections::HashMap<usize, Vec<(u8, u32)>> =
+        // Group the PAD half of the watch set (probe and own-drive channels)
+        // per owning peripheral. Wire channels are handled below, and are
+        // deliberately not offered to the pad watch: that hook is about pads,
+        // and a peripheral answering it must not have to guess which of its
+        // own lines a pin number meant.
+        let mut per_peripheral: std::collections::HashMap<usize, Vec<pins::WatchedPad>> =
             std::collections::HashMap::new();
         if !self.logic_force_poll {
             for (ch, r) in resolved.iter().enumerate() {
-                if let Some(LogicSource::Pad { peripheral, pin }) = *r {
-                    per_peripheral
-                        .entry(peripheral)
-                        .or_default()
-                        .push((pin, ch as u32));
-                }
+                let (peripheral, pin, view) = match *r {
+                    Some(LogicSource::Pad { peripheral, pin }) => {
+                        (peripheral, pin, pins::PadView::Probe)
+                    }
+                    Some(LogicSource::Driver { peripheral, pin }) => {
+                        (peripheral, pin, pins::PadView::Driver)
+                    }
+                    _ => continue,
+                };
+                per_peripheral
+                    .entry(peripheral)
+                    .or_default()
+                    .push(pins::WatchedPad {
+                        pin,
+                        ch: ch as u32,
+                        view,
+                    });
             }
         }
 
         // Offer every peripheral its slice of the watch set (empty ⇒ clears a
-        // previously installed tap). Whether a peripheral ACCEPTS is its own
-        // declaration of push capability — no hardcoded list here.
+        // previously installed watch). Whether a peripheral ACCEPTS is its own
+        // declaration of push capability — no hardcoded list here. A pin port
+        // takes a generic `PadWatch`; anything else that owns pads (an RMT
+        // bit engine) answers the older `install_logic_tap`.
         let tap = self.bus.logic_tap.clone();
         let mut push = vec![false; resolved.len()];
-        static EMPTY: [(u8, u32); 0] = [];
+        static EMPTY: [pins::WatchedPad; 0] = [];
         for (idx, p) in self.bus.peripherals.iter_mut().enumerate() {
-            let watched: &[(u8, u32)] = per_peripheral.get(&idx).map_or(&EMPTY, |v| v.as_slice());
-            let accepted = p.dev.install_logic_tap(&tap, watched);
+            let watched: &[pins::WatchedPad] =
+                per_peripheral.get(&idx).map_or(&EMPTY, |v| v.as_slice());
+            let accepted = match p.dev.pins_mut() {
+                Some(port) => port.install_watch(pins::PadWatch::new(&tap, watched)),
+                None => {
+                    let pairs: Vec<(u8, u32)> = watched
+                        .iter()
+                        .filter(|w| w.view == pins::PadView::Probe)
+                        .map(|w| (w.pin, w.ch))
+                        .collect();
+                    p.dev.install_logic_tap(&tap, &pairs) && pairs.len() == watched.len()
+                }
+            };
             if accepted {
-                for &(_, ch) in watched {
-                    push[ch as usize] = true;
+                for w in watched {
+                    push[w.ch as usize] = true;
                 }
             }
         }
@@ -3041,11 +3231,17 @@ impl<C: Cpu> Machine<C> {
                 |source| Self::read_logic_drive(bus, source),
             );
         }
+        // A world running this node until its next net pad drive change
+        // (`advance_to_cycle_or_net_drive_change`) stops here.
+        if self.logic_capture.state_seq() > self.net_drive_stop_from {
+            self.net_drive_stop_hit = true;
+        }
     }
 
     /// The drive one analyzer channel reads right now: a pad's model answers
-    /// through [`Peripheral::read_gpio_pad_drive`]; a peripheral WIRE is by
-    /// definition driven by that peripheral.
+    /// through [`Peripheral::read_gpio_pad_drive`] ([`pins::probe_drive`]), a
+    /// chip's own output stage through [`pins::own_drive`]; a peripheral WIRE
+    /// is by definition driven by that peripheral.
     fn read_logic_drive(
         bus: &bus::SystemBus,
         source: logic_capture::LogicSource,
@@ -3055,6 +3251,11 @@ impl<C: Cpu> Machine<C> {
                 .peripherals
                 .get(peripheral)
                 .and_then(|p| p.dev.read_gpio_pad_drive(pin)),
+            logic_capture::LogicSource::Driver { peripheral, pin } => bus
+                .peripherals
+                .get(peripheral)
+                .and_then(|p| p.dev.pins())
+                .and_then(|port| pins::own_drive(port, pin)),
             logic_capture::LogicSource::Wire { .. } => Some(logic_capture::PadDrive::Driven),
         }
     }
@@ -3073,6 +3274,11 @@ impl<C: Cpu> Machine<C> {
                 .peripherals
                 .get(peripheral)
                 .and_then(|p| p.dev.read_gpio_pad(pin)),
+            logic_capture::LogicSource::Driver { peripheral, pin } => bus
+                .peripherals
+                .get(peripheral)
+                .and_then(|p| p.dev.pins())
+                .and_then(|port| port.level(pin)),
             logic_capture::LogicSource::Wire { peripheral, line } => bus
                 .peripherals
                 .get(peripheral)
@@ -3230,6 +3436,8 @@ impl<C: Cpu> Machine<C> {
             secondary_awaits_boot_addr: false,
             breakpoints: HashSet::new(),
             last_breakpoint: None,
+            last_breakpoint_secondary: None,
+            breakpoint_core: 0,
             total_cycles: 0,
             idle_fast_forward_cycles_skipped: 0,
             config: SimulationConfig::default(),
@@ -3261,6 +3469,8 @@ impl<C: Cpu> Machine<C> {
             last_i2c_time_us: u64::MAX,
             derived_device_time_noted: false,
             unpowered_rail_noted: false,
+            net_drive_stop_from: u64::MAX,
+            net_drive_stop_hit: false,
         }
     }
 
@@ -3420,22 +3630,24 @@ impl<C: Cpu> Machine<C> {
         self.step_profile.legacy_tick_entries += legacy_tick_entries as u64;
     }
 
-    fn try_idle_fast_forward(
-        &mut self,
-        _max_steps: Option<u64>,
-        _steps: u64,
-        breakpoints_block_idle: bool,
-    ) -> u64 {
+    fn try_idle_fast_forward(&mut self, _max_steps: Option<u64>, _steps: u64) -> u64 {
         // POLLED logic capture disables the skip: a scheduler event inside the
         // skipped window could toggle a watched pad, and the per-cycle poll
         // guarantee must hold even under this opt-in acceleration. Push-only
         // watch sets keep the skip — a pad write inside the window happens in
         // instrumented peripheral code, which pushes its own edge with the
         // post-skip tap clock (seeded below before the scheduler drain).
-        if !self.config.idle_fast_forward_enabled
-            || breakpoints_block_idle
-            || self.bus.requires_cycle_accurate()
-            || self.logic_capture.poll_active()
+        if !self.config.idle_fast_forward_enabled || self.logic_capture.poll_active() {
+            return 0;
+        }
+        // A cycle-accurate bus still skips a WFI wait while every resident is
+        // idle (an idle DHT22 between reads). It does not coalesce timer polls:
+        // that would leap a freehand `micros()` busy-loop, which is why such a
+        // resident pins the bus in the first place.
+        let cycle_accurate = self.bus.requires_cycle_accurate();
+        if cycle_accurate
+            && (self.bus.idle_skip_requires_cycle_accurate()
+                || self.cpu.idle_fast_forward_budget(&self.bus).is_none())
         {
             return 0;
         }
@@ -3465,7 +3677,7 @@ impl<C: Cpu> Machine<C> {
             //    stays CPU-agnostic: chip register maps live in peripheral
             //    models, not SystemBus.
             let wfi_budget = self.cpu.idle_fast_forward_budget(&self.bus);
-            let timer_poll = self.bus.take_timer_poll_coalesce_eligible();
+            let timer_poll = !cycle_accurate && self.bus.take_timer_poll_coalesce_eligible();
             let mut budget = match wfi_budget {
                 Some(budget) if budget > 0 => budget,
                 _ if timer_poll => u64::MAX,
@@ -3694,6 +3906,9 @@ impl<C: Cpu> Machine<C> {
                 }
             }
             if !all_written {
+                if self.cpu.uses_elf_entry_point() {
+                    return Err(SimulationError::MemoryViolation(segment.start_addr));
+                }
                 tracing::warn!(
                     "Failed to load segment at {:#x} - outside of memory map",
                     segment.start_addr
@@ -3705,6 +3920,13 @@ impl<C: Cpu> Machine<C> {
             observer.on_simulation_start();
         }
         self.reset()?;
+
+        if self.cpu.uses_elf_entry_point() {
+            let entry = u32::try_from(image.entry_point)
+                .map_err(|_| SimulationError::MemoryViolation(image.entry_point))?;
+            self.cpu.set_pc(entry);
+            return Ok(());
+        }
 
         // Resolve the reset vector.
         //
@@ -4134,6 +4356,13 @@ impl<C: Cpu> Machine<C> {
             for irq in &result.explicit_irqs {
                 self.bus.pend_irq_for_event(*irq, &mut fallthrough);
             }
+            // A multi-line LEVEL source (STM32 EXTI) marks the pends its event
+            // chain raises — scheduler-driven models never pass through the
+            // walk's reconcile — so the MMIO write choke can drop them when
+            // the handler clears the pending latch.
+            if !result.explicit_irqs.is_empty() {
+                self.bus.mark_multi_irq_levels(peripheral_idx);
+            }
         }
         // Phase 2B.3b: route DMA signals exactly as the legacy tick path does.
         if !result.dma_signals.is_empty() {
@@ -4320,7 +4549,7 @@ impl<C: Cpu> Machine<C> {
                 got: snapshot.schema_version,
             });
         }
-        self.cpu.apply_snapshot(&snapshot.cpu);
+        self.cpu.try_apply_snapshot(&snapshot.cpu)?;
         for p in &mut self.bus.peripherals {
             if let Some(state) = snapshot.peripherals.get(&p.name) {
                 p.dev.restore(state.clone())?;
@@ -4429,7 +4658,9 @@ impl<C: Cpu> DebugControl for Machine<C> {
         Ok(match report.stop {
             AdvanceStop::Breakpoint(pc) => StopReason::Breakpoint(pc),
             AdvanceStop::FuelLimit => StopReason::MaxStepsReached,
-            AdvanceStop::CycleLimit | AdvanceStop::NoProgress => StopReason::StepDone,
+            AdvanceStop::CycleLimit | AdvanceStop::NoProgress | AdvanceStop::NetDriveChange => {
+                StopReason::StepDone
+            }
             AdvanceStop::FirmwareExit { code } => StopReason::FirmwareExit(code),
         })
     }
