@@ -17,6 +17,11 @@ boards:
     # L2 LED_BUILTIN often GPIO2 digitalWrite — watch classic gpio peripheral
     led_watch: "gpio:2"
     led_min_edges: 2
+    # L6 analogWrite(LED_BUILTIN=2, 128): the LEDC channel reaches GPIO2 through
+    # the GPIO matrix (gpio_matrix_out + LEDC pad wire), so its PWM edges are
+    # an oracle here. Duties are measured exactly by crates/cli/tests/esp32_ledc_pad.rs.
+    pwm_watch: "gpio:2"
+    pwm_min_edges: 2
     family: esp32
     notes: "Arduino-ESP32 FreeRTOS — real models only (no thunks); L8 TWAI self-RX"
     # L8_can: classic TWAI @ 0x3FF6B000 self-reception (esp32_twai model)

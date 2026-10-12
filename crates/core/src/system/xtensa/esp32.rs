@@ -448,7 +448,12 @@ pub fn configure_xtensa_esp32(bus: &mut SystemBus) -> XtensaLx7 {
                                                                  // gpio_matrix_in (0x4000_9edc) is the same BROM entry already registered
                                                                  // above as esp_rom_gpio_connect_in_signal — just two ABI-compatible names
                                                                  // for the same function. Only register the new alias (gpio_matrix_out).
-    rom_bank.register(0x4000_9f0c, rom_thunks::nop_return_zero); // gpio_matrix_out
+                                                                 // gpio_matrix_out (= esp_rom_gpio_connect_out_signal, esp32.rom.api.ld) is
+                                                                 // NOT a no-op any more: every peripheral output routed through the matrix
+                                                                 // (LEDC channels, a remapped UART TX, VSPI, I2C) is selected by this call,
+                                                                 // and a nop left `GPIO_FUNCn_OUT_SEL_CFG` at the bypass sentinel so no
+                                                                 // routed signal ever reached its pad on a real image.
+    rom_bank.register(0x4000_9f0c, rom_thunks::esp32_gpio_matrix_out);
 
     // ESP-IDF partition-table verification uses ROM MD5 (classic MD5Context
     // layout). Real implementations — CONFIG_PARTITION_TABLE_MD5 is on for
@@ -604,6 +609,9 @@ pub fn configure_xtensa_esp32(bus: &mut SystemBus) -> XtensaLx7 {
     // `configs/chips/esp32.yaml` is not what a classic lab is built from.
     bus.wire_esp32_spi_pads();
     bus.wire_esp32_uart_pads();
+    // …and the LEDC channel outputs, so `analogWrite`/`ledcWrite` duty is a
+    // waveform on the pad `ledc_channel_config` routed.
+    bus.wire_esp_matrix_outputs();
     // AHB TX FIFO alias registered after wifi_mac_phy (see below).
 
     // SYSCON (TRM §13.2) — system controller. Owns SYSCLK_CONF, TICK_CONF,
@@ -650,7 +658,8 @@ pub fn configure_xtensa_esp32(bus: &mut SystemBus) -> XtensaLx7 {
     // LEDC — LED PWM controller (TRM §14) at 0x3FF5_9000. Real model: 8 HS +
     // 8 LS channels over 4 HS / 4 LS timers, CONF1.DUTY_START latch so
     // ledc_get_duty()/ledcRead() read back the committed duty, derived duty
-    // fraction + frequency. (PWM-edge emission to GPIO deferred.) Registered
+    // fraction + frequency, and each channel's PWM published on its matrix
+    // wire (`wire_esp_matrix_outputs`). Registered
     // before the catch-all loop below so its window wins (first-registered).
 
     // TWAI / CAN controller (TRM §27) at 0x3FF6_B000. SJA1000-derived:

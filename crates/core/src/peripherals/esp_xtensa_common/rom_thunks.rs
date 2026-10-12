@@ -713,6 +713,63 @@ pub fn esp32s3_rom_route_intr_matrix(cpu: &mut XtensaLx7, bus: &mut dyn Bus) -> 
     Ok(())
 }
 
+/// Classic-ESP32 BROM `gpio_matrix_out(gpio, signal_idx, out_inv, oen_inv)` @
+/// `0x4000_9f0c` (`esp32.rom.ld`), which esp-idf calls as
+/// `esp_rom_gpio_connect_out_signal` (`esp32.rom.api.ld`).
+///
+/// Same effect as esp-idf's own C implementation of that entry point
+/// (`components/esp_rom/patches/esp_rom_gpio.c`, used on parts whose ROM copy
+/// is unusable): write `GPIO_FUNCn_OUT_SEL_CFG` = `signal_idx` |
+/// `out_inv << 9` | `oen_inv << 11` (`GPIO_FUNC0_OUT_SEL_CFG_REG` =
+/// `0x3FF4_4530`, stride 4), then set the pad's output enable through
+/// `GPIO_ENABLE_W1TS` (`+0x24`) or, for GPIO32..39, `GPIO_ENABLE1_W1TS`
+/// (`+0x30`).
+pub fn esp32_gpio_matrix_out(cpu: &mut XtensaLx7, bus: &mut dyn Bus) -> SimResult<()> {
+    gpio_matrix_out_at(cpu, bus, 0x3FF4_4000, 0x530, 40)
+}
+
+/// ESP32-S3 `gpio_matrix_out` @ `0x4000_1aa0` (`esp32s3.rom.ld`), the same
+/// entry point on the S3's GPIO block: `GPIO_FUNC0_OUT_SEL_CFG_REG` =
+/// `0x6000_4554`, `GPIO_ENABLE_W1TS` / `GPIO_ENABLE1_W1TS` at `+0x24` / `+0x30`,
+/// GPIO0..53. Without it the fast-boot harness answered the call with its
+/// default no-op, and no matrix-routed output (LEDC, a remapped UART) reached a
+/// pad.
+pub fn esp32s3_gpio_matrix_out(cpu: &mut XtensaLx7, bus: &mut dyn Bus) -> SimResult<()> {
+    gpio_matrix_out_at(cpu, bus, 0x6000_4000, 0x554, 54)
+}
+
+/// The shared body: `(gpio, signal_idx, out_inv, oen_inv)` in a2..a5.
+fn gpio_matrix_out_at(
+    cpu: &mut XtensaLx7,
+    bus: &mut dyn Bus,
+    gpio_base: u64,
+    out_sel_cfg: u64,
+    pads: u32,
+) -> SimResult<()> {
+    let n = cpu.ps.callinc() * 4;
+    let gpio = cpu.regs.read_logical(n + 2);
+    let signal = cpu.regs.read_logical(n + 3);
+    let out_inv = cpu.regs.read_logical(n + 4) & 0xFF != 0;
+    let oen_inv = cpu.regs.read_logical(n + 5) & 0xFF != 0;
+    if gpio < pads {
+        let mut value = signal & 0x1FF;
+        if out_inv {
+            value |= 1 << 9;
+        }
+        if oen_inv {
+            value |= 1 << 11;
+        }
+        let _ = bus.write_u32(gpio_base + out_sel_cfg + u64::from(gpio) * 4, value);
+        if gpio < 32 {
+            let _ = bus.write_u32(gpio_base + 0x24, 1 << gpio);
+        } else {
+            let _ = bus.write_u32(gpio_base + 0x30, 1 << (gpio - 32));
+        }
+    }
+    RomThunkBank::return_with(cpu, 0);
+    Ok(())
+}
+
 /// Generic NOP thunk that returns 0. Useful for ROM functions whose
 /// behaviour we don't model but whose return value the caller needs to
 /// pass through (e.g. cache config, frequency update, busy-wait).

@@ -182,6 +182,11 @@ const SIG_U2TXD: u32 = 18;
 const I2C_LINE_SCL: usize = super::i2c::LINE_SCL;
 const I2C_LINE_SDA: usize = super::i2c::LINE_SDA;
 
+/// GPIO-matrix OUTPUT index of LEDC channel 0 — esp-idf
+/// `soc/esp32s3/include/soc/gpio_sig_map.h` :157 `LEDC_LS_SIG_OUT0_IDX`; the
+/// eight channel outputs are contiguous (73..80, :157-164).
+const SIG_LEDC_LS_OUT0: u32 = 73;
+
 pub const RMT_SIG_OUT0: u32 = 81;
 pub const RMT_SIG_OUT1: u32 = 82;
 pub const RMT_SIG_OUT2: u32 = 83;
@@ -194,6 +199,9 @@ fn s3_out_signal_name(idx: u32) -> Option<&'static str> {
     Some(match idx {
         SIG_I2CEXT0_SCL => "I2CEXT0_SCL",
         SIG_I2CEXT0_SDA => "I2CEXT0_SDA",
+        SIG_LEDC_LS_OUT0..=80 => {
+            crate::peripherals::esp32s3::ledc::LEDC_LINES[(idx - SIG_LEDC_LS_OUT0) as usize]
+        }
         RMT_SIG_OUT0 => "RMT_SIG_OUT0",
         RMT_SIG_OUT1 => "RMT_SIG_OUT1",
         RMT_SIG_OUT2 => "RMT_SIG_OUT2",
@@ -1108,6 +1116,21 @@ impl Peripheral for Esp32s3Gpio {
             self.driven_level(pin)
                 .unwrap_or_else(|| (self.effective_input(0) & (1u32 << pin)) != 0),
         )
+    }
+
+    /// Matrix-only outputs (the LEDC channels): one span route per pad, so
+    /// which line a pad shows is decided by its `FUNCn_OUT_SEL_CFG` through
+    /// the shared routing seam, exactly like the I²C/SPI/UART bindings.
+    fn bind_matrix_output_lines(
+        &mut self,
+        first_signal: u32,
+        lines: &std::sync::Arc<crate::peripherals::pad_lines::PadLines>,
+    ) -> bool {
+        for pin in 0..PAD_COUNT {
+            self.pad_routes
+                .bind_span(lines, pin, first_signal, 0, lines.names());
+        }
+        true
     }
 
     fn gpio_routing(&self, pin: u8) -> Option<crate::peripherals::gpio::GpioRouting> {

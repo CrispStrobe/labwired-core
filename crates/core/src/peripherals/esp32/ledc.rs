@@ -46,7 +46,7 @@
 //! | ...     | HSCH1..7 (stride 0x14)| Same layout, +0x14 per channel           |
 //! | 0x00A0  | LSCH0_CONF0           | Low-speed channel 0 (same layout)        |
 //! | ...     | LSCH1..7 (stride 0x14)|                                          |
-//! | 0x0140  | HSTIMER0_CONF         | DUTY_RES[4:0], DIV_NUM[17:5], PAUSE[18], RST[19], TICK_SEL[20] |
+//! | 0x0140  | HSTIMER0_CONF         | DUTY_RES[4:0], DIV_NUM[22:5], PAUSE[23], RST[24], TICK_SEL[25] |
 //! | 0x0144  | HSTIMER0_VALUE        | Read-only running counter (round-trip)   |
 //! | ...     | HSTIMER1..3 (stride 8)|                                          |
 //! | 0x0160  | LSTIMER0_CONF         | Low-speed timer 0 (same layout)          |
@@ -61,14 +61,26 @@
 //! Any offset not enumerated above falls through to the generic word
 //! store, so RMW probes from firmware still observe their own writes.
 //!
-//! This model is **functional, not cycle-accurate**: the timer VALUE
-//! counters are not advanced and no PWM edges are emitted to GPIO (LEDC
-//! output routing through the GPIO matrix is not modeled). Its job is to
-//! make LEDC configuration introspectable — duty-cycle readback and the
-//! derived frequency/fraction helpers — which is what firmware and a
-//! waveform UI actually consume.
+//! ## Channel outputs on the pads
+//!
+//! Each channel's output is a real waveform ([`LedcPads`], shared with the C3
+//! and S3 models): its bound timer counts `2^DUTY_RES` at the selected source
+//! clock (HS: APB 80 MHz or REF_TICK 1 MHz by `TICK_SEL`; LS: SLOW_CLK — APB
+//! 80 MHz or RTC8M 8 MHz by `CONF.APB_CLK_SEL` — or REF_TICK) divided by the
+//! Q8 `DIV_NUM`, the output is high from `HPOINT` to `HPOINT + DUTY_R`, and
+//! every edge is published at its exact cycle on the channel's wire. The
+//! classic GPIO matrix binds those wires to every output pad
+//! (`LEDC_HS_SIG_OUT0..7` = 71..78, `LEDC_LS_SIG_OUT0..7` = 79..86), so a pad
+//! whose `GPIO_FUNCn_OUT_SEL_CFG` selects a channel reads its PWM — which is
+//! what makes `analogWrite`/`ledcWrite` duty reach the circuit. Wired in
+//! `SystemBus::wire_esp_matrix_outputs`.
+//!
+//! Timer `VALUE` registers are not advanced for firmware reads, and overflow
+//! / duty-change interrupts are not raised (INT_RAW round-trips).
 
-use crate::{Peripheral, PeripheralTickResult, SimResult};
+use crate::peripherals::esp_ledc_wave::{channel_drive, LedcDrive, LedcPads, LedcTimerState};
+use crate::peripherals::pad_lines::PadLines;
+use crate::{CycleClock, Peripheral, PeripheralTickResult, SimResult};
 use std::sync::Arc;
 
 pub use crate::peripherals::LedcDutyObserver;
@@ -85,7 +97,6 @@ const CH_COUNT: u64 = 8;
 
 // Per-channel register offsets, relative to the channel block base.
 const CH_CONF0: u64 = 0x00;
-#[allow(dead_code)]
 const CH_HPOINT: u64 = 0x04;
 const CH_DUTY: u64 = 0x08;
 const CH_CONF1: u64 = 0x0C;
@@ -99,6 +110,8 @@ const CONF0_SIG_OUT_EN_BIT: u32 = 1 << 2;
 /// CONF0.TIMER_SEL — bits[1:0]. Which of the 4 timers in this speed mode
 /// the channel is bound to.
 const CONF0_TIMER_SEL_MASK: u32 = 0b11;
+/// HPOINT — bits[19:0].
+const HPOINT_MASK: u32 = 0xF_FFFF;
 
 // ── Timer block geometry (TRM §14.5) ─────────────────────────────────────
 /// First HS timer CONF register.
@@ -117,10 +130,42 @@ const TIMER_VALUE: u64 = 0x04;
 /// TIMER_CONF.DUTY_RES — bits[4:0]. Number of duty resolution bits; the
 /// counter counts 0..(2^DUTY_RES - 1).
 const TIMER_DUTY_RES_MASK: u32 = 0x1F;
-/// TIMER_CONF.DIV_NUM — bits[17:5]. Fixed-point Q8 divider applied to the
-/// source clock: actual divider = DIV_NUM / 256.
+/// TIMER_CONF.DIV_NUM — bits[22:5] (18 bits: 10 integer + 8 fractional;
+/// `clock_divider:18` in esp-idf `soc/esp32/include/soc/ledc_struct.h`).
+/// Fixed-point Q8 divider applied to the source clock: actual divider =
+/// DIV_NUM / 256. Arduino's default 1 kHz / 8-bit `analogWrite` needs
+/// 80 MHz / 256 kHz = 312.5 = Q8 80000, which a 13-bit field could not hold.
 const TIMER_DIV_NUM_SHIFT: u32 = 5;
-const TIMER_DIV_NUM_MASK: u32 = 0x1FFF;
+const TIMER_DIV_NUM_MASK: u32 = 0x3_FFFF;
+/// TIMER_CONF.PAUSE (23), RST (24), TICK_SEL (25) — `ledc_struct.h`.
+const TIMER_PAUSE_BIT: u32 = 1 << 23;
+const TIMER_RST_BIT: u32 = 1 << 24;
+const TIMER_TICK_SEL_BIT: u32 = 1 << 25;
+/// REF_TICK, the alternative timer clock (`TICK_SEL = 0`): 1 MHz.
+const REF_TICK_HZ: u64 = 1_000_000;
+/// RTC8M, LS SLOW_CLK when `CONF.APB_CLK_SEL = 0`.
+const RTC8M_HZ: u64 = 8_000_000;
+/// Classic core clock until the bus hands over the chip's own `cpu_hz`.
+const DEFAULT_CPU_HZ: u64 = 240_000_000;
+/// Channel wire names, global channel order (0..7 HS, 8..15 LS).
+pub(crate) const LEDC_LINES: &[&str] = &[
+    "LEDC_HS_CH0",
+    "LEDC_HS_CH1",
+    "LEDC_HS_CH2",
+    "LEDC_HS_CH3",
+    "LEDC_HS_CH4",
+    "LEDC_HS_CH5",
+    "LEDC_HS_CH6",
+    "LEDC_HS_CH7",
+    "LEDC_LS_CH0",
+    "LEDC_LS_CH1",
+    "LEDC_LS_CH2",
+    "LEDC_LS_CH3",
+    "LEDC_LS_CH4",
+    "LEDC_LS_CH5",
+    "LEDC_LS_CH6",
+    "LEDC_LS_CH7",
+];
 
 // ── Interrupt + global registers (TRM §14.5) ─────────────────────────────
 const INT_RAW: u64 = 0x0180;
@@ -131,7 +176,6 @@ const INT_ENA: u64 = 0x0188;
 const INT_CLR: u64 = 0x018C;
 /// CONF.APB_CLK_SEL — global clock-source mux. Round-trips through the
 /// generic word store; referenced by name in tests for spec clarity.
-#[allow(dead_code)]
 const CONF: u64 = 0x0190;
 const DATE: u64 = 0x01FC;
 
@@ -158,6 +202,12 @@ pub struct Ledc {
     /// Actuators driven by this controller's PWM output, notified on each
     /// duty latch. Runtime wiring — not part of the register snapshot.
     duty_observers: Vec<Arc<dyn LedcDutyObserver>>,
+    /// The 16 channel outputs as waveforms (see module docs).
+    pads: LedcPads,
+    /// Per timer (0..3 HS, 4..7 LS): the cycle its counter last restarted.
+    timer_origin: [u64; 8],
+    clock: Option<CycleClock>,
+    cpu_hz: u64,
 }
 
 impl Default for Ledc {
@@ -179,7 +229,74 @@ impl Ledc {
             base,
             regs,
             duty_observers: Vec::new(),
+            pads: LedcPads::new(LEDC_LINES),
+            timer_origin: [0; 8],
+            clock: None,
+            cpu_hz: DEFAULT_CPU_HZ,
         }
+    }
+
+    /// Live output level of every channel (0..7 HS, 8..15 LS), now.
+    pub fn channel_output_levels(&mut self) -> Vec<bool> {
+        let now = self.now();
+        self.pads.advance_to(now);
+        (0..LEDC_LINES.len())
+            .map(|ch| self.pads.level(ch))
+            .collect()
+    }
+
+    fn now(&self) -> u64 {
+        self.clock
+            .as_ref()
+            .map_or(self.pads.anchor(), |c| c.now().max(self.pads.anchor()))
+    }
+
+    /// Source clock of timer `tmr` (0..3 HS, 4..7 LS) in Hz.
+    fn timer_src_hz(&self, tmr: u64) -> u64 {
+        let conf = self.word(Self::timer_reg(tmr, TIMER_CONF));
+        if conf & TIMER_TICK_SEL_BIT == 0 {
+            REF_TICK_HZ
+        } else if tmr < TIMER_COUNT || self.word(CONF) & 1 != 0 {
+            APB_CLK_HZ
+        } else {
+            RTC8M_HZ
+        }
+    }
+
+    /// Decode channel `ch` into the waveform it drives right now.
+    fn channel_drive(&self, ch: u64) -> LedcDrive {
+        let tmr = self.channel_timer(ch);
+        let conf = self.word(Self::timer_reg(tmr, TIMER_CONF));
+        let timer = LedcTimerState {
+            duty_res: conf & TIMER_DUTY_RES_MASK,
+            div_q8: u64::from((conf >> TIMER_DIV_NUM_SHIFT) & TIMER_DIV_NUM_MASK),
+            paused: conf & TIMER_PAUSE_BIT != 0,
+            reset: conf & TIMER_RST_BIT != 0,
+            src_hz: self.timer_src_hz(tmr),
+            origin: self.timer_origin[tmr as usize],
+        };
+        channel_drive(
+            self.word(Self::ch_reg(ch, CH_CONF0)),
+            u64::from(self.word(Self::ch_reg(ch, CH_HPOINT)) & HPOINT_MASK),
+            u64::from(self.channel_duty(ch)),
+            &timer,
+            self.cpu_hz,
+            self.pads.level(ch as usize),
+        )
+    }
+
+    /// Re-derive every channel's output from the registers at `now`.
+    fn redrive(&mut self, now: u64) {
+        self.pads.advance_to(now);
+        for ch in 0..(2 * CH_COUNT) {
+            let d = self.channel_drive(ch);
+            self.pads.set_drive(ch as usize, d, now);
+        }
+    }
+
+    /// If `word_off` is a timer CONF offset, return the global timer index.
+    fn timer_of_conf(word_off: u64) -> Option<u64> {
+        (0..(2 * TIMER_COUNT)).find(|&t| Self::timer_reg(t, TIMER_CONF) == word_off)
     }
 
     /// Register an actuator to be notified whenever a channel latches a new
@@ -290,6 +407,29 @@ impl Ledc {
     /// Idempotent: each trigger reads live state and writes deterministic
     /// values, so one-per-word or four-per-word calls converge.
     fn apply_write_side_effects(&mut self, word_off: u64) {
+        self.apply_register_side_effects(word_off);
+        if word_off < INT_RAW {
+            let now = self.now();
+            self.redrive(now);
+        }
+    }
+
+    /// Restart a timer whose counting configuration a CONF write changed (or
+    /// whose RST/PAUSE was released). `old` is the CONF value before the write.
+    fn timer_conf_written(&mut self, tmr: u64, old: u32, now: u64) {
+        let new = self.word(Self::timer_reg(tmr, TIMER_CONF));
+        const COUNTING: u32 = TIMER_DUTY_RES_MASK
+            | (TIMER_DIV_NUM_MASK << TIMER_DIV_NUM_SHIFT)
+            | TIMER_PAUSE_BIT
+            | TIMER_RST_BIT
+            | TIMER_TICK_SEL_BIT;
+        if (old ^ new) & COUNTING != 0 {
+            self.pads.advance_to(now);
+            self.timer_origin[tmr as usize] = now;
+        }
+    }
+
+    fn apply_register_side_effects(&mut self, word_off: u64) {
         if let Some(ch) = Self::channel_of_conf1(word_off) {
             // DUTY_START strobe latches the staged duty into the live
             // shadow. We do NOT clear DUTY_START (silicon self-clears it
@@ -322,9 +462,61 @@ impl Peripheral for Ledc {
         true
     }
 
-    // Inert walk: classic-ESP32 LEDC is a config-introspection register bank — no PWM edges or timer-counter advance modeled (unlike the C3 LEDC, whose live up-counters DO real tick work); tick() is an explicit no-op.
+    // No walk: the channel waveforms advance lazily (`sync_to`, register
+    // writes) and by scheduler wakes on each edge (`on_event`); tick() is a
+    // no-op.
     fn needs_legacy_walk(&self) -> bool {
         false
+    }
+
+    fn uses_scheduler(&self) -> bool {
+        true
+    }
+
+    fn attach_cycle_clock(&mut self, clock: CycleClock) {
+        self.clock = Some(clock);
+    }
+
+    fn attach_cpu_hz(&mut self, hz: u64) {
+        if hz != 0 {
+            self.cpu_hz = hz;
+        }
+    }
+
+    fn sync_to(&mut self, _now_cycle: u64) {
+        let now = self.now();
+        self.pads.advance_to(now);
+    }
+
+    fn take_scheduled_events(&mut self) -> Vec<(u64, u32)> {
+        self.pads.take_scheduled_events()
+    }
+
+    fn on_event(
+        &mut self,
+        event_token: u32,
+        sched: &mut crate::sched::EventScheduler,
+        _bus: &mut dyn crate::Bus,
+    ) -> crate::sched::EventResult {
+        let (_, reschedule_delay) = self.pads.on_event(event_token, sched.now());
+        crate::sched::EventResult {
+            reschedule_delay,
+            ..Default::default()
+        }
+    }
+
+    fn line_names(&self) -> &'static [&'static str] {
+        LEDC_LINES
+    }
+
+    /// The channel outputs reach pads only through the GPIO matrix:
+    /// `LEDC_HS_SIG_OUT0_IDX` = 71 (esp-idf `soc/esp32/include/soc/gpio_sig_map.h` :154); the sixteen outputs are contiguous, HS0..7 then LS0..7.
+    fn matrix_output_lines(&mut self) -> Option<(u32, Arc<PadLines>)> {
+        Some((71, self.pads.lines_arc()))
+    }
+
+    fn wire_lines(&self) -> Option<&PadLines> {
+        self.pads.wire_lines()
     }
 
     /// Side-effect-free probe, so `inspect` can show real values instead of
@@ -356,9 +548,14 @@ impl Peripheral for Ledc {
     fn write(&mut self, offset: u64, value: u8) -> SimResult<()> {
         let word_off = offset & !3;
         let byte_off = (offset & 3) * 8;
+        let old = self.word(word_off);
         let entry = self.regs.entry(word_off).or_insert(0);
         *entry &= !(0xFFu32 << byte_off);
         *entry |= (value as u32) << byte_off;
+        if let Some(t) = Self::timer_of_conf(word_off) {
+            let now = self.now();
+            self.timer_conf_written(t, old, now);
+        }
         self.apply_write_side_effects(word_off);
         Ok(())
     }
@@ -369,7 +566,12 @@ impl Peripheral for Ledc {
 
     fn write_u32(&mut self, offset: u64, value: u32) -> SimResult<()> {
         let word_off = offset & !3;
+        let old = self.word(word_off);
         self.regs.insert(word_off, value);
+        if let Some(t) = Self::timer_of_conf(word_off) {
+            let now = self.now();
+            self.timer_conf_written(t, old, now);
+        }
         self.apply_write_side_effects(word_off);
         Ok(())
     }
@@ -412,6 +614,12 @@ impl Peripheral for Ledc {
         })?;
         self.base = snap.base;
         self.regs = snap.regs.into_iter().collect();
+        // Waveform phase is not snapshot state: every timer restarts at the
+        // restore point, from the restored registers.
+        let now = self.now();
+        self.pads.reset_to(now);
+        self.timer_origin = [now; 8];
+        self.redrive(now);
         Ok(())
     }
 }
