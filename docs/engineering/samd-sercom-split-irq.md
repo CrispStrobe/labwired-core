@@ -1,7 +1,10 @@
 # SAMD51 SERCOM SPI split-IRQ slice
 
-Status: implementation candidate; hosted correctness and actual guest
-qualification are pending. This is not an admitted CODAL runtime or a new
+Status: the original candidate passed hosted correctness and actual guest
+qualification on its recorded base; see the
+[original receipt](../receipts/2026-10-12-samd-sercom-split-irq/README.md).
+Latest-main integration, refreshed qualification and merge remain pending.
+This is not an admitted CODAL runtime or a new
 performance result. Continue through the ordered
 [runtime plan](samd-runtime-replacement-plan.md).
 
