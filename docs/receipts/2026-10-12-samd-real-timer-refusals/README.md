@@ -1,5 +1,10 @@
 # Actual Timer adapter refusals — original qualification
 
+Historical source-head result. [Final integration qualification](../2026-10-12-samd-timer-integration/README.md)
+now records PR200's landed source, final guests and all enabled checks. It
+supersedes the pending integration status below, without changing this original
+JSON or its artifact identity.
+
 [Run38198468505](https://github.com/CrispStrobe/labwired-core/actions/runs/38198468505),
 attempt1, passed all three cases in both scheduler profiles at
 `6947637378841a3fe0e249620b8ec8316efe93a3`. All eight enabled checks at that

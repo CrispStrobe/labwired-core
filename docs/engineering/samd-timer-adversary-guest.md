@@ -1,4 +1,9 @@
-# Timer adapter negative guests — prospective harness
+# Timer adapter negative guests — qualified diagnostic harness
+
+The actual six-case qualification and final integration have now landed through
+[PR200](https://github.com/CrispStrobe/labwired-core/pull/200). Read the
+[final source-bound originals, audits and limitations](../receipts/2026-10-12-samd-timer-integration/README.md).
+The prospective preparation below is historical context, not the latest status.
 
 The separate `samd_real_timer_adversary_guest` integration test consumes the
 three derivative images from [PR201](https://github.com/CrispStrobe/labwired-core/pull/201).
@@ -40,8 +45,9 @@ does not establish whole-toolchain closure. Seven manufactured Python groups
 include 31 validation refusals, four compiler-component refusals and ten
 entry-point refusals; these are not guest evidence.
 
-Still required: dedicated actual execution in both scheduler profiles,
-a bound original receipt and separate audit, and every enabled final
-check before the Timer source lane merges. Existing positive Timer and authored
-paired-policy receipts remain unchanged. This lane makes no runtime, licensing,
-physical qualification, native-boot or RTx claim.
+Completed: dedicated actual execution in both scheduler profiles, original
+receipts and separate audits, and all 28 enabled final-head checks before merge.
+Existing earlier positive Timer and authored paired-policy receipts remain
+unchanged. Real runtime services and peripheral IRQ/DMA integration remain
+separate tasks. This lane makes no whole-runtime, licensing, physical
+qualification, native-boot or RTx claim.

@@ -148,7 +148,12 @@ successful unchanged fixtures merely to read their receipts.
    simulation-only source base, and clean-build affected consumers on hosted
    CI. Keep authored abstract transfer events separate from real peripheral
    completions; unsupported services must reject rather than report success.
-2. **Integrate critical sections before peripheral IRQ/DMA.** Bind the
+2. **Preserve the reached critical-section caller checkpoint.** The strict
+   paired-policy fixture and actual upstream Timer diagnostic caller have landed
+   through PR198/PR200. Read the [final Timer qualification](../receipts/2026-10-12-samd-timer-integration/README.md)
+   before repeating work: both positive and six refusal guests, original audits
+   and all final-head gates are complete. This does not close actual clock,
+   component, allocator, event bus or Fiber/Heap integration. Bind the
    qualified PRIMASK primitive to the actual selected caller/build closure,
    starting with the [pinned definition, ABI and bounded caller census](samd-critical-section-interface.md),
    without ASF header fallback. Prove nested/already-disabled restoration,
@@ -162,6 +167,20 @@ successful unchanged fixtures merely to read their receipts.
    writeback, error/abort and final SPI TXC. Only then bridge exactly-once
    CODAL callback/event/fiber behavior. Software-pending IRQ0 and abstract
    transfer-state success cannot substitute for these observations.
+
+   **First bounded IRQ slice:** derive the exact SAMD51 SPI flag-to-vector
+   grouping from primary definitions, with SERCOM4 IRQ62–65 independently
+   masked and cleared. Reuse `Peripheral::irq_line_levels` where appropriate;
+   do not collapse the four lines onto one configured IRQ. Audit both MMIO
+   write and read reconciliation: DATA consumption may clear RXC, and the
+   existing read-clear hook covers only a single configured line. Enabling
+   an already-set flag while idle must deliver the correct IRQ without
+   restoring an idle per-cycle walk. Test simultaneous flags, pending-on-enable,
+   INTENCLR/W1C/reset/read-clear, NVIC/PRIMASK masks and no stale double entry
+   through actual authored handlers. Compare scheduler and forced-walk behavior
+   at intervals 1/64/1024; keep clock-gate freeze and idle batching intact.
+   Clock-rate derivation, DMA descriptors and real fiber callbacks are later
+   separate slices, not success claims of this IRQ work.
 
 R1a provenance/build closure and R1d/R3 admission remain mandatory even when
 these foundations pass. No historical image hash or rejection policy changes
