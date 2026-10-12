@@ -56,6 +56,10 @@ const SIG_FSPICS0: u32 = 68;
 /// the GPIO latch. The route lights up when firmware remaps TX to any other pin
 /// — `uart_set_pin` falls back to `gpio_matrix_out` for a non-IO_MUX pad, and
 /// UART1 has no IO_MUX route on the C3 at all, so it is matrix-only.
+/// GPIO-matrix OUTPUT index of LEDC channel 0 — esp-idf
+/// `soc/esp32c3/include/soc/gpio_sig_map.h` :85 `LEDC_LS_SIG_OUT0_IDX`; the six
+/// channel outputs are contiguous (45..50, :85-90).
+const SIG_LEDC_LS_OUT0: u32 = 45;
 const SIG_U0TXD: u32 = 6;
 const SIG_U1TXD: u32 = 9;
 
@@ -73,6 +77,9 @@ fn c3_out_signal_name(idx: u32) -> Option<&'static str> {
         64 => "FSPIQ", // FSPI MISO
         65 => "FSPID", // FSPI MOSI
         68 => "FSPICS0",
+        SIG_LEDC_LS_OUT0..=50 => {
+            crate::peripherals::esp32c3::ledc::LEDC_LINES[(idx - SIG_LEDC_LS_OUT0) as usize]
+        }
         _ => return None,
     })
 }
@@ -670,6 +677,21 @@ impl Peripheral for Esp32c3Gpio {
 
     fn read_gpio_pad(&self, pin: u8) -> Option<bool> {
         self.pad_level(pin)
+    }
+
+    /// Matrix-only outputs (the LEDC channels): one span route per pad, so
+    /// which line a pad shows is decided by its `FUNCn_OUT_SEL_CFG` through
+    /// the shared routing seam, exactly like the I²C/SPI/UART bindings.
+    fn bind_matrix_output_lines(
+        &mut self,
+        first_signal: u32,
+        lines: &std::sync::Arc<crate::peripherals::pad_lines::PadLines>,
+    ) -> bool {
+        for pin in 0..PIN_COUNT {
+            self.pad_routes
+                .bind_span(lines, pin, first_signal, 0, lines.names());
+        }
+        true
     }
 
     fn gpio_routing(&self, pin: u8) -> Option<GpioRouting> {

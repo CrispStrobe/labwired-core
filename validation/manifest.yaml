@@ -2094,7 +2094,7 @@ boards:
     # behaviour lives in exchange memory and the radio event path, which that
     # capture does not cover. This acknowledges model drift, NOT a recapture.
     drift_ack: 2026-09-28
-    drift_ack_digest: 0a80eb406b98d7ddda33d4cf569be3f00bf9bd0dfe1b503181dfd1f51200b2bb
+    drift_ack_digest: 14ed1ebdfd9a7a0a44c350c762feb7a54b330cb3f8894823de67c94732f11ac0
     models:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs
@@ -2774,6 +2774,17 @@ boards:
     # assertions pass. Level/NMI/light-sleep remain unsupported.
     # ACK, NOT A CAPTURE: physical re-capture and electrical IO-Link pending.
     drift_ack: 2026-10-01
+    # 2026-10-12: LEDC channel outputs reach pads (task B9). Each channel is a
+    # real waveform (shared esp_ledc_wave: 2^DUTY_RES counts at APB/RC_FAST/XTAL
+    # through the Q8 CLK_DIV, HPOINT..HPOINT+DUTY_R high, edges at their exact
+    # cycle) bound to every pad through the GPIO matrix (LEDC_LS_SIG_OUT0..5 =
+    # 45..50, PadRoutes::bind_span); DUTY_START now commits DUTY into DUTY_R;
+    # the overflow chain re-stamps its token only when the deadline moves (a
+    # real ledcSetup+ledcWrite image held 9 live events vs the ceiling 8). The
+    # overflow counters' own timing and the register map are unchanged. Pinned
+    # by crates/cli/tests/esp32_ledc_pad.rs (real Arduino-ESP32 2.0.17 image,
+    # exact duties). ACK, NOT A CAPTURE.
+    drift_ack: 2026-10-12
 
   - id: nucleo-l476rg
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -6591,7 +6602,7 @@ boards:
     # the generic Xtensa BB JIT emit core (#1139) — the merge of the two is one
     # digest, so it is re-stamped once here rather than twice.
     drift_ack: 2026-09-18
-    drift_ack_digest: 999b30947d2256b012e1ebd6021454c08f01b7672b3499307a62d74550c45d0e
+    drift_ack_digest: a74a38b53923bff27dac957c1bd440b6efd42d96225324869ad1a4146d64c876
     #
     # 2026-09-18 (execute split): no execution change. The arm bodies of
     # `XtensaLx7::execute` moved verbatim into `cpu/xtensa_lx7/exec/*.rs` as
@@ -6694,6 +6705,14 @@ boards:
     # reset value changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-30
+    # 2026-10-12: LEDC channel outputs reach pads (task B9): each channel is a
+    # real waveform published on its matrix wire (LEDC_LS_SIG_OUT0..7 = 73..80)
+    # and bound to every pad; the fast-boot ROM harness now implements
+    # gpio_matrix_out (0x4000_1aa0) instead of its default no-op, so routed
+    # outputs reach their pads at all. Register map and reset values unchanged.
+    # Pinned by crates/cli/tests/esp32_ledc_pad.rs (real Arduino-ESP32 2.0.17
+    # image, exact duties). ACK, NOT A CAPTURE.
+    drift_ack: 2026-10-12
 
   - id: esp32s3-zero
     # Board variant of esp32s3: same silicon (LX7), 4 MiB flash / 480 KiB RAM.

@@ -128,6 +128,11 @@ const SIG_VSPICS0: u32 = 68;
 /// bypass sentinel and the pad keeps reading its latch. The routes light the
 /// moment firmware remaps TX, which every real WROOM-32 board does for UART1
 /// (GPIO9/GPIO10 are the flash pins) and most do for UART2.
+/// GPIO-matrix OUTPUT index of LEDC high-speed channel 0 — esp-idf
+/// `soc/esp32/include/soc/gpio_sig_map.h` :154 `LEDC_HS_SIG_OUT0_IDX`; the
+/// sixteen channel outputs follow contiguously (HS0..7 = 71..78, LS0..7 =
+/// 79..86, :156-184). C3: 45..50 (LS only); S3: 73..80 (LS only).
+const SIG_LEDC_HS_OUT0: u32 = 71;
 const SIG_U0TXD: u32 = 14;
 const SIG_U1TXD: u32 = 17;
 const SIG_U2TXD: u32 = 198;
@@ -168,6 +173,7 @@ fn esp32_out_signal_name(idx: u32) -> Option<&'static str> {
         95 => "I2CEXT1_SCL",
         96 => "I2CEXT1_SDA",
         SIG_U2TXD => "U2TXD",
+        71..=86 => crate::peripherals::esp32::ledc::LEDC_LINES[(idx - SIG_LEDC_HS_OUT0) as usize],
         _ => return None,
     })
 }
@@ -813,6 +819,24 @@ impl Peripheral for Esp32Gpio {
         // analyzer clipped to a classic-ESP32 I²C pin show a flat line while
         // the bus was busy.
         self.pad_level(pin)
+    }
+
+    /// Matrix-only outputs (the LEDC channels): one span route per pad, so
+    /// which line a pad shows is decided by its `FUNCn_OUT_SEL_CFG` through
+    /// the shared routing seam, exactly like the I²C/SPI/UART bindings.
+    fn bind_matrix_output_lines(
+        &mut self,
+        first_signal: u32,
+        lines: &std::sync::Arc<crate::peripherals::pad_lines::PadLines>,
+    ) -> bool {
+        for pin in 0..PAD_COUNT {
+            if VALID_OUTPUT_PADS & (1u64 << pin) == 0 {
+                continue;
+            }
+            self.pad_routes
+                .bind_span(lines, pin, first_signal, 0, lines.names());
+        }
+        true
     }
 
     fn gpio_routing(&self, pin: u8) -> Option<crate::peripherals::gpio::GpioRouting> {

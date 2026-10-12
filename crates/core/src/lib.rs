@@ -1219,6 +1219,33 @@ pub trait Peripheral: std::fmt::Debug + Send {
         None
     }
 
+    /// GPIO-matrix output capability, the peripheral half: a model whose
+    /// outputs reach pads ONLY through an output matrix (the ESP LEDC) returns
+    /// the matrix index of its first output and the wire carrying them — line
+    /// `k` is matrix signal `first + k`. The wire is created on the first call,
+    /// at bus wiring time. `None` — the default — for everything else.
+    ///
+    /// A capability rather than a downcast so ONE wiring pass
+    /// (`SystemBus::wire_esp_matrix_outputs`) serves every chip that has the
+    /// pair, with no per-chip concrete-type reach.
+    fn matrix_output_lines(
+        &mut self,
+    ) -> Option<(u32, std::sync::Arc<crate::peripherals::pad_lines::PadLines>)> {
+        None
+    }
+
+    /// GPIO-matrix output capability, the port half: bind `lines` (matrix
+    /// signals `first_signal ..`) to every pad this port's output matrix can
+    /// drive, through its routing seam. `false` — the default — for a port
+    /// with no output matrix.
+    fn bind_matrix_output_lines(
+        &mut self,
+        _first_signal: u32,
+        _lines: &std::sync::Arc<crate::peripherals::pad_lines::PadLines>,
+    ) -> bool {
+        false
+    }
+
     /// Bus-aware tick hook for peripherals that need to read or write the
     /// bus themselves (e.g. Easy DMA on RADIO). Default no-op.
     fn tick_with_bus(&mut self, _bus: &mut dyn Bus) {}
