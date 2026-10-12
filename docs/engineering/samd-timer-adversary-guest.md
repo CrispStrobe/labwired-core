@@ -2,9 +2,12 @@
 
 The separate `samd_real_timer_adversary_guest` integration test consumes the
 three derivative images from [PR201](https://github.com/CrispStrobe/labwired-core/pull/201).
-Neither compilation nor actual negative execution has passed yet. Its ordinary
-workflow compiles the harness and runs manufactured controls only; the actual
-guest test remains ignored until dedicated qualification is enabled.
+[Hosted harness controls](https://github.com/CrispStrobe/labwired-core/actions/runs/38172838576)
+compiled the harness and passed its three manufactured Rust groups.
+[Owned mutant build](https://github.com/CrispStrobe/labwired-core/actions/runs/38172360799)
+compiled and linked all three cases. The dedicated
+`samd-real-timer-adversary-guest.yml` workflow now enables actual execution in
+both scheduler profiles. Workflow preparation is not a negative guest pass.
 
 The actual test requires `LABWIRED_TIMER_MUTANT_DIR`, matching immutable adapter
 source, each declared case and the consumed ELF byte identity. It validates all
@@ -26,9 +29,16 @@ consecutive instructions within the actual compiled `reject` function, preserve
 all terminal witnesses and show changing PC, within 250,000 total instructions.
 This is bounded terminal behavior, not indefinite liveness or hardware safety.
 
-Still required: hosted mutant builds and harness controls, fuller source/header/
-compiler/object/reader adversaries, dedicated actual execution in both scheduler
-profiles, a bound original receipt and separate audit, and every enabled final
+The receipt producer separately reconstructs each fixed source derivative from
+live immutable Git bytes, checks the complete positive source/header inventory,
+changed-unit closure, all consumed object/image hashes, both complete logs and
+fixed statuses/context/counts. It binds actual merge/head/tree/parents,
+official run/attempt and live builder/reader/harness source bytes, and refuses
+to overwrite an existing receipt. Five manufactured Python groups include
+31 validation refusals and nine entry-point refusals; these are not guest evidence.
+
+Still required: dedicated actual execution in both scheduler profiles,
+a bound original receipt and separate audit, and every enabled final
 check before the Timer source lane merges. Existing positive Timer and authored
 paired-policy receipts remain unchanged. This lane makes no runtime, licensing,
 physical qualification, native-boot or RTx claim.
