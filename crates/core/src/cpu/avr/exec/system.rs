@@ -12,7 +12,8 @@ use crate::cpu::avr::Avr;
 use crate::{Bus, SimResult, SimulationError};
 
 impl Avr {
-    /// NOP, SEI, CLI.
+    /// NOP and the BSET/BCLR family. SEI/CLI stay on their own path so SEI
+    /// still shadows one instruction before a pending interrupt.
     #[inline(always)]
     pub(in crate::cpu::avr) fn exec_system_a(
         &mut self,
@@ -28,12 +29,29 @@ impl Avr {
         }
         if op == 0x9478 {
             self.set_flag_i(true);
+            // "The instruction following SEI will be executed before any
+            // pending interrupts."
+            self.irq_shadow = true;
             self.pc = next;
             self.cycles += 1;
             return Ok(Some(()));
         }
         if op == 0x94F8 {
             self.set_flag_i(false);
+            self.pc = next;
+            self.cycles += 1;
+            return Ok(Some(()));
+        }
+        // BSET s / BCLR s: 1001 0100 Bsss 1000 (SEC/CLC, SEZ/CLZ, SEN/CLN,
+        // SEV/CLV, SES/CLS, SEH/CLH, SET/CLT). SEI/CLI (s = 7) are handled
+        // above. avr-libc `__floatsisf` uses `clt` (0x94E8).
+        if (op & 0xFF0F) == 0x9408 {
+            let mask = 1u8 << ((op >> 4) & 0x07);
+            if op & 0x0080 != 0 {
+                self.sreg &= !mask;
+            } else {
+                self.sreg |= mask;
+            }
             self.pc = next;
             self.cycles += 1;
             return Ok(Some(()));
@@ -51,6 +69,7 @@ impl Avr {
         next: u32,
     ) -> SimResult<Option<()>> {
         if op == 0x9588 {
+            self.exec_sleep();
             self.pc = next;
             self.cycles += 1;
             return Ok(Some(()));

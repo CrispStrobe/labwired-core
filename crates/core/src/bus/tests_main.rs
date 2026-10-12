@@ -143,6 +143,28 @@ fn access_counts_track_memory_and_peripheral_separately() {
     assert_eq!(bus.access_counts(), (0, 0, 0));
 }
 
+/// A run stuck polling one register reports it: back-to-back accesses to one
+/// peripheral offset accumulate, any other register restarts the streak.
+#[test]
+fn mmio_poll_streak_names_the_register_being_polled() {
+    use crate::Bus;
+
+    let mut bus = SystemBus::new();
+    assert_eq!(bus.mmio_poll_streak(), None);
+    // GPIO on the default bus: 0x4001_0800. Offset 0x08 is a plain register.
+    bus.write_u32(0x4001_0800, 0x1).expect("gpio write");
+    for _ in 0..5 {
+        let _ = bus.read_u32(0x4001_0808).expect("gpio read");
+    }
+    let (name, offset, count, _) = bus.mmio_poll_streak().expect("a streak");
+    assert_eq!((name.as_str(), offset), ("gpioa", 0x08));
+    assert_eq!(count, 5);
+
+    let _ = bus.read_u32(0x4001_0800).expect("gpio read");
+    let (_, offset, count, _) = bus.mmio_poll_streak().expect("a streak");
+    assert_eq!((offset, count), (0x00, 1), "another register restarts it");
+}
+
 /// `max_safe_tick_interval`: 1 while the legacy walk is live (the default
 /// bus), the batching recommendation once the walk is deleted, and back to
 /// 1 when a non-relaxable device (test-only HC-SR04 legacy pin) is present.
@@ -879,6 +901,51 @@ board_io: []
         "sg90 mid duty → ~94.7°, got {}",
         servos[0].angle_degrees()
     );
+}
+
+/// ESP32-C3 servos follow LEDC duty the same way: ESP32Servo's `write()` is a
+/// `ledcWrite` (DUTY, then `CONF1.DUTY_START`) on the C3 LEDC.
+#[test]
+fn test_from_config_c3_servo_follows_ledc_duty() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let chip = ChipDescriptor::from_file(root.join("../../configs/chips/esp32c3.yaml"))
+        .expect("read ESP32-C3 chip descriptor");
+    let manifest: SystemManifest = serde_yaml::from_str(
+        r#"
+name: "c3-servo-twin"
+chip: "../chips/esp32c3.yaml"
+external_devices:
+  - id: "M1"
+    type: "servo"
+    connection: "gpio"
+    config:
+      signal_pin: "GPIO7"
+      model: "sg90"
+board_io: []
+"#,
+    )
+    .expect("parse C3 servo manifest");
+    let mut bus = SystemBus::from_config(&chip, &manifest).expect("build C3 bus with servo");
+
+    const LEDC: u64 = 0x6001_9000;
+    // ledcSetup(ch 2, 50 Hz, 14 bit) on timer 1, channel bound to timer 1.
+    bus.write_u32(LEDC + 0xA0 + 8, 14).unwrap();
+    bus.write_u32(LEDC + 2 * 0x14, 1).unwrap();
+    // ESP32Servo write(angle) on a 500..2400 us attach: ticks = us * 2^14 / 20000.
+    for angle in [155u32, 46, 25] {
+        let us = 500 + angle * 1900 / 180;
+        let ticks = us * 16384 / 20000;
+        bus.write_u32(LEDC + 2 * 0x14 + 0x08, ticks << 4).unwrap();
+        bus.write_u32(LEDC + 2 * 0x14 + 0x0C, 1 << 31).unwrap();
+        let servos: Vec<&crate::peripherals::components::servo::Servo> =
+            bus.observed_of().collect();
+        assert_eq!(servos.len(), 1);
+        assert!(
+            (servos[0].angle_degrees() - angle as f32).abs() < 1.0,
+            "write({angle}) -> shaft {}",
+            servos[0].angle_degrees()
+        );
+    }
 }
 
 /// Parallel ILI9341 (`ili9341-16bit` / `ili9341_16bit`) attaches as a GPIO
@@ -3500,6 +3567,8 @@ fn test_flash_boot_alias_read_and_write() {
         esp32c3_gpio_idx: None,
         rp2040_io_bank0_idx: None,
         rp2040_sio_idx: None,
+        pad_control_links: Vec::new(),
+        pin_port_ids: Vec::new(),
         rcc_idx: None,
         clock_gating_bypass: false,
         fault_unclocked: std::collections::HashMap::new(),
@@ -3524,6 +3593,7 @@ fn test_flash_boot_alias_read_and_write() {
         memory_reads: std::cell::Cell::new(0),
         memory_writes: std::cell::Cell::new(0),
         peripheral_accesses: std::cell::Cell::new(0),
+        poll_streak: std::cell::Cell::new((u32::MAX, 0, 0, 0)),
         legacy_walk_disabled: false,
         reset_vector_offset: 0,
         flash_boot_alias: true,
@@ -3549,6 +3619,7 @@ fn test_flash_boot_alias_read_and_write() {
         flash_models_ops: false,
         nordic_gpio_service: false,
         timer_capture_wired: false,
+        wire_inputs_live: false,
         resident_scheduling_disabled: false,
         flash_error_flags_idx: None,
         u5_program_gate_idx: None,
@@ -3614,6 +3685,8 @@ fn h5_flash_bus(gate: bool) -> SystemBus {
         esp32c3_gpio_idx: None,
         rp2040_io_bank0_idx: None,
         rp2040_sio_idx: None,
+        pad_control_links: Vec::new(),
+        pin_port_ids: Vec::new(),
         rcc_idx: None,
         clock_gating_bypass: false,
         fault_unclocked: std::collections::HashMap::new(),
@@ -3638,6 +3711,7 @@ fn h5_flash_bus(gate: bool) -> SystemBus {
         memory_reads: std::cell::Cell::new(0),
         memory_writes: std::cell::Cell::new(0),
         peripheral_accesses: std::cell::Cell::new(0),
+        poll_streak: std::cell::Cell::new((u32::MAX, 0, 0, 0)),
         legacy_walk_disabled: false,
         reset_vector_offset: 0,
         flash_boot_alias: true,
@@ -3663,6 +3737,7 @@ fn h5_flash_bus(gate: bool) -> SystemBus {
         flash_models_ops: false,
         nordic_gpio_service: false,
         timer_capture_wired: false,
+        wire_inputs_live: false,
         resident_scheduling_disabled: false,
         flash_error_flags_idx: None,
         u5_program_gate_idx: None,
@@ -3881,6 +3956,8 @@ fn h5_rww_bus(gate: bool) -> SystemBus {
         esp32c3_gpio_idx: None,
         rp2040_io_bank0_idx: None,
         rp2040_sio_idx: None,
+        pad_control_links: Vec::new(),
+        pin_port_ids: Vec::new(),
         rcc_idx: None,
         clock_gating_bypass: false,
         fault_unclocked: std::collections::HashMap::new(),
@@ -3905,6 +3982,7 @@ fn h5_rww_bus(gate: bool) -> SystemBus {
         memory_reads: std::cell::Cell::new(0),
         memory_writes: std::cell::Cell::new(0),
         peripheral_accesses: std::cell::Cell::new(0),
+        poll_streak: std::cell::Cell::new((u32::MAX, 0, 0, 0)),
         legacy_walk_disabled: false,
         reset_vector_offset: 0,
         flash_boot_alias: true,
@@ -3930,6 +4008,7 @@ fn h5_rww_bus(gate: bool) -> SystemBus {
         flash_models_ops: false,
         nordic_gpio_service: false,
         timer_capture_wired: false,
+        wire_inputs_live: false,
         resident_scheduling_disabled: false,
         flash_error_flags_idx: None,
         u5_program_gate_idx: None,
@@ -4144,6 +4223,8 @@ fn test_peripheral_range_index_lookup() {
         esp32c3_gpio_idx: None,
         rp2040_io_bank0_idx: None,
         rp2040_sio_idx: None,
+        pad_control_links: Vec::new(),
+        pin_port_ids: Vec::new(),
         rcc_idx: None,
         clock_gating_bypass: false,
         fault_unclocked: std::collections::HashMap::new(),
@@ -4168,6 +4249,7 @@ fn test_peripheral_range_index_lookup() {
         memory_reads: std::cell::Cell::new(0),
         memory_writes: std::cell::Cell::new(0),
         peripheral_accesses: std::cell::Cell::new(0),
+        poll_streak: std::cell::Cell::new((u32::MAX, 0, 0, 0)),
         legacy_walk_disabled: false,
         reset_vector_offset: 0,
         flash_boot_alias: true,
@@ -4193,6 +4275,7 @@ fn test_peripheral_range_index_lookup() {
         flash_models_ops: false,
         nordic_gpio_service: false,
         timer_capture_wired: false,
+        wire_inputs_live: false,
         resident_scheduling_disabled: false,
         flash_error_flags_idx: None,
         u5_program_gate_idx: None,
@@ -4262,6 +4345,8 @@ fn test_dma_tick_executes_copy_and_raises_irq() {
         esp32c3_gpio_idx: None,
         rp2040_io_bank0_idx: None,
         rp2040_sio_idx: None,
+        pad_control_links: Vec::new(),
+        pin_port_ids: Vec::new(),
         rcc_idx: None,
         clock_gating_bypass: false,
         fault_unclocked: std::collections::HashMap::new(),
@@ -4286,6 +4371,7 @@ fn test_dma_tick_executes_copy_and_raises_irq() {
         memory_reads: std::cell::Cell::new(0),
         memory_writes: std::cell::Cell::new(0),
         peripheral_accesses: std::cell::Cell::new(0),
+        poll_streak: std::cell::Cell::new((u32::MAX, 0, 0, 0)),
         legacy_walk_disabled: false,
         reset_vector_offset: 0,
         flash_boot_alias: true,
@@ -4311,6 +4397,7 @@ fn test_dma_tick_executes_copy_and_raises_irq() {
         flash_models_ops: false,
         nordic_gpio_service: false,
         timer_capture_wired: false,
+        wire_inputs_live: false,
         resident_scheduling_disabled: false,
         flash_error_flags_idx: None,
         u5_program_gate_idx: None,
