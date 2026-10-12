@@ -73,6 +73,19 @@ prototypes; their use here does not mean their runtime PRs have merged.
   and is software-pended IRQ0,
   not actual SAMD peripheral IRQ routing or DMA/fiber completion.
 
+- [PR198](https://github.com/CrispStrobe/labwired-core/pull/198) landed the strict
+  paired-policy fixture with ten actual cases across both profiles and all
+  enabled checks passing; see its [originals](../receipts/2026-10-11-samd-paired-irq/README.md).
+- [PR200](https://github.com/CrispStrobe/labwired-core/pull/200) landed the actual
+  upstream Timer diagnostic caller as `f45d0069c042456333ee472a90bf1d1e9e94c1e6`,
+  after all 28 enabled checks passed. Both positive and six refusal guests
+  passed on the final refreshed base, with separate original artifact audits
+  and reviewed/tested/landed tree equality. Read the
+  [final originals and exact limits](../receipts/2026-10-12-samd-timer-integration/README.md).
+  CODAL PR13 landed the opt-in fixture; the default build and app pins did not
+  change. Diagnostic clock/component/allocation/event services are not actual
+  runtime service integration.
+
 Next execute the ordered foundation/integration tasks in the
 [replacement plan](samd-runtime-replacement-plan.md#next-bounded-foundation-and-integration-tasks).
 None of these results moves an app pin, admits a whole runtime, qualifies a
