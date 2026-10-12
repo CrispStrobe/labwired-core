@@ -1,7 +1,12 @@
 # SAMD51 SERCOM SPI split-IRQ slice
 
-Status: implementation candidate; hosted correctness and actual guest
-qualification are pending. This is not an admitted CODAL runtime or a new
+Status: the bounded slice landed through
+[PR208](https://github.com/CrispStrobe/labwired-core/pull/208) after normal
+latest-main integration, fresh feature-off/on actual guest qualification,
+independent original audits and all26 enabled exact-head checks passing.
+Reviewed, actual-tested and landed trees match; see the
+[final receipt](../receipts/2026-10-12-samd-sercom-split-irq/README.md).
+This is not an admitted CODAL runtime or a new
 performance result. Continue through the ordered
 [runtime plan](samd-runtime-replacement-plan.md).
 
