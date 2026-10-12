@@ -221,7 +221,7 @@ fn actual_timer_adversaries_reject_exactly_and_remain_terminal() {
                 assert!(machine.cpu.primask && machine.cpu.active_exception == 0);
                 startup = true;
             }
-            let exception = u32::from(machine.cpu.active_exception);
+            let exception = machine.cpu.active_exception;
             if exception == 16 && previous_exception != 16 {
                 entries += 1;
             }
