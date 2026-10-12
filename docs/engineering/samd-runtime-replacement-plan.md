@@ -7,9 +7,11 @@ own-fork heads and open PRs. Do not repeat completed evidence collectors or
 execute the historical chip-restricted images. Runtime source changes belong
 in our own runtime forks; engine changes belong in LabWired. No upstream posts.
 
-The next engine candidate is the separately bounded
-[SERCOM SPI split-IRQ slice](samd-sercom-split-irq.md). It is not yet qualified;
-DMA and real-runtime integration remain later tasks.
+The separately bounded [SERCOM SPI split-IRQ slice](samd-sercom-split-irq.md)
+has landed through PR208 after fresh final-base qualification and all enabled
+checks. Read its [final receipt](../receipts/2026-10-12-samd-sercom-split-irq/README.md)
+before repeating work. Full P2 clock semantics, DMA and real-runtime integration
+remain later tasks.
 
 ## Why not an ASF-compatible SPI shim?
 
@@ -172,9 +174,10 @@ successful unchanged fixtures merely to read their receipts.
    CODAL callback/event/fiber behavior. Software-pending IRQ0 and abstract
    transfer-state success cannot substitute for these observations.
 
-   **First bounded IRQ slice:** derive the exact SAMD51 SPI flag-to-vector
-   grouping from primary definitions, with SERCOM4 IRQ62–65 independently
-   masked and cleared. Reuse `Peripheral::irq_line_levels` where appropriate;
+   **First bounded IRQ slice — reached:** PR208 derives the exact SAMD51 SPI
+   flag-to-vector grouping from primary definitions, with SERCOM4 IRQ62–65
+   independently masked and cleared. Preserve its qualified contracts and
+   original receipts. Reuse `Peripheral::irq_line_levels` where appropriate;
    do not collapse the four lines onto one configured IRQ. Audit both MMIO
    write and read reconciliation: DATA consumption may clear RXC, and the
    existing read-clear hook covers only a single configured line. Enabling
