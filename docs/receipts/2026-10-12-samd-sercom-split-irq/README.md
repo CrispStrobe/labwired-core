@@ -1,8 +1,43 @@
 # SERCOM4 split-IRQ original hosted qualification
 
-Status: the original candidate passed on its recorded base. Latest main was
-then integrated normally; combined-tree qualification and merge remain pending.
-Do not substitute this receipt for the refreshed candidate's checks.
+Status: [PR208](https://github.com/CrispStrobe/labwired-core/pull/208) landed
+after normal latest-main integration, fresh affected guest qualification,
+independent original-log and final admission audits, and every enabled
+exact-head check passing. The earlier candidate records remain historical.
+
+## Fresh combined-tree guest qualification
+
+- Source: `8fbe5138bc24c9985f1c4c163c1fbb17e1023a1a`;
+  base: `ae91f9ad90db4fd49f85a076611906df16b70d43`.
+- Original [Rust run38264996236](https://github.com/CrispStrobe/labwired-core/actions/runs/38264996236),
+  attempt1, completed SUCCESS. All26 enabled exact-head PR checks passed.
+  The four declared skips were `core-full`, `pr-gate-warm`, `core-integrity`
+  and `ci-runner-image`; no threshold, baseline, pin, capture or ACK changed.
+- Actual checkout: `83da10189b83bcf4d4d976809c673d241ce567ac`, with exactly the
+  base/source parents above. Tested tree
+  `44e32b140d3000a1443b50ea165026b327aa3a54` equals the reviewed source tree.
+- Normal matched-head merge:
+  [`16cf93d4465e39cc4e6ac282c4fb0897841e04b6`](https://github.com/CrispStrobe/labwired-core/commit/16cf93d4465e39cc4e6ac282c4fb0897841e04b6).
+  Its official Git parents equal the base/source pair above, and its tree
+  equals the reviewed and actual-tested tree. This documentation update does
+  not change the qualified implementation.
+- Both original logs were acquired once after official metadata admission and
+  checked by a separate standard-library reader, without producer imports or
+  guest replay. All expected cases are present exactly once.
+
+| Profile | Actual original job | Cases | Entries and returns | Original log bytes / SHA256 |
+| --- | --- | --- | --- | --- |
+| Feature off | [114864807394](https://github.com/CrispStrobe/labwired-core/actions/runs/38264996236/job/114864807394) | 24 | 8 / 8 | 643685 / `b322758b4b11aa77479270d9bec5ee25f58349b680595011e17e7a690eff1967` |
+| Feature on | [114864807224](https://github.com/CrispStrobe/labwired-core/actions/runs/38264996236/job/114864807224) | 48 | 16 / 16 | 110448 / `86527988ca1e74b891323139eecfeec4bc12b081f342b18acdc075c6013c742b` |
+
+The original candidate records below remain unchanged historical evidence.
+
+Final admission checked the complete 26-success/four-skip census, run/source/
+base/attempt, both actual job checkouts, original guest rows and exact tested
+parents/tree before merge. Manufactured census/source/base/tree refusals were
+checked separately. The subsequent official landed-tree audit passed. This
+is bounded source/test/log/check/tree evidence, not full binary provenance or
+the broader runtime, DMA, physical or performance qualifications below.
 
 ## Immutable source and hosted input
 

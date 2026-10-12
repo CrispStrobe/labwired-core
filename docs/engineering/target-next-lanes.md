@@ -187,6 +187,17 @@ BTCNT/writeback, channel windows, per-beat triggers and W1C completion/errors.
 SERCOM4 RX/TX triggers are 12/13; channels 0..3 use IRQ 31..34 and 4..31 share 35.
 Confirm stride/masks before implementation; unsupported modes stay explicit.
 
+The generic `DmaRequest` queue is not a per-channel transfer-result protocol:
+`SystemBus::execute_dma` returns bus failures, but the scheduler drain currently
+logs them without reporting them to the originating DMA channel. A new SAM
+controller must observe each beat's bus result before committing count,
+writeback or completion, using a reviewed bus-aware service or result seam.
+Do not decrement a failed beat or turn an invalid access into success. Follow
+the primary distinction between bus transfer error (TERR/channel disable) and
+invalid descriptor suspension (SUSP/FERR). Add actual guest controls for both.
+SERCOM DRE/RXC requests need their live request-level behavior, not just an
+enable-time pulse. A DMA completion must remain distinct from final SPI TXC.
+
 **Done when:** guest-created descriptors move real memory to SPI DATA, write
 back progress and reach the correct handler. Disabled clocks/controller/channel,
 wrong trigger, invalid descriptor/bus access, masked IRQ and abort/reset must
