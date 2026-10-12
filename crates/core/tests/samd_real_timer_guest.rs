@@ -186,7 +186,7 @@ fn actual_timer_nested_callers_restore_and_deliver_two_irqs() {
             assert!(machine.cpu.primask && machine.cpu.active_exception == 0);
             startup = true;
         }
-        let exception = u32::from(machine.cpu.active_exception);
+        let exception = machine.cpu.active_exception;
         if exception == 16 && previous_exception != 16 {
             irq_entries += 1;
         }
