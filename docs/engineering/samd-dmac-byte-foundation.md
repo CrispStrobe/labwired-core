@@ -2,7 +2,9 @@
 
 Status: implementation lane claimed after the qualified
 [split-IRQ checkpoint](../receipts/2026-10-12-samd-sercom-split-irq/README.md).
-No DMA implementation or actual guest qualification is claimed yet.
+The opt-in candidate implementation and tests are authored; hosted correctness,
+actual guest qualification and merge remain pending. No passing DMA result is
+claimed from source declarations or local formatting.
 
 ## Selected first boundary
 
@@ -30,6 +32,21 @@ DMAC/NVIC, transfer memory, acknowledge the correct handler and return. Test
 all five IRQ routes and channel31; masks, no trigger, disabled controller/channel,
 reset, read/write bus failures and no success after a failed beat. Compare both
 feature configurations and preserve existing SPI/scheduler regressions.
+
+`crates/core/tests/sam_dmac_byte.rs` declares90 authored guest cases per feature
+configuration. Reset must interrupt actual partial progress, not just precede
+all work. The second-beat read/write-error controls require63 beats remaining;
+the failed beat must not decrement. A separate failed-writeback control cannot
+produce TCMPL. Handler-written flag/vector/count witnesses and architectural
+entry/return are checked, separately from host-MMIO/refusal/shared-vector tests.
+The model is bus-assisted and not event-migrated or performance-qualified.
+
+Unsupported descriptor modes latch an explicit simulator refusal exposed by
+subsequent register reads and inspection; no guessed hardware flags are used.
+Writes that request unsupported trigger/command/priority/event modes refuse
+immediately. External data/writeback side effects already performed before a
+bus failure are not rolled back or claimed atomic. Wider transfers, physical
+arbitration, CPU batch quanta and full production clock behavior are excluded.
 
 Unsupported requests must fail explicitly, not silently degrade into byte
 transfers or completion. The first slice excludes peripheral triggers, linked
