@@ -7,6 +7,10 @@ own-fork heads and open PRs. Do not repeat completed evidence collectors or
 execute the historical chip-restricted images. Runtime source changes belong
 in our own runtime forks; engine changes belong in LabWired. No upstream posts.
 
+The next engine candidate is the separately bounded
+[SERCOM SPI split-IRQ slice](samd-sercom-split-irq.md). It is not yet qualified;
+DMA and real-runtime integration remain later tasks.
+
 ## Why not an ASF-compatible SPI shim?
 
 The [original map](../receipts/2026-10-08-pybadge-link-map/README.md) retains
