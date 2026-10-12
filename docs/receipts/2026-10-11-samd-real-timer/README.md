@@ -1,5 +1,10 @@
 # Actual Timer caller — original positive qualification
 
+Historical source-head result. Final integration and all eight guest cases
+have since landed: [final qualification](../2026-10-12-samd-timer-integration/README.md).
+That dated result supersedes prospective PR status below; this original JSON
+and its artifact identity remain unchanged.
+
 [Run38169003939](https://github.com/CrispStrobe/labwired-core/actions/runs/38169003939),
 attempt1, passed both scheduler profiles at LabWired source
 `d5fe6d4c31d885082d8416d6687be50c669f6a07`. Qualification merge
