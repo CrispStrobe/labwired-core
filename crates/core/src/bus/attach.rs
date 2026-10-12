@@ -306,6 +306,34 @@ impl SystemBus {
         }
     }
 
+    /// Bind every matrix-only output (the ESP LEDC channels: classic
+    /// `LEDC_HS/LS_SIG_OUT0..7` = 71..86, C3 `LEDC_LS_SIG_OUT0..5` = 45..50, S3
+    /// `LEDC_LS_SIG_OUT0..7` = 73..80) to the pads of the bus's GPIO matrix, so
+    /// `analogWrite` / `ledcWrite` duty is a waveform on the pad its
+    /// `ledc_channel_config` routed — not the idle GPIO latch.
+    ///
+    /// Capability-driven ([`crate::Peripheral::matrix_output_lines`] /
+    /// [`crate::Peripheral::bind_matrix_output_lines`]): no-op on a bus without
+    /// both halves. The port is resolved FIRST, because `matrix_output_lines`
+    /// creates the wire cell, and a LEDC owning a cell no route reaches would
+    /// still wake the scheduler on every edge of a waveform nothing reads.
+    pub(crate) fn wire_esp_matrix_outputs(&mut self) {
+        let Some(gpio_idx) = self.find_peripheral_index_by_name("gpio") else {
+            return;
+        };
+        for idx in 0..self.peripherals.len() {
+            if idx == gpio_idx {
+                continue;
+            }
+            let Some((first, lines)) = self.peripherals[idx].dev.matrix_output_lines() else {
+                continue;
+            };
+            self.peripherals[gpio_idx]
+                .dev
+                .bind_matrix_output_lines(first, &lines);
+        }
+    }
+
     /// Bind the RP2040 UARTs' TX/RX wires to the pads IO_BANK0 can route them
     /// to, so a probe on GP0 shows the serial waveform rather than the SIO
     /// output latch. No-op unless IO_BANK0, SIO and a UART are all on the bus.

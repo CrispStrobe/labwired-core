@@ -796,6 +796,9 @@ pub(crate) fn register_esp32s3_peripherals(bus: &mut SystemBus, opts: &Esp32s3Op
     // `from_config` alone would be green in test and dark in production.
     bus.wire_esp32s3_spi_pads();
     bus.wire_esp32s3_uart_pads();
+    // …and the LEDC channel outputs, so `analogWrite`/`ledcWrite` duty is a
+    // waveform on the pad `ledc_channel_config` routed.
+    bus.wire_esp_matrix_outputs();
 
     // Share the IO_MUX per-pad register bank with GPIO now that both models
     // exist, so a `FUN_WPU` write (Arduino `INPUT_PULLUP`) changes the level a
@@ -825,6 +828,10 @@ fn register_default_thunks(bank: &mut RomThunkBank) {
     // intr_matrix_set / esp_rom_route_intr_matrix — binds peripheral source
     // IDs to CPU IRQ slots (FROM_CPU yield, systimer tick, UART, …).
     bank.register(0x4000_1b54, rom_thunks::esp32s3_rom_route_intr_matrix);
+    // gpio_matrix_out / esp_rom_gpio_connect_out_signal (esp32s3.rom.ld) —
+    // routes a peripheral output (LEDC channel, remapped UART TX, …) to a pad.
+    // The harness default (no-op) left every such pad on its GPIO latch.
+    bank.register(0x4000_1aa0, rom_thunks::esp32s3_gpio_matrix_out);
     // ROM MD5 — `CONFIG_PARTITION_TABLE_MD5` hashes every 32-byte partition
     // entry then compares the 0xEBEB trailer. Without real MD5, load_partitions
     // fails MD5 verify → empty list → OTA `it != NULL` assert in initArduino.

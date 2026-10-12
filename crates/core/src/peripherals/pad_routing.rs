@@ -59,6 +59,10 @@ struct Route {
     line: usize,
     /// Signal name surfaced through `gpio_routing().func`, e.g. `"I2C1_SDA"`.
     func: &'static str,
+    /// A SPAN route ([`PadRoutes::bind_span`]): selectors `selector ..
+    /// selector + span_funcs.len()` drive lines `line ..` of the same cell, one
+    /// name each. Empty for an ordinary one-selector route.
+    span_funcs: &'static [&'static str],
     /// Index into [`PadRoutes::cells`].
     cell: usize,
 }
@@ -103,8 +107,15 @@ impl PadRoutes {
     pub fn bound_functions(&self) -> Vec<&'static str> {
         let mut out: Vec<&'static str> = Vec::new();
         for route in &self.routes {
-            if !out.contains(&route.func) {
-                out.push(route.func);
+            let names = if route.span_funcs.is_empty() {
+                std::slice::from_ref(&route.func)
+            } else {
+                route.span_funcs
+            };
+            for &func in names {
+                if !out.contains(&func) {
+                    out.push(func);
+                }
             }
         }
         out
@@ -120,21 +131,57 @@ impl PadRoutes {
         line: usize,
         func: &'static str,
     ) {
-        let cell_idx = match self.cells.iter().position(|c| Arc::ptr_eq(c, cell)) {
+        let cell_idx = self.cell_index(cell);
+        self.routes.push(Route {
+            pin,
+            selector,
+            line,
+            func,
+            span_funcs: &[],
+            cell: cell_idx,
+        });
+    }
+
+    /// Bind `pin` to a contiguous BLOCK of signals in one call: selector
+    /// `first_selector + k` drives line `first_line + k` of `cell`, named
+    /// `funcs[k]`.
+    ///
+    /// For a controller with many outputs on consecutive matrix indices — the
+    /// ESP LEDC's eight (C3: six) channel outputs per group — where one route
+    /// per (pad, channel) would multiply the table by the channel count, and a
+    /// routed pad read scans the table.
+    pub fn bind_span(
+        &mut self,
+        cell: &Arc<PadLines>,
+        pin: u8,
+        first_selector: u32,
+        first_line: usize,
+        funcs: &'static [&'static str],
+    ) {
+        if funcs.is_empty() {
+            return;
+        }
+        let cell_idx = self.cell_index(cell);
+        self.routes.push(Route {
+            pin,
+            selector: Some(first_selector),
+            line: first_line,
+            func: funcs[0],
+            span_funcs: funcs,
+            cell: cell_idx,
+        });
+    }
+
+    /// Index of `cell` in [`Self::cells`], registering it on first use.
+    fn cell_index(&mut self, cell: &Arc<PadLines>) -> usize {
+        match self.cells.iter().position(|c| Arc::ptr_eq(c, cell)) {
             Some(i) => i,
             None => {
                 self.cells.push(cell.clone());
                 self.registered.push(vec![Vec::new(); cell.names().len()]);
                 self.cells.len() - 1
             }
-        };
-        self.routes.push(Route {
-            pin,
-            selector,
-            line,
-            func,
-            cell: cell_idx,
-        });
+        }
     }
 
     /// The route currently driving `pin`, if any.
@@ -143,7 +190,10 @@ impl PadRoutes {
     /// pad is handed to a peripheral (the AF nibble / matrix index / FUNCSEL),
     /// `None` when it is a plain GPIO. A route with `selector: None` matches
     /// any `Some`, which is the fixed-mapping case (STM32 F1).
-    fn active<F>(&self, pin: u8, selector_of: F) -> Option<&Route>
+    ///
+    /// Returns the route and the live `(line, name)` it resolves to — which, for
+    /// a span route, depends on WHICH selector of the span the pad holds.
+    fn active<F>(&self, pin: u8, selector_of: F) -> Option<(&Route, usize, &'static str)>
     where
         F: Fn(u8) -> Option<u32>,
     {
@@ -151,9 +201,20 @@ impl PadRoutes {
             return None;
         }
         let current = selector_of(pin)?;
-        self.routes
-            .iter()
-            .find(|r| r.pin == pin && r.selector.is_none_or(|want| want == current))
+        self.routes.iter().find_map(|r| {
+            if r.pin != pin {
+                return None;
+            }
+            let Some(want) = r.selector else {
+                return Some((r, r.line, r.func));
+            };
+            if r.span_funcs.is_empty() {
+                return (want == current).then_some((r, r.line, r.func));
+            }
+            let k = current.checked_sub(want)? as usize;
+            let func = *r.span_funcs.get(k)?;
+            Some((r, r.line + k, func))
+        })
     }
 
     /// The live wire level for `pin`, or `None` when no peripheral drives it
@@ -162,8 +223,8 @@ impl PadRoutes {
     where
         F: Fn(u8) -> Option<u32>,
     {
-        let route = self.active(pin, selector_of)?;
-        Some(self.cells[route.cell].level(route.line))
+        let (route, line, _) = self.active(pin, selector_of)?;
+        Some(self.cells[route.cell].level(line))
     }
 
     /// The wire and line `pin` carries right now, if it selects one.
@@ -171,15 +232,18 @@ impl PadRoutes {
     where
         F: Fn(u8) -> Option<u32>,
     {
-        let route = self.active(pin, selector_of)?;
-        Some((&self.cells[route.cell], route.line))
+        let (route, line, _) = self.active(pin, selector_of)?;
+        Some((&self.cells[route.cell], line))
     }
 
     /// Mark every line `pin` can carry (whatever it selects now) as reachable
     /// from a world `gpio_net`: the pad was put on one.
     pub fn mark_on_net(&self, pin: u8) {
         for route in self.routes.iter().filter(|r| r.pin == pin) {
-            self.cells[route.cell].mark_on_net(route.line);
+            // A span route carries one line per selector in its span.
+            for k in 0..route.span_funcs.len().max(1) {
+                self.cells[route.cell].mark_on_net(route.line + k);
+            }
         }
     }
 
@@ -189,7 +253,7 @@ impl PadRoutes {
     where
         F: Fn(u8) -> Option<u32>,
     {
-        self.active(pin, selector_of).map(|route| route.func)
+        self.active(pin, selector_of).map(|(_, _, func)| func)
     }
 
     /// Register `watched` pads' channels with the wires that drive them, so
@@ -212,8 +276,8 @@ impl PadRoutes {
             .map(|cell| vec![Vec::new(); cell.names().len()])
             .collect();
         for &(pin, channel) in watched {
-            if let Some(route) = self.active(pin, &selector_of) {
-                if let Some(slot) = per_cell[route.cell].get_mut(route.line) {
+            if let Some((route, line, _)) = self.active(pin, &selector_of) {
+                if let Some(slot) = per_cell[route.cell].get_mut(line) {
                     slot.push(channel);
                 }
             }
@@ -400,6 +464,32 @@ mod tests {
         routes.clear_taps();
         lines.set(&[false, false]);
         assert!(tap.take_events().is_empty());
+    }
+
+    #[test]
+    fn a_span_route_picks_the_line_its_selector_names() {
+        const PWM: &[&str] = &["CH0", "CH1", "CH2"];
+        let lines = Arc::new(PadLines::new(PWM, &[false, false, false]));
+        let mut routes = PadRoutes::new();
+        routes.bind_span(&lines, 5, 71, 0, PWM);
+        lines.set(&[false, true, false]);
+        assert_eq!(routes.level(5, |_| Some(72)), Some(true), "71 + 1 -> CH1");
+        assert_eq!(routes.level(5, |_| Some(71)), Some(false));
+        assert_eq!(routes.func(5, |_| Some(73)), Some("CH2"));
+        assert_eq!(routes.level(5, |_| Some(74)), None, "past the span");
+        assert_eq!(routes.level(5, |_| Some(70)), None, "before the span");
+        assert_eq!(routes.bound_functions(), vec!["CH0", "CH1", "CH2"]);
+        let tap = LogicTap::new();
+        routes.sync_taps(&tap, &[(5, 9)], |_| Some(73));
+        lines.set(&[true, true, true]);
+        assert_eq!(
+            tap.take_events()
+                .iter()
+                .map(|e| (e.ch, e.value))
+                .collect::<Vec<_>>(),
+            vec![(9, true)],
+            "the watched pad reports from CH2 only",
+        );
     }
 
     #[test]
