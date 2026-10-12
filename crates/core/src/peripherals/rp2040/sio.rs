@@ -22,6 +22,7 @@
 //! pin left as an input reports what the outside world put there. An input pin
 //! nothing drives still floats to 0. `CPUID` reads 0 (core 0).
 
+use crate::pins::{External, InputChange, PinPort};
 use crate::{Peripheral, SimResult};
 use std::cell::Cell;
 
@@ -70,22 +71,6 @@ const GPIO_MASK: u32 = 0x3fff_ffff;
 /// never shows.
 const PAD_COUNT: u8 = 30;
 
-/// Push-mode logic capture for SIO bank-0 pads (Arduino `digitalWrite` / LED).
-struct SioTap {
-    tap: crate::logic_capture::LogicTap,
-    /// `(pin, channel)` watch set.
-    watched: Vec<(u8, u32)>,
-    scratch: Vec<Option<bool>>,
-}
-
-impl std::fmt::Debug for SioTap {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SioTap")
-            .field("watched", &self.watched)
-            .finish_non_exhaustive()
-    }
-}
-
 #[derive(Debug, Default)]
 pub struct Rp2040Sio {
     gpio_out: u32,
@@ -97,6 +82,9 @@ pub struct Rp2040Sio {
     /// button holds its released level from boot, and the pin must return to it
     /// the moment the firmware releases the output driver.
     ext_in: u32,
+    /// Pads the outside world holds ([`PinPort::set_external`]); the level on
+    /// each is its `ext_in` bit.
+    ext_mask: u32,
     /// Pads bound to peripheral wires, resolved against IO_BANK0's live
     /// FUNCSEL. Empty until `SystemBus::wire_rp2040_pads` binds them.
     pad_routes: crate::peripherals::pad_routing::PadRoutes,
@@ -106,8 +94,14 @@ pub struct Rp2040Sio {
     /// Bit `n` set == spinlock `n` is currently claimed. `Cell` because a
     /// spinlock read is a claim (a write side-effect) on the `&self` read path.
     spinlocks_held: Cell<u32>,
-    /// Logic-analyzer push tap (not snapshot state).
-    tap: Option<SioTap>,
+    /// Logic-analyzer push watch ([`PinPort::install_watch`]; not snapshot
+    /// state).
+    watch: Option<crate::pins::PadWatch>,
+    /// IO_BANK0's GPIO interrupt state: every change of `GPIO_IN` is
+    /// reported there, so edges latch whatever moved the pad.
+    bank_irq: Option<std::sync::Arc<super::io_bank0::BankIrq>>,
+    /// Bus index of IO_BANK0, whose interrupt chain a pad change must arm.
+    io_bank0_idx: Option<usize>,
     /// Raw divider operand latches, shared between the U*/S* register views
     /// (real silicon feeds both into the same divider core).
     div_dividend: u32,
@@ -119,6 +113,9 @@ pub struct Rp2040Sio {
     div_signed: bool,
     /// DIRTY: set on any operand write, cleared when QUOTIENT is read.
     div_dirty: bool,
+    /// Outside levels that reached a pad routed to a peripheral line since
+    /// the bus last collected them (see `sync_wire_input`).
+    wire_edges: Vec<crate::peripherals::pad_lines::WireInputEdge>,
 }
 
 impl Rp2040Sio {
@@ -146,6 +143,115 @@ impl Rp2040Sio {
     /// is not on this bus (so nothing is ever routed) or the pad is NULL.
     fn pad_function(&self, pin: u8) -> Option<u32> {
         self.pad_functions.as_ref()?.function(pin)
+    }
+
+    /// Share IO_BANK0's pad functions and GPIO interrupt state, and name its
+    /// bus index (whose interrupt chain a pad change arms). Called at bus
+    /// wiring time (`SystemBus::wire_rp2040_uart_pads`).
+    pub(crate) fn attach_io_bank0(
+        &mut self,
+        functions: std::sync::Arc<super::io_bank0::PadFunctions>,
+        irq: std::sync::Arc<super::io_bank0::BankIrq>,
+        io_bank0_idx: usize,
+    ) {
+        self.pad_functions = Some(functions);
+        irq.seed_levels(self.gpio_in());
+        self.bank_irq = Some(irq);
+        self.io_bank0_idx = Some(io_bank0_idx);
+    }
+
+    /// Tell IO_BANK0 the pad levels after anything that may have moved them.
+    #[inline]
+    fn report_levels(&self) {
+        if let Some(irq) = &self.bank_irq {
+            irq.set_levels(self.gpio_in());
+        }
+    }
+
+    /// The pad's own output stage ([`PinPort::driver`]): what the SIO output
+    /// stage does (`OE`, `GPIO_OUT`) while IO_BANK0 selects SIO for the pad
+    /// (or selects nothing yet: this model has always let the SIO latch drive
+    /// an unassigned pad, and the level firmware reads back on `GPIO_IN` says
+    /// the same). A pad handed to a peripheral that publishes its wire is
+    /// driven by it; one handed to a peripheral that publishes nothing (PWM,
+    /// PIO, ...) has no known drive (`None`), so a world refuses it. The SIO
+    /// does not model the PADS_BANK0 pulls, so it reports none.
+    fn pad_driver(&self, pin: u8) -> Option<crate::pins::PadDriver> {
+        use crate::pins::PadDriver;
+        if pin >= PAD_COUNT {
+            return None;
+        }
+        match self.pad_function(pin) {
+            None | Some(super::io_bank0::GPIO_FUNC_SIO) => {
+                Some(if self.gpio_oe & (1 << pin) != 0 {
+                    PadDriver::drive(self.gpio_out & (1 << pin) != 0)
+                } else {
+                    PadDriver::OFF
+                })
+            }
+            // The peripheral says what its output stage does: a line it
+            // drives drives the pad, a released line or an input does not.
+            Some(_) => self
+                .pad_routes
+                .active_line(pin, |p| self.pad_function(p))
+                .map(|(cell, line)| {
+                    if cell.drives(line) {
+                        PadDriver::drive(cell.level(line))
+                    } else {
+                        PadDriver::OFF
+                    }
+                }),
+        }
+    }
+
+    /// Hand the level the outside holds on `pin` to the peripheral line the
+    /// pad is routed to, if any, and remember the edge for the bus to
+    /// deliver (`Peripheral::take_wire_input_edges`).
+    fn sync_wire_input(&mut self, pin: u8) {
+        if self.pad_routes.is_empty() || pin >= PAD_COUNT || self.ext_mask & (1 << pin) == 0 {
+            return;
+        }
+        let level = self.ext_in & (1 << pin) != 0;
+        let functions = self.pad_functions.clone();
+        let edge = self
+            .pad_routes
+            .active_line(pin, |p| functions.as_ref().and_then(|f| f.function(p)))
+            .and_then(|(cell, line)| {
+                cell.set_input(line, level)
+                    .then(|| crate::peripherals::pad_lines::WireInputEdge {
+                        cell: cell.clone(),
+                        line,
+                        level,
+                    })
+            });
+        if let Some(edge) = edge {
+            self.wire_edges.push(edge);
+        }
+    }
+
+    /// After a FUNCSEL change: a pad that just became routed to a peripheral
+    /// line hands it the level the outside already holds there.
+    fn sync_wire_inputs(&mut self) {
+        if self.pad_routes.is_empty() || self.ext_mask == 0 {
+            return;
+        }
+        let mut pins = self.ext_mask;
+        while pins != 0 {
+            let pin = pins.trailing_zeros() as u8;
+            pins &= pins - 1;
+            self.sync_wire_input(pin);
+        }
+    }
+
+    /// Run a pad mutation bracketed for push capture, then tell IO_BANK0 the
+    /// pad levels.
+    #[inline]
+    fn mutate_pads<R>(&mut self, mutate: impl FnOnce(&mut Self) -> R) -> R {
+        crate::pins::watch_begin(self);
+        let r = mutate(self);
+        self.report_levels();
+        crate::pins::watch_end(self);
+        r
     }
 
     /// Share IO_BANK0's live pad-function state and bind a peripheral wire to
@@ -179,8 +285,13 @@ impl Rp2040Sio {
         // A pad IO_BANK0 has handed to a peripheral is driven by that
         // peripheral's wire, not by the SIO output latch. Resolving it through
         // the shared routing seam is what makes an RP2040 bus measurable.
-        if let Some(level) = self.pad_routes.level(pin, |p| self.pad_function(p)) {
-            return Some(level);
+        if let Some((cell, line)) = self.pad_routes.active_line(pin, |p| self.pad_function(p)) {
+            // A line the peripheral does not drive (an input) reads what is
+            // outside the pad.
+            if !cell.drives(line) {
+                return Some(self.gpio_in() & (1u32 << pin) != 0);
+            }
+            return Some(cell.level(line));
         }
         // ONE definition of "pad level": whatever firmware reads on GPIO_IN is
         // what a probe clipped to the pad sees, so a host-driven input and a
@@ -194,49 +305,15 @@ impl Rp2040Sio {
         if self.pad_routes.is_empty() {
             return;
         }
-        let Some(t) = self.tap.take() else {
+        let Some(watch) = self.watch.take() else {
             return;
         };
         let functions = self.pad_functions.clone();
-        self.pad_routes.sync_taps(&t.tap, &t.watched, |pin| {
-            functions.as_ref().and_then(|f| f.function(pin))
-        });
-        self.tap = Some(t);
-    }
-
-    /// Snapshot watched pad levels before a write that may re-route them.
-    /// `pub(crate)` so the bus can bracket an IO_BANK0 `GPIOn_CTRL` write —
-    /// FUNCSEL lives in that block, not in SIO, and must still re-sync push
-    /// capture (see [`Self::tap_report`]).
-    #[inline]
-    pub(crate) fn tap_snapshot(&mut self) {
-        let Some(mut t) = self.tap.take() else {
-            return;
-        };
-        for (k, &(pin, _)) in t.watched.iter().enumerate() {
-            t.scratch[k] = self.pad_level(pin);
-        }
-        self.tap = Some(t);
-    }
-
-    /// Report level changes since [`Self::tap_snapshot`] and re-register
-    /// watched pads with the wires that drive them. Called from SIO latch
-    /// writes and from the bus after an IO_BANK0 FUNCSEL change so a probe
-    /// armed before firmware muxes the pad follows the new source.
-    #[inline]
-    pub(crate) fn tap_report(&mut self) {
-        let Some(t) = self.tap.take() else {
-            return;
-        };
-        for (k, &(pin, ch)) in t.watched.iter().enumerate() {
-            if let Some(level) = self.pad_level(pin) {
-                if t.scratch[k] != Some(level) {
-                    t.tap.push(ch, level);
-                }
-            }
-        }
-        self.tap = Some(t);
-        self.sync_pad_routes();
+        self.pad_routes
+            .sync_taps(watch.tap(), watch.pairs(), |pin| {
+                functions.as_ref().and_then(|f| f.function(pin))
+            });
+        self.watch = Some(watch);
     }
 
     /// Recompute `DIV_QUOTIENT`/`DIV_REMAINDER` from the latched operands,
@@ -323,6 +400,10 @@ impl Peripheral for Rp2040Sio {
     /// Dropping SIO from the walk is byte-identical (logic taps fire on write).
     fn needs_legacy_walk(&self) -> bool {
         false
+    }
+
+    fn take_wire_input_edges(&mut self) -> Vec<crate::peripherals::pad_lines::WireInputEdge> {
+        std::mem::take(&mut self.wire_edges)
     }
 
     fn read_u32(&self, offset: u64) -> SimResult<u32> {
@@ -415,25 +496,20 @@ impl Peripheral for Rp2040Sio {
                 | GPIO_OE_CLR
                 | GPIO_OE_XOR
         );
-        if mut_out {
-            self.tap_snapshot();
+        if !mut_out {
+            crate::census_reg!("rp2040.sio:Rp2040Sio", offset, "write");
+            return Ok(());
         }
-        match offset {
-            GPIO_OUT => self.gpio_out = v,
-            GPIO_OUT_SET => self.gpio_out |= v,
-            GPIO_OUT_CLR => self.gpio_out &= !v,
-            GPIO_OUT_XOR => self.gpio_out ^= v,
-            GPIO_OE => self.gpio_oe = v,
-            GPIO_OE_SET => self.gpio_oe |= v,
-            GPIO_OE_CLR => self.gpio_oe &= !v,
-            GPIO_OE_XOR => self.gpio_oe ^= v,
-            _ => {
-                crate::census_reg!("rp2040.sio:Rp2040Sio", offset, "write");
-            }
-        }
-        if mut_out {
-            self.tap_report();
-        }
+        self.mutate_pads(|s| match offset {
+            GPIO_OUT => s.gpio_out = v,
+            GPIO_OUT_SET => s.gpio_out |= v,
+            GPIO_OUT_CLR => s.gpio_out &= !v,
+            GPIO_OUT_XOR => s.gpio_out ^= v,
+            GPIO_OE => s.gpio_oe = v,
+            GPIO_OE_SET => s.gpio_oe |= v,
+            GPIO_OE_CLR => s.gpio_oe &= !v,
+            _ => s.gpio_oe ^= v, // GPIO_OE_XOR
+        });
         Ok(())
     }
 
@@ -458,8 +534,12 @@ impl Peripheral for Rp2040Sio {
         self.write_u32(aligned, new)
     }
 
-    fn read_gpio_pad(&self, pin: u8) -> Option<bool> {
-        self.pad_level(pin)
+    fn pins(&self) -> Option<&dyn PinPort> {
+        Some(self)
+    }
+
+    fn pins_mut(&mut self) -> Option<&mut dyn PinPort> {
+        Some(self)
     }
 
     fn read_gpio_input(&self, pin: u8) -> Option<bool> {
@@ -472,22 +552,46 @@ impl Peripheral for Rp2040Sio {
         Some(self.gpio_in() & (1u32 << pin) != 0)
     }
 
-    fn set_gpio_input(&mut self, pin: u8, level: bool) -> bool {
+    fn read_gpio_output(&self, pin: u8) -> Option<bool> {
         if pin >= PAD_COUNT {
-            return false;
+            return None;
         }
-        // Bracketed like every SIO latch write: a host-driven input change is
-        // an edge a probe armed on this pad must see, and `pad_level` already
-        // folds `ext_in` in, so the snapshot/report pair reports it for free.
-        self.tap_snapshot();
-        let bit = 1u32 << pin;
-        if level {
-            self.ext_in |= bit;
-        } else {
-            self.ext_in &= !bit;
+        // The `GPIO_OUT` latch, whether or not `OE` lets it reach the pad.
+        Some(self.gpio_out & (1u32 << pin) != 0)
+    }
+
+    /// Direction from `OE` while IO_BANK0 hands the pad to SIO (or has not
+    /// assigned it); a pad handed to a peripheral is an alternate function,
+    /// named when a wire is bound to it.
+    fn gpio_routing(&self, pin: u8) -> Option<crate::peripherals::gpio::GpioRouting> {
+        use crate::peripherals::gpio::{GpioMode, GpioRouting};
+        if pin >= PAD_COUNT {
+            return None;
         }
-        self.tap_report();
-        true
+        match self.pad_function(pin) {
+            None | Some(super::io_bank0::GPIO_FUNC_SIO) => Some(GpioRouting {
+                mode: if self.gpio_oe & (1 << pin) != 0 {
+                    GpioMode::Output
+                } else {
+                    GpioMode::Input
+                },
+                func: None,
+            }),
+            Some(_) => Some(GpioRouting {
+                mode: GpioMode::Af,
+                func: self
+                    .pad_routes
+                    .func(pin, |p| self.pad_function(p))
+                    .map(str::to_string),
+            }),
+        }
+    }
+
+    /// A pad change (a `GPIO_OUT`/`GPIO_OE` write, an external level) can
+    /// raise IO_BANK0's GPIO interrupt, so the bus arms that block's event
+    /// chain after every write here and after every external input.
+    fn scheduler_wake_owner(&self) -> Option<usize> {
+        self.io_bank0_idx
     }
 
     fn as_any(&self) -> Option<&dyn std::any::Any> {
@@ -497,27 +601,104 @@ impl Peripheral for Rp2040Sio {
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
     }
+}
 
-    fn install_logic_tap(
-        &mut self,
-        tap: &crate::logic_capture::LogicTap,
-        watched: &[(u8, u32)],
-    ) -> bool {
-        if watched.is_empty() {
-            self.tap = None;
-            self.pad_routes.clear_taps();
+impl PinPort for Rp2040Sio {
+    fn pin_count(&self) -> u8 {
+        PAD_COUNT
+    }
+
+    fn driver(&self, pin: u8) -> Option<crate::pins::PadDriver> {
+        self.pad_driver(pin)
+    }
+
+    fn external(&self, pin: u8) -> External {
+        if pin < PAD_COUNT && self.ext_mask & (1 << pin) != 0 {
+            External::Level(self.ext_in & (1 << pin) != 0)
         } else {
-            self.tap = Some(SioTap {
-                tap: tap.clone(),
-                watched: watched.to_vec(),
-                scratch: vec![None; watched.len()],
-            });
-            // Routed pads are driven by their peripheral's wire, so the wire
-            // reports their transitions at the cycles they occurred.
-            self.pad_routes.invalidate_registrations();
-            self.sync_pad_routes();
+            External::Released
+        }
+    }
+
+    /// A level is held in `ext_in`, separate from `GPIO_OUT` because it must
+    /// survive the firmware driving the same pad in the other direction: a
+    /// button holds its released level from boot, and the pin must return to
+    /// it the moment the firmware releases the output driver. Releasing lets
+    /// an undriven pad float to 0, as this model has always read one.
+    fn set_external(&mut self, pin: u8, ext: External) -> Option<InputChange> {
+        if pin >= PAD_COUNT {
+            return None;
+        }
+        let bit = 1u32 << pin;
+        let before = self.gpio_in() & bit != 0;
+        self.mutate_pads(|s| match ext {
+            External::Level(level) => {
+                s.ext_mask |= bit;
+                if level {
+                    s.ext_in |= bit;
+                } else {
+                    s.ext_in &= !bit;
+                }
+            }
+            External::Released => {
+                s.ext_mask &= !bit;
+                s.ext_in &= !bit;
+            }
+        });
+        self.sync_wire_input(pin);
+        Some(InputChange {
+            before,
+            after: self.gpio_in() & bit != 0,
+        })
+    }
+
+    /// `pin` joined a world `gpio_net`: every peripheral line it can carry
+    /// shares a wire with other chips now.
+    fn join_wire(&mut self, pin: u8) {
+        self.pad_routes.mark_on_net(pin);
+    }
+
+    fn input(&self, pin: u8) -> Option<bool> {
+        Peripheral::read_gpio_input(self, pin)
+    }
+
+    /// `pad_level`: a routed pad reads its peripheral's wire, any other
+    /// `GPIO_IN`.
+    fn level(&self, pin: u8) -> Option<bool> {
+        self.pad_level(pin)
+    }
+
+    fn install_watch(&mut self, watch: Option<crate::pins::PadWatch>) -> bool {
+        match watch {
+            None => {
+                self.watch = None;
+                self.pad_routes.clear_taps();
+            }
+            Some(watch) => {
+                self.watch = Some(watch);
+                // Routed pads are driven by their peripheral's wire, so the
+                // wire reports their transitions at the cycles they occurred.
+                self.pad_routes.invalidate_registrations();
+                self.sync_pad_routes();
+            }
         }
         true
+    }
+
+    fn take_watch(&mut self) -> Option<crate::pins::PadWatch> {
+        self.watch.take()
+    }
+
+    fn put_watch(&mut self, watch: crate::pins::PadWatch) {
+        self.watch = Some(watch);
+    }
+
+    /// An IO_BANK0 `FUNCSEL` write may have handed a pad to another source:
+    /// re-register watched channels, and give a peripheral line that just
+    /// took a pad the level the outside holds there.
+    fn routes_changed(&mut self) {
+        self.sync_pad_routes();
+        self.sync_wire_inputs();
     }
 }
 
@@ -548,12 +729,31 @@ mod tests {
     }
 
     #[test]
+    fn gpio_output_latch_and_direction_are_readable() {
+        use crate::peripherals::gpio::GpioMode;
+        use crate::Peripheral;
+        let mut sio = Rp2040Sio::new();
+        sio.write_u32(GPIO_OUT_SET, PIN25).unwrap();
+        // The latch reads back whether or not the driver is enabled.
+        assert_eq!(sio.read_gpio_output(25), Some(true));
+        assert_eq!(sio.read_gpio_output(24), Some(false));
+        assert_eq!(sio.read_gpio_output(PAD_COUNT), None);
+        // No FUNCSEL bound yet: direction comes from OE alone.
+        assert_eq!(sio.read_gpio_is_output(25), Some(false));
+        assert_eq!(sio.gpio_routing(25).unwrap().mode, GpioMode::Input);
+        sio.write_u32(GPIO_OE_SET, PIN25).unwrap();
+        assert_eq!(sio.read_gpio_is_output(25), Some(true));
+        assert_eq!(sio.gpio_routing(25).unwrap().mode, GpioMode::Output);
+        assert_eq!(sio.gpio_routing(PAD_COUNT), None);
+    }
+
+    #[test]
     fn logic_tap_sees_led_pin25_toggle() {
         use crate::logic_capture::LogicTap;
         use crate::Peripheral;
         let mut sio = Rp2040Sio::new();
         let tap = LogicTap::new();
-        assert!(sio.install_logic_tap(&tap, &[(25, 0)]));
+        assert!(sio.install_watch(crate::pins::PadWatch::probes(&tap, &[(25, 0)])));
         // Arm push mode so ingest is live (machine does this on logic_watch).
         tap.set_armed(true);
         sio.write_u32(GPIO_OE_SET, PIN25).unwrap();
@@ -654,7 +854,7 @@ mod tests {
         use crate::Peripheral;
         let mut sio = Rp2040Sio::new();
         let tap = LogicTap::new();
-        assert!(sio.install_logic_tap(&tap, &[(14, 0)]));
+        assert!(sio.install_watch(crate::pins::PadWatch::probes(&tap, &[(14, 0)])));
         tap.set_armed(true);
         sio.set_gpio_input(14, true);
         sio.set_gpio_input(14, false);
@@ -691,5 +891,56 @@ mod tests {
         let l31 = sio.read_u32(SPINLOCK31).unwrap();
         assert_ne!(l31, 0, "lock 31 independent of lock 0");
         assert_eq!(l31 & (l31 - 1), 0, "grant value is a single bit (1<<n)");
+    }
+
+    /// A pad's own drive is what the SIO output stage does (`GPIO_OE`), never
+    /// the level the outside holds on it. A pad IO_BANK0 hands to a
+    /// peripheral that publishes no wire has no known drive.
+    #[test]
+    fn the_own_drive_is_oe() {
+        use crate::logic_capture::PadDrive;
+        use crate::peripherals::rp2040::io_bank0::Rp2040IoBank0;
+        use crate::pins::own_drive;
+        use crate::Peripheral;
+        let mut bank = Rp2040IoBank0::new();
+        let mut sio = Rp2040Sio::new();
+        sio.attach_io_bank0(bank.pad_functions(), bank.bank_irq(), 0);
+        assert_eq!(sio.driver(30), None);
+        sio.set_gpio_input(4, true);
+        assert_eq!(own_drive(&sio, 4), Some(PadDrive::HighZ));
+        assert_eq!(sio.read_gpio_pad_drive(4), Some(PadDrive::Driven), "probe");
+        sio.write_u32(GPIO_OE_SET, 1 << 4).unwrap();
+        assert_eq!(own_drive(&sio, 4), Some(PadDrive::Driven));
+        assert_eq!(
+            sio.read_gpio_pad_drive(4),
+            Some(PadDrive::Contention),
+            "a probe sees the fight"
+        );
+        assert_eq!(sio.read_gpio_pad(4), Some(false), "drives its own 0");
+        // FUNCSEL = SIO keeps the SIO in charge; PWM (4) publishes no wire.
+        <Rp2040IoBank0 as Peripheral>::write_u32(&mut bank, 8 * 4 + 4, 5).unwrap();
+        assert_eq!(own_drive(&sio, 4), Some(PadDrive::Driven));
+        <Rp2040IoBank0 as Peripheral>::write_u32(&mut bank, 8 * 4 + 4, 4).unwrap();
+        assert_eq!(own_drive(&sio, 4), None);
+        assert_eq!(sio.scheduler_wake_owner(), Some(0));
+    }
+
+    /// A probe on the pad reports `1` / `0` / `z` from the SIO output stage
+    /// (`OE`, `OUT`) when nothing outside holds it.
+    #[test]
+    fn an_off_net_pad_reports_its_own_drive_state() {
+        use crate::logic_capture::{PadDrive, PadState};
+        use crate::Peripheral;
+        let mut sio = Rp2040Sio::new();
+        let state = |sio: &Rp2040Sio| {
+            PadState::from_parts(sio.read_gpio_pad(4), sio.read_gpio_pad_drive(4).unwrap()).unwrap()
+        };
+        assert_eq!(sio.read_gpio_pad_drive(4), Some(PadDrive::HighZ));
+        assert_eq!(state(&sio), PadState::HighZ, "!OE: z");
+        sio.write_u32(GPIO_OE_SET, 1 << 4).unwrap();
+        assert_eq!(state(&sio), PadState::Low, "OE, OUT=0: 0");
+        sio.write_u32(GPIO_OUT_SET, 1 << 4).unwrap();
+        assert_eq!(state(&sio), PadState::High, "OE, OUT=1: 1");
+        assert_eq!(sio.read_gpio_pad_drive(PAD_COUNT), None, "no such pad");
     }
 }

@@ -464,6 +464,11 @@ fn run_world(
     // window; a regression restarts it, and a runtime/safety stop always wins.
     let mut assertions_first_passed_at = None;
 
+    // The node set is fixed for the run; sort it once, not twice a round.
+    let node_ids = sorted_node_ids(world);
+    // One result buffer for the whole run: a round's results without a map
+    // and a copy of every node id per round.
+    let mut outcomes = labwired_core::world::StepResults::new();
     while rounds < limits.max_steps {
         let cycles = max_cycles(world);
         let uart_bytes = total_uart_bytes(uart_sinks);
@@ -472,19 +477,19 @@ fn run_world(
             break;
         }
 
-        let outcomes = world.step_all();
+        world.step_all_into(&mut outcomes);
         rounds += 1;
         // `instructions` is the total number of successful individual machine
         // steps, not the number of world rounds. This makes a heterogeneous
         // environment's result explicit and reproducible.
-        for id in sorted_node_ids(world) {
-            if outcomes.get(&id).is_some_and(Result::is_ok) {
+        for id in &node_ids {
+            if outcomes.get(id).is_some_and(Result::is_ok) {
                 instructions += 1;
             }
         }
-        if let Some((id, error)) = sorted_node_ids(world).into_iter().find_map(|id| {
+        if let Some((id, error)) = node_ids.iter().find_map(|id| {
             outcomes
-                .get(&id)
+                .get(id)
                 .and_then(|outcome| outcome.as_ref().err().map(|error| (id, error)))
         }) {
             runtime_error = true;

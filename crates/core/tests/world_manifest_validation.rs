@@ -101,6 +101,7 @@ fn temporary_arm_world(
                 system: "system.yaml".to_string(),
                 firmware: "firmware.elf".to_string(),
                 config_overrides: HashMap::new(),
+                profile: None,
             }],
             interconnects: Vec::new(),
             rf: None,
@@ -146,6 +147,7 @@ fn world_builds_from_browser_resolved_node_bytes_without_filesystem_access() {
             system,
             chip,
             firmware,
+            blobs: Default::default(),
         }],
     )
     .expect("resolved browser world");
@@ -170,12 +172,14 @@ fn world_runs_riscv_nodes() {
                 system: "configs/systems/ci-fixture-riscv-uart1.yaml".to_string(),
                 firmware: "tests/fixtures/riscv-ci-fixture.elf".to_string(),
                 config_overrides: HashMap::new(),
+                profile: None,
             },
             NodeConfig {
                 id: "beta".to_string(),
                 system: "configs/systems/ci-fixture-riscv-uart1.yaml".to_string(),
                 firmware: "tests/fixtures/riscv-ci-fixture.elf".to_string(),
                 config_overrides: HashMap::new(),
+                profile: None,
             },
         ],
         interconnects: Vec::new(),
@@ -214,6 +218,7 @@ fn world_rejects_nodes_whose_chip_declares_no_known_architecture() {
             system: "configs/systems/ci-fixture-unknown-arch.yaml".to_string(),
             firmware: "tests/fixtures/riscv-ci-fixture.elf".to_string(),
             config_overrides: HashMap::new(),
+            profile: None,
         }],
         interconnects: Vec::new(),
         rf: None,
@@ -234,17 +239,21 @@ fn world_rejects_nodes_whose_chip_declares_no_known_architecture() {
 
 #[test]
 fn world_rejects_non_cortex_m_arm_cores_before_constructing_a_cortex_m_machine() {
-    for (name, core) in [("missing-core", None), ("cortex-a9", Some("cortex-a9"))] {
+    for (name, core, expected_error) in [
+        ("missing-core", None, "only Cortex-M cores are modelled"),
+        (
+            "cortex-a9",
+            Some("cortex-a9"),
+            "unsupported ARM application core 'cortex-a9'",
+        ),
+    ] {
         let (dir, manifest) = temporary_arm_world(core, 0x0800_0009);
         let error = match World::from_manifest(manifest, dir.path()) {
             Ok(_) => panic!("World::from_manifest accepted {name} as Cortex-M"),
             Err(error) => format!("{error:#}"),
         };
 
-        assert!(
-            error.contains("only Cortex-M cores are modelled"),
-            "{name}: {error}"
-        );
+        assert!(error.contains(expected_error), "{name}: {error}");
     }
 }
 
@@ -272,6 +281,7 @@ fn world_rejects_riscv_firmware_for_a_cortex_m_node_before_execution() {
             system: "configs/systems/nucleo-h563zi-demo.yaml".to_string(),
             firmware: "tests/fixtures/riscv-ci-fixture.elf".to_string(),
             config_overrides: HashMap::new(),
+            profile: None,
         }],
         interconnects: Vec::new(),
         rf: None,
@@ -332,6 +342,7 @@ cosim_models:
             system,
             chip,
             firmware,
+            blobs: Default::default(),
         }],
     ) {
         Ok(_) => panic!("a world whose node declares cosim_models must not build"),

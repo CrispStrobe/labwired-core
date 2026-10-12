@@ -176,6 +176,12 @@ pub(crate) struct TestResult {
     /// prove-blink `gpio_edges`/`gpio_period`/`gpio_duty` clauses.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) logic_edges: Option<labwired_core::logic_capture::LogicEdgesResult>,
+    /// End-of-run state of every `--watch-gpio` pad (same set as
+    /// `logic_edges`) read through the chip-agnostic GPIO accessors: mode,
+    /// alternate function, output/input/pad level and four-state drive. `null`
+    /// where the pad's model cannot say. Omitted when no pad was watched.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) gpio_pins: Option<Vec<labwired_core::logic_capture::GpioPinState>>,
     /// Final + peak motor evidence (omitted when the manifest declared no
     /// motors, keeping result.json byte-identical for every other run). The
     /// oracle evaluates the peak `|speed_rpm|` post-hoc: a continuous
@@ -275,6 +281,23 @@ pub(crate) struct ExecutionMetrics {
     /// Top PC histogram samples (descending by count). Empty when no samples.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pc_samples: Vec<PcSample>,
+    /// The peripheral register a run that hit its step budget was still
+    /// polling at the end. Omitted unless the run ended in such a poll.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stalled_poll: Option<StalledPoll>,
+}
+
+/// A step-budget run that ended inside a wait loop on one peripheral register:
+/// the firmware read it back to back (free-running timer reads aside) right up
+/// to the end of the run, i.e. it waited on a status bit that never changed.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub(crate) struct StalledPoll {
+    /// Bus name of the peripheral, e.g. `i2c1`.
+    pub peripheral: String,
+    /// Register offset within the peripheral.
+    pub offset: u64,
+    /// Consecutive accesses to that register.
+    pub accesses: u64,
 }
 
 /// One hot PC from statistical sampling during the test loop.

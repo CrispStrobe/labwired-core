@@ -152,39 +152,147 @@ impl SystemBus {
     }
 
     /// Drive an external input level on `pin` of the GPIO peripheral at bus
-    /// index `idx` through its `set_gpio_input` seam, then deliver any
-    /// timer-input edge that produced. Every caller that holds a peripheral
-    /// index instead of an input-register address (browser board I/O, session
-    /// bindings, motor feedback) goes through here so a timer on that pad
-    /// sees the edge.
+    /// index `idx`; see [`Self::set_pad_external`]. Every caller that holds a
+    /// peripheral index instead of an input-register address (browser board
+    /// I/O, session bindings, motor feedback, a world `gpio_net`) goes through
+    /// here so edge sinks and a timer on that pad see the edge.
     pub fn set_peripheral_gpio_input(&mut self, idx: usize, pin: u8, level: bool) -> bool {
-        let Some(p) = self.peripherals.get_mut(idx) else {
-            return false;
-        };
-        let before = p.dev.read_gpio_input(pin);
-        let port = p
-            .name
-            .to_ascii_lowercase()
-            .strip_prefix("gpio")
-            .filter(|suffix| suffix.len() == 1)
-            .and_then(|suffix| suffix.as_bytes()[0].checked_sub(b'a'))
-            .filter(|port| *port < 16);
-        let ok = p.dev.set_gpio_input(pin, level);
-        let after = p.dev.read_gpio_input(pin);
-        if let (Some(port), Some(before), Some(after)) = (port, before, after) {
-            if ok && before != after {
-                for exti_idx in 0..self.peripherals.len() {
-                    let pending = self.peripherals[exti_idx]
-                        .dev
-                        .gpio_input_edge(port, pin, before, after);
-                    if pending {
-                        self.collect_scheduled_events(exti_idx);
+        self.set_pad_external(idx, pin, crate::pins::External::Level(level))
+            .is_some()
+    }
+
+    /// Present `ext` to `pin` of the pin port at bus index `idx`
+    /// ([`PinPort::set_external`](crate::pins::PinPort::set_external)), then
+    /// fan the input change out: to every edge sink by the port's
+    /// [`PortId`](crate::pins::PortId) (STM32 EXTI through
+    /// [`Peripheral::gpio_input_edge`](crate::Peripheral::gpio_input_edge)),
+    /// to a timer input routed to the pad, to a peripheral line routed to the
+    /// pad, and to the port's own scheduler-driven interrupt logic (the
+    /// ESP32-family GPIO matrix line, RP2040 IO_BANK0 through the SIO's wake
+    /// owner). `None` when the pad cannot take input.
+    pub fn set_pad_external(
+        &mut self,
+        idx: usize,
+        pin: u8,
+        ext: crate::pins::External,
+    ) -> Option<crate::pins::InputChange> {
+        let p = self.peripherals.get_mut(idx)?;
+        let change = match p.dev.pins_mut() {
+            Some(port) => port.set_external(pin, ext),
+            // A peripheral that takes input levels without owning pads
+            // through the pin interface (none in tree; kept so a plugin that
+            // only implements the old hook keeps working).
+            None => {
+                let level = ext.level()?;
+                let before = p.dev.read_gpio_input(pin);
+                p.dev.set_gpio_input(pin, level).then(|| {
+                    let after = p.dev.read_gpio_input(pin).unwrap_or(level);
+                    crate::pins::InputChange {
+                        before: before.unwrap_or(after),
+                        after,
                     }
-                }
+                })
+            }
+        };
+        if let (Some(change), Some(port)) = (change, self.pin_port_id(idx)) {
+            if change.changed() {
+                self.fan_out_pad_edge(port, pin, change);
             }
         }
         self.deliver_timer_input_edges(idx);
-        ok
+        // A GPIO model whose interrupt is delivered by the event scheduler
+        // arms it here, exactly as after an MMIO write: an edge from outside
+        // is not a write, and nothing else would.
+        if change.is_some() {
+            self.collect_scheduled_events(idx);
+        }
+        self.deliver_wire_input_edges(idx);
+        change
+    }
+
+    /// The [`PortId`](crate::pins::PortId) the port at bus index `idx` was
+    /// given when it was attached (see `rebuild_peripheral_ranges`).
+    pub fn pin_port_id(&self, idx: usize) -> Option<crate::pins::PortId> {
+        self.pin_port_ids.get(idx).copied().flatten()
+    }
+
+    /// Hand an input change of pad `pin` of port `port` to every edge sink.
+    fn fan_out_pad_edge(
+        &mut self,
+        port: crate::pins::PortId,
+        pin: u8,
+        change: crate::pins::InputChange,
+    ) {
+        // The F1/F4 EXTI takes its port select from AFIO / SYSCFG; asked once
+        // per edge, only for pads EXTI can see.
+        let line_source = if pin < 16 {
+            self.peripherals
+                .iter()
+                .find_map(|p| p.dev.exti_line_source(pin))
+        } else {
+            None
+        };
+        for sink in 0..self.peripherals.len() {
+            let pending = self.peripherals[sink].dev.gpio_input_edge(
+                port.0,
+                pin,
+                change.before,
+                change.after,
+                line_source,
+            );
+            if pending {
+                self.collect_scheduled_events(sink);
+            }
+        }
+    }
+
+    /// Hand the outside levels GPIO port `gpio_idx` collected on pads routed
+    /// to peripheral lines to the peripherals owning those lines
+    /// ([`crate::Peripheral::wire_input_edge`]). Inert (one flag test) until
+    /// a world `gpio_net` puts a pad on a net.
+    pub fn deliver_wire_input_edges(&mut self, gpio_idx: usize) {
+        if !self.wire_inputs_live || gpio_idx >= self.peripherals.len() {
+            return;
+        }
+        let edges = self.peripherals[gpio_idx].dev.take_wire_input_edges();
+        if edges.is_empty() {
+            return;
+        }
+        // An owner may answer an edge on the same pad within this cycle (an
+        // I²C master starting on a bus it just saw go free, a target
+        // stretching the SCL it just saw fall). The port has already
+        // reported the pad's new input at the tap's provisional clock, which
+        // can be a cycle past `now`; bracket the answers so the port
+        // reports the pad's drive again after them, or the net would take
+        // the earlier report as the last word.
+        if let Some(port) = self.peripherals[gpio_idx].dev.pins_mut() {
+            crate::pins::watch_begin(port);
+        }
+        for edge in edges {
+            let owner = self.peripherals.iter().position(|p| {
+                p.dev
+                    .wire_lines()
+                    .is_some_and(|lines| std::ptr::eq(lines, &*edge.cell))
+            });
+            let Some(owner) = owner else {
+                continue;
+            };
+            let now = self.current_cycle;
+            // A scheduler-driven owner catches up to now first. Only under the
+            // scheduler: on the walk the owner is already ticked to now, and a
+            // second advance would run its engine twice.
+            #[cfg(feature = "event-scheduler")]
+            self.sync_scheduler_peripheral(owner);
+            if self.peripherals[owner]
+                .dev
+                .wire_input_edge(edge.line, edge.level, now)
+            {
+                self.collect_scheduled_events(owner);
+            }
+        }
+        if let Some(port) = self.peripherals[gpio_idx].dev.pins_mut() {
+            crate::pins::watch_end(port);
+        }
     }
 
     pub(crate) fn service_gpio_devices(&mut self) {
@@ -225,6 +333,9 @@ impl SystemBus {
         // `drive_idr_bit`) is an external edge like `set_gpio_input`.
         if self.timer_capture_wired {
             self.deliver_timer_input_edges(idx);
+        }
+        if self.wire_inputs_live {
+            self.deliver_wire_input_edges(idx);
         }
         if self.gpio_devices.is_empty() {
             return;

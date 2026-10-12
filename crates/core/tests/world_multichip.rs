@@ -58,12 +58,14 @@ fn from_manifest_builds_two_cortexm_nodes_and_uart_link() {
                 system: "sensor/system.yaml".into(),
                 firmware: DEVICE_FW.into(),
                 config_overrides: HashMap::new(),
+                profile: None,
             },
             NodeConfig {
                 id: "n2".into(),
                 system: "sensor/system.yaml".into(),
                 firmware: DEVICE_FW.into(),
                 config_overrides: HashMap::new(),
+                profile: None,
             },
         ],
         interconnects: vec![InterconnectConfig {
@@ -224,7 +226,7 @@ mod gpio_net_world {
     //! interrupt line, a ready line and a shared open-drain alert line with a
     //! pull-up (`examples/gpio-net-two-boards`).
     //!
-    //! The firmware counts edges (EXTI on the STM32, a polled PIND on the AVR) and
+    //! The firmware counts edges (EXTI on the STM32, INT1 and PCINT2 on the AVR) and
     //! reports over UART. Every count is a hand-derived number from the firmware's
     //! loops, not a measurement: 10 irq pulses, 7 ready pulses, 5 alert pulses the
     //! STM32 pulls and 3 the AVR pulls.
@@ -440,6 +442,192 @@ mod gpio_net_world {
         assert_eq!(text(&s.1), AVR_LINE);
     }
 
+    /// How a test drives a GPIO-net world to a time.
+    #[derive(Debug, Clone, Copy)]
+    enum Drive {
+        /// `step_all` round by round on the per-node scheduler (the default).
+        Rounds,
+        /// `step_all` on the lockstep round driver the per-node scheduler
+        /// replaced (still the one a world with a timed UART network uses).
+        Lockstep,
+        /// One `run_until_ps` call: each node in as few pieces as the nets'
+        /// latency allows.
+        RunUntil,
+        /// `step_rounds` (what the browser's `step_batch` calls), 997
+        /// rounds at a time.
+        StepRounds,
+    }
+
+    /// Run a GPIO-net world to each of `stops` (ps) the way `drive` says and
+    /// hand back what `seen` reads at each stop.
+    fn drive_world<T>(
+        w: &mut World,
+        drive: Drive,
+        stops: &[u64],
+        mut seen: impl FnMut(&World) -> T,
+    ) -> Vec<T> {
+        w.set_gpio_lockstep(matches!(drive, Drive::Lockstep));
+        let mut out = Vec::new();
+        for &ps in stops {
+            match drive {
+                Drive::RunUntil => {
+                    for (id, r) in w.run_until_ps(ps).unwrap() {
+                        r.unwrap_or_else(|e| panic!("node {id}: {e:?}"));
+                    }
+                }
+                Drive::StepRounds => {
+                    while w.round_now_ps().unwrap() < ps {
+                        let left = (ps - w.round_now_ps().unwrap()).div_ceil(100_000);
+                        for (id, r) in w.step_rounds(left.min(997)) {
+                            r.unwrap_or_else(|e| panic!("node {id}: {e:?}"));
+                        }
+                    }
+                }
+                Drive::Rounds | Drive::Lockstep => {
+                    let mut results = labwired_core::world::StepResults::new();
+                    while w.round_now_ps().unwrap() < ps {
+                        w.step_all_into(&mut results);
+                        if let Some((id, e)) = results.first_error() {
+                            panic!("node {id}: {e:?}");
+                        }
+                    }
+                }
+            }
+            out.push(seen(w));
+        }
+        out
+    }
+
+    /// The per-node scheduler against the lockstep round driver it replaced,
+    /// stepped round by round and run in one call: the same run, stopped part
+    /// way through (the AVR is in its irq pulses, deliveries are in flight)
+    /// and at the end, must leave every counter, transcript, applied
+    /// delivery, net and node cycle count identical. With idle fast-forward
+    /// on, the sleeping AVR also lets the STM32 run ahead of it (a sleeping
+    /// node changes no pad before its next event, so it does not hold its
+    /// peers to one latency past its own time), and still nothing changes.
+    #[test]
+    fn the_per_node_scheduler_matches_the_lockstep_rounds() {
+        let run = |drive: Drive, round_ps: Option<u64>, ff: bool, stops: &[u64]| {
+            let (mut w, s) = build("env.yaml", |s| s);
+            if let Some(r) = round_ps {
+                w.set_gpio_round_ps(r).unwrap();
+            }
+            for m in w.machines.values_mut() {
+                m.set_idle_fast_forward(ff);
+            }
+            let seen = drive_world(&mut w, drive, stops, |w| {
+                let cycles: Vec<u64> = ["avr", "stm"]
+                    .iter()
+                    .map(|id| w.machines[*id].total_cycles())
+                    .collect();
+                (fingerprint(w, "stm", &s), cycles, w.round_now_ps())
+            });
+            (seen, w.gpio_net_scheduler_stats().unwrap())
+        };
+        let stops = [1_200_000_000u64, 30_000_000_000];
+        let (rounds, _) = run(Drive::Rounds, None, false, &stops);
+        assert!(!rounds[0].0.applied.is_empty() && rounds[0].0.nets[0].1 < 20);
+        assert_eq!(
+            run(Drive::Lockstep, None, false, &stops).0,
+            rounds,
+            "lockstep"
+        );
+        assert_eq!(
+            run(Drive::Lockstep, Some(50_000), false, &stops).0,
+            rounds,
+            "lockstep, 50 ns rounds"
+        );
+        let (until, plain) = run(Drive::RunUntil, None, false, &stops);
+        assert_eq!(until, rounds, "run_until_ps");
+        assert_eq!(
+            run(Drive::StepRounds, None, false, &stops).0,
+            rounds,
+            "step_rounds"
+        );
+        // Each node ran until its own drive changed, not one latency at a
+        // time: well under one piece per node per 100 ns round.
+        assert!(plain.drive_stops > 0, "{plain:?}");
+        assert!(plain.node_runs < 2 * 300_000, "{plain:?}");
+
+        // Idle fast-forward on: the same run on every driver.
+        let (ff_lockstep, _) = run(Drive::Lockstep, None, true, &stops);
+        assert_eq!(ff_lockstep, rounds, "lockstep, idle fast-forward");
+        assert_eq!(
+            run(Drive::Rounds, None, true, &stops).0,
+            rounds,
+            "rounds, idle fast-forward"
+        );
+        let (ff_until, ff) = run(Drive::RunUntil, None, true, &stops);
+        assert_eq!(ff_until, rounds, "run_until_ps, idle fast-forward");
+        assert_eq!(
+            run(Drive::StepRounds, None, true, &stops).0,
+            rounds,
+            "step_rounds, idle fast-forward"
+        );
+        assert_eq!(
+            run(Drive::RunUntil, Some(33_333), true, &stops).0,
+            rounds,
+            "run_until_ps, 33 ns rounds, idle fast-forward"
+        );
+        // Where idle fast-forward exists (the event-scheduler build), the
+        // sleeping AVR stretches the STM32's horizon: fewer pieces.
+        let (mut probe, _s) = build("env.yaml", |s| s);
+        for m in probe.machines.values_mut() {
+            m.set_idle_fast_forward(true);
+        }
+        probe.run_until_ps(stops[1]).unwrap();
+        if probe.machines["avr"].idle_fast_forward_cycles() > 0 {
+            assert!(ff.node_runs < plain.node_runs, "{ff:?} vs {plain:?}");
+        }
+    }
+
+    /// The ATmega328P pads on the nets are captured by push, not by the
+    /// per-cycle poll, so neither node is clamped to one instruction per
+    /// batch. The AVR counts `ready` with INT1 and `alert` with PCINT2 and
+    /// sleeps between edges (src/avr.c): the right counts prove the edges
+    /// arrived as interrupts, since nothing polls PIND any more.
+    #[test]
+    fn avr_net_pads_are_push_captured_and_counted_by_interrupts() {
+        let (mut world, sinks) = build("env.yaml", |s| s);
+        for (id, m) in &world.machines {
+            assert!(
+                !m.logic_poll_active(),
+                "node {id} fell back to poll capture"
+            );
+        }
+        run_ms(&mut world, 30);
+        assert_eq!(text(&sinks.1), AVR_LINE, "AVR report");
+        assert_eq!(text(&sinks.0), STM_LINE, "STM32 report");
+    }
+
+    /// With idle fast-forward on, the sleeping AVR skips its waits and every
+    /// observable stays identical to the run that steps each idle clock.
+    #[cfg(feature = "event-scheduler")]
+    #[test]
+    fn idle_fast_forward_skips_the_avr_sleep_and_changes_nothing() {
+        let baseline = {
+            let (mut w, s) = build("env.yaml", |s| s);
+            run_ms(&mut w, 30);
+            assert_eq!(w.machines["avr"].idle_fast_forward_cycles(), 0);
+            fingerprint(&w, "stm", &s)
+        };
+        let (mut w, s) = build("env.yaml", |s| s);
+        for m in w.machines.values_mut() {
+            m.set_idle_fast_forward(true);
+        }
+        run_ms(&mut w, 30);
+        let skipped = w.machines["avr"].idle_fast_forward_cycles();
+        assert_eq!(fingerprint(&w, "stm", &s), baseline);
+        // The AVR sleeps from the end of its irq pulses until the last alert
+        // edge, about 0.9 ms (14 400 cycles at 16 MHz); a round of 100 ns is
+        // under two cycles, so most of each sleeping round is skipped.
+        assert!(
+            skipped > 5_000,
+            "the sleeping AVR must fast-forward, skipped {skipped} cycles"
+        );
+    }
+
     #[test]
     fn both_boards_driving_one_push_pull_wire_reports_contention() {
         let (mut world, _s) = build("env-contention.yaml", |s| s);
@@ -503,6 +691,234 @@ mod gpio_net_world {
         assert_eq!(ready.floating_events, 0);
     }
 
+    /// Wall time of the example world against each machine run alone for the
+    /// same simulated time. Timing only, so ignored by default:
+    /// `cargo test --release -p labwired-core --test world_multichip -- --ignored --nocapture gpio_net_speed`.
+    /// `GPIO_NET_BENCH_ENV` picks another manifest of the example
+    /// (`env-esp32c6.yaml`), `GPIO_NET_BENCH_FF=1` turns idle fast-forward on
+    /// for every node (world and alone alike).
+    #[test]
+    #[ignore = "timing benchmark: run with --release --ignored --nocapture"]
+    fn gpio_net_speed() {
+        let ms: u64 = std::env::var("GPIO_NET_BENCH_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(30);
+        let reps: usize = std::env::var("GPIO_NET_BENCH_REPS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3);
+        let env = std::env::var("GPIO_NET_BENCH_ENV").unwrap_or_else(|_| "env.yaml".into());
+        let ff = std::env::var("GPIO_NET_BENCH_FF").is_ok_and(|v| v == "1");
+        let world = || {
+            let yaml = std::fs::read_to_string(example().join(&env)).unwrap();
+            let manifest: EnvironmentManifest = serde_yaml::from_str(&yaml).unwrap();
+            let mut w = World::from_manifest(manifest, &example()).expect("world");
+            for m in w.machines.values_mut() {
+                m.set_idle_fast_forward(ff);
+            }
+            w
+        };
+        for _ in 0..reps {
+            let mut w = world();
+            let t = std::time::Instant::now();
+            run_ms(&mut w, ms);
+            let world_s = t.elapsed().as_secs_f64();
+            // What `labwired test` and Python do: the same rounds into one
+            // reused result buffer.
+            let mut w = world();
+            let mut results = labwired_core::world::StepResults::new();
+            let t = std::time::Instant::now();
+            while w.round_now_ps().unwrap() < ms * 1_000_000_000 {
+                w.step_all_into(&mut results);
+                if let Some((id, e)) = results.first_error() {
+                    panic!("node {id}: {e:?}");
+                }
+            }
+            let into_s = t.elapsed().as_secs_f64();
+            let mut w = world();
+            let t = std::time::Instant::now();
+            for (id, r) in w.run_until_ps(ms * 1_000_000_000).unwrap() {
+                r.unwrap_or_else(|e| panic!("node {id}: {e:?}"));
+            }
+            let until_s = t.elapsed().as_secs_f64();
+            let stats = w.gpio_net_scheduler_stats().unwrap();
+            let mut ids: Vec<String> = w.machines.keys().cloned().collect();
+            ids.sort();
+            let mut alone = Vec::new();
+            let mut sum = 0.0;
+            for id in &ids {
+                let yaml = std::fs::read_to_string(example().join(&env)).unwrap();
+                let mut manifest: EnvironmentManifest = serde_yaml::from_str(&yaml).unwrap();
+                manifest.interconnects.clear();
+                manifest.nodes.retain(|n| &n.id == id);
+                let mut w = World::from_manifest(manifest, &example()).expect("world");
+                let hz = w.node_hz(id).unwrap();
+                let m = w.machines.get_mut(id).unwrap();
+                m.set_idle_fast_forward(ff);
+                let t = std::time::Instant::now();
+                m.advance_to_cycle(hz / 1000 * ms).unwrap();
+                let s = t.elapsed().as_secs_f64();
+                alone.push(format!("{id} {s:.3} s"));
+                sum += s;
+            }
+            println!(
+                "gpio_net_speed {env} ff={ff} {ms} ms: step_all {world_s:.3} s ({:.2}x), \
+                 step_all_into {into_s:.3} s ({:.2}x), run_until_ps {until_s:.3} s ({:.2}x, {} pieces, {} at own drive changes), \
+                 alone {} = {sum:.3} s",
+                world_s / sum,
+                into_s / sum,
+                until_s / sum,
+                stats.node_runs,
+                stats.drive_stops,
+                alone.join(" + ")
+            );
+        }
+    }
+
+    /// The same STM32 firmware with another chip in place of the ATmega328P
+    /// (`env-rp2040.yaml`, `env-esp32c6.yaml`). The peer counts the STM32's
+    /// edges with its GPIO interrupt and leaves `[ready rising, alert
+    /// falling, alert rising, interrupts taken, done]` at `result`.
+    fn build_peer(
+        env_file: &str,
+        rewrite: impl Fn(String) -> String,
+    ) -> (World, Arc<Mutex<Vec<u8>>>) {
+        let yaml = rewrite(std::fs::read_to_string(example().join(env_file)).unwrap());
+        let manifest: EnvironmentManifest = serde_yaml::from_str(&yaml).unwrap();
+        let mut world = World::from_manifest(manifest, &example()).expect("world");
+        let stm = Arc::new(Mutex::new(Vec::new()));
+        let key = world
+            .machines
+            .keys()
+            .find(|k| k.ends_with("stm"))
+            .cloned()
+            .unwrap();
+        world
+            .machines
+            .get_mut(&key)
+            .unwrap()
+            .attach_uart_tx_sink(stm.clone(), false)
+            .unwrap();
+        (world, stm)
+    }
+
+    fn peer_result(world: &World, id: &str, at: u32) -> Vec<u32> {
+        let b = world.machines[id].read_memory(at, 20).unwrap();
+        b.chunks(4)
+            .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect()
+    }
+
+    /// One peer chip against the unchanged STM32 firmware: both sides count
+    /// every edge, the peer with GPIO interrupts, and neither node order nor
+    /// round length changes a number.
+    fn peer_counts_the_stm32_edges(env_file: &str, peer: &str, result: u32) {
+        let (mut world, stm) = build_peer(env_file, |s| s);
+        run_ms(&mut world, 30);
+        assert_eq!(text(&stm), STM_LINE, "STM32 report");
+        assert_eq!(stm_result(&world, "stm"), vec![10, 10, 3, 3, 1]);
+        let r = peer_result(&world, peer, result);
+        assert_eq!(&r[..3], &[7, 5, 5], "{peer} interrupt counts {r:?}");
+        assert!(r[3] >= 17, "at least one interrupt per edge {r:?}");
+        assert_eq!(r[4], 1, "{peer} finished {r:?}");
+        let reports = world.gpio_net_reports();
+        let by = |n: &str| reports.iter().find(|r| r.name == n).unwrap();
+        assert_eq!(by("irq").edges, 20);
+        assert_eq!(by("ready").edges, 14);
+        assert_eq!(by("alert").edges, 16);
+        for r in &reports {
+            assert_eq!(r.contention_events, 0, "{}", r.name);
+            assert_eq!(r.floating_events, 0, "{}", r.name);
+        }
+
+        let fp = |w: &World, stm: &str, p: &str, s: &Arc<Mutex<Vec<u8>>>| {
+            (
+                text(s),
+                stm_result(w, stm),
+                peer_result(w, p, result),
+                w.gpio_net_reports()
+                    .iter()
+                    .map(|n| (n.name.clone(), n.edges, n.level))
+                    .collect::<Vec<_>>(),
+            )
+        };
+        let baseline = fp(&world, "stm", peer, &stm);
+        let renamed = format!("z_{peer}");
+        let (mut w, s) = build_peer(env_file, |s| {
+            s.replace("id: stm", "id: a_stm")
+                .replace(&format!("id: {peer}"), &format!("id: {renamed}"))
+                .replace("node: stm", "node: a_stm")
+                .replace(&format!("node: {peer}"), &format!("node: {renamed}"))
+                .replace(&format!("[{peer}, stm]"), &format!("[a_stm, {renamed}]"))
+        });
+        run_ms(&mut w, 30);
+        assert_eq!(fp(&w, "a_stm", &renamed, &s), baseline, "node order");
+        let (mut w, s) = build_peer(env_file, |s| s);
+        w.set_gpio_round_ps(33_333).unwrap();
+        run_ms(&mut w, 30);
+        assert_eq!(fp(&w, "stm", peer, &s), baseline, "round length");
+    }
+
+    /// RP2040 SIO pads on the nets; IO_BANK0 `EDGE_HIGH` / `EDGE_LOW`
+    /// interrupts (IO_IRQ_BANK0, NVIC 13) count the STM32's edges, and the
+    /// alert pad is open drain by `GPIO_OE`.
+    #[test]
+    fn an_rp2040_counts_the_stm32_edges_with_gpio_interrupts() {
+        peer_counts_the_stm32_edges("env-rp2040.yaml", "rp", 0x2000_0100);
+    }
+
+    /// ESP32-C6 GPIO pads on the nets; `GPIO_PINn.INT_TYPE` interrupts through
+    /// the interrupt matrix (source 30 -> CPU line 9) count the STM32's edges,
+    /// and the alert pad is open drain by `GPIO_PIN6.PAD_DRIVER`.
+    #[test]
+    fn an_esp32c6_counts_the_stm32_edges_with_gpio_interrupts() {
+        peer_counts_the_stm32_edges("env-esp32c6.yaml", "c6", 0x4080_0100);
+    }
+
+    /// The ESP32-C6 world on every driver, with idle fast-forward off and
+    /// on: the STM32 transcript and counters, the C6's counters, every
+    /// applied delivery, every net and both cycle counts, part way and at
+    /// the end, are those of the lockstep round driver.
+    #[test]
+    fn the_esp32c6_world_is_the_same_on_every_driver() {
+        let run = |drive: Drive, ff: bool| {
+            let (mut w, s) = build_peer("env-esp32c6.yaml", |s| s);
+            for m in w.machines.values_mut() {
+                m.set_idle_fast_forward(ff);
+            }
+            drive_world(&mut w, drive, &[1_500_000_000, 30_000_000_000], |w| {
+                (
+                    text(&s),
+                    stm_result(w, "stm"),
+                    peer_result(w, "c6", 0x4080_0100),
+                    w.gpio_net_applied()
+                        .iter()
+                        .map(|a| (a.node.clone(), a.pin, a.cycle, a.due_ps, a.level))
+                        .collect::<Vec<_>>(),
+                    w.gpio_net_reports()
+                        .iter()
+                        .map(|n| (n.name.clone(), n.edges, n.level, n.contention_events))
+                        .collect::<Vec<_>>(),
+                    ["c6", "stm"].map(|id| w.machines[id].total_cycles()),
+                )
+            })
+        };
+        let want = run(Drive::Lockstep, false);
+        assert_eq!(want[1].0, STM_LINE);
+        assert_eq!(want[1].1, vec![10, 10, 3, 3, 1]);
+        assert!(!want[0].3.is_empty(), "deliveries before the first stop");
+        for (drive, ff) in [
+            (Drive::Rounds, false),
+            (Drive::RunUntil, false),
+            (Drive::Lockstep, true),
+            (Drive::RunUntil, true),
+            (Drive::StepRounds, true),
+        ] {
+            assert_eq!(run(drive, ff), want, "{drive:?}, idle fast-forward {ff}");
+        }
+    }
+
     fn build_err(env_file: &str, rewrite: impl Fn(String) -> String) -> String {
         let yaml = rewrite(std::fs::read_to_string(example().join(env_file)).unwrap());
         match serde_yaml::from_str::<EnvironmentManifest>(&yaml)
@@ -545,5 +961,145 @@ mod gpio_net_world {
             e.to_lowercase().contains("pin") || e.contains("net support"),
             "{e}"
         );
+    }
+}
+
+// STM32F1 / F4 EXTI on a net, and a chip's internal pull-up as the only pull
+// on a wire (`examples/gpio-net-f1-f4`).
+mod gpio_net_f1_f4 {
+    //! An STM32F103, an STM32F401 and an ATmega328P. The AVR puts 10 pulses
+    //! on `irq`; the F103 counts them with EXTI0 (AFIO_EXTICR1 = port B) and
+    //! the F401 with EXTI1 (SYSCFG_EXTICR1 = port C), rising and falling
+    //! separately. `alert` and `wake` have no `pull`: the F401's PUPDR
+    //! pull-up holds `alert` high while the AVR pulls it low 3 times (the F401
+    //! counts them on EXTI8), and the AVR's own pull-up (PORTD5 with DDRD5
+    //! clear) holds `wake` high while the F103 pulls it low 4 times (the AVR
+    //! polls them). Every count is the firmware's loop count.
+
+    use labwired_config::EnvironmentManifest;
+    use labwired_core::network::gpio_net::{
+        Own, GPIO_NET_CONTENTION, GPIO_NET_FLOATING, GPIO_NET_PULL_CONFLICT,
+    };
+    use labwired_core::world::World;
+    use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
+
+    fn example() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/gpio-net-f1-f4")
+    }
+
+    fn build(rewrite: impl Fn(String) -> String) -> (World, Arc<Mutex<Vec<u8>>>) {
+        let yaml = rewrite(std::fs::read_to_string(example().join("env.yaml")).unwrap());
+        let manifest: EnvironmentManifest = serde_yaml::from_str(&yaml).unwrap();
+        let mut world = World::from_manifest(manifest, &example()).expect("world");
+        let avr = Arc::new(Mutex::new(Vec::new()));
+        world
+            .machines
+            .get_mut("avr")
+            .unwrap()
+            .attach_uart_tx_sink(avr.clone(), false)
+            .unwrap();
+        (world, avr)
+    }
+
+    fn run_ms(world: &mut World, ms: u64) {
+        let end = ms * 1_000_000_000;
+        let mut calls = 0u64;
+        while world.round_now_ps().unwrap() < end {
+            for (id, r) in world.step_all() {
+                r.unwrap_or_else(|e| panic!("node {id}: {e:?}"));
+            }
+            calls += 1;
+            assert!(calls < 50_000_000, "runaway");
+        }
+    }
+
+    fn ram(world: &World, id: &str, words: usize) -> Vec<u32> {
+        let b = world.machines[id]
+            .read_memory(0x2000_0100, words * 4)
+            .unwrap();
+        b.chunks(4)
+            .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect()
+    }
+
+    #[test]
+    fn f1_and_f4_exti_count_a_peers_edges_and_an_internal_pull_up_holds_the_wire() {
+        let (mut world, avr) = build(|s| s);
+        run_ms(&mut world, 20);
+
+        // F103: 10 rising + 10 falling irq edges through AFIO; wake done.
+        assert_eq!(ram(&world, "f1", 3), vec![10, 10, 1], "F103 EXTI0");
+        // F401: 10 + 10 irq edges through SYSCFG, 3 + 3 alert edges.
+        assert_eq!(ram(&world, "f4", 4), vec![10, 10, 3, 3], "F401 EXTI1/EXTI8");
+        // The AVR saw the F103's 4 pulses on a wire only its pull-up lifts.
+        assert_eq!(
+            String::from_utf8_lossy(&avr.lock().unwrap()),
+            "AVR wake f=4 r=4\n"
+        );
+
+        let reports = world.gpio_net_reports();
+        let by = |n: &str| reports.iter().find(|r| r.name == n).unwrap();
+        assert_eq!(by("irq").edges, 20);
+        // alert and wake float until the firmware turns the pull-up on, rise
+        // once when it does, then carry 3 and 4 pulses.
+        assert_eq!(by("alert").edges, 1 + 6);
+        assert_eq!(by("wake").edges, 1 + 8);
+        for n in ["alert", "wake"] {
+            let r = by(n);
+            assert!(r.level, "{n} rests high on the internal pull-up");
+            assert_eq!(
+                r.floating_events, 1,
+                "{n}: floating only before the pull-up"
+            );
+            let d = r
+                .diagnostics
+                .iter()
+                .find(|d| d.code == GPIO_NET_FLOATING)
+                .unwrap();
+            assert_eq!(d.t_ps, 0);
+            assert!(d.end_ps.is_some(), "{n}: the pull-up ends the float");
+        }
+        for r in &reports {
+            assert_eq!(r.contention_events, 0, "{}", r.name);
+            assert_eq!(r.pull_conflict_events, 0, "{}", r.name);
+            assert!(r.diagnostics.iter().all(|d| d.code != GPIO_NET_CONTENTION));
+        }
+        let drive = |net: &str, node: &str| {
+            by(net)
+                .members
+                .iter()
+                .find(|m| m.node == node)
+                .unwrap()
+                .drive
+        };
+        assert_eq!(drive("alert", "f4"), Own::PullUp);
+        assert_eq!(drive("alert", "avr"), Own::Z);
+        assert_eq!(drive("wake", "avr"), Own::PullUp);
+        assert_eq!(drive("wake", "f1"), Own::Z, "released open-drain");
+    }
+
+    #[test]
+    fn an_internal_pull_up_against_the_nets_pull_down_is_a_pull_conflict() {
+        let (mut world, _avr) =
+            build(|s| s.replace("      name: wake\n", "      name: wake\n      pull: down\n"));
+        run_ms(&mut world, 2);
+        let wake = world
+            .gpio_net_reports()
+            .into_iter()
+            .find(|r| r.name == "wake")
+            .unwrap();
+        assert_eq!(wake.pull, "down");
+        assert_eq!(wake.pull_conflict_events, 1, "{wake:#?}");
+        let d = wake
+            .diagnostics
+            .iter()
+            .find(|d| d.code == GPIO_NET_PULL_CONFLICT)
+            .unwrap();
+        assert!(d.end_ps.is_none(), "the divider lasts");
+        // The board resistor decides: the wire reads low and never rose.
+        assert!(!wake.level);
+        assert_eq!(wake.edges, 0);
+        assert_eq!(wake.floating_events, 0);
     }
 }

@@ -107,6 +107,9 @@ pub const MODEL_TYPES: &[&str] = &[
     "esp32c3_apb_saradc",
     "esp32c3_ledc",
     "esp32c3_rmt",
+    // MUST be listed: the fuzzy `contains("timer")` fallback would coerce the
+    // SYSTIMER onto an unrelated timer register map.
+    "esp32c3_systimer",
     // MUST be listed: the fuzzy fallback matches `contains("uart")`, which
     // would coerce the C3's UART onto the STM32 register map — the silently
     // wrong model that wedged every `Serial.print` over 128 bytes.
@@ -290,6 +293,8 @@ pub const MODEL_TYPES: &[&str] = &[
     "sam_mclk",
     // Renesas RA SYSTEM (HOCO / OSCSF).
     "ra_sysc",
+    // Renesas RA pin function select (PmnPFS / PWPR).
+    "ra_pfs",
     // NXP i.MX RT CCM / IOMUXC.
     "imx_ccm",
     "imx_iomuxc",
@@ -790,7 +795,18 @@ pub fn try_build(
         // so a read-as-zero stub keeps the enable sequence from bus-faulting.
         // No cache behaviour is modelled — the simulator has flat memory.
         "icache" | "dcache" => Box::new(crate::peripherals::stub::StubPeripheral::new(0x00)),
-        // SYSCFG — mostly EXTI source select (harmless read-0 stub), plus the H7
+        // SYSCFG on STM32F4 (`profile: stm32f4`): a real register file,
+        // because its EXTICR is the EXTI line-source mux external GPIO edges
+        // go through.
+        "syscfg" if p_cfg.config.get("profile").and_then(|v| v.as_str()) == Some("stm32f4") => {
+            Box::new(crate::peripherals::syscfg::Stm32F4Syscfg::new())
+        }
+        // SYSCFG on STM32L0 (`profile: stm32l0`): the same EXTICR line-source
+        // mux, among the L0's own configuration words (RM0367 §10).
+        "syscfg" if p_cfg.config.get("profile").and_then(|v| v.as_str()) == Some("stm32l0") => {
+            Box::new(crate::peripherals::syscfg::Stm32L0Syscfg::new())
+        }
+        // SYSCFG elsewhere — mostly EXTI source select (harmless read-0 stub), plus the H7
         // I/O compensation cell the H7 HAL enables + polls during rcc.freeze:
         // CCCSR @ 0x20, READY = bit 8. Seed it so the poll exits (EN is a
         // read-modify-write the stub drops, but the READY read returns the seed).
@@ -812,6 +828,7 @@ pub fn try_build(
         "sam_gclk" => Box::new(crate::peripherals::sam_clock::SamGclk::new()),
         "sam_mclk" => Box::new(crate::peripherals::sam_clock::SamMclk::new()),
         "ra_sysc" => Box::new(crate::peripherals::ra_clock::RaSysc::new()),
+        "ra_pfs" => Box::new(crate::peripherals::ra_pfs::RaPfs::new()),
         "imx_ccm" => Box::new(crate::peripherals::imx_ccm::ImxCcm::new()),
         "imx_iomuxc" => Box::new(crate::peripherals::imx_iomuxc::ImxIomuxc::new()),
         "imxrt_ccm" => Box::new(crate::peripherals::imxrt::ccm::ImxrtCcm::new()),
