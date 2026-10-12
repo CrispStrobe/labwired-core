@@ -163,7 +163,13 @@ Work only in our own runtime forks. Prefer exact reviewed permissive components
 or attributed independent implementations with recorded origins. Review each
 component/build and preserve notices/obligations; do not assume every header in
 a vendor directory shares one licence, relabel copied code, or claim whole-tree
-clean-room origin. MPL/LGPL components need their applicable obligations retained.
+clean-room origin. For this selected simulation-runtime build, use reviewed
+MIT/BSD/Apache components, LGPL components with their applicable obligations,
+or GPL library components with an applicable linking/runtime exception and
+retained obligations. Exclude ASF4 and vendor/hardware-use restrictions.
+An exception's presence elsewhere in a source archive does not establish that
+it applies to a selected object. This selection is not blanket licence or
+store clearance and does not admit the historical restricted images.
 
 Acceptance: a reviewed source/build plan with immutable inputs, API scope,
 excluded modes/devices, affected files, origin records and independently authored
