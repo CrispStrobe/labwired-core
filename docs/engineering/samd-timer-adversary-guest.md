@@ -34,8 +34,11 @@ live immutable Git bytes, checks the complete positive source/header inventory,
 changed-unit closure, all consumed object/image hashes, both complete logs and
 fixed statuses/context/counts. It binds actual merge/head/tree/parents,
 official run/attempt and live builder/reader/harness source bytes, and refuses
-to overwrite an existing receipt. Five manufactured Python groups include
-31 validation refusals and nine entry-point refusals; these are not guest evidence.
+to overwrite an existing receipt. The recorded driver/libgcc/header component
+bytes must also match after negative builds and execution; this limited snapshot
+does not establish whole-toolchain closure. Seven manufactured Python groups
+include 31 validation refusals, four compiler-component refusals and ten
+entry-point refusals; these are not guest evidence.
 
 Still required: dedicated actual execution in both scheduler profiles,
 a bound original receipt and separate audit, and every enabled final

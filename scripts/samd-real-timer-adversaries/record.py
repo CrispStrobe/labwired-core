@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 
 SAMD = 'd55214588780d737640536b0a58707cd6d69cfce'
@@ -39,6 +40,21 @@ def require(ok, reason):
 
 def identity(data):
     return {'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
+
+def compiler_snapshot():
+    executable = shutil.which('arm-none-eabi-g++')
+    require(executable is not None, 'cross compiler missing')
+    driver = Path(executable).resolve()
+    libgcc = Path(subprocess.check_output([str(driver), '-print-libgcc-file-name']).decode().strip()).resolve()
+    include = Path(subprocess.check_output([str(driver), '-print-file-name=include']).decode().strip()).resolve()
+    return {label: identity(path.read_bytes()) for label, path in
+            [('compiler/driver', driver), ('compiler/libgcc.a', libgcc),
+             ('compiler/include/stdbool.h', include / 'stdbool.h')]}
+
+def verify_compiler(after, before):
+    require(set(after) == COMPILER_FILES, 'exact recorded compiler components')
+    require(after == {label: before['files'][label] for label in COMPILER_FILES},
+            'compiler components changed during negative build/execution')
 
 def validate(logs, build, before, originals, positive_objects, positive_images, mutants):
     require(set(logs) == {'default', 'scheduler'}, 'both profiles required')
@@ -157,6 +173,8 @@ def main():
             for profile in ('default', 'scheduler')}
     profiles = validate(logs, build, before, originals, positive_objects,
                         {field: (positive / ('control.' + field)).read_bytes() for field in ('elf', 'map')}, mutants)
+    compiler_after = compiler_snapshot()
+    verify_compiler(compiler_after, before)
     head = os.environ['QUALIFICATION_HEAD']
     parents = git('show', '-s', '--format=%P', 'HEAD').split()
     require(re.fullmatch('[0-9a-f]{40}', head) and len(parents) == 2 and parents[1] == head, 'merge/head identity')
@@ -172,6 +190,7 @@ def main():
         helpers[name] = identity(data)
     result = {'schema': 1, 'head': head, 'commit': git('rev-parse', 'HEAD'), 'tree': git('rev-parse', 'HEAD^{tree}'),
               'parents': parents, 'run': run, 'attempt': attempt, 'build': build, 'helpers': helpers,
+              'compiler_after': compiler_after,
               'mutants': {case: item['manifest'] for case, item in mutants.items()}, 'profiles': profiles,
               'boundary': 'Owned adapter negative guests only; no full runtime/toolchain/hardware qualification'}
     with Path('timer-refusal-qualification.json').open('x') as output:

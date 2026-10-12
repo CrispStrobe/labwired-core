@@ -13,6 +13,26 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
 class ReaderControls(unittest.TestCase):
+    def test_recorded_compiler_component_drift_refuses(self):
+        before = self.fixture()[2]
+        after = {label: before['files'][label] for label in module.COMPILER_FILES}
+        module.verify_compiler(after, before)
+        for label in module.COMPILER_FILES:
+            changed = copy.deepcopy(after); changed[label]['sha256'] = 'f'*64
+            with self.subTest(label=label), self.assertRaises(ValueError): module.verify_compiler(changed, before)
+        changed = dict(after); changed['unknown/compiler'] = module.identity(b'unknown')
+        with self.assertRaises(ValueError): module.verify_compiler(changed, before)
+
+    def test_manufactured_compiler_snapshot_binds_three_actual_paths(self):
+        def command(args):
+            return b'/manufactured/libgcc.a' if args[-1] == '-print-libgcc-file-name' else b'/manufactured/include'
+        with patch.object(module.shutil, 'which', return_value='/manufactured/driver'), \
+                patch.object(module.subprocess, 'check_output', command), \
+                patch.object(Path, 'read_bytes', lambda path: str(path).encode()):
+            result = module.compiler_snapshot()
+        self.assertEqual(result['compiler/libgcc.a'], module.identity(b'/manufactured/libgcc.a'))
+        self.assertEqual(result['compiler/include/stdbool.h'], module.identity(b'/manufactured/include/stdbool.h'))
+        self.assertEqual(result['compiler/driver'], module.identity(b'/manufactured/driver'))
     def fixture(self):
         originals = {label: b'manufactured source' for label in module.FILES - module.COMPILER_FILES}
         originals['samd/paired-irq/profile.cpp'] = module.LEAVE.encode() + b'\n'
@@ -129,9 +149,12 @@ class ReaderControls(unittest.TestCase):
             if args[1] == '-C': return originals[args[2].split('/')[-1] + '/' + args[-1].removeprefix('HEAD:')]
             return b'manufactured helper'
         output = mock_open()
+        compiler = {label: before['files'][label] for label in module.COMPILER_FILES}
+        if mode == 'compiler': compiler['compiler/driver'] = module.identity(b'changed compiler')
         if mode == 'existing': output.side_effect = FileExistsError('existing receipt')
         with patch.dict(module.os.environ, env, clear=True), patch.object(Path, 'read_bytes', read), \
                 patch.object(module, 'git', git), patch.object(module.subprocess, 'check_output', raw_git), \
+                patch.object(module, 'compiler_snapshot', return_value=compiler), \
                 patch.object(Path, 'open', output):
             if mode:
                 with self.assertRaises(FileExistsError if mode == 'existing' else ValueError): module.main()
@@ -150,7 +173,7 @@ class ReaderControls(unittest.TestCase):
         self.entrypoint()
 
     def test_entrypoint_bad_identity_or_existing_receipt_writes_nothing(self):
-        for mode in ('repository', 'event', 'run', 'attempt', 'live_pin', 'live_bytes', 'helper', 'head', 'existing'):
+        for mode in ('repository', 'event', 'run', 'attempt', 'live_pin', 'live_bytes', 'helper', 'head', 'existing', 'compiler'):
             with self.subTest(mode=mode): self.entrypoint(mode)
 
 if __name__ == '__main__':
