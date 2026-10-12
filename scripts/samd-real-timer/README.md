@@ -1,4 +1,4 @@
-# Prospective actual Timer guest harness
+# Actual Timer guest qualification harness
 
 This is a separate actual-guest qualification lane for [CODAL PR13](https://github.com/CrispStrobe/codal-samd/pull/13),
 not another run of the already qualified five authored paired-policy cases.
@@ -7,7 +7,9 @@ compiled the harness and passed three manufactured Rust groups and five Python
 reader groups. The [source ARM build](https://github.com/CrispStrobe/codal-samd/actions/runs/38163094316)
 passed at `d55214588780d737640536b0a58707cd6d69cfce`. The dedicated
 `samd-real-timer-guest.yml` workflow now selects that exact source for both
-scheduler profiles. Enabling the workflow is not an actual guest pass.
+scheduler profiles. The [first positive run](https://github.com/CrispStrobe/labwired-core/actions/runs/38169003939)
+passed both profiles, with a separate original-packet/source audit. See its
+[unchanged receipt](../../docs/receipts/2026-10-11-samd-real-timer/README.md).
 
 The ignored test requires `LABWIRED_TIMER_FIXTURE_DIR` and an explicitly reviewed
 `LABWIRED_TIMER_QUALIFIED_SOURCE`. That source parameter verifies identity, not
@@ -33,9 +35,11 @@ groups with seventeen validation refusals and nine entry-point refusals. The
 entry-point controls also check exclusive receipt creation and no writes after
 rejected source/run/merge context; these tests contain no actual guest result.
 
-Still required: both scheduler-profile actual runs, guest adversaries, a source/log/run-bound
-original receipt with manufactured reader controls, and separate packet audit.
-Keep the PR draft until every affected final-head check and actual guest passes.
+The [three actual adapter adversaries](../../docs/receipts/2026-10-12-samd-real-timer-refusals/README.md)
+also passed both profiles with a separate source/object/log audit. The complete
+lane now includes current-main documentation and the stacked negative harness.
+Keep the PR draft until every affected final integration-head check and actual
+guest passes; earlier source-head results are not final integration results.
 Do not move existing consumer pins or overwrite earlier original packets.
 
 Clock, allocation, component registration and event dispatch remain explicitly
