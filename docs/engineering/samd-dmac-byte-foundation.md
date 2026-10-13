@@ -86,6 +86,12 @@ unambiguous unit increment; wider beat/address math remains a separate review.
 
 ### Next bounded lane — live SERCOM4 TX byte requests
 
+The bus acceptance prerequisite is now claimed separately. Its candidate must
+reuse the byte-MMIO write bookkeeping, explicitly deny unsupported/shadowed/
+aliased routes, honor live clocks, and distinguish accepted from not-ready.
+No hardware-triggered DMAC profile or production descriptor is admitted by
+this claim. Qualification and bus-source merge remain pending.
+
 The controller-local endpoint prerequisite landed in
 [PR212](https://github.com/CrispStrobe/labwired-core/pull/212):
 `Peripheral::dma_tx_request` and `try_dma_write_tx_u8` expose readiness and
