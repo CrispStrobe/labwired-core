@@ -27,6 +27,7 @@ const NAMES: &[&str] = &[
     "runtime_main_identity",
     "runtime_worker_identity",
 ];
+#[derive(Debug)]
 struct Calls {
     swap: u32,
     restore: u32,
