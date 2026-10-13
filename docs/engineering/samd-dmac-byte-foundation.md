@@ -95,11 +95,15 @@ honors live clocks, and distinguishes accepted from not-ready. These are host
 bus controls with CPU time advancement, not a CPU-programmed peripheral DMA
 guest. No hardware-triggered profile or production descriptor is admitted yet.
 
-**Claimed next implementation:** an explicitly opt-in SAMD51 SERCOM4 TX byte
+**Implemented, landed-source qualification pending:** an explicitly opt-in SAMD51 SERCOM4 TX byte
 profile, using the landed bus acceptance seam. Preserve the software-only
 profile and its90 guest cases. CPU-authored descriptors must exercise actual
 hardware-request polling, count/writeback progress, clock stalls, reset and IRQ
-return without host-injected requests or completion. Final wire delivery/TXC,
+return without host-injected requests or completion. See the
+[original qualification and concurrent landing drift](../receipts/2026-10-13-samd-sercom4-tx/README.md).
+PR216 landed, but its frozen final tree/parent audit failed after concurrent
+main advancement; fresh qualification is required before claiming completion.
+Final wire delivery/TXC,
 CS release and callback/fiber integration remain separately observed boundaries;
 no native Arcade or performance result follows from this claim.
 
