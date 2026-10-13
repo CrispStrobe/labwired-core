@@ -54,7 +54,7 @@ Arcade. Deliberately slow byte timing is not representative throughput, RTx or
 physical timing. No engine implementation, app pin, drift acknowledgement,
 capture, expiry or performance threshold changed.
 
-## Subsequent real-service clock qualification — pending
+## Subsequent real-service clock qualification — eight cases passed, not landed
 
 The separate real CODAL service candidate has preserved two actual clock
 failures, rather than treating baseline fiber success as runtime completion.
@@ -72,3 +72,38 @@ defers compare rearming until the actual CODAL callback finishes. The expected
 eight guest cases, exact clock counts, masked-pending boundaries and two
 scheduler profiles are unchanged. Build success is not guest qualification,
 whole-image admission, native Arcade, app adoption or a performance result.
+
+The [actual run38458217987](https://github.com/CrispStrobe/labwired-core/actions/runs/38458217987),
+[job115506320374](https://github.com/CrispStrobe/labwired-core/actions/runs/38458217987/job/115506320374),
+attempt1, passed all eight cases. Reviewed engine source
+`5c93195f8e6ebc23834573bedc3124aa60eba7e6`, base
+`5809f42850eda119a6fe87597bfe29458be46112` and actual checkout
+`02d724bf6acacf50f0f8e8216131a133a7199743` bind tree
+`942a6c462d268d7d44cb24104c4c31fe835e954a`. Runtime source is the exact
+`c153f8d` above, with CODAL core `2ed19d64ec3359143409a4b0a9758b4aeef3ee7d`.
+
+Both profiles produced identical outcomes:
+
+| Case | Machine steps | Actual result |
+| --- | ---: | --- |
+| Real heap/Event/fiber baseline |2478447|Four assembly swaps, six IRQ entry/return pairs, distinct real worker/main wake|
+| Closed critical-section switch |61930|Exact refusal before any switch, IRQ or Event success|
+| IRQ disabled after real pending exception |307893|Disabled entry retires without Event; time2428→2445; resume delivers one Event, two IRQ entry/return pairs total|
+| Clock stopped after real pending exception |308124|Disabled entry retires without Event; time2429→2429; resume delivers one Event, two IRQ entry/return pairs total|
+
+The independent pre-observation reader verified all four image bindings, the
+four baseline summaries, four clock summaries and24 chronological raw clock
+boundaries. Its source-binding SHA256 is
+`d7c203f595ac93d83d87f65753cd0824315a81d7d2e97e92d9ccc15b663efff3`;
+positive clock rules remain
+`263fc93d913c5eaccd1d26b272db2fa242fec7fcc5f02c3e4671be2c263a31ce`.
+Original log139895 bytes, SHA256
+`554ec3587663de0ce0860bd63e951e52fe4a89d9fb46f164761217d5f407ef0d`.
+No host pend, artificial clock advance or Event injection was used.
+
+This is a qualified service/clock slice, not full reset/error/board/native
+Arcade or image admission. The same head's default-members CI gate failed
+before compilation on its stale generated ignored-test inventory; that original
+failure is preserved. The inventory is refreshed separately without changing
+the ignore reason, undocumented ceiling, test predicates or clock assertions.
+All enabled final-head checks and own-fork landing remain pending.
