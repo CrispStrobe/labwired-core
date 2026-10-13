@@ -51,57 +51,6 @@ impl AdvanceState {
 }
 
 impl<C: Cpu> Machine<C> {
-    /// What `advance` does after a step that retired nothing (native
-    /// Cortex-A architectural wait). Only the existing configured idle path
-    /// may move time; a parked CPU without a deadline returns NoProgress.
-    /// `None` means time moved and the loop continues.
-    ///
-    /// Out of line and cold on purpose: `advance` runs once per instruction on
-    /// the single-step paths, and carrying this block's locals in its body
-    /// cost every MCU core ~82 Ir/step (ATmega328P step loop, Core Perf)
-    /// although no MCU core ever retires zero.
-    #[cold]
-    #[inline(never)]
-    fn after_zero_retirement(
-        &mut self,
-        request: &AdvanceRequest,
-        state: &mut AdvanceState,
-        start_cycles: u64,
-        start_wall: Duration,
-    ) -> Option<AdvanceReport> {
-        if self.cpu.is_parked_idle() && request.idle_policy() == IdlePolicy::Configured {
-            let fuel_remaining = request
-                .limits()
-                .fuel
-                .map(|limit| limit.saturating_sub(state.fuel_consumed));
-            let cycle_remaining = request
-                .limits()
-                .simulated_cycles
-                .map(|limit| limit.saturating_sub(self.total_cycles - start_cycles));
-            let limit = match (fuel_remaining, cycle_remaining) {
-                (Some(a), Some(b)) => Some(a.min(b)),
-                (Some(a), None) | (None, Some(a)) => Some(a),
-                (None, None) => None,
-            };
-            let before = self.total_cycles;
-            let skipped = self.try_idle_fast_forward(limit, 0);
-            if skipped > 0 && self.total_cycles > before {
-                state.fuel_consumed += skipped;
-                state.idle_cycles += skipped;
-                self.logic_observe(self.total_cycles);
-                self.pace_realtime(start_cycles, start_wall);
-                if self.net_drive_stop_hit {
-                    return Some(state.report(
-                        AdvanceStop::NetDriveChange,
-                        self.total_cycles - start_cycles,
-                    ));
-                }
-                return None;
-            }
-        }
-        Some(state.report(AdvanceStop::NoProgress, self.total_cycles - start_cycles))
-    }
-
     fn pace_realtime(&self, start_cycles: u64, start_wall: Duration) {
         if self.config.host_time_mode != HostTimeMode::Realtime {
             return;
@@ -419,11 +368,39 @@ impl<C: Cpu> Machine<C> {
             };
             if progress.primary_steps == 0 {
                 // A native call can enter architectural wait without retiring
-                // anything; see `after_zero_retirement`.
-                match self.after_zero_retirement(&request, &mut state, start_cycles, start_wall) {
-                    Some(report) => return Ok(report),
-                    None => continue,
+                // anything. Only the existing configured idle path may move
+                // time; a parked CPU without a deadline returns NoProgress.
+                if self.cpu.is_parked_idle() && request.idle_policy() == IdlePolicy::Configured {
+                    let fuel_remaining = request
+                        .limits()
+                        .fuel
+                        .map(|limit| limit.saturating_sub(state.fuel_consumed));
+                    let cycle_remaining = request
+                        .limits()
+                        .simulated_cycles
+                        .map(|limit| limit.saturating_sub(self.total_cycles - start_cycles));
+                    let limit = match (fuel_remaining, cycle_remaining) {
+                        (Some(a), Some(b)) => Some(a.min(b)),
+                        (Some(a), None) | (None, Some(a)) => Some(a),
+                        (None, None) => None,
+                    };
+                    let before = self.total_cycles;
+                    let skipped = self.try_idle_fast_forward(limit, 0);
+                    if skipped > 0 && self.total_cycles > before {
+                        state.fuel_consumed += skipped;
+                        state.idle_cycles += skipped;
+                        self.logic_observe(self.total_cycles);
+                        self.pace_realtime(start_cycles, start_wall);
+                        if self.net_drive_stop_hit {
+                            return Ok(state.report(
+                                AdvanceStop::NetDriveChange,
+                                self.total_cycles - start_cycles,
+                            ));
+                        }
+                        continue;
+                    }
                 }
+                return Ok(state.report(AdvanceStop::NoProgress, self.total_cycles - start_cycles));
             }
 
             self.commit_advance_boundary(mode, batch_start, progress)?;
