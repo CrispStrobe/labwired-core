@@ -3,10 +3,12 @@ name: "feather-f405-example"
 chip: "../../configs/chips/stm32f405.yaml"
 external_devices: []
 board_io:
-  - id: "led2_pa5"
+  # D13 / the red user LED is PC1 on the Feather STM32F405 Express (it was
+  # declared on PA5, which is the Nucleo LD2 pin, not this board's).
+  - id: "led_d13_pc1"
     kind: "led"
-    peripheral: "gpioa"
-    pin: 5
+    peripheral: "gpioc"
+    pin: 1
     signal: "output"
     active_high: true
   - id: "button_user_pc13"

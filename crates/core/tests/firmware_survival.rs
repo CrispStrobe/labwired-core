@@ -1335,6 +1335,21 @@ DONE\r\n",
         expected_uart_output: b"LW_L0_OK",
     },
     SurvivalCase {
+        // NUCLEO-U545RE-Q bare-metal blinky (examples/nucleo-u545re/firmware,
+        // arm-none-eabi-gcc, no HAL): RCC AHB2ENR1/APB2ENR gates, PA9/PA10 AF7,
+        // USART1 VCP banner, PA5 LD2 toggle loop. Machine-run pin proofs live in
+        // `nucleo_u545re.rs`; this case is the PR-run chip behavior gate.
+        name: "stm32u545_blinky",
+        core: "cortex-m33",
+        family: CpuFamily::CortexM,
+        hal: Hal::Bare,
+        chip: "stm32u545",
+        system: "nucleo-u545re",
+        fixture: "nucleo-u545re-blinky.elf",
+        valid_pc_ranges: &[(0x0800_0000, 0x0807_FFFF), (0x2000_0000, 0x2003_FFFF)],
+        expected_uart_output: b"OK\n",
+    },
+    SurvivalCase {
         // SAMD21G18A Nano 33 IoT bare-metal UART smoke: PM APBCMASK + GCLK
         // SERCOM5_CORE, then three DATA writes of "OK\n" on Serial1.
         name: "atsamd21_nano33_smoke",
@@ -2653,6 +2668,11 @@ fn test_stm32wb55_arduino_serial_survival() {
 #[test]
 fn test_stm32wba52_arduino_serial_survival() {
     run_survival_case(case_by_name("stm32wba52_arduino_serial"));
+}
+
+#[test]
+fn test_stm32u545_blinky_survival() {
+    run_survival_case(case_by_name("stm32u545_blinky"));
 }
 
 #[test]

@@ -1,0 +1,21 @@
+# LabWired - STM32H735 (Cortex-M7) demo firmware smoke
+#
+# Build: cargo build -p firmware-stm32h735-dk-demo --release --target thumbv7em-none-eabi
+#
+# The modelled user LED (PA5, active high) blinks and a heartbeat goes out on USART3 (PD8).
+# The heartbeat reports the state READ BACK from the GPIO ODR register, so
+# `uart_ordered` asserts the pad really changed level, in order.
+schema_version: "1.0"
+inputs:
+  firmware: "../../target/thumbv7em-none-eabi/release/firmware-stm32h735-dk-demo"
+  system: "../../configs/systems/stm32h735-smoke.yaml"
+limits:
+  max_steps: 4000000
+assertions:
+  - uart_contains: "STM32H735 ready"
+  - uart_ordered:
+      - "hb=0 led=on"
+      - "hb=1 led=off"
+      - "hb=2 led=on"
+      - "hb=3 led=off"
+  - expected_stop_reason: max_steps

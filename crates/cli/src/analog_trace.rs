@@ -36,20 +36,8 @@ pub fn write_analog_trace(batch: &AnalogTraceBatch, path: &Path) -> io::Result<(
 }
 
 /// `time_ns,<channel>...` with one row per sample.
-pub fn write_analog_csv<W: Write>(batch: &AnalogTraceBatch, mut sink: W) -> io::Result<()> {
-    write!(sink, "time_ns")?;
-    for channel in &batch.channels {
-        write!(sink, ",{}", csv_field(&channel.name))?;
-    }
-    writeln!(sink)?;
-    for sample in &batch.samples {
-        write!(sink, "{}", sample.time_ns)?;
-        for value in &sample.values {
-            write!(sink, ",{value}")?;
-        }
-        writeln!(sink)?;
-    }
-    Ok(())
+pub fn write_analog_csv<W: Write>(batch: &AnalogTraceBatch, sink: W) -> io::Result<()> {
+    batch.write_csv(sink)
 }
 
 /// One `real` variable per channel, timestamped in nanoseconds.
@@ -88,14 +76,6 @@ pub fn write_analog_vcd<W: Write>(batch: &AnalogTraceBatch, sink: W) -> io::Resu
 }
 
 /// Quote a CSV field only when it needs it.
-fn csv_field(name: &str) -> String {
-    if name.contains([',', '"', '\n']) {
-        format!("\"{}\"", name.replace('"', "\"\""))
-    } else {
-        name.to_string()
-    }
-}
-
 /// VCD identifiers cannot carry spaces or the `(` `)` of a probe expression.
 fn vcd_identifier(name: &str) -> String {
     name.chars()

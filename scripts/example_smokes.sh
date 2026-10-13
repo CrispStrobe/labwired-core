@@ -23,20 +23,6 @@ CLI=(cargo run -q -p labwired-cli --)
 OUT_ROOT="${OUT_DIR:-out/example-smokes}"
 mkdir -p "$OUT_ROOT"
 
-# Expected-FAIL / self-managed smokes: the f103-fidelity-bench cases run
-# deliberately-broken firmware and assert the sim FAILS it (a pass would be a
-# false pass). They have their own outcome-aware runner (run-benchmark.sh), so a
-# naive pass/fail runner must not flag them. Matched on "<dir>/<yaml-basename>".
-is_skipped() {
-  case "$1" in
-    f103-fidelity-bench/clockbug-smoke.yaml|\
-    f103-fidelity-bench/clockbug-nogate-smoke.yaml|\
-    f103-fidelity-bench/gpiobug-smoke.yaml|\
-    f103-fidelity-bench/rambug-smoke.yaml) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
 pass=0 fail=0 uncovered=0
 failed_names=()
 
@@ -49,10 +35,6 @@ for yaml in examples/*/*smoke*.yaml examples/*/test*.yaml; do
   [ -f "$yaml" ] || continue
   dir="$(dirname "$yaml")"
   name="$(basename "$dir")"
-  if is_skipped "$name/$(basename "$yaml")"; then
-    printf '%-30s %-10s %s\n' "$name" "SKIP" "$(basename "$yaml") (expected-fail; see run-benchmark.sh)"
-    continue
-  fi
   # firmware path is relative to the yaml's directory
   fw_rel="$(grep -E '^\s*firmware:' "$yaml" | head -1 | sed -E 's/.*firmware:[[:space:]]*"?([^"]*)"?.*/\1/')"
   fw_path="$dir/${fw_rel#./}"

@@ -152,9 +152,9 @@ use std::path::{Path, PathBuf};
 /// RTT and ITM reaches above, plus two `as_any()` checks that confirm a cached
 /// pad-bracket slot is still that peripheral (`begin_*`). Measured by
 /// `the_downcast_count_only_shrinks`.
-const MAX_AS_ANY: usize = 199;
+const MAX_AS_ANY: usize = 198;
 // GPIO schedule migration removes four concrete sensor downcasts.
-const MAX_DOWNCAST_REF: usize = 198;
+const MAX_DOWNCAST_REF: usize = 197;
 
 /// The MUTABLE half of the same reach, counted from the day it started being
 /// counted. Until then the scan matched only `as_any()` and `downcast_ref`,
@@ -191,10 +191,23 @@ const MAX_DOWNCAST_REF: usize = 198;
 /// `downcast_mut` arm each. The wiring pass is a one-time build step, not a
 /// per-cycle reach; moving it and its siblings onto a capability belongs
 /// together, upstream.
-/// Tightened 275 -> 274 and 341 -> 340 after the current source scan removed
-/// one mutable type-erased reach. Keep both ceilings at the measured counts.
-const MAX_AS_ANY_MUT: usize = 274;
-const MAX_DOWNCAST_MUT: usize = 340;
+///
+/// Raised 341 -> 342 (`downcast_mut` only) when nRF PWM joined the same loop:
+/// a playing `PSEL.OUT[n]` channel owns its pad (duty reaches the circuit),
+/// one more `downcast_mut` arm beside GPIOTE's, same one-time wiring step.
+///
+/// Lowered 275 -> 274: the wasm held-ADC setters (`set_adc_channel` /
+/// `clear_adc_channel`) ask the generic `set_adc_channel_input` hooks first
+/// and share one STM32 `Adc` fallback, instead of two inline downcasts.
+/// `MAX_DOWNCAST_MUT` 342 -> 341 for the same change.
+// 274 → 273 / 341 → 340: the servo kit binds LEDC duty through
+// `Peripheral::add_ledc_duty_observer` instead of downcasting to the classic
+// ESP32 `Ledc`, so the ESP32-C3 LEDC drives a servo too.
+// 273 → 269 / 340 → 336: the C3 IO_MUX and RP2040 IO_BANK0 pad brackets
+// reach the GPIO port through `Peripheral::pins_mut` (the pin interface,
+// `crate::pins`) instead of downcasting to `Esp32c3Gpio` / `Rp2040Sio`.
+const MAX_AS_ANY_MUT: usize = 269;
+const MAX_DOWNCAST_MUT: usize = 336;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

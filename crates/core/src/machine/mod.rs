@@ -10,7 +10,7 @@ mod advance;
 mod boundary;
 mod plan;
 pub mod quantum_trace;
-mod world_hooks;
+pub mod world_hooks;
 #[cfg(test)]
 pub(crate) use boundary::{CoreProgress, ExecutionMode};
 pub(crate) use plan::CpuWindow;
@@ -181,6 +181,11 @@ pub enum AdvanceStop {
     /// output. `0` is a pass. Only present on a bus that declares a `simctl`
     /// peripheral; see [`crate::peripherals::simctl`].
     FirmwareExit { code: u32 },
+    /// A world's `gpio_net` pad of this machine changed drive while the
+    /// world was running it until that happens
+    /// ([`Machine::advance_to_cycle_or_net_drive_change`](crate::Machine::advance_to_cycle_or_net_drive_change)).
+    /// Never returned otherwise.
+    NetDriveChange,
 }
 
 /// Structured progress and stop accounting for one advance operation.

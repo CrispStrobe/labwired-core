@@ -58,7 +58,7 @@ static bool lw_can_probe() {
 }
 #define LW_HAS_CAN 1
 
-#elif defined(ARDUINO_NUCLEO_U575ZI_Q) || defined(STM32U575xx) || defined(STM32U575ZITx)
+#elif defined(ARDUINO_NUCLEO_U575ZI_Q) || defined(STM32U575xx) || defined(STM32U575ZITx) || defined(STM32U545xx)
 // U5 FDCAN1 — same Bosch M_CAN enter_loopback sequence as the H5. RCC base is
 // 0x46020C00 and FDCAN1EN lives in APB1ENR2 @ +0xA0 bit 9 (RM0456), NOT
 // APB1ENR1. Internal loopback (TEST.LBCK): no pads wired — FDCAN1 would be

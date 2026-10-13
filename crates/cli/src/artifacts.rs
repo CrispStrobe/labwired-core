@@ -176,6 +176,26 @@ pub(crate) struct TestResult {
     /// prove-blink `gpio_edges`/`gpio_period`/`gpio_duty` clauses.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) logic_edges: Option<labwired_core::logic_capture::LogicEdgesResult>,
+    /// End-of-run state of every `--watch-gpio` pad (same set as
+    /// `logic_edges`) read through the chip-agnostic GPIO accessors: mode,
+    /// alternate function, output/input/pad level and four-state drive. `null`
+    /// where the pad's model cannot say. Omitted when no pad was watched.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) gpio_pins: Option<Vec<labwired_core::logic_capture::GpioPinState>>,
+    /// Final + peak motor evidence (omitted when the manifest declared no
+    /// motors, keeping result.json byte-identical for every other run). The
+    /// oracle evaluates the peak `|speed_rpm|` post-hoc: a continuous
+    /// trajectory from 0 passes through every value up to its peak, so a
+    /// final-state-only verdict cannot disagree with the CLI's latched in-run
+    /// `MotorSpeedReached` assertion when the run stopped early. Precondition:
+    /// that equivalence holds for a min-only clause with an unbounded maximum;
+    /// a finite upper bound is a band the peak cannot reproduce.
+    ///
+    /// `skip_deserializing`: `MotorSnapshot::kind` is a `&'static str` engine
+    /// tag that serde cannot materialize from input, and nothing deserializes
+    /// `TestResult` — `result.json` is a write-only artifact.
+    #[serde(default, skip_deserializing, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) motors: Vec<labwired_core::bus::MotorSnapshot>,
     /// What became of every declarative input stimulus the script declared —
     /// applied, rejected by the engine, or never reached. Absent (and omitted)
     /// when the script declared none, so runs that never used the feature keep
@@ -261,6 +281,23 @@ pub(crate) struct ExecutionMetrics {
     /// Top PC histogram samples (descending by count). Empty when no samples.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pc_samples: Vec<PcSample>,
+    /// The peripheral register a run that hit its step budget was still
+    /// polling at the end. Omitted unless the run ended in such a poll.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stalled_poll: Option<StalledPoll>,
+}
+
+/// A step-budget run that ended inside a wait loop on one peripheral register:
+/// the firmware read it back to back (free-running timer reads aside) right up
+/// to the end of the run, i.e. it waited on a status bit that never changed.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub(crate) struct StalledPoll {
+    /// Bus name of the peripheral, e.g. `i2c1`.
+    pub peripheral: String,
+    /// Register offset within the peripheral.
+    pub offset: u64,
+    /// Consecutive accesses to that register.
+    pub accesses: u64,
 }
 
 /// One hot PC from statistical sampling during the test loop.
@@ -428,6 +465,10 @@ pub(crate) struct EnvironmentTestResult {
     /// and unified timeline (ps), when the world has one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) uart_network: Option<serde_json::Value>,
+    /// Every `gpio_net` of the world: level, edge count, members and the
+    /// diagnostics (`GPIO_NET_CONTENTION`, `GPIO_NET_FLOATING`), times in ps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) gpio_nets: Option<serde_json::Value>,
 }
 
 /// One final machine state in an environment snapshot.

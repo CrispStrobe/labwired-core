@@ -6,9 +6,8 @@
 
 name: "stm32f103c8-nogate"
 # DERIVED DEMO FILE — generated from configs/chips/stm32f103.yaml with every
-# `clock:` gate stripped out. It exists only to show what LabWired does WITHOUT
-# clock-gating fidelity: the clockbug firmware false-passes here, exactly like a
-# low-fidelity emulator. Do not use for real testing.
+# `clock:` gate stripped out. The images in this directory enable the clocks
+# they use, so they print their markers on this chip too.
 arch: "arm"
 core: "cortex-m3"
 registers_count: 125

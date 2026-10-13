@@ -17,8 +17,9 @@
 //!   [`Peripheral::install_logic_tap`](crate::Peripheral::install_logic_tap)).
 //!   Pad state only changes when code writes it, so the write sites themselves
 //!   report the new level into a shared [`LogicTap`]: GPIO out-latch /
-//!   direction / matrix updates, externally driven input-pad updates
-//!   (`set_gpio_input` / sim-input), and bit-engine line drivers (the ESP32-C3
+//!   direction / matrix updates and externally driven input-pad updates
+//!   (`PinPort::set_external`, through the generic [`crate::pins::PadWatch`]
+//!   every pin port brackets its mutations with), and bit-engine line drivers (the ESP32-C3
 //!   I²C `I2cLineLevels` cell). The run loop keeps its full instruction batch
 //!   width and idle fast-forward stays available — probing costs (almost)
 //!   nothing.
@@ -64,7 +65,7 @@
 //! transition is actually recorded).
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Maximum number of edges retained in the ring buffer. On overflow the oldest
@@ -106,12 +107,24 @@ pub enum PadDrive {
     /// Two drivers disagree: the MCU drives one level while an external
     /// device holds the other.
     Contention,
+    /// Nothing drives it but the chip's own internal pull-up: a weak 1 that
+    /// any driver overrides. Reported only for a chip's own output stage
+    /// ([`crate::pins::own_drive`], a [`LogicSource::Driver`] channel such as
+    /// a world `gpio_net` member), where the pull takes part in the wire's
+    /// resolution; a probe on the pad ([`crate::pins::probe_drive`]) keeps
+    /// reporting [`HighZ`](Self::HighZ) for an undriven input, pulled or not.
+    PullUp,
+    /// As [`PullUp`](Self::PullUp), for an internal pull-down: a weak 0.
+    PullDown,
 }
 
-/// The four-state pad value a pin trace records: `0`, `1`, `z`, `x`.
+/// The four-state pad value a pin trace records: `0`, `1`, `z`, `x`, plus
+/// the two weak levels `h` and `l` (IEEE 1164 `H`/`L`).
 ///
 /// Serialized as the one-character string sigrok/VCD use, so a trace reads
-/// the same in `result.json`, the browser and PulseView.
+/// the same in `result.json`, the browser and PulseView. `h` and `l` appear
+/// only on [`LogicSource::Driver`] channels (a world `gpio_net` member, see
+/// [`PadDrive::PullUp`]), where a chip's internal pull is part of the wire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PadState {
     #[serde(rename = "0")]
@@ -122,6 +135,12 @@ pub enum PadState {
     HighZ,
     #[serde(rename = "x")]
     Contention,
+    /// Pulled up by the chip's own internal resistor, nothing driving.
+    #[serde(rename = "h")]
+    WeakHigh,
+    /// Pulled down by the chip's own internal resistor, nothing driving.
+    #[serde(rename = "l")]
+    WeakLow,
 }
 
 impl PadState {
@@ -131,17 +150,21 @@ impl PadState {
         match drive {
             PadDrive::HighZ => Some(Self::HighZ),
             PadDrive::Contention => Some(Self::Contention),
+            PadDrive::PullUp => Some(Self::WeakHigh),
+            PadDrive::PullDown => Some(Self::WeakLow),
             PadDrive::Driven => level.map(|high| if high { Self::High } else { Self::Low }),
         }
     }
 
-    /// `'0'`, `'1'`, `'z'` or `'x'`.
+    /// `'0'`, `'1'`, `'z'`, `'x'`, `'h'` or `'l'`.
     pub fn as_char(self) -> char {
         match self {
             Self::Low => '0',
             Self::High => '1',
             Self::HighZ => 'z',
             Self::Contention => 'x',
+            Self::WeakHigh => 'h',
+            Self::WeakLow => 'l',
         }
     }
 }
@@ -194,6 +217,18 @@ pub enum LogicSource {
         /// Pin within that peripheral's port.
         pin: u8,
     },
+    /// A chip's own output stage on a pad, through
+    /// [`PinPort::driver`](crate::pins::PinPort::driver): the pad's level,
+    /// with the drive of [`crate::pins::own_drive`] — what the chip itself
+    /// does, never what the outside world presents. A world `gpio_net`
+    /// watches its members this way, so the level the net feeds back into
+    /// a pad is never mistaken for that chip driving it.
+    Driver {
+        /// Bus index of the peripheral that owns the pad.
+        peripheral: usize,
+        /// Pin within that peripheral's port.
+        pin: u8,
+    },
     /// A peripheral's own wire line: bus index of the peripheral plus an index
     /// into its [`Peripheral::line_names`](crate::Peripheral::line_names).
     Wire {
@@ -210,6 +245,11 @@ impl LogicSource {
         Self::Pad { peripheral, pin }
     }
 
+    /// A chip's own output stage on a pad.
+    pub fn driver(peripheral: usize, pin: u8) -> Self {
+        Self::Driver { peripheral, pin }
+    }
+
     /// A wire channel, by line INDEX. Prefer resolving a name through
     /// [`Machine::resolve_wire_source`](crate::Machine::resolve_wire_source):
     /// an index chosen by hand cannot be checked, and a wrong one draws a
@@ -221,7 +261,9 @@ impl LogicSource {
     /// Bus index of the peripheral this channel reads, whichever kind it is.
     pub fn peripheral(&self) -> usize {
         match *self {
-            Self::Pad { peripheral, .. } | Self::Wire { peripheral, .. } => peripheral,
+            Self::Pad { peripheral, .. }
+            | Self::Driver { peripheral, .. }
+            | Self::Wire { peripheral, .. } => peripheral,
         }
     }
 }
@@ -367,6 +409,13 @@ struct TapShared {
     /// the mutex exists because `Peripheral: Send` forces shared handles to be
     /// `Send + Sync`, mirroring `bus_trace::BusTrace`.
     queue: Mutex<Vec<PadEvent>>,
+    /// Channels `stop_lo..stop_hi` end a CPU batch when pushed (a world's
+    /// `gpio_net` pads, see [`LogicTap::set_batch_stop_channels`]). Empty by
+    /// default.
+    stop_lo: AtomicU32,
+    stop_hi: AtomicU32,
+    /// A push on a stop channel is queued and not yet drained.
+    stop_hit: AtomicBool,
 }
 
 /// Shared push-capture tap: the handle instrumented peripherals report pad
@@ -459,6 +508,35 @@ impl LogicTap {
             drive: None,
         });
         self.shared.pending.fetch_add(1, Ordering::Relaxed);
+        self.note_stop(ch);
+    }
+
+    /// Number of pad events currently queued. A core whose instructions cost
+    /// a variable number of cycles reads this before a step, then calls
+    /// [`restamp_pending_from`](Self::restamp_pending_from) once the step's
+    /// real cost is known.
+    #[inline]
+    pub fn pending_len(&self) -> usize {
+        self.shared.pending.load(Ordering::Relaxed)
+    }
+
+    /// Move events queued at or after index `from` whose stamp is still the
+    /// provisional `from_cycle` to `cycle`.
+    ///
+    /// Pushes made while an instruction executes (or while paused, ahead of
+    /// the next one) carry the provisional clock, one cycle on. A multi-cycle
+    /// instruction (AVR `sts`, `sbi`, `rjmp`, ...) only knows its cost once it
+    /// has retired, and the poll reference observes the pad at the boundary
+    /// AFTER the whole instruction, so those events are moved there. Events
+    /// already carrying another stamp (earlier instructions, `push_at`) are
+    /// left alone.
+    pub fn restamp_pending_from(&self, from: usize, from_cycle: u64, cycle: u64) {
+        let mut queue = self.shared.queue.lock().unwrap();
+        for event in queue.iter_mut().skip(from) {
+            if event.cycle == from_cycle {
+                event.cycle = cycle;
+            }
+        }
     }
 
     /// Record a pad level AND its drive, stamped with the provisional clock.
@@ -474,6 +552,51 @@ impl LogicTap {
             drive: Some(drive),
         });
         self.shared.pending.fetch_add(1, Ordering::Relaxed);
+        self.note_stop(ch);
+    }
+
+    /// Record a pad level with an optional drive, stamped with `cycle` when
+    /// given and with the provisional clock otherwise. The general form of
+    /// [`push`](Self::push), [`push_at`](Self::push_at) and
+    /// [`push_with_drive`](Self::push_with_drive), for a wire whose lines know
+    /// their own drive (an open-drain line released, a peripheral input).
+    pub fn push_event(&self, ch: u32, value: bool, drive: Option<PadDrive>, cycle: Option<u64>) {
+        let cycle = cycle.unwrap_or_else(|| self.shared.clock.load(Ordering::Relaxed));
+        self.shared.queue.lock().unwrap().push(PadEvent {
+            ch,
+            value,
+            cycle,
+            drive,
+        });
+        self.shared.pending.fetch_add(1, Ordering::Relaxed);
+        self.note_stop(ch);
+    }
+
+    /// Flag a push on a batch-stop channel.
+    #[inline]
+    fn note_stop(&self, ch: u32) {
+        if ch >= self.shared.stop_lo.load(Ordering::Relaxed)
+            && ch < self.shared.stop_hi.load(Ordering::Relaxed)
+        {
+            self.shared.stop_hit.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Make a push on channels `lo..hi` end the CPU batch it happens in, at
+    /// the instruction that made it (`lo == hi` turns it off). A world sets
+    /// its `gpio_net` pads here: the per-node scheduler runs a node until its
+    /// next own drive change, and a change found only at the end of a wide
+    /// batch could already be due back at the node.
+    pub fn set_batch_stop_channels(&self, lo: u32, hi: u32) {
+        self.shared.stop_lo.store(lo, Ordering::Relaxed);
+        self.shared.stop_hi.store(hi, Ordering::Relaxed);
+    }
+
+    /// A push on a batch-stop channel is queued and not yet drained: a CPU
+    /// batch loop ends after the instruction it is in.
+    #[inline]
+    pub fn batch_stop_hit(&self) -> bool {
+        self.shared.stop_hit.load(Ordering::Relaxed)
     }
 
     pub(crate) fn set_armed(&self, armed: bool) {
@@ -488,11 +611,13 @@ impl LogicTap {
             return Vec::new();
         }
         self.shared.pending.store(0, Ordering::Relaxed);
+        self.shared.stop_hit.store(false, Ordering::Relaxed);
         std::mem::take(&mut *self.shared.queue.lock().unwrap())
     }
 
     pub(crate) fn clear_events(&self) {
         self.shared.pending.store(0, Ordering::Relaxed);
+        self.shared.stop_hit.store(false, Ordering::Relaxed);
         self.shared.queue.lock().unwrap().clear();
     }
 }
@@ -562,6 +687,14 @@ pub struct ChannelEdgeSeries {
     /// cannot report drive.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub states: Option<Vec<StateTransition>>,
+    /// Pad routing at the end of the run (`input`/`output`/`af`/`analog`/
+    /// `unknown`), from the same [`GpioPinState`] the `gpio_pins` block carries.
+    /// Absent until [`attach_logic_routing`] runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    /// Alternate-function signal name when the model can name it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub func: Option<String>,
 }
 
 /// One four-state transition in the serialized series.
@@ -595,6 +728,96 @@ pub fn attach_logic_states(
                 })
                 .collect(),
         );
+    }
+}
+
+/// End-of-run state of one watched pad, read through the chip-agnostic GPIO
+/// accessors on [`Peripheral`](crate::Peripheral) so an agent never has to know
+/// a family's raw registers (STM32 `ODR`/`IDR`, ESP32 `IN`/`out`, AVR `PORT`).
+/// Serialized as one entry of `result.json`'s `gpio_pins`.
+///
+/// Every accessor a model cannot answer is `null`, never a guess.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GpioPinState {
+    /// The pad's logic-analyzer channel id, as in `logic_edges` ("CH0"…).
+    pub pin: String,
+    /// Watched peripheral name (`gpioa`, `gpio`, …).
+    pub peripheral: String,
+    /// Pin number within that peripheral.
+    pub number: u8,
+    /// `input` | `output` | `af` | `analog` | `unknown`.
+    pub mode: String,
+    /// Alternate-function signal name, or `null`.
+    pub func: Option<String>,
+    /// Output latch level.
+    pub output: Option<bool>,
+    /// Firmware-visible input level.
+    pub input: Option<bool>,
+    /// Level a probe on the pad would see.
+    pub pad: Option<bool>,
+    /// Four-state pad value: `0`, `1`, `z`, `x` (`h`/`l` on a `gpio_net` pad
+    /// held only by an internal pull).
+    pub drive: Option<String>,
+}
+
+/// Read the end-of-run [`GpioPinState`] of every channel in the watch set.
+/// Channels are resolved by the same peripheral name the watch itself used
+/// (`find_peripheral_index_by_name`); one that does not resolve reports
+/// `unknown` with every reading `null`, matching the flat `logic_edges` lane.
+pub fn collect_gpio_pins(
+    bus: &crate::bus::SystemBus,
+    meta: &[LogicChannelMeta],
+) -> Vec<GpioPinState> {
+    use crate::peripherals::gpio::GpioMode;
+
+    meta.iter()
+        .map(|m| {
+            let dev = bus
+                .find_peripheral_index_by_name(&m.peripheral)
+                .and_then(|idx| bus.peripherals.get(idx))
+                .map(|p| &p.dev);
+            let routing = dev.and_then(|d| d.gpio_routing(m.pin));
+            let mode = match routing.as_ref().map(|r| r.mode) {
+                Some(GpioMode::Input) => "input",
+                Some(GpioMode::Output) => "output",
+                Some(GpioMode::Af) => "af",
+                Some(GpioMode::Analog) => "analog",
+                Some(GpioMode::Unknown) | None => {
+                    match dev.and_then(|d| d.read_gpio_is_output(m.pin)) {
+                        Some(true) => "output",
+                        Some(false) => "input",
+                        None => "unknown",
+                    }
+                }
+            };
+            let pad = dev.and_then(|d| d.read_gpio_pad(m.pin));
+            let drive = dev
+                .and_then(|d| d.read_gpio_pad_drive(m.pin))
+                .and_then(|drive| PadState::from_parts(pad, drive))
+                .map(|state| state.as_char().to_string());
+            GpioPinState {
+                pin: format!("CH{}", m.ch),
+                peripheral: m.peripheral.clone(),
+                number: m.pin,
+                mode: mode.to_string(),
+                func: routing.and_then(|r| r.func),
+                output: dev.and_then(|d| d.read_gpio_output(m.pin)),
+                input: dev.and_then(|d| d.read_gpio_input(m.pin)),
+                pad,
+                drive,
+            }
+        })
+        .collect()
+}
+
+/// Copy each pin's `mode`/`func` onto the matching `logic_edges` channel
+/// (additive fields; every existing field is untouched).
+pub fn attach_logic_routing(result: &mut LogicEdgesResult, pins: &[GpioPinState]) {
+    for lane in result.channels.iter_mut() {
+        if let Some(p) = pins.get(lane.ch as usize) {
+            lane.mode = Some(p.mode.clone());
+            lane.func = p.func.clone();
+        }
     }
 }
 
@@ -646,6 +869,8 @@ pub fn build_logic_edges_result(
             gaps: Vec::new(),
             initial_state: None,
             states: None,
+            mode: None,
+            func: None,
         })
         .collect();
     for edge in &batch.edges {
@@ -677,6 +902,17 @@ pub struct LogicCapture {
     states: VecDeque<LogicStateEdge>,
     state_next_seq: u64,
     state_dropped: u64,
+    /// `poll_active()` / `push_active()` answers, fixed at `install` time.
+    /// The run loop asks both at every instruction boundary, so they must not
+    /// walk the channel list each time.
+    any_poll: bool,
+    any_push: bool,
+    /// Per-channel totals since `install`, never decremented by `read_edges`.
+    /// The ring is a bounded window, so a caller asking "has this pad toggled
+    /// N times yet?" (the `gpio_edges` assertion's early-stop) cannot count
+    /// retained edges — they may have overflowed away. These are the honest
+    /// totals, bumped in `push_edge` beside `next_seq`.
+    counts: Vec<u64>,
 }
 
 impl LogicCapture {
@@ -697,15 +933,13 @@ impl LogicCapture {
     /// neither cost.
     #[inline]
     pub fn poll_active(&self) -> bool {
-        self.channels
-            .iter()
-            .any(|c| c.resolved.is_some() && !c.push)
+        self.any_poll
     }
 
     /// `true` while at least one channel is push-mode (event-driven).
     #[inline]
     pub fn push_active(&self) -> bool {
-        self.channels.iter().any(|c| c.push)
+        self.any_push
     }
 
     /// Install a fresh watch set from pre-resolved channels, their initial
@@ -732,12 +966,26 @@ impl LogicCapture {
                 state: None,
             })
             .collect();
+        self.any_poll = self
+            .channels
+            .iter()
+            .any(|c| c.resolved.is_some() && !c.push);
+        self.any_push = self.channels.iter().any(|c| c.push);
         self.ring.clear();
         self.next_seq = 0;
         self.dropped = 0;
         self.states.clear();
         self.state_next_seq = 0;
         self.state_dropped = 0;
+        self.counts = vec![0; self.channels.len()];
+    }
+
+    /// Total transitions observed per channel since the watch set was installed
+    /// (indexed by the same `ch` as [`LogicEdge`]). Unlike the retained ring
+    /// window, these are cumulative and survive reads.
+    #[inline]
+    pub fn channel_edge_counts(&self) -> &[u64] {
+        &self.counts
     }
 
     /// Seed each channel's drive at arm time (after [`Self::install`]) and
@@ -771,17 +1019,34 @@ impl LogicCapture {
             cycle,
             state,
         };
-        if let Some(last) = self.states.back_mut() {
-            if last.ch == edge.ch && last.cycle == cycle {
-                *last = edge;
-                return;
-            }
+        // A second change of this channel in a cycle already recorded (a
+        // pause-time input push and the next instruction's write land on one
+        // boundary, possibly with other channels in between) replaces the
+        // first: a boundary sampler sees only the settled state.
+        if let Some(same) = self
+            .states
+            .iter_mut()
+            .rev()
+            .take_while(|e| e.cycle == cycle)
+            .find(|e| e.ch == edge.ch)
+        {
+            *same = edge;
+            return;
         }
         if self.states.len() == LOGIC_RING_CAPACITY {
             self.states.pop_front();
             self.state_dropped += 1;
         }
-        self.states.push_back(edge);
+        // Same-cycle changes in ascending channel order, as a boundary sampler
+        // emits them, even when they arrive in separate drains.
+        let at = self.states.len()
+            - self
+                .states
+                .iter()
+                .rev()
+                .take_while(|e| e.cycle == cycle && e.ch > edge.ch)
+                .count();
+        self.states.insert(at, edge);
         self.state_next_seq += 1;
     }
 
@@ -807,6 +1072,13 @@ impl LogicCapture {
             }
             self.refresh_state(i, now);
         }
+    }
+
+    /// Four-state transitions recorded since the watch set was installed:
+    /// the cursor a [`Self::read_states`] call made now would return.
+    #[inline]
+    pub fn state_seq(&self) -> u64 {
+        self.state_next_seq
     }
 
     /// Read four-state transitions newer than `cursor` — the same contract as
@@ -923,7 +1195,17 @@ impl LogicCapture {
             self.ring.pop_front();
             self.dropped += 1;
         }
-        self.ring.push_back(edge);
+        if let Some(count) = self.counts.get_mut(edge.ch as usize) {
+            *count += 1;
+        }
+        let at = self.ring.len()
+            - self
+                .ring
+                .iter()
+                .rev()
+                .take_while(|e| e.cycle == edge.cycle && e.ch > edge.ch)
+                .count();
+        self.ring.insert(at, edge);
         self.next_seq += 1;
     }
 

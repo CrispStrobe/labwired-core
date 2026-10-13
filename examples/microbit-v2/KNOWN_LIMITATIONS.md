@@ -105,9 +105,10 @@ survival gate `firmware_survival::test_nrf52833_microbit_v2_smoke_survival`.
 - **Motion sensors** — the selected LSM303AGR variant exposes separate
   `accelerometer` (`0x19`) and `magnetometer` (`0x1e`) I²C components.
   Live `x`/`y`/`z` inputs are held acceleration in g / magnetic field in µT,
-  sampled at configured ODR; all inputs default to zero, with no invented
-  gravity, motion or automatic ready flag. This is not the alternative
-  FXOS8700-equipped board. Shared open-drain P0.25 sensor IRQ, FIFO, gestures,
+  reported live; all inputs default to zero, with no invented gravity or
+  motion. Data-ready paces at a fixed 100 Hz while each half is measuring;
+  the configured ODR value and BDU latching are not modelled. This is not the alternative FXOS8700-equipped board. Shared
+  open-drain P0.25 sensor IRQ, FIFO, gestures,
   self-test, temperature and physical calibration are unsupported. Full CODAL /
   MakeCode sensor firmware and motion/audio browser-WASM qualification remain
   pending; this does not mark CP13 complete.

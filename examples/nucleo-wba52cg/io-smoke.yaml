@@ -1,0 +1,21 @@
+# LabWired - NUCLEO-WBA52CG demo firmware smoke
+#
+# Build: cargo build -p firmware-nucleo-wba52cg-demo --release --target thumbv8m.main-none-eabi
+#
+# LD1 PB4, LD2 PA9, LD3 PB8 (ACTIVE LOW) run as a light and a heartbeat goes out on USART1 (PB12).
+# The heartbeat reports the state READ BACK from the GPIO ODR register, so
+# `uart_ordered` asserts the pad really changed level, in order.
+schema_version: "1.0"
+inputs:
+  firmware: "../../target/thumbv8m.main-none-eabi/release/firmware-nucleo-wba52cg-demo"
+  system: "../../configs/systems/nucleo_wba52cg.yaml"
+limits:
+  max_steps: 4000000
+assertions:
+  - uart_contains: "NUCLEO-WBA52CG ready"
+  - uart_ordered:
+      - "hb=0 ld1=on"
+      - "hb=1 ld1=off"
+      - "hb=2 ld2=on"
+      - "hb=3 ld2=off"
+  - expected_stop_reason: max_steps

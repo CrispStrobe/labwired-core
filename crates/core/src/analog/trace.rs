@@ -86,6 +86,36 @@ pub struct AnalogTraceBatch {
     pub dropped: u64,
 }
 
+impl AnalogTraceBatch {
+    /// `time_ns,<channel>...`, one row per sample: the file `labwired test
+    /// --analog-trace x.csv` writes, and what the multimeter readings are
+    /// computed from. Times are the engine's own nanoseconds.
+    pub fn write_csv<W: std::io::Write>(&self, mut sink: W) -> std::io::Result<()> {
+        write!(sink, "time_ns")?;
+        for channel in &self.channels {
+            write!(sink, ",{}", csv_field(&channel.name))?;
+        }
+        writeln!(sink)?;
+        for sample in &self.samples {
+            write!(sink, "{}", sample.time_ns)?;
+            for value in &sample.values {
+                write!(sink, ",{value}")?;
+            }
+            writeln!(sink)?;
+        }
+        Ok(())
+    }
+}
+
+/// A channel name as a CSV field: quoted only when it has to be.
+fn csv_field(name: &str) -> String {
+    if name.contains([',', '"', '\n']) {
+        format!("\"{}\"", name.replace('"', "\"\""))
+    } else {
+        name.to_string()
+    }
+}
+
 /// The ring itself.
 #[derive(Debug)]
 pub struct AnalogTrace {

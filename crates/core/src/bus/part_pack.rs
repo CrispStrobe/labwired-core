@@ -128,10 +128,16 @@ fn validate_runtime_descriptor(pack: &DeviceDescriptor) -> Result<()> {
         }
         "display" => crate::peripherals::components::declarative_display::validate_descriptor(pack),
         "gpio_device" => super::declarative_device::validate_descriptor(pack),
+        "uart_device" => {
+            crate::peripherals::components::declarative_uart::validate_descriptor(pack)
+        }
+        "uart_transceiver" => {
+            crate::peripherals::components::declarative_transceiver::validate_descriptor(pack)
+        }
         primitive => anyhow::bail!(
             "part pack '{}' names unsupported primitive '{}'. Supported primitives are \
              i2c_device, spi_device, analog_source, display, \
-             gpio_device",
+             gpio_device, uart_device, uart_transceiver",
             pack.r#type,
             primitive
         ),
@@ -157,6 +163,13 @@ pub(crate) fn kit_for(pack: &DeviceDescriptor) -> Result<Option<Box<dyn Peripher
         // by its FRAMING (a D/C pad means SPI, a control byte means I²C), not by
         // the primitive name — so the one kit covers both.
         "display" => Transport::Display,
+        // A byte-stream peer is not a bus resident either, but it already has
+        // a kit that attaches it to the hosting UART, so a pack and a shipped
+        // descriptor take the same route.
+        "uart_device" => Transport::Uart,
+        // A transceiver gates the hosting UART from two pads; it attaches to
+        // the UART the same way a stream peer does.
+        "uart_transceiver" => Transport::Transceiver,
         _ => return Ok(None),
     };
 
@@ -176,6 +189,20 @@ pub(crate) fn kit_for(pack: &DeviceDescriptor) -> Result<Option<Box<dyn Peripher
                     format!("part pack '{}' is not a valid analog_source", pack.r#type)
                 })?)
             }
+            Transport::Uart => Box::new(
+                crate::peripherals::components::declarative_uart::DeclarativeUartKit::from_yaml(
+                    &key,
+                )
+                .with_context(|| {
+                    format!("part pack '{}' is not a valid uart_device", pack.r#type)
+                })?,
+            ),
+            Transport::Transceiver => Box::new(
+                crate::peripherals::components::declarative_transceiver::DeclarativeTransceiverKit::from_yaml(&key)
+                    .with_context(|| {
+                        format!("part pack '{}' is not a valid uart_transceiver", pack.r#type)
+                    })?,
+            ),
             Transport::Display => Box::new(
                 crate::peripherals::components::DeclarativeDisplayKit::from_yaml(&key)
                     .with_context(|| {
@@ -191,6 +218,8 @@ enum Transport {
     Spi,
     Analog,
     Display,
+    Uart,
+    Transceiver,
 }
 
 /// Build the I²C model for `ext` from a manifest-carried pack, if one claims

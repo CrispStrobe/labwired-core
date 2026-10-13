@@ -1,0 +1,33 @@
+# LabWired - STM32G0B1RE peripheral examples.
+#
+# Rebuild the committed ELF with:
+#   cargo build -p firmware-stm32g0b1-demo --release --target thumbv6m-none-eabi
+#   cp target/thumbv6m-none-eabi/release/firmware-stm32g0b1-demo \
+#      tests/fixtures/stm32g0b1re-smoke.elf
+schema_version: "1.0"
+inputs:
+  firmware: "../../tests/fixtures/stm32g0b1re-smoke.elf"
+  system: "./system.yaml"
+limits:
+  max_steps: 500000
+assertions:
+  - uart_contains: "OK"
+  - uart_contains: "usart1 pa9 af1"
+  - uart_contains: "tim2 psc=15"
+  - uart_contains: "exti0 port=B falling imr=1"
+  - memory_value:
+      address: 0x40000028
+      expected_value: 15
+  - memory_value:
+      address: 0x40021860
+      expected_value: 1
+      mask: 7
+  - memory_value:
+      address: 0x40021804
+      expected_value: 1
+      mask: 1
+  - memory_value:
+      address: 0x40021880
+      expected_value: 1
+      mask: 1
+  - expected_stop_reason: max_steps

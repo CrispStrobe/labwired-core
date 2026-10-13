@@ -41,9 +41,12 @@ pub enum GpioInputError {
 }
 
 /// Everything a session needs from a machine, without the `C: Cpu` generic.
-pub trait SessionMachine: DebugControl + Send {
+pub trait SessionMachine: DebugControl + crate::debug::SourceStepTarget + Send {
     /// Advance the machine through its authoritative execution path.
     fn advance(&mut self, request: AdvanceRequest) -> SimResult<AdvanceReport>;
+    /// Let the run loop skip cycles the firmware spends idle (`wfi`, `waiti`,
+    /// an idle-loop budget), as the browser does. Off by default.
+    fn set_idle_fast_forward(&mut self, enabled: bool);
     /// Simulated machine cycles since construction.
     fn cycles(&self) -> u64;
     /// Drive one simulated input channel.
@@ -93,11 +96,29 @@ pub trait SessionMachine: DebugControl + Send {
     fn inject_can(&mut self, controller: &str, frame: CanFrame) -> Result<(), CanInjectError>;
     /// Attach a per-instruction observer (coverage, tracing).
     fn add_observer(&mut self, observer: std::sync::Arc<dyn crate::SimulationObserver>);
+    /// Bind the manifest's `cosim_models` to this machine's bus. `None` when
+    /// there are none, which is what keeps a session without models on the
+    /// plain [`Self::advance`] path.
+    fn bind_cosim(
+        &self,
+        configs: &[labwired_config::CosimModelConfig],
+        base_dir: &std::path::Path,
+    ) -> SimResult<Option<crate::cosim::CosimSession>>;
+    /// [`Self::advance`] in lockstep with `cosim`: the machine stops on each
+    /// model boundary, the models step, and their outputs are written back.
+    fn advance_cosim(
+        &mut self,
+        cosim: &mut crate::cosim::CosimSession,
+        request: AdvanceRequest,
+    ) -> SimResult<AdvanceReport>;
 }
 
 impl<C: Cpu + 'static> SessionMachine for Machine<C> {
     fn advance(&mut self, request: AdvanceRequest) -> SimResult<AdvanceReport> {
         Machine::advance(self, request)
+    }
+    fn set_idle_fast_forward(&mut self, enabled: bool) {
+        self.config.idle_fast_forward_enabled = enabled;
     }
 
     fn cycles(&self) -> u64 {
@@ -179,5 +200,25 @@ impl<C: Cpu + 'static> SessionMachine for Machine<C> {
 
     fn add_observer(&mut self, observer: std::sync::Arc<dyn crate::SimulationObserver>) {
         Machine::add_observer(self, observer)
+    }
+
+    fn bind_cosim(
+        &self,
+        configs: &[labwired_config::CosimModelConfig],
+        base_dir: &std::path::Path,
+    ) -> SimResult<Option<crate::cosim::CosimSession>> {
+        crate::cosim::CosimSession::new(configs, base_dir, &self.bus)
+    }
+
+    fn advance_cosim(
+        &mut self,
+        cosim: &mut crate::cosim::CosimSession,
+        request: AdvanceRequest,
+    ) -> SimResult<AdvanceReport> {
+        match cosim.advance(self, request) {
+            Ok(advance) => Ok(advance.report),
+            Err(crate::cosim::CosimAdvanceError::Machine(error))
+            | Err(crate::cosim::CosimAdvanceError::Model { error, .. }) => Err(error),
+        }
     }
 }

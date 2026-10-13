@@ -1,0 +1,22 @@
+# LabWired - nRF5340 DK (PCA10095) demo firmware smoke
+#
+# Build: cargo build -p firmware-nrf5340-dk-demo --release --target thumbv8m.main-none-eabi
+#
+# The firmware runs LED1..LED4 (P0.28..P0.31, active low) as a running light and
+# prints one heartbeat line per step, with the state READ BACK from GPIO OUT.
+# `uart_ordered` therefore asserts the pad actually went low, then high, then
+# moved on to the next LED.
+schema_version: "1.0"
+inputs:
+  firmware: "../../target/thumbv8m.main-none-eabi/release/firmware-nrf5340-dk-demo"
+  system: "../../configs/systems/nrf5340dk.yaml"
+limits:
+  max_steps: 4000000
+assertions:
+  - uart_contains: "nRF5340 DK ready"
+  - uart_ordered:
+      - "hb=0 led1=on"
+      - "hb=1 led1=off"
+      - "hb=2 led2=on"
+      - "hb=3 led2=off"
+  - expected_stop_reason: max_steps

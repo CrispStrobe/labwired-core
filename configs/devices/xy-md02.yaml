@@ -1,0 +1,172 @@
+# XY-MD02: SHT20-based RS-485 temperature and humidity transmitter, Modbus RTU
+# slave. A real product (DIN-rail housing, 65 x 46 x 28.5 mm, 4-way terminal).
+#
+# A data pack on the `uart_device` primitive. The part does not know it is a
+# bus device: it sees byte frames on its UART, answers the ones addressed to
+# it, and stays quiet for everything else, like a real slave.
+#
+# ── Source ─────────────────────────────────────────────────────────────────
+#
+# Manufacturer manual "XY-MD02", product name "Modbus RTU RS485 SHT20
+# Temperature Humidity Transmitter" (copy retrieved 2026-10-04):
+#   https://www.hestore.hu/prod_getfile.php?id=18062
+#   https://knowledgebase.grenton.com/hubfs/xy-md02-manual.pdf
+# A second revision of the manual (60 x 30 x 18 mm, same register map):
+#   https://iot-kmutnb.github.io/blogs/sensors/xy-md02/xy-md02_manual-2.pdf
+# The manual's frame examples are checked, byte for byte, by
+# crates/core/tests/rs485_modbus.rs (`manual_examples`).
+#
+# ── Register map (manual, "Modbus Protocol" table) ─────────────────────────
+#
+#   input registers (function 04)         holding registers (03, 06, 10)
+#   0x0001  temperature, 0.1 C, signed    0x0101  device address, 1..247
+#   0x0002  humidity, 0.1 %RH             0x0102  baud rate
+#                                         0x0103  temperature correction, 0.1 C
+#                                         0x0104  humidity correction, 0.1 %RH
+#
+# The correction registers hold -10.0..10.0 in tenths, as a signed 16-bit word
+# (-100..100). The measured value reads `input + correction`.
+#
+# Defaults (manual, "Parameters"): address 1, 9600 baud, 8 data bits, 1 stop
+# bit, no parity.
+#
+# ── Where the manual is silent or contradicts itself ───────────────────────
+#
+# * Baud register. The table says 0:9600, 1:14400, 2:19200; the function-10
+#   example writes 0x2580 (9600) into it. This part stores and reads back the
+#   bit rate itself (9600 = 0x2580) and accepts 9600, 14400 and 19200. The
+#   codes 0, 1 and 2 are answered with exception 03. A written rate is
+#   stored; the line keeps the rate it was placed with (a real part applies it
+#   at the next power-up, which a simulation run does not have).
+# * The manual lists no exception responses. This part answers the standard
+#   Modbus ones: 01 for an unsupported function, 02 for a register or range
+#   outside the map, 03 for a bad count or a value out of range.
+# * Registers 0x0001/0x0002 are input registers only and 0x0101..0x0104 are
+#   holding registers only; a read of the wrong kind answers 02.
+# * The manual's humidity example response (01 04 02 02 22 D1 BA) carries a
+#   wrong CRC; the correct one is 38 49. The manual's address-read response
+#   (01 03 02 01 02 ..) shows 0x0102 for an address of 1 and is not used.
+#
+# ── What it does on the wire ───────────────────────────────────────────────
+#
+# * A frame ends after 3.5 character times of silence at the part's baud.
+# * A frame with a bad CRC-16/MODBUS is dropped without an answer.
+# * A frame for another address gets no answer. There is no broadcast: the
+#   manual gives an address range of 1..247 and says nothing about address 0.
+# * The slave address and the baud are placement settings (`address:` and
+#   `baud:` under `config:`). Writing register 0x0101 changes the address at
+#   once; the answer to that request still carries the old address, as on
+#   hardware.
+#
+# ── Not modelled ───────────────────────────────────────────────────────────
+#
+# The manual's "ordinary UART protocol" (READ, AUTO, BR:, TC:, HC:, HZ:,
+# PARAM text commands). Parity. The range check of a function-10 write covers
+# the first two registers only. The 1.75 ms fixed gap Modbus asks for above
+# 19200 baud. The line is half duplex on the bus, but this part only decides
+# what to say, not when the bus is free; the MAX485 model owns that.
+type: xy-md02
+
+behavior:
+  primitive: uart_device
+  vars:
+    address: 1
+    baud: 9600
+    temp_correction: 0
+    hum_correction: 0
+  uart:
+    baud: 9600
+    frames: { framing: silence, gap_chars: 3.5, check: crc16_modbus, max_bytes: 256 }
+    regs:
+      - { reg: 1, expr: "input(temperature) + var(temp_correction)" }
+      - { reg: 2, expr: "input(humidity) + var(hum_correction)" }
+      - { reg: 257, var: address }
+      - { reg: 258, var: baud }
+      - { reg: 259, var: temp_correction }
+      - { reg: 260, var: hum_correction }
+    responses:
+      # ── function 03, read holding registers (0x0101..0x0104) ──
+      - match: { bytes: "addr:u8 0x03 reg:u16be count:u16be" }
+        when: "var(addr) == var(address) && (var(count) < 1 || var(count) > 125)"
+        respond_bytes: [ "var(addr)", "0x83", "0x03", crc16_modbus ]
+      - match: { bytes: "addr:u8 0x03 reg:u16be count:u16be" }
+        when: "var(addr) == var(address) && var(reg) >= 257 && var(reg) + var(count) <= 261"
+        respond_bytes: [ "var(addr)", "0x03", "var(count) * 2", "regs(var(reg), var(count))", crc16_modbus ]
+      - match: { bytes: "addr:u8 0x03 reg:u16be count:u16be" }
+        when: "var(addr) == var(address)"
+        respond_bytes: [ "var(addr)", "0x83", "0x02", crc16_modbus ]
+
+      # ── function 04, read input registers (0x0001, 0x0002) ──
+      - match: { bytes: "addr:u8 0x04 reg:u16be count:u16be" }
+        when: "var(addr) == var(address) && (var(count) < 1 || var(count) > 125)"
+        respond_bytes: [ "var(addr)", "0x84", "0x03", crc16_modbus ]
+      - match: { bytes: "addr:u8 0x04 reg:u16be count:u16be" }
+        when: "var(addr) == var(address) && var(reg) >= 1 && var(reg) + var(count) <= 3"
+        respond_bytes: [ "var(addr)", "0x04", "var(count) * 2", "regs(var(reg), var(count))", crc16_modbus ]
+      - match: { bytes: "addr:u8 0x04 reg:u16be count:u16be" }
+        when: "var(addr) == var(address)"
+        respond_bytes: [ "var(addr)", "0x84", "0x02", crc16_modbus ]
+
+      # ── function 06, write single register ──
+      - match: { bytes: "addr:u8 0x06 reg:u16be value:u16be" }
+        when: "var(addr) == var(address) && ((var(reg) == 257 && (var(value) < 1 || var(value) > 247)) || (var(reg) == 258 && var(value) != 9600 && var(value) != 14400 && var(value) != 19200) || (var(reg) >= 259 && var(reg) <= 260 && var(value) > 100 && var(value) < 65436))"
+        respond_bytes: [ "var(addr)", "0x86", "0x03", crc16_modbus ]
+      - match: { bytes: "addr:u8 0x06 reg:u16be value:u16be" }
+        when: "var(addr) == var(address) && var(reg) >= 257 && var(reg) <= 260"
+        write_regs: { first: "var(reg)", count: "1", data_at: 4 }
+        respond_bytes: [ "var(addr)", "0x06", "var(reg):u16be", "var(value):u16be", crc16_modbus ]
+      - match: { bytes: "addr:u8 0x06 reg:u16be value:u16be" }
+        when: "var(addr) == var(address)"
+        respond_bytes: [ "var(addr)", "0x86", "0x02", crc16_modbus ]
+
+      # ── function 16 (0x10), write multiple registers ──
+      # The two-word patterns come first: they check the first two values.
+      - match: { bytes: "addr:u8 0x10 reg:u16be count:u16be nbytes:u8 w0:u16be w1:u16be tail:rest" }
+        when: "var(addr) == var(address) && var(count) >= 2 && var(count) <= 4 && var(nbytes) == var(count) * 2 && var(tail) == var(nbytes) - 4 && var(reg) >= 257 && var(reg) + var(count) <= 261 && ((var(reg) == 257 && (var(w0) < 1 || var(w0) > 247 || (var(w1) != 9600 && var(w1) != 14400 && var(w1) != 19200))) || (var(reg) == 258 && ((var(w0) != 9600 && var(w0) != 14400 && var(w0) != 19200) || (var(w1) > 100 && var(w1) < 65436))) || (var(reg) == 259 && ((var(w0) > 100 && var(w0) < 65436) || (var(w1) > 100 && var(w1) < 65436))))"
+        respond_bytes: [ "var(addr)", "0x90", "0x03", crc16_modbus ]
+      - match: { bytes: "addr:u8 0x10 reg:u16be count:u16be nbytes:u8 w0:u16be w1:u16be tail:rest" }
+        when: "var(addr) == var(address) && var(count) >= 2 && var(count) <= 4 && var(nbytes) == var(count) * 2 && var(tail) == var(nbytes) - 4 && var(reg) >= 257 && var(reg) + var(count) <= 261"
+        write_regs: { first: "var(reg)", count: "var(count)", data_at: 7 }
+        respond_bytes: [ "var(addr)", "0x10", "var(reg):u16be", "var(count):u16be", crc16_modbus ]
+      - match: { bytes: "addr:u8 0x10 reg:u16be count:u16be nbytes:u8 w0:u16be tail:rest" }
+        when: "var(addr) == var(address) && var(count) == 1 && var(nbytes) == 2 && var(tail) == 0 && ((var(reg) == 257 && (var(w0) < 1 || var(w0) > 247)) || (var(reg) == 258 && var(w0) != 9600 && var(w0) != 14400 && var(w0) != 19200) || (var(reg) >= 259 && var(reg) <= 260 && var(w0) > 100 && var(w0) < 65436))"
+        respond_bytes: [ "var(addr)", "0x90", "0x03", crc16_modbus ]
+      - match: { bytes: "addr:u8 0x10 reg:u16be count:u16be nbytes:u8 w0:u16be tail:rest" }
+        when: "var(addr) == var(address) && var(count) == 1 && var(nbytes) == 2 && var(tail) == 0 && var(reg) >= 257 && var(reg) <= 260"
+        write_regs: { first: "var(reg)", count: "1", data_at: 7 }
+        respond_bytes: [ "var(addr)", "0x10", "var(reg):u16be", "var(count):u16be", crc16_modbus ]
+      # Anything else for function 16: a count that does not match the bytes
+      # is exception 03, a range outside 0x0101..0x0104 is exception 02.
+      - match: { bytes: "addr:u8 0x10 reg:u16be count:u16be nbytes:u8 w0:u16be tail:rest" }
+        when: "var(addr) == var(address) && (var(count) < 1 || var(count) > 123 || var(nbytes) != var(count) * 2 || var(tail) != var(nbytes) - 2)"
+        respond_bytes: [ "var(addr)", "0x90", "0x03", crc16_modbus ]
+      - match: { bytes: "addr:u8 0x10 reg:u16be count:u16be nbytes:u8 w0:u16be tail:rest" }
+        when: "var(addr) == var(address)"
+        respond_bytes: [ "var(addr)", "0x90", "0x02", crc16_modbus ]
+
+      # ── anything else addressed to this slave ──
+      - match: { bytes: "addr:u8 func:u8 body:rest" }
+        when: "var(addr) == var(address) && var(func) != 3 && var(func) != 4 && var(func) != 6 && var(func) != 16"
+        respond_bytes: [ "var(addr)", "var(func) | 0x80", "0x01", crc16_modbus ]
+
+metadata:
+  label: "XY-MD02"
+  summary: "SHT20 RS-485 temperature and humidity transmitter speaking Modbus RTU."
+  detail: "XY-MD02 Modbus RTU slave on a UART, modelled from the manufacturer manual. Input registers 0x0001 (temperature, signed tenths of a degree C) and 0x0002 (humidity, tenths of %RH) for function 04; holding registers 0x0101 (address 1..247), 0x0102 (baud), 0x0103 (temperature correction) and 0x0104 (humidity correction), both -10.0..10.0 in tenths, for functions 03, 06 and 10. Defaults are address 1 and 9600 8N1. Frames end after 3.5 character times of line silence, and a frame with a bad CRC-16/MODBUS or another slave's address gets no answer. The manual lists no exception codes; the standard ones 01, 02 and 03 are used. NOT modelled: the ordinary UART text protocol (READ, AUTO, BR:, TC:, HC:, HZ:), parity, and range checks beyond the first two registers of a function-10 write."
+  category: uart
+  config_keys:
+    - name: address
+      ty: int
+      doc: "Modbus slave address, 1..247. Default 1."
+    - name: baud
+      ty: int
+      doc: "Line rate in bit/s: 9600, 14400 or 19200. Default 9600. The master must be set to the same rate."
+    - name: temp_correction
+      ty: int
+      doc: "Initial temperature correction in tenths of a degree, -100..100. Default 0."
+    - name: hum_correction
+      ty: int
+      doc: "Initial humidity correction in tenths of %RH, -100..100. Default 0."
+  inputs:
+    - { key: temperature, label: "Temperature", unit: "C",   min: -40, max: 60,  default: 21.5, expr_scale: 10 }
+    - { key: humidity,    label: "Humidity",    unit: "%RH", min: 0,   max: 100, default: 48.0, expr_scale: 10 }

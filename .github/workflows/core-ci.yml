@@ -1,5 +1,11 @@
 name: Rust Core CI
 
+# Pin PR/control lanes to the same Ubuntu 24.04 image observed in the
+# 2026-10-01 fmt runner (run 36897016014, job 110487130156). During the
+# Actions job-delay incident, ubuntu-latest jobs remained unassigned while
+# explicit ubuntu-24.04 board lanes ran. This is a queue-workaround attempt,
+# not a different test environment or a gate/floor/cache-policy waiver.
+
 # Scheduled runs are gated to this repository. GitHub attributes a cron run to
 # whoever last edited the schedule, so a fork with Actions enabled mails this
 # workflow's nightly failures to a maintainer here, about a run they can
@@ -49,7 +55,7 @@ jobs:
   release-runner-contract:
     name: release-runner-contract
     if: ${{ github.event_name != 'schedule' || github.repository == 'w1ne/labwired-core' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       # fetch-depth: 0 — verify-release-runner-contract.sh reads the pinned
@@ -159,7 +165,7 @@ jobs:
   fmt-autofix:
     name: fmt-autofix
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Read-only on purpose — see the PAT note above.
     permissions:
@@ -391,7 +397,7 @@ jobs:
     # pr-gate is only equivalent when the branch is already up to date with
     # main — which `strict` branch protection requires before merging anyway.
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Was 5. The browser-layer steps below (crates/wasm clippy + lib tests) are
     # a real ~1.5 min of additional compile — crates/wasm is a cdylib outside
     # default-members, so nothing earlier in this job has already built it.
@@ -445,6 +451,11 @@ jobs:
     # are the merge-blocking gates and the previous margin (0.3 min) was not a
     # deliberate budget — it was luck. If this job starts approaching 20, the
     # answer is to split it, not to raise again.
+    #
+    # 2026-09-30: it did. Two warm runs were cancelled at this wall inside
+    # Firmware survival. In this fork the feature-off lib tests and the steps
+    # after them moved to `pr-feature-off`; the aggregate `pr-gate` requires
+    # both children (upstream named its split `pr-core-feature-off`).
     timeout-minutes: 20
     steps:
       # Full history required: generate_validation_status.py uses
@@ -573,7 +584,6 @@ jobs:
             scripts/perf/test_board_perf.py \
             scripts/perf/test_board_rtx.py \
             scripts/perf/test_workload_perf.py \
-            scripts/perf/test_compare_renode_hello.py \
             scripts/ci/test_board_matrix.py \
             scripts/ci/test_chip_coverage.py \
             scripts/ci/test_matrix_external_cache.py \
@@ -674,7 +684,7 @@ jobs:
   pr-feature-off:
     name: pr-feature-off
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -724,6 +734,15 @@ jobs:
       # plain `cargo test -p labwired-core` gives a contributor.
       - name: Unit tests (labwired-core, FEATURE-OFF)
         run: cargo test -p labwired-core --lib
+
+      # The workspace shards exercise SPI with event-scheduler. Keep its
+      # reference/MMIO/guest cancellation tests nonvacuous without the feature,
+      # too; lib-only feature-off tests do not reach integration targets.
+      - name: SAM SPI controller and guest (FEATURE-OFF)
+        run: >
+          scripts/ci/cargo-test-nonvacuous.sh
+          -p labwired-core --test sam_sercom_spi --test st7735_sam_guest --test sam_dmac_byte
+          -- --nocapture
 
       # AVR sim-smoke golden — cheap (~ms), no PlatformIO. Pins Arduino Nano
       # UART+D13 behavior on every PR so the twin cannot regress silently.
@@ -849,7 +868,7 @@ jobs:
     # verdict instead of silently skipping the required aggregate context.
     if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
     needs: [pr-default-members, pr-feature-off]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Both core coverage configurations must succeed
@@ -930,7 +949,7 @@ jobs:
     # the no-save loop this job exists to break (measured on a fork 2026-09-28:
     # every PR's pr-gate cancelled at ~20m with all its gates green).
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     continue-on-error: true
     # Generous on purpose: the FIRST run of this job is the cold build that
     # every PR is paying for today, and a cold pr-gate has been measured at
@@ -1042,7 +1061,7 @@ jobs:
     # only way out of a wedged concurrency group when a required context has to
     # be reported against a head SHA.
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Standalone this job pays for `labwired-core` itself, which pr-gate had
     # already built by the time these steps ran there — so the 185s measured
     # inside pr-gate is NOT what this costs alone. 20 is sized for the cold
@@ -1242,7 +1261,7 @@ jobs:
   pr-scheduler-observable:
     name: pr-scheduler-observable
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       # Shallow checkout is fine here: unlike `pr-gate` this job runs no
@@ -1321,6 +1340,16 @@ jobs:
       # refuse rather than fake it — the wrapper is the second lock, and it also
       # catches the emptying this step could still suffer silently: a per-item
       # `#[cfg]` or a deleted test leaving a binary with nothing in it.
+      # A real authored blocking-SPI guest, not a host transfer substitute.
+      # Reuse this job's compiled feature set, and run the feature-off reference
+      # in pr-feature-off. Bounded prototype pixels/controls, not native Arcade
+      # or actual module/timing qualification.
+      - name: SAM split IRQ and ST7735 controller-memory guests (FEATURE-ON)
+        run: >
+          scripts/ci/cargo-test-nonvacuous.sh
+          -p labwired-core --features event-scheduler
+          --test sam_sercom_spi --test st7735_sam_guest --test sam_dmac_byte -- --nocapture
+
       - name: Scheduler-only fidelity lanes (walk≡scheduler timing gates)
         run: >
           scripts/ci/cargo-test-nonvacuous.sh
@@ -1332,6 +1361,7 @@ jobs:
           --test nrf52_timer_walk_differential
           --test nrf52_easydma_tick512_fidelity
           --test nrf52840_timer_machine_gate
+          --test nrf52_pwm_pad
           --test nrf54l15_grtc_walk_differential
           --test rp2040_timer_machine_gate
           --test rp2040_i2c_irq_delivery
@@ -1473,9 +1503,83 @@ jobs:
   # otherwise return early with a skip notice, and an early return is a pass.
   # cargo-test-nonvacuous.sh covers the other half — a feature-gated file built
   # without its feature executes zero tests and reports ok.
+  # ── Demo labs built FROM SOURCE against the simulator in this PR ───────────
+  #
+  # labwired-core#1346 made STM32F1 I2C receive require clearing ADDR (as
+  # silicon does). Seven F103 sensor-lab demo firmwares never cleared it and read
+  # garbage. Core CI was green, because no job built those labs and ran their
+  # smoke scripts against the PR's simulator; the break surfaced as a blocked
+  # playground deploy in the superproject a day later. This lane closes that.
+  #
+  # COST / TRADE-OFF. It is a SEPARATE job, so it runs in parallel with pr-gate
+  # and adds nothing to the ~2-4 min gate's critical path. It builds the CLI in
+  # the dev profile (opt-level 1, with event-scheduler) rather than release: the
+  # smoke scripts run 0.2-2M steps each, which is well under a second either
+  # way, and the dev build is the cheaper compile. The seven labs are tiny
+  # no_std crates (~6s cold for all of them).
+  #
+  # It is NOT path-filtered at the workflow level: a filtered workflow emits no
+  # check at all on PRs that miss the filter, which would make this impossible
+  # to ever require. The job always runs and reports; the expensive steps are
+  # skipped INSIDE it when the PR touches nothing a lab can observe (docs-only
+  # and the like), so the context is always present and green in that case.
+  # It is not in branch protection yet: add `lab-smoke-from-source` to the
+  # required contexts once a few runs have confirmed its wall time.
+  lab-smoke-from-source:
+    name: lab-smoke-from-source
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # Full history so the changed-path check can diff against the base.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Does this change touch anything a demo lab can observe?
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # Simulator, device descriptors, chip/system configs, the labs, this
+          # lane's own script and this workflow. Anything else cannot change what
+          # a lab firmware sees.
+          changed="$(git diff --name-only "$BASE_SHA"...HEAD)"
+          if printf '%s\n' "$changed" | grep -Eq '^(crates/|configs/|examples/|Cargo\.(toml|lock)$|rust-toolchain\.toml$|scripts/ci/lab-smoke-from-source\.sh$|\.github/workflows/core-ci\.yml$)'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No simulator, config or example paths changed; lab smoke not needed."
+          fi
+
+      - name: Install Rust
+        if: steps.scope.outputs.run == 'true'
+        uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          targets: thumbv7m-none-eabi
+
+      - uses: Swatinem/rust-cache@v2
+        if: steps.scope.outputs.run == 'true'
+        with:
+          shared-key: core-lab-smoke
+          workspaces: . -> target
+
+      - name: Build the simulator under test
+        if: steps.scope.outputs.run == 'true'
+        run: cargo build -p labwired-cli --features event-scheduler
+
+      - name: Build demo-lab firmware from source and run every lab smoke script
+        if: steps.scope.outputs.run == 'true'
+        run: scripts/ci/lab-smoke-from-source.sh target/debug/labwired
+
   xtensa-flash-boot:
     name: xtensa-flash-boot
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -1515,7 +1619,7 @@ jobs:
     # a branch without opening a PR, which is how its own runtime gets
     # measured before anyone considers making it required.
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Sized generously until the first real runs say otherwise — the nightly
     # `Run Workspace Tests` step takes ~8 min to cover roughly half the
     # targets on a warm cache, so a shard of ~72 should sit well under this.
@@ -1636,7 +1740,7 @@ jobs:
     if: >
       always() &&
       (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       # The checkout carries the allow-list (workspace-test-shards.json) and
@@ -1852,6 +1956,8 @@ jobs:
           --test world_esp32c3_ble_pong
           --test esp32c3_usb_cdc_console
           --test esp32c3_pms_shipped_firmware
+          --test world_can_perf
+          --test world_can_dashboard_demo
 
       # `esp32_classic_walk_differential` is BOTH arms here, and both arms are
       # covered pre-merge as well — do not read this step as their only lane.

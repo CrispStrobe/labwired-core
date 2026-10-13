@@ -124,15 +124,30 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
     // tap, and keep the per-channel identity so the drained edges can be shaped
     // into `result.json`'s `logic_edges` block after the run. An empty watch set
     // is a no-op (no channels installed → zero-overhead capture path).
+    //
+    // A `gpio_edges` assertion names pads it needs watched, so those pins are
+    // armed here too: the assertion cannot observe a pad nobody watches, and a
+    // script author should not have to repeat every pin as a flag. Same ref
+    // grammar as `--watch-gpio` (`peripheral:pin`).
+    let watch_specs: Vec<String> = {
+        let mut specs = ctx.args.watch_gpio.clone();
+        for assertion in ctx.assertions {
+            if let TestAssertion::GpioEdges(a) = assertion {
+                let pin = a.gpio_edges.pin.trim().to_string();
+                if !pin.is_empty() && !specs.iter().any(|s| s.eq_ignore_ascii_case(&pin)) {
+                    specs.push(pin);
+                }
+            }
+        }
+        specs
+    };
     let logic_watch_meta: Vec<labwired_core::logic_capture::LogicChannelMeta> = {
-        let refs: Vec<(String, u8)> = ctx
-            .args
-            .watch_gpio
+        let refs: Vec<(String, u8)> = watch_specs
             .iter()
             .filter_map(|spec| parse_watch_gpio_ref(spec))
             .collect();
-        if refs.len() != ctx.args.watch_gpio.len() {
-            for spec in &ctx.args.watch_gpio {
+        if refs.len() != watch_specs.len() {
+            for spec in &watch_specs {
                 if parse_watch_gpio_ref(spec).is_none() {
                     error!("--watch-gpio: ignoring malformed ref {spec:?} (want `peripheral:pin`)");
                 }
@@ -219,6 +234,15 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
             .unwrap_or(labwired_core::bus::RECOMMENDED_TICK_INTERVAL);
         ctx.machine.config.peripheral_tick_interval = interval;
         ctx.machine.bus.config.peripheral_tick_interval = interval;
+    }
+
+    // An explicit script limit sets the peripheral tick for this run.
+    // Absent leaves the interval set above: one tick per cycle, or the JIT widen.
+    if let Some(interval) = ctx.resolved_limits.peripheral_tick_interval {
+        if interval > 0 {
+            ctx.machine.config.peripheral_tick_interval = interval;
+            ctx.machine.bus.config.peripheral_tick_interval = interval;
+        }
     }
 
     let otherwise_batch_eligible = ctx.machine.config.batch_mode_enabled
@@ -704,7 +728,9 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
     let mut cached_all_pass = false;
 
     let mut step = 0;
+    let mut heartbeat = Heartbeat::new(ctx.args.heartbeat_file.clone());
     while step < max_steps {
+        heartbeat.tick(step, ctx.machine.total_cycles);
         // JIT-eligible path: mirror the machine's authoritative counters into
         // `metrics` BEFORE the cycle-sensitive checks below (stimulus
         // `after_cycles`, `max_cycles`), so they fire at exactly the same batch
@@ -1089,6 +1115,7 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
                             &rtt_text,
                             &itm_text,
                             ctx.machine,
+                            &logic_watch_meta,
                         ),
                         _ => false,
                     };
@@ -1119,6 +1146,7 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
                             &rtt_text,
                             &itm_text,
                             ctx.machine,
+                            &logic_watch_meta,
                         )
                 });
             }
@@ -1232,6 +1260,9 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
         peripheral_accesses,
         exceptions: exception_count,
         pc_samples,
+        stalled_poll: (stop_reason == StopReason::MaxSteps)
+            .then(|| stalled_poll(&ctx.machine.bus))
+            .flatten(),
     };
 
     let memory = if let Some(session) = paint_session {
@@ -1254,13 +1285,15 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
             | TestAssertion::SemihostingContains(_)
             | TestAssertion::ItmContains(_)
             | TestAssertion::MotorState(_)
-            | TestAssertion::MqttFabric(_) => (
+            | TestAssertion::MqttFabric(_)
+            | TestAssertion::GpioEdges(_) => (
                 assertion_currently_passes(
                     assertion,
                     &uart_text,
                     &rtt_text,
                     &itm_text,
                     ctx.machine,
+                    &logic_watch_meta,
                 ),
                 None,
             ),
@@ -1272,6 +1305,7 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
                         &rtt_text,
                         &itm_text,
                         ctx.machine,
+                        &logic_watch_meta,
                     ),
                 None,
             ),
@@ -1575,7 +1609,7 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
     // the 64k ring overflowed, which the oracle treats as fail-loud. This is the
     // SAME `logic_read_edges` drain the wasm `read_logic_edges` accessor uses, so
     // the CLI `result.json` edges and the browser edges are edge-for-edge equal.
-    let logic_edges = if logic_capture_armed {
+    let (logic_edges, gpio_pins) = if logic_capture_armed {
         let now_cycle = ctx.machine.logic_now_cycle();
         let batch = ctx.machine.logic_read_edges(0);
         let mut result = labwired_core::logic_capture::build_logic_edges_result(
@@ -1589,9 +1623,14 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
         let states = ctx.machine.logic_read_states(0);
         let initial_states = ctx.machine.logic_initial_states().to_vec();
         labwired_core::logic_capture::attach_logic_states(&mut result, &initial_states, &states);
-        Some(result)
+        // End-of-run per-pad state through the chip-agnostic GPIO accessors,
+        // so an agent reads `gpio_pins` instead of raw per-family registers.
+        let pins =
+            labwired_core::logic_capture::collect_gpio_pins(&ctx.machine.bus, &logic_watch_meta);
+        labwired_core::logic_capture::attach_logic_routing(&mut result, &pins);
+        (Some(result), Some(pins))
     } else {
-        None
+        (None, None)
     };
 
     export_analog_trace_if_requested(&ctx.args.analog_trace, ctx.machine);
@@ -1683,6 +1722,8 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
         &ctx.fault_evidence,
         Some(inspect_block),
         logic_edges,
+        gpio_pins,
+        ctx.machine.bus.motor_snapshots(),
         stimulus_outcomes,
         footprint,
         Some(memory),
@@ -1704,4 +1745,91 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
     // The same `verdict` the artifact above was written from. Not a second
     // chain — that is the whole point of `crate::verdict`.
     verdict.exit_code()
+}
+
+/// Back-to-back accesses to one register before a run that ran out of budget
+/// counts as stalled on it. A status-flag wait loop retires a handful of
+/// instructions per poll, so a few thousand polls is well under a millisecond
+/// of simulated time, while ordinary driver code (a UART print, an I2C byte)
+/// touches a register at most a few dozen times in a row.
+const STALL_MIN_ACCESSES: u64 = 4096;
+
+/// The register the firmware was polling when the step budget ran out, if the
+/// run ended in such a poll: the streak is long and its latest access falls in
+/// the last 1% of the run.
+fn stalled_poll(bus: &labwired_core::bus::SystemBus) -> Option<artifacts::StalledPoll> {
+    let (peripheral, offset, accesses, last_cycle) = bus.mmio_poll_streak()?;
+    // The streak is stamped with the bus's own cycle counter, so "now" must
+    // come from the same counter.
+    let end_cycle = bus.current_cycle;
+    let recent = end_cycle.saturating_sub(last_cycle) <= (end_cycle / 100).max(100_000);
+    (accesses >= STALL_MIN_ACCESSES && recent).then_some(artifacts::StalledPoll {
+        peripheral,
+        offset,
+        accesses,
+    })
+}
+
+/// Liveness beacon for a supervising process (`--heartbeat-file`).
+///
+/// The first tick writes at once, so the supervisor can tell "the loop never
+/// started" from "the loop is slow". After that the clock is read only once the
+/// run has advanced 64Ki steps or 1Mi cycles since the last read, and the file
+/// is rewritten at most once a second: in single-step mode that is one clock
+/// read per ~10 ms, and in the wide idle-skip batches every iteration is
+/// already past the threshold. Absent a path, `tick` is one `Option` test.
+struct Heartbeat {
+    path: Option<std::path::PathBuf>,
+    checked_steps: u64,
+    checked_cycles: u64,
+    last_write: Option<std::time::Instant>,
+}
+
+impl Heartbeat {
+    const STEP_STRIDE: u64 = 1 << 16;
+    const CYCLE_STRIDE: u64 = 1 << 20;
+
+    fn new(path: Option<std::path::PathBuf>) -> Self {
+        Self {
+            path,
+            checked_steps: 0,
+            checked_cycles: 0,
+            last_write: None,
+        }
+    }
+
+    #[inline]
+    fn tick(&mut self, steps: u64, cycles: u64) {
+        if self.path.is_none() {
+            return;
+        }
+        if self.last_write.is_some()
+            && steps.wrapping_sub(self.checked_steps) < Self::STEP_STRIDE
+            && cycles.wrapping_sub(self.checked_cycles) < Self::CYCLE_STRIDE
+        {
+            return;
+        }
+        self.checked_steps = steps;
+        self.checked_cycles = cycles;
+        let now = std::time::Instant::now();
+        if self
+            .last_write
+            .is_some_and(|t| now.duration_since(t).as_millis() < 1000)
+        {
+            return;
+        }
+        self.last_write = Some(now);
+        self.write(steps, cycles);
+    }
+
+    #[cold]
+    fn write(&self, steps: u64, cycles: u64) {
+        let Some(path) = &self.path else { return };
+        let tmp = path.with_extension("tmp");
+        let body = format!("{{\"steps\":{steps},\"cycles\":{cycles}}}");
+        // Best effort: a supervisor reading a stale file just sees no progress.
+        if std::fs::write(&tmp, body).is_ok() {
+            let _ = std::fs::rename(&tmp, path);
+        }
+    }
 }

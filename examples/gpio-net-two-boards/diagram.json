@@ -1,0 +1,221 @@
+{
+  "version": 1,
+  "board": "stm32g071",
+  "parts": [
+    {
+      "id": "note",
+      "type": "note",
+      "x": 80,
+      "y": 810,
+      "rotate": 0,
+      "attrs": {
+        "text": "An STM32G0B1 and an ATmega328P joined by three wires: an interrupt line (AVR to STM32), a ready line (STM32 to AVR) and one shared open-drain alert line with a 10k pull-up. Both boards run in one world.\nTry: Run and watch the logic analyzer: each board reacts to the other, and the Nets window counts every edge."
+      }
+    },
+    {
+      "id": "mcu",
+      "type": "nucleo-g071rb",
+      "x": 80,
+      "y": 120,
+      "rotate": 0,
+      "attrs": {
+        "label": "STM32G0B1",
+        "boardId": "gpio-net-stm"
+      }
+    },
+    {
+      "id": "avr",
+      "type": "arduino-uno",
+      "x": 440,
+      "y": 230,
+      "rotate": 0,
+      "attrs": {
+        "label": "ATmega328P",
+        "boardId": "gpio-net-avr"
+      }
+    },
+    {
+      "id": "probe",
+      "type": "logic-analyzer",
+      "x": 440,
+      "y": -10,
+      "rotate": 0,
+      "attrs": {}
+    },
+    {
+      "id": "r_irq",
+      "type": "resistor",
+      "x": 430,
+      "y": 510,
+      "rotate": 90,
+      "attrs": {
+        "value": "10k"
+      }
+    },
+    {
+      "id": "r_ready",
+      "type": "resistor",
+      "x": 430,
+      "y": 620,
+      "rotate": 90,
+      "attrs": {
+        "value": "10k"
+      }
+    },
+    {
+      "id": "r_alert",
+      "type": "resistor",
+      "x": 430,
+      "y": 720,
+      "rotate": 90,
+      "attrs": {
+        "value": "10k"
+      }
+    }
+  ],
+  "wires": [
+    {
+      "from": {
+        "part": "avr",
+        "pin": "D2"
+      },
+      "to": {
+        "part": "mcu",
+        "pin": "PB0"
+      },
+      "color": "#06D6A0"
+    },
+    {
+      "from": {
+        "part": "mcu",
+        "pin": "PB0"
+      },
+      "to": {
+        "part": "r_irq",
+        "pin": "1"
+      },
+      "color": "#06D6A0"
+    },
+    {
+      "from": {
+        "part": "r_irq",
+        "pin": "2"
+      },
+      "to": {
+        "part": "mcu",
+        "pin": "GND"
+      },
+      "color": "#888888"
+    },
+    {
+      "from": {
+        "part": "mcu",
+        "pin": "PB1"
+      },
+      "to": {
+        "part": "avr",
+        "pin": "D3"
+      },
+      "color": "#118AB2"
+    },
+    {
+      "from": {
+        "part": "mcu",
+        "pin": "PB1"
+      },
+      "to": {
+        "part": "r_ready",
+        "pin": "1"
+      },
+      "color": "#118AB2"
+    },
+    {
+      "from": {
+        "part": "r_ready",
+        "pin": "2"
+      },
+      "to": {
+        "part": "mcu",
+        "pin": "GND"
+      },
+      "color": "#888888"
+    },
+    {
+      "from": {
+        "part": "mcu",
+        "pin": "PB4"
+      },
+      "to": {
+        "part": "avr",
+        "pin": "D4"
+      },
+      "color": "#FFD166"
+    },
+    {
+      "from": {
+        "part": "mcu",
+        "pin": "PB4"
+      },
+      "to": {
+        "part": "r_alert",
+        "pin": "1"
+      },
+      "color": "#FFD166"
+    },
+    {
+      "from": {
+        "part": "r_alert",
+        "pin": "2"
+      },
+      "to": {
+        "part": "mcu",
+        "pin": "VCC"
+      },
+      "color": "#d63384"
+    },
+    {
+      "from": {
+        "part": "probe",
+        "pin": "CH0"
+      },
+      "to": {
+        "part": "avr",
+        "pin": "D2"
+      },
+      "color": "#F5B642"
+    },
+    {
+      "from": {
+        "part": "probe",
+        "pin": "CH1"
+      },
+      "to": {
+        "part": "mcu",
+        "pin": "PB1"
+      },
+      "color": "#F5B642"
+    },
+    {
+      "from": {
+        "part": "probe",
+        "pin": "CH2"
+      },
+      "to": {
+        "part": "mcu",
+        "pin": "PB4"
+      },
+      "color": "#F5B642"
+    },
+    {
+      "from": {
+        "part": "probe",
+        "pin": "CH3"
+      },
+      "to": {
+        "part": "avr",
+        "pin": "D4"
+      },
+      "color": "#F5B642"
+    }
+  ]
+}

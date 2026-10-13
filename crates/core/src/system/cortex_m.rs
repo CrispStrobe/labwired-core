@@ -242,7 +242,7 @@ pub fn attach_swd_dp(bus: &mut SystemBus, cpu: &mut CortexM, idcode: u32) -> cra
     bus.replace_or_add_peripheral(
         "scs_debug",
         0xE000_EDF0,
-        4,
+        0x10,
         None,
         Box::new(crate::peripherals::scs_debug::ScsDebug::new(state)),
     );

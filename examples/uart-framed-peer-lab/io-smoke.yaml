@@ -1,0 +1,12 @@
+# LabWired - framed binary peer smoke test
+schema_version: "1.0"
+inputs:
+  firmware: "../../target/thumbv7m-none-eabi/release/uart-framed-peer-lab"
+  system: "./system.yaml"
+limits:
+  max_steps: 400000
+assertions:
+  - uart_contains: "framed-peer lab"
+  # reg0 is the temperature channel: 21.0 C at expr_scale 10 = 210.
+  - uart_contains: "[peer] reg0=210 reg1=7 crc=ok"
+  - expected_stop_reason: max_steps

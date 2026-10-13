@@ -1,0 +1,5 @@
+# Exact customer startup via the user-facing CLI; no electrical medium.
+name: iolinki-g0-startup
+chip: ../chips/stm32g0b1re.yaml
+external_devices: []
+board_io: []

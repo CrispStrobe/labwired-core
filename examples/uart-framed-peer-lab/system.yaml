@@ -1,0 +1,36 @@
+name: "uart-framed-peer-lab"
+chip: "../../configs/chips/stm32f103.yaml"
+# The firmware never touches the PLL: it runs from the 8 MHz HSI. Saying so
+# here keeps the UART divisor (417) and the peer's 19200 baud consistent.
+cpu_hz: 8_000_000
+parts:
+  - schema: labwired.part/v1
+    type: lab:framed-reg-peer
+    source: uart-framed-peer-lab
+    behavior:
+      primitive: uart_device
+      uart:
+        baud: 19200
+        char_bits: 11
+        frames: { framing: silence, gap_chars: 3.5, check: crc16_modbus, max_bytes: 64 }
+        regs:
+          - { reg: 0, input: temperature }
+          - { reg: 1, value: 7 }
+        responses:
+          - match: { bytes: "addr:u8 0x03 reg:u16be count:u16be" }
+            when: "var(addr) == 1"
+            respond_bytes:
+              - "var(addr)"
+              - "0x03"
+              - "var(count) * 2"
+              - "regs(var(reg), var(count))"
+              - crc16_modbus
+    metadata:
+      label: "Framed register peer"
+      inputs:
+        - { key: temperature, label: "Temperature", unit: "C", min: -40, max: 125, default: 21, expr_scale: 10 }
+external_devices:
+  - id: "peer"
+    type: "lab:framed-reg-peer"
+    connection: "uart1"
+board_io: []

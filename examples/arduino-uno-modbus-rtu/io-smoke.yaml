@@ -1,0 +1,27 @@
+# LabWired - Arduino Uno + MAX485 + two XY-MD02 Modbus RTU sensors.
+#
+# The master polls slave 1 and 2 over RS-485 with the ModbusMaster library. A
+# stimulus warms slave 1 from 21.5 to 25.0 C 1.5 s into the run; the master
+# prints the new value on its next poll. The `rs485` log on usart0
+# holds every frame that crossed the A/B pair, decoded from the wire.
+schema_version: "1.2"
+inputs:
+  firmware: "../../tests/fixtures/avr/arduino-uno-modbus-rtu.elf"
+  system: "./system.yaml"
+limits:
+  max_steps: 45000000
+stimuli:
+  - target: { component: "s1", channel: "temperature" }
+    trigger: !after_cycles { cycles: 24000000 }
+    value: 25.0
+assertions:
+  - uart_contains: "modbus-rtu master up"
+  - uart_contains: "poll 1 s1 T=21.5 H=48.0"
+  - uart_contains: "poll 1 s2 T=19.0 H=55.5"
+  - uart_contains: "poll 2 s1 reg 0x0200 -> 0x2"
+  - uart_contains: "poll 2 s2 write correction -> 0x0"
+  - uart_contains: "poll 3 s2 T=19.5 H=55.5"
+  - uart_contains: "poll 4 s1 T=25.0 H=48.0"
+  - peripheral_log: { peripheral: usart0, log: rs485, contains: "master: 01 04 00 01 00 02 20 0B" }
+  - peripheral_log: { peripheral: usart0, log: rs485, contains: "slave s1: 01 04 04 00 D7 01 E0 4B A4" }
+  - expected_stop_reason: max_steps

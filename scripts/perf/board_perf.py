@@ -319,7 +319,17 @@ FIXTURES = {
 # precisely so it cannot be dropped from here and start reading as coverage —
 # which is what happened when the Xtensa parts were moved out of this dict into
 # FIXTURES and WAIVED was emptied.
-WAIVED: dict[str, str] = {}
+# Chips that share a Cortex-M or RISC-V link map run that map's spin ELF on
+# their own chip config and get their own baseline. A generic CPU-only smoke
+# fixture must not stand in for an unimplemented board platform.
+WAIVED: dict[str, str] = {
+    "rv1103": (
+        "Optional native Cortex-A7 CPU subset only; RV1103 platform peripherals, "
+        "boot chain and Linux/BSP execution are unimplemented. No representative "
+        "perf fixture can run this board; the generic Cortex-A7 CPU smoke ELF "
+        "does not establish RV1103 throughput."
+    ),
+}
 
 # Descriptors that are CI plumbing rather than a modelled part.
 CHIP_EXCLUDE_PREFIX = "ci-fixture-"
@@ -384,6 +394,18 @@ def gate_is_ok(
 # has to clear the same absolute noise floor as regressions; Callgrind jitter
 # does not become deterministic merely because its sign is negative.
 STALE_TOLERANCE = 0.10
+
+
+def is_regression(measured: float, baseline: float, mode: str) -> bool:
+    relative = (measured - baseline) / baseline
+    absolute_floor = BATCH_ABSOLUTE_NOISE_FLOOR if mode == MODE_BATCH else 0.0
+    return relative > REGRESSION_TOLERANCE and measured - baseline > absolute_floor
+
+
+def is_stale(measured: float, baseline: float, mode: str) -> bool:
+    relative = (baseline - measured) / baseline
+    absolute_floor = BATCH_ABSOLUTE_NOISE_FLOOR if mode == MODE_BATCH else 0.0
+    return relative > STALE_TOLERANCE and baseline - measured > absolute_floor
 
 # Step and batch costs closer than this measured one loop twice. The duplicated
 # ARM pairs sat at ~1.00. The narrowest honest pair seen once step mode

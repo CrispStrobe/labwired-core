@@ -1,6 +1,7 @@
 #![allow(non_local_definitions)]
 
 mod session;
+mod world;
 use labwired_core::{
     bus::SystemBus,
     system::{cortex_m, riscv},
@@ -252,6 +253,7 @@ impl Machine {
 fn _native(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<Machine>()?;
     session::register(_py, m)?;
+    world::register(m)?;
     m.add_class::<PyStopReason>()?;
     Ok(())
 }

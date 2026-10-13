@@ -1,0 +1,21 @@
+# One push-pull wire driven from both boards: the AVR holds it low, the STM32
+# drives it high for 50 us. The net reports GPIO_NET_CONTENTION and resolves
+# to 0 (the low side wins).
+schema_version: "1.0"
+name: gpio-net-contention
+nodes:
+  - id: stm
+    system: "../stm32g0b1re/system.yaml"
+    firmware: "firmware/stm-fight.elf"
+  - id: avr
+    system: "../../configs/systems/arduino-uno.yaml"
+    firmware: "firmware/avr-fight.elf"
+interconnects:
+  - type: gpio_net
+    nodes: [avr, stm]
+    config:
+      name: fight
+      pull: down
+      members:
+        - { node: avr, peripheral: portd, pin: 2 }
+        - { node: stm, peripheral: gpiob, pin: 1 }

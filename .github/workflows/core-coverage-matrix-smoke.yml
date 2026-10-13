@@ -58,6 +58,17 @@ jobs:
             profile_dir: release
             script: examples/demo-blinky/io-smoke.yaml
             system: examples/demo-blinky/system.yaml
+          # NTC lab: its io-smoke asserts the ADC CONVERSION (boot reading =
+          # divider midpoint, later reading rises after the 80 C stimulus). It
+          # ran in no workflow, so the firmware's F2/F4 SWSTART (bit 30) on an
+          # F1 part read adc=0 unnoticed until the F1 ADC model went strict.
+          - id: ntc-thermistor-lab
+            target: thumbv7m-none-eabi
+            crate: ntc-thermistor-lab
+            profile: release
+            profile_dir: release
+            script: examples/ntc-thermistor-lab/io-smoke.yaml
+            system: examples/ntc-thermistor-lab/system.yaml
           - id: stm32h563-nucleo
             target: thumbv7m-none-eabi
             crate: firmware-h563-demo
@@ -86,6 +97,13 @@ jobs:
             profile_dir: release
             script: examples/metro-m4/uart-smoke.yaml
             system: examples/metro-m4/system.yaml
+          - id: pybadge
+            target: thumbv7em-none-eabi
+            crate: firmware-atsamd51-pybadge-demo
+            profile: release
+            profile_dir: release
+            script: examples/pybadge/io-smoke.yaml
+            system: examples/pybadge/system.yaml
           - id: arduino-uno-r4-minima
             target: thumbv7em-none-eabi
             crate: firmware-ra4m1-demo
@@ -165,6 +183,11 @@ jobs:
           # state, which is the whole point — the transcript says "location
           # published" while the panel shows nothing. Cost is negligible: the
           # sim reaches its assertions in 840k steps / 0.23s.
+          # Committed bare-metal ELF (examples/nucleo-u545re/firmware); no
+          # cross-toolchain needed on the runner.
+          - id: nucleo-u545re
+            script: examples/nucleo-u545re/io-smoke.yaml
+            system: examples/nucleo-u545re/system.yaml
           - id: h735-telematics-lab
             target: thumbv7em-none-eabi
             crate: h735-telematics-lab

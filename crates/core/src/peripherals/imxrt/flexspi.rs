@@ -25,8 +25,10 @@
 //! The device model is a generic JEDEC serial NOR (Winbond W25Q command set):
 //! READ family (any opcode with an address and a READ phase), RDSR1/2/3,
 //! WRSR1/2/3, WREN/WRDI, page program (256-byte pages, AND semantics), 4K/32K/
-//! 64K/chip erase to 0xFF with WEL gating and WIP busy time, RDID (JEDEC ID),
-//! SFDP is not modelled (reads 0xFF).
+//! 64K/chip erase to 0xFF with WEL gating and WIP busy time, erase/program
+//! suspend and resume (`0x75` / `0x7A`, SUS in status register 2). A page
+//! program is accepted while an erase is suspended; it does not replace the
+//! saved remainder. RDID (JEDEC ID). SFDP is not modelled (reads 0xFF).
 
 use super::{byte_of, Timebase};
 use crate::{Peripheral, PeripheralTickResult, SimResult};
@@ -72,6 +74,8 @@ const BLOCK32_ERASE_US: u64 = 120_000;
 const BLOCK64_ERASE_US: u64 = 150_000;
 const CHIP_ERASE_US: u64 = 5_000_000;
 const DLL_LOCK_US: u64 = 5;
+/// Time from Erase/Program Suspend until WIP clears (Winbond tSUS).
+const SUSPEND_US: u64 = 20;
 
 /// The NOR array as the command engine sees it.
 pub trait FlashArray {
@@ -141,6 +145,9 @@ struct Nor {
     sr: [u8; 3],
     wel: bool,
     busy_until: u64,
+    /// Cycles of busy time left when an erase or program is suspended.
+    remain_cycles: u64,
+    suspended: bool,
     jedec: [u8; 3],
 }
 
@@ -229,6 +236,8 @@ impl ImxrtFlexspi {
                 sr: [0, 0x02, 0x60], // SR2.QE = 1 (quad enabled, factory setting on -IQ parts)
                 wel: false,
                 busy_until: 0,
+                remain_cycles: 0,
+                suspended: false,
                 jedec,
             },
             time: Timebase::default(),
@@ -406,7 +415,13 @@ impl ImxrtFlexspi {
                     | if self.nor.wel { 2 } else { 0 };
                 out = vec![sr1; datasz];
             }
-            0x35 => out = vec![self.nor.sr[1]; datasz],
+            0x35 => {
+                let mut sr2 = self.nor.sr[1];
+                if self.nor.suspended {
+                    sr2 |= 0x80;
+                }
+                out = vec![sr2; datasz];
+            }
             0x15 => out = vec![self.nor.sr[2]; datasz],
             0x9F => {
                 out = self
@@ -436,8 +451,25 @@ impl ImxrtFlexspi {
                     self.nor.wel = false;
                 }
             }
+            0x75 => {
+                // Erase/Program Suspend. WIP stays set for tSUS, then clears
+                // with SUS. A suspend while idle is a no-op.
+                if !self.nor.suspended && now < self.nor.busy_until {
+                    self.nor.remain_cycles = self.nor.busy_until - now;
+                    self.nor.suspended = true;
+                    self.nor.busy_until = now + self.time.us(SUSPEND_US);
+                }
+            }
+            0x7A => {
+                if self.nor.suspended {
+                    self.nor.suspended = false;
+                    let left = self.nor.remain_cycles;
+                    self.nor.remain_cycles = 0;
+                    self.nor.busy_until = now + left;
+                }
+            }
             0x20 | 0x21 | 0x52 | 0xD8 | 0xDC | 0x60 | 0xC7 => {
-                if self.nor.wel && !nor_busy {
+                if self.nor.wel && !nor_busy && !self.nor.suspended {
                     let (len, us) = match cmd {
                         0x20 | 0x21 => (4096, SECTOR_ERASE_US),
                         0x52 => (32 * 1024, BLOCK32_ERASE_US),
@@ -454,8 +486,10 @@ impl ImxrtFlexspi {
                 }
             }
             0x02 | 0x12 | 0x32 | 0x34 | 0x38 | 0x3E => {
+                // Legal while an erase is suspended. The program's own busy
+                // time must leave `remain_cycles` and `suspended` alone.
+                // Page program: wraps inside the 256-byte page.
                 if self.nor.wel && !nor_busy {
-                    // Page program: wraps inside the 256-byte page.
                     let page = addr & !0xFF;
                     for (k, b) in self.tx_collected.iter().enumerate() {
                         let a = page + ((addr + k) & 0xFF);
@@ -805,6 +839,81 @@ mod tests {
         ip(&mut f, &mut array, 2, 0, 1);
         c.publish(f.time.us(SECTOR_ERASE_US) + 200_000);
         assert_eq!(f.read_reg(RFDR) & 3, 0);
+    }
+
+    #[test]
+    fn erase_suspend_clears_wip_until_resume() {
+        let (mut f, c, mut array) = setup();
+        // seq 5: suspend 0x75; seq 6: resume 0x7A; seq 7: RDSR2 0x35.
+        f.write_reg(LUT + 80, lut((0x01, 0, 0x75), (0, 0, 0)), u32::MAX);
+        f.write_reg(LUT + 96, lut((0x01, 0, 0x7A), (0, 0, 0)), u32::MAX);
+        f.write_reg(LUT + 112, lut((0x01, 0, 0x35), (0x09, 0, 1)), u32::MAX);
+        ip_done(&mut f, &c, &mut array, 1, 0, 0);
+        ip_done(&mut f, &c, &mut array, 3, 0x1000, 0);
+        ip_done(&mut f, &c, &mut array, 5, 0, 0);
+        c.publish(c.now() + f.time.us(SUSPEND_US) + 1_000);
+        assert_eq!(
+            status(&mut f, &c, &mut array, 2) & 1,
+            0,
+            "WIP clear while suspended"
+        );
+        assert_ne!(status(&mut f, &c, &mut array, 7) & 0x80, 0, "SUS set");
+        ip_done(&mut f, &c, &mut array, 6, 0, 0);
+        assert_eq!(
+            status(&mut f, &c, &mut array, 2) & 1,
+            1,
+            "WIP set again after resume"
+        );
+        c.publish(c.now() + f.time.us(SECTOR_ERASE_US));
+        assert_eq!(
+            status(&mut f, &c, &mut array, 2) & 1,
+            0,
+            "erase finishes after the remaining busy time"
+        );
+    }
+
+    #[test]
+    fn page_program_works_while_erase_is_suspended() {
+        let (mut f, c, mut array) = setup();
+        f.write_reg(LUT + 80, lut((0x01, 0, 0x75), (0, 0, 0)), u32::MAX);
+        f.write_reg(LUT + 96, lut((0x01, 0, 0x7A), (0, 0, 0)), u32::MAX);
+        f.write_reg(LUT + 112, lut((0x01, 0, 0x35), (0x09, 0, 1)), u32::MAX);
+        ip_done(&mut f, &c, &mut array, 1, 0, 0);
+        ip_done(&mut f, &c, &mut array, 3, 0x1000, 0);
+        ip_done(&mut f, &c, &mut array, 5, 0, 0);
+        c.publish(c.now() + f.time.us(SUSPEND_US) + 1_000);
+        ip_done(&mut f, &c, &mut array, 1, 0, 0);
+        f.write_reg(IPCR0, 0x2000, u32::MAX);
+        f.write_reg(IPCR1, (4 << 16) | 1, u32::MAX);
+        f.write_reg(IPCMD, 1, u32::MAX);
+        f.service(&mut array);
+        f.write_reg(TFDR, 0xA5, u32::MAX);
+        f.write_reg(INTR, INTR_IPTXWE, u32::MAX);
+        f.service(&mut array);
+        assert_eq!(array[0x2000], 0xA5, "program while suspended");
+        c.publish(c.now() + f.time.us(PAGE_PROGRAM_US) + 1_000);
+        assert_ne!(
+            status(&mut f, &c, &mut array, 7) & 0x80,
+            0,
+            "SUS stays set after the program"
+        );
+        assert_eq!(
+            status(&mut f, &c, &mut array, 2) & 1,
+            0,
+            "WIP clear after the program"
+        );
+        ip_done(&mut f, &c, &mut array, 6, 0, 0);
+        assert_eq!(status(&mut f, &c, &mut array, 2) & 1, 1, "erase resumes");
+    }
+
+    /// One status read. `ip_done` drains the RX FIFO, so a status check has
+    /// to capture `RFDR` before that drain.
+    fn status(f: &mut ImxrtFlexspi, c: &CycleClock, array: &mut Vec<u8>, seq: u32) -> u32 {
+        ip(f, array, seq, 0, 1);
+        c.publish(c.now() + 10_000);
+        let value = f.read_reg(RFDR);
+        f.write_reg(INTR, INTR_IPRXWA, u32::MAX);
+        value
     }
 
     #[test]

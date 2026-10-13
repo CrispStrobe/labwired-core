@@ -848,13 +848,39 @@ pub(crate) fn validate_environment_interconnect_config(
             crate::UartNetworkConfig::from_interconnect_config(&interconnect.config)
                 .with_context(|| format!("interconnects[{index}]"))?;
         }
+        "gpio_net" => {
+            let cfg = crate::GpioNetConfig::from_interconnect_config(&interconnect.config)
+                .with_context(|| format!("interconnects[{index}]"))?;
+            let mut members: Vec<&str> = cfg.members.iter().map(|m| m.node.as_str()).collect();
+            members.sort_unstable();
+            members.dedup();
+            let mut listed: Vec<&str> = interconnect.nodes.iter().map(String::as_str).collect();
+            listed.sort_unstable();
+            listed.dedup();
+            if members != listed {
+                anyhow::bail!(
+                    "interconnects[{index}]: gpio_net nodes {listed:?} must be exactly the nodes that own a member {members:?}"
+                );
+            }
+        }
         "can_bus" => {
             reject_unknown_interconnect_config_keys(
                 index,
                 kind,
                 &interconnect.config,
-                &["peripheral", "endpoints"],
+                &["peripheral", "endpoints", "bitrate", "id"],
             )?;
+            optional_nonempty_interconnect_string(index, kind, &interconnect.config, "id")?;
+            if let Some(bitrate) = interconnect.config.get("bitrate") {
+                // Classic CAN runs from 10 kbit/s up to 1 Mbit/s
+                // (ISO 11898-2 high-speed physical layer).
+                match bitrate.as_u64() {
+                    Some(b) if (10_000..=1_000_000).contains(&b) => {}
+                    _ => anyhow::bail!(
+                        "interconnects[{index}]: can_bus config.bitrate must be an integer bit rate from 10000 to 1000000"
+                    ),
+                }
+            }
             let has_peripheral = interconnect
                 .config
                 .get("peripheral")

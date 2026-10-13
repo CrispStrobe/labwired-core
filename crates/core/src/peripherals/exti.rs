@@ -24,6 +24,14 @@ pub enum ExtiRegisterLayout {
     /// STM32L4: two banks (40 lines total). Bank1 at 0x00..0x14, bank2 at
     /// 0x20..0x34. Bank-2 covers lines 32..39 (LPTIM/COMP/I2C/USART wakeup).
     Stm32L4,
+    /// STM32G0 GPIO lines: split rising/falling pending and EXTI-owned mux.
+    Stm32G0,
+    /// STM32U5 GPIO lines: split pending, 4-bit mux, individual IRQs 11..26.
+    Stm32U5,
+    /// STM32L0 (RM0367, EXTI chapter): the F1 register file (IMR/EMR/RTSR/FTSR/SWIER/
+    /// PR at 0x00..0x14, port mux in `SYSCFG_EXTICRx`), with the Cortex-M0+
+    /// grouped vectors: EXTI0_1 = IRQ 5, EXTI2_3 = 6, EXTI4_15 = 7.
+    Stm32L0,
 }
 
 impl FromStr for ExtiRegisterLayout {
@@ -34,8 +42,11 @@ impl FromStr for ExtiRegisterLayout {
         match v.as_str() {
             "stm32f1" | "f1" | "legacy" => Ok(Self::Stm32F1),
             "stm32l4" | "l4" => Ok(Self::Stm32L4),
+            "stm32g0" | "g0" => Ok(Self::Stm32G0),
+            "stm32u5" | "u5" => Ok(Self::Stm32U5),
+            "stm32l0" | "l0" => Ok(Self::Stm32L0),
             _ => Err(format!(
-                "unsupported EXTI register layout '{}'; supported: stm32f1, stm32l4",
+                "unsupported EXTI register layout '{}'; supported: stm32f1, stm32l4, stm32g0, stm32u5, stm32l0",
                 value
             )),
         }
@@ -114,6 +125,23 @@ fn route_bank1_irqs(active1: u32, irqs: &mut Vec<u32>) {
     }
 }
 
+/// The STM32L0 / G0 grouped GPIO vectors: lines 0..1 → IRQ 5 (EXTI0_1),
+/// 2..3 → 6 (EXTI2_3), 4..15 → 7 (EXTI4_15), per the RM0367 and RM0444
+/// vector tables.
+const M0_GPIO_GROUPS: [(u32, u32); 3] = [(0x0003, 5), (0x000c, 6), (0xfff0, 7)];
+
+/// Bank-1 GPIO-group NVIC line LEVELS (the level twin of
+/// [`route_bank1_irqs`]): EXTI0..4 → IRQ 6..10, EXTI9_5 → 23, EXTI15_10 → 40.
+/// Lines 16+ (PVD, RTC, USB/OTG wakeup, …) route to IRQs another peripheral may
+/// also drive, so they are not reported and keep pulse semantics.
+fn report_bank1_levels(active1: u32, report: &mut dyn FnMut(u32, bool)) {
+    for i in 0..5 {
+        report(6 + i, active1 & (1 << i) != 0);
+    }
+    report(23, active1 & 0x0000_03E0 != 0);
+    report(40, active1 & 0x0000_FC00 != 0);
+}
+
 // ── STM32F1 / F4: single bank ────────────────────────────────────────────────
 // The implemented-line count is part-specific (F103 = 19 lines, F4-class = more),
 // so the mask is per-instance, set from the chip config's `lines` field. Default
@@ -160,11 +188,70 @@ impl L4Exti {
     const MASK2: u32 = 0x0000_00FF; // lines 32..39
 }
 
+/// RM0444/RM0456 split-pending GPIO EXTI bank. Internal peripheral event lines and EMR event
+/// delivery are not synthesized by this GPIO interrupt path.
+#[derive(Debug, Default, serde::Serialize)]
+pub struct SplitPendingGpioExti {
+    rtsr: u32,
+    ftsr: u32,
+    rpr: u32,
+    fpr: u32,
+    imr: u32,
+    emr: u32,
+    exticr: [u32; 4],
+    #[serde(skip)]
+    clock: Option<CycleClock>,
+    #[serde(skip)]
+    chain_live: bool,
+}
+
+/// Compatibility name for the original G0-only bank.
+pub type G0Exti = SplitPendingGpioExti;
+
+impl SplitPendingGpioExti {
+    fn read(&self, offset: u64) -> u32 {
+        match offset {
+            0x00 => self.rtsr,
+            0x04 => self.ftsr,
+            0x0c => self.rpr,
+            0x10 => self.fpr,
+            0x60..=0x6c => self.exticr[((offset - 0x60) / 4) as usize],
+            0x80 => self.imr,
+            0x84 => self.emr,
+            _ => {
+                crate::census_reg!("exti:G0Exti", offset, "read");
+                0
+            }
+        }
+    }
+    fn write(&mut self, offset: u64, value: u32, mux_mask: u32) {
+        match offset {
+            0x00 => self.rtsr = value & 0xffff,
+            0x04 => self.ftsr = value & 0xffff,
+            0x0c => self.rpr &= !value,
+            0x10 => self.fpr &= !value,
+            0x60..=0x6c => self.exticr[((offset - 0x60) / 4) as usize] = value & mux_mask,
+            0x80 => self.imr = value & 0xffff,
+            0x84 => self.emr = value & 0xffff,
+            _ => {
+                crate::census_reg!("exti:G0Exti", offset, "write");
+            }
+        }
+    }
+    fn active(&self) -> u32 {
+        (self.rpr | self.fpr) & self.imr
+    }
+}
+
 /// External Interrupt/Event Controller — one variant per chip family.
 #[derive(Debug, serde::Serialize)]
 pub enum Exti {
     Stm32F1(F1Exti),
     Stm32L4(L4Exti),
+    Stm32G0(SplitPendingGpioExti),
+    Stm32U5(SplitPendingGpioExti),
+    /// The F1 register file with the L0 vector routing.
+    Stm32L0(F1Exti),
 }
 
 impl Default for Exti {
@@ -191,6 +278,12 @@ impl Exti {
                 ..Default::default()
             }),
             ExtiRegisterLayout::Stm32L4 => Self::Stm32L4(L4Exti::default()),
+            ExtiRegisterLayout::Stm32G0 => Self::Stm32G0(SplitPendingGpioExti::default()),
+            ExtiRegisterLayout::Stm32U5 => Self::Stm32U5(SplitPendingGpioExti::default()),
+            ExtiRegisterLayout::Stm32L0 => Self::Stm32L0(F1Exti {
+                line_mask,
+                ..Default::default()
+            }),
         }
     }
 
@@ -198,7 +291,12 @@ impl Exti {
     /// Bank-2 lines (32..39) exist only on the L4 variant.
     pub fn trigger_line(&mut self, line: u8) {
         match self {
-            Self::Stm32F1(e) => {
+            Self::Stm32G0(e) | Self::Stm32U5(e) => {
+                if line < 16 {
+                    e.rpr |= 1 << line;
+                }
+            }
+            Self::Stm32F1(e) | Self::Stm32L0(e) => {
                 if line < 32 {
                     e.bank1.pr |= 1u32 << line;
                 }
@@ -211,9 +309,70 @@ impl Exti {
         }
     }
 
+    /// Apply an actual GPIO edge, respecting the G0/U5 port mux and polarity.
+    /// Returns true when this edge creates a pending GPIO interrupt flag.
+    /// The F1/F4 and L4 layouts keep their port mux outside EXTI; see
+    /// [`Self::gpio_edge_with_source`].
+    pub fn gpio_edge(&mut self, port: u8, line: u8, before: bool, after: bool) -> bool {
+        self.gpio_edge_with_source(port, line, before, after, None)
+    }
+
+    /// As [`Self::gpio_edge`], with the port the chip's external line-source
+    /// mux selects for `line` (`AFIO_EXTICRx` on F1, `SYSCFG_EXTICRx` on F4;
+    /// `None` when the chip has no such mux on the bus).
+    ///
+    /// G0/U5 select the port in their own `EXTI_EXTICRx` and ignore
+    /// `line_source`. The single-bank F1/F4 layout (and L4 bank 1) has no mux
+    /// of its own: the edge counts only when `line_source` names `port`, and
+    /// then sets PR for the line if RTSR (rising) or FTSR (falling) selects
+    /// it, whatever IMR says — IMR gates the interrupt, not the pending bit
+    /// (RM0008 §10.2.5, RM0090 §12.2.5). Returns true when PR was set.
+    pub fn gpio_edge_with_source(
+        &mut self,
+        port: u8,
+        line: u8,
+        before: bool,
+        after: bool,
+        line_source: Option<u8>,
+    ) -> bool {
+        if line >= 16 || before == after {
+            return false;
+        }
+        let bit = 1u32 << line;
+        let bank = match self {
+            Self::Stm32G0(e) | Self::Stm32U5(e) => {
+                let mux = (e.exticr[usize::from(line / 4)] >> (u32::from(line % 4) * 8)) & 0xff;
+                if mux != u32::from(port) {
+                    return false;
+                }
+                if after && e.rtsr & bit != 0 {
+                    e.rpr |= bit;
+                    return true;
+                }
+                if !after && e.ftsr & bit != 0 {
+                    e.fpr |= bit;
+                    return true;
+                }
+                return false;
+            }
+            Self::Stm32F1(e) | Self::Stm32L0(e) => &mut e.bank1,
+            Self::Stm32L4(e) => &mut e.bank1,
+        };
+        if line_source != Some(port) {
+            return false;
+        }
+        let selected = if after { bank.rtsr } else { bank.ftsr };
+        if selected & bit == 0 {
+            return false;
+        }
+        bank.pr |= bit;
+        true
+    }
+
     fn read_reg(&self, offset: u64) -> u32 {
         match self {
-            Self::Stm32F1(e) => match offset {
+            Self::Stm32G0(e) | Self::Stm32U5(e) => e.read(offset),
+            Self::Stm32F1(e) | Self::Stm32L0(e) => match offset {
                 0x00..=0x14 => e.bank1.read(offset),
                 _ => {
                     crate::census_reg!("exti:Exti", offset, "read");
@@ -233,7 +392,9 @@ impl Exti {
 
     fn write_reg(&mut self, offset: u64, value: u32) {
         match self {
-            Self::Stm32F1(e) => {
+            Self::Stm32G0(e) => e.write(offset, value, 0x07070707),
+            Self::Stm32U5(e) => e.write(offset, value, 0x0f0f0f0f),
+            Self::Stm32F1(e) | Self::Stm32L0(e) => {
                 if (0x00..=0x14).contains(&offset) {
                     let mask = e.line_mask;
                     e.bank1.write(offset, value, mask);
@@ -255,6 +416,30 @@ impl Exti {
     fn pending_irqs(&self) -> Vec<u32> {
         let mut irqs = Vec::new();
         match self {
+            Self::Stm32U5(e) => {
+                for line in 0..16 {
+                    if e.active() & (1 << line) != 0 {
+                        irqs.push(11 + line);
+                    }
+                }
+            }
+            Self::Stm32G0(e) => {
+                for (mask, irq) in M0_GPIO_GROUPS {
+                    if e.active() & mask != 0 {
+                        irqs.push(irq);
+                    }
+                }
+            }
+            Self::Stm32L0(e) => {
+                // Lines 16+ (PVD, RTC, COMP, wakeups) route to other vectors
+                // this model does not synthesize; they stay register-level.
+                let active = e.bank1.pr & e.bank1.imr;
+                for (mask, irq) in M0_GPIO_GROUPS {
+                    if active & mask != 0 {
+                        irqs.push(irq);
+                    }
+                }
+            }
             Self::Stm32F1(e) => {
                 let active1 = e.bank1.pr & e.bank1.imr;
                 if active1 != 0 {
@@ -293,7 +478,8 @@ impl Exti {
     /// idle fast-forward engage; firmware clearing PR (rc_w1) drops it.
     fn active(&self) -> bool {
         match self {
-            Self::Stm32F1(e) => (e.bank1.pr & e.bank1.imr) != 0,
+            Self::Stm32G0(e) | Self::Stm32U5(e) => e.active() != 0,
+            Self::Stm32F1(e) | Self::Stm32L0(e) => (e.bank1.pr & e.bank1.imr) != 0,
             Self::Stm32L4(e) => (e.bank1.pr & e.bank1.imr) != 0 || (e.bank2.pr & e.bank2.imr) != 0,
         }
     }
@@ -312,7 +498,8 @@ impl Exti {
 
     fn scheduler_mode(&self) -> bool {
         let clock = match self {
-            Self::Stm32F1(e) => &e.clock,
+            Self::Stm32G0(e) | Self::Stm32U5(e) => &e.clock,
+            Self::Stm32F1(e) | Self::Stm32L0(e) => &e.clock,
             Self::Stm32L4(e) => &e.clock,
         };
         cfg!(feature = "event-scheduler") && clock.is_some()
@@ -320,14 +507,16 @@ impl Exti {
 
     fn set_chain_live(&mut self, live: bool) {
         match self {
-            Self::Stm32F1(e) => e.chain_live = live,
+            Self::Stm32G0(e) | Self::Stm32U5(e) => e.chain_live = live,
+            Self::Stm32F1(e) | Self::Stm32L0(e) => e.chain_live = live,
             Self::Stm32L4(e) => e.chain_live = live,
         }
     }
 
     fn chain_live(&self) -> bool {
         match self {
-            Self::Stm32F1(e) => e.chain_live,
+            Self::Stm32G0(e) | Self::Stm32U5(e) => e.chain_live,
+            Self::Stm32F1(e) | Self::Stm32L0(e) => e.chain_live,
             Self::Stm32L4(e) => e.chain_live,
         }
     }
@@ -336,7 +525,8 @@ impl Exti {
     /// walk (the walk-on reference for the differential gate).
     pub fn force_legacy_walk(&mut self) {
         match self {
-            Self::Stm32F1(e) => e.clock = None,
+            Self::Stm32G0(e) | Self::Stm32U5(e) => e.clock = None,
+            Self::Stm32F1(e) | Self::Stm32L0(e) => e.clock = None,
             Self::Stm32L4(e) => e.clock = None,
         }
     }
@@ -353,6 +543,12 @@ impl Peripheral for Exti {
     fn write(&mut self, offset: u64, value: u8) -> SimResult<()> {
         let reg_offset = offset & !3;
         let byte_offset = (offset % 4) as u32;
+
+        if matches!(self, Self::Stm32G0(_) | Self::Stm32U5(_)) && matches!(reg_offset, 0x0c | 0x10)
+        {
+            self.write_reg(reg_offset, u32::from(value) << (byte_offset * 8));
+            return Ok(());
+        }
 
         let mut reg_val = self.read_reg(reg_offset);
         let mask = 0xFF << (byte_offset * 8);
@@ -419,7 +615,8 @@ impl Peripheral for Exti {
 
     fn attach_cycle_clock(&mut self, clock: CycleClock) {
         match self {
-            Self::Stm32F1(e) => e.clock = Some(clock),
+            Self::Stm32G0(e) | Self::Stm32U5(e) => e.clock = Some(clock),
+            Self::Stm32F1(e) | Self::Stm32L0(e) => e.clock = Some(clock),
             Self::Stm32L4(e) => e.clock = Some(clock),
         }
     }
@@ -431,14 +628,12 @@ impl Peripheral for Exti {
 
     fn take_scheduled_events(&mut self) -> Vec<(u64, u32)> {
         // Arm the held-level re-emit chain the moment a write raises a masked
-        // pending line (SWIER→PR, or IMR unmasking a pending PR). Every EXTI
-        // PR-setting path today is an MMIO write (SWIER edge-detect or a direct
-        // PR/IMR write), so `take_scheduled_events` — drained after every MMIO
-        // write — always catches the activation. (`trigger_line`, the external
-        // GPIO-edge injector, has no runtime caller; were it ever wired to a bus
-        // path, that path must re-arm the chain the same way, since a `&mut`
-        // injector cannot itself return events.) delay-0 → deadline
-        // `current_cycle + 1` = the walk's next tick.
+        // pending line (SWIER→PR, or IMR unmasking a pending PR), or an
+        // external GPIO edge sets PR (`gpio_input_edge`): MMIO writes are
+        // drained after every write, and the bus drains this after an edge
+        // that returned true. (`trigger_line` has no runtime caller; were it
+        // ever wired to a bus path, that path must re-arm the chain the same
+        // way.) delay-0 → deadline `current_cycle + 1` = the walk's next tick.
         if self.scheduler_mode() && self.active() && !self.chain_live() {
             self.set_chain_live(true);
             vec![(0u64, 0u32)]
@@ -467,6 +662,49 @@ impl Peripheral for Exti {
             reschedule_delay: active.then_some(1),
             ..Default::default()
         }
+    }
+
+    /// Per-NVIC-line levels of the GPIO EXTI groups, so the bus drops the
+    /// NVIC pend the held level raised while the handler ran once firmware
+    /// clears the pending latch (rc_w1). Without it a handler that clears PR
+    /// without re-checking it ran twice per edge. Only the lines EXTI owns
+    /// exclusively are reported (see [`report_bank1_levels`]); the L4 bank-2
+    /// wakeup lines share their IRQ with the UART / I2C they wake and stay
+    /// pulse-delivered.
+    fn irq_line_levels(&self, report: &mut dyn FnMut(u32, bool)) {
+        match self {
+            Self::Stm32U5(e) => {
+                let active = e.active();
+                for line in 0..16 {
+                    report(11 + line, active & (1 << line) != 0);
+                }
+            }
+            Self::Stm32G0(e) => {
+                let active = e.active();
+                for (mask, irq) in M0_GPIO_GROUPS {
+                    report(irq, active & mask != 0);
+                }
+            }
+            Self::Stm32L0(e) => {
+                let active = e.bank1.pr & e.bank1.imr;
+                for (mask, irq) in M0_GPIO_GROUPS {
+                    report(irq, active & mask != 0);
+                }
+            }
+            Self::Stm32F1(e) => report_bank1_levels(e.bank1.pr & e.bank1.imr, report),
+            Self::Stm32L4(e) => report_bank1_levels(e.bank1.pr & e.bank1.imr, report),
+        }
+    }
+
+    fn gpio_input_edge(
+        &mut self,
+        port: u8,
+        pin: u8,
+        before: bool,
+        after: bool,
+        line_source: Option<u8>,
+    ) -> bool {
+        self.gpio_edge_with_source(port, pin, before, after, line_source)
     }
 
     fn as_any(&self) -> Option<&dyn Any> {
@@ -576,6 +814,185 @@ mod tests {
     }
 }
 
+// ── External GPIO edges through the F1 AFIO / F4 SYSCFG line-source mux ─────
+#[cfg(test)]
+mod external_mux {
+    use super::{Exti, ExtiRegisterLayout};
+    use crate::bus::SystemBus;
+    use crate::peripherals::gpio::{GpioPort, GpioRegisterLayout};
+    use crate::{Bus, Peripheral};
+
+    #[test]
+    fn f1_layout_counts_only_the_selected_port_and_polarity() {
+        let mut e = Exti::new_with_layout_lines(ExtiRegisterLayout::Stm32F1, 0x7FFFF);
+        e.write_u32(0x00, 1 << 3).unwrap(); // IMR line 3
+        e.write_u32(0x08, 1 << 3).unwrap(); // RTSR line 3 (rising only)
+                                            // No mux on the bus, or another port selected: nothing.
+        assert!(!e.gpio_edge_with_source(2, 3, false, true, None));
+        assert!(!e.gpio_edge_with_source(2, 3, false, true, Some(0)));
+        // Falling edge on a rising-only line: nothing.
+        assert!(!e.gpio_edge_with_source(2, 3, true, false, Some(2)));
+        assert_eq!(e.read_u32(0x14).unwrap(), 0);
+        assert!(e.gpio_edge_with_source(2, 3, false, true, Some(2)));
+        assert_eq!(e.read_u32(0x14).unwrap(), 1 << 3);
+        assert_eq!(e.tick().explicit_irqs, Some(vec![9]), "EXTI3 -> IRQ 9");
+        e.write_u32(0x14, 1 << 3).unwrap(); // rc_w1
+        assert_eq!(e.tick().explicit_irqs, None);
+    }
+
+    #[test]
+    fn pending_is_set_while_masked_and_fires_once_unmasked() {
+        // IMR gates the interrupt, not PR (RM0008 §10.2.5).
+        let mut e = Exti::new_with_layout(ExtiRegisterLayout::Stm32F1);
+        e.write_u32(0x0C, 1 << 12).unwrap(); // FTSR line 12
+        assert!(e.gpio_edge_with_source(1, 12, true, false, Some(1)));
+        assert_eq!(e.read_u32(0x14).unwrap(), 1 << 12);
+        assert_eq!(e.tick().explicit_irqs, None);
+        e.write_u32(0x00, 1 << 12).unwrap();
+        assert_eq!(e.tick().explicit_irqs, Some(vec![40]), "EXTI15_10");
+    }
+
+    /// L0: the F1 register file, but the NVIC lines are the Cortex-M0+
+    /// groups 5/6/7, both in the held level and in the levels the bus
+    /// reconciles — never the F1 6..10/23/40.
+    #[test]
+    fn l0_routes_gpio_lines_to_the_m0_groups() {
+        let mut exti = Exti::new_with_layout(ExtiRegisterLayout::Stm32L0);
+        exti.write_u32(0x00, 0xFFFF).unwrap(); // IMR
+        exti.write_u32(0x08, 0xFFFF).unwrap(); // RTSR
+        let levels = |exti: &Exti| {
+            let mut out = Vec::new();
+            exti.irq_line_levels(&mut |irq, on| out.push((irq, on)));
+            out
+        };
+        assert_eq!(levels(&exti), vec![(5, false), (6, false), (7, false)]);
+        for (line, irq) in [
+            (0u8, 5u32),
+            (1, 5),
+            (2, 6),
+            (3, 6),
+            (4, 7),
+            (13, 7),
+            (15, 7),
+        ] {
+            assert!(exti.gpio_edge_with_source(2, line, false, true, Some(2)));
+            assert_eq!(exti.pending_irqs(), vec![irq], "line {line}");
+            assert!(levels(&exti).contains(&(irq, true)));
+            exti.write_u32(0x14, 1 << line).unwrap(); // PR rc_w1
+            assert!(exti.pending_irqs().is_empty());
+        }
+        // The port select still comes from SYSCFG: another port is ignored.
+        assert!(!exti.gpio_edge_with_source(1, 0, false, true, Some(2)));
+        assert_eq!(
+            "l0".parse::<ExtiRegisterLayout>(),
+            Ok(ExtiRegisterLayout::Stm32L0)
+        );
+    }
+
+    #[test]
+    fn g0_ignores_an_external_line_source() {
+        let mut e = Exti::new_with_layout(ExtiRegisterLayout::Stm32G0);
+        e.write_u32(0x00, 1).unwrap(); // RTSR line 0, EXTICR1 = port A
+        assert!(!e.gpio_edge_with_source(1, 0, false, true, Some(1)));
+        assert!(e.gpio_edge_with_source(0, 0, false, true, Some(1)));
+    }
+
+    /// GPIOA/GPIOB, the line-source mux and EXTI on one bus, as a chip yaml
+    /// wires them.
+    fn bus_with(mux_name: &str, mux_base: u64, mux: Box<dyn Peripheral>, v2: bool) -> SystemBus {
+        let layout = if v2 {
+            GpioRegisterLayout::Stm32V2
+        } else {
+            GpioRegisterLayout::Stm32F1
+        };
+        let mut bus = SystemBus::empty();
+        bus.add_peripheral(
+            "gpioa",
+            0x5000_0000,
+            1024,
+            None,
+            Box::new(GpioPort::new_with_layout(layout)),
+        );
+        bus.add_peripheral(
+            "gpiob",
+            0x5000_0400,
+            1024,
+            None,
+            Box::new(GpioPort::new_with_layout(layout)),
+        );
+        bus.add_peripheral(mux_name, mux_base, 1024, None, mux);
+        bus.add_peripheral(
+            "exti",
+            0x4001_0400,
+            1024,
+            None,
+            Box::new(Exti::new_with_layout(ExtiRegisterLayout::Stm32F1)),
+        );
+        bus
+    }
+
+    /// Both edges on line 1, port B selected through the mux at `exticr1`;
+    /// count PR sets from external input changes on PA1 and PB1.
+    fn edges_reach_exti_through(mut bus: SystemBus, exticr1: u64) {
+        const EXTI: u64 = 0x4001_0400;
+        bus.write_u32(exticr1, 1 << 4).unwrap(); // line 1 -> port B
+        bus.write_u32(EXTI + 0x08, 1 << 1).unwrap(); // RTSR
+        bus.write_u32(EXTI + 0x0C, 1 << 1).unwrap(); // FTSR
+        bus.write_u32(EXTI, 1 << 1).unwrap(); // IMR
+        let pr = |bus: &SystemBus| bus.read_u32(EXTI + 0x14).unwrap();
+        // Port A is not selected.
+        bus.set_peripheral_gpio_input(0, 1, true);
+        bus.set_peripheral_gpio_input(0, 1, false);
+        assert_eq!(pr(&bus), 0);
+        // Port B rising, then falling: each sets PR and raises EXTI1 (IRQ 7).
+        bus.set_peripheral_gpio_input(1, 1, true);
+        assert_eq!(pr(&bus), 1 << 1);
+        assert_eq!(bus.tick_peripherals_fully_forced().0, vec![7]);
+        bus.write_u32(EXTI + 0x14, 1 << 1).unwrap();
+        // The same level again is no edge.
+        bus.set_peripheral_gpio_input(1, 1, true);
+        assert_eq!(pr(&bus), 0);
+        bus.set_peripheral_gpio_input(1, 1, false);
+        assert_eq!(pr(&bus), 1 << 1);
+    }
+
+    #[test]
+    fn f1_afio_exticr_routes_external_edges_to_exti() {
+        let bus = bus_with(
+            "afio",
+            0x4001_0000,
+            Box::new(crate::peripherals::afio::Afio::new()),
+            false,
+        );
+        edges_reach_exti_through(bus, 0x4001_0008);
+    }
+
+    #[test]
+    fn f4_syscfg_exticr_routes_external_edges_to_exti() {
+        let bus = bus_with(
+            "syscfg",
+            0x4001_3800,
+            Box::new(crate::peripherals::syscfg::Stm32F4Syscfg::new()),
+            true,
+        );
+        edges_reach_exti_through(bus, 0x4001_3808);
+    }
+
+    #[test]
+    fn without_a_mux_on_the_bus_the_f1_exti_stays_quiet() {
+        let bus = bus_with(
+            "stub",
+            0x4001_3800,
+            Box::new(crate::peripherals::stub::StubPeripheral::new(0)),
+            true,
+        );
+        let mut bus = bus;
+        bus.write_u32(0x4001_0408, 1).unwrap(); // RTSR line 0
+        bus.set_peripheral_gpio_input(0, 0, true);
+        assert_eq!(bus.read_u32(0x4001_0414).unwrap(), 0);
+    }
+}
+
 // ── Walk-free differential: held-level EXTI walk vs scheduler ────────────────
 #[cfg(all(test, feature = "event-scheduler"))]
 mod scheduler_diff {
@@ -604,8 +1021,9 @@ mod scheduler_diff {
         let mut walk = build(layout, false);
         let mut sched = build(layout, true);
         let clock = match &sched {
-            Exti::Stm32F1(e) => e.clock.clone(),
+            Exti::Stm32F1(e) | Exti::Stm32L0(e) => e.clock.clone(),
             Exti::Stm32L4(e) => e.clock.clone(),
+            Exti::Stm32G0(e) | Exti::Stm32U5(e) => e.clock.clone(),
         }
         .unwrap();
 
@@ -680,6 +1098,18 @@ mod scheduler_diff {
             (9, Op::Write(0x14, 1 << 12)),                 // clear line 12 (IRQ40 drops)
         ];
         assert_walk_identical(ExtiRegisterLayout::Stm32F1, &script, 14);
+    }
+
+    #[test]
+    fn l0_grouped_irq_line_walk_identity() {
+        // Lines 1 (EXTI0_1, IRQ 5) and 9 (EXTI4_15, IRQ 7).
+        let script = [
+            (1u64, Op::Write(0x00, (1 << 1) | (1 << 9))),
+            (1, Op::Write(0x10, (1 << 1) | (1 << 9))),
+            (6, Op::Write(0x14, 1 << 1)),
+            (9, Op::Write(0x14, 1 << 9)),
+        ];
+        assert_walk_identical(ExtiRegisterLayout::Stm32L0, &script, 14);
     }
 
     #[test]

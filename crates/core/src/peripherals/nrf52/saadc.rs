@@ -151,6 +151,9 @@ impl Nrf52Saadc {
                     .unwrap_or(0),
             ),
             9 => Some(SAADC_VDD_MV),
+            // VDDHDIV5 (nRF52833/nRF52840). VDDH is not modelled separately;
+            // it is taken as VDD.
+            0x0D => Some(SAADC_VDD_MV / 5),
             _ => None,
         }
     }
@@ -299,6 +302,11 @@ impl Peripheral for Nrf52Saadc {
                 self.pending = PENDING_NONE;
                 self.armed = false;
                 self.events_stopped = 1;
+            }
+            // Offset calibration is not modelled; it completes at once so a
+            // driver waiting on CALIBRATEDONE does not spin forever.
+            OFF_TASKS_CALIBRATEOFFSET if value != 0 && self.enabled() => {
+                self.events_calibratedone = 1;
             }
             OFF_TASKS_START | OFF_TASKS_SAMPLE | OFF_TASKS_STOP | OFF_TASKS_CALIBRATEOFFSET => {}
             // EVENTS_*: hardware-generated. SW write-1 is ignored; SW write-0 clears.
@@ -493,6 +501,39 @@ mod tests {
         assert_eq!(convert(&mut s, 1), vec![3072]);
         s.write_u32(OFF_CH_FIRST + 7 * 0x10, 0x8000_0004).unwrap();
         assert_eq!(convert(&mut s, 1), vec![3072]); // reserved selector bits ignored
+    }
+
+    #[test]
+    fn vddhdiv5_keeps_its_result_slot_in_a_scan() {
+        let mut s = Nrf52Saadc::new();
+        s.set_adc_channel_input(0, 600);
+        s.write_u32(OFF_CH_FIRST, 1).unwrap(); // CH[0] = AIN0
+        s.write_u32(OFF_CH_FIRST + 0x10, 0x0D).unwrap(); // CH[1] = VDDHDIV5
+        let mut bus = FlatRam::new();
+        s.write_u32(OFF_ENABLE, 1).unwrap();
+        s.write_u32(OFF_RESOLUTION, 2).unwrap();
+        s.write_u32(OFF_RESULT_PTR, 0x2000_0000).unwrap();
+        s.write_u32(OFF_RESULT_MAXCNT, 2).unwrap();
+        s.write_u32(OFF_TASKS_START, 1).unwrap();
+        s.write_u32(OFF_TASKS_SAMPLE, 1).unwrap();
+        s.tick_with_bus(&mut bus);
+        assert_eq!(
+            s.read_u32(OFF_RESULT_AMOUNT).unwrap(),
+            2,
+            "one SAMPLE, two channels"
+        );
+        assert_eq!(s.read_u32(OFF_EVENTS_END).unwrap(), 1);
+        let r = bus.read_slice(0x2000_0000, 4);
+        // 3300 mV / 5 at gain 1/6, 0.6 V reference, 12 bits, truncated.
+        assert_eq!(i16::from_le_bytes([r[2], r[3]]), 750);
+    }
+
+    #[test]
+    fn calibrate_offset_completes() {
+        let mut s = Nrf52Saadc::new();
+        s.write_u32(OFF_ENABLE, 1).unwrap();
+        s.write_u32(OFF_TASKS_CALIBRATEOFFSET, 1).unwrap();
+        assert_eq!(s.read_u32(OFF_EVENTS_CALIBRATEDONE).unwrap(), 1);
     }
 
     #[test]

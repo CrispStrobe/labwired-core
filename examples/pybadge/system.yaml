@@ -1,0 +1,17 @@
+# Adafruit PyBadge (SAMD51J19A), application image linked at 0x4000 behind the
+# resident UF2 bootloader. Mirrors configs/systems/pybadge.yaml (board
+# pin facts and sources are documented there and in README.md).
+name: "pybadge-example"
+chip: "../../configs/chips/atsamd51-pybadge.yaml"
+external_devices: []
+board_io:
+  - id: "led_d13"
+    kind: "led"
+    peripheral: "porta"
+    pin: 23   # PA23 - Adafruit variants/pybadge_m4/variant.cpp D13 (LED)
+    signal: "output"
+    active_high: true
+connectors:
+  - type: "uart"
+    peripheral: "sercom1"
+    endpoint: "host_console"

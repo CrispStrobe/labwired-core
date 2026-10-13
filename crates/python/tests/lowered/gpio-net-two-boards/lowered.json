@@ -1,0 +1,56 @@
+{
+  "schema": 1,
+  "tool": "labwired-lower",
+  "version": "0.1.0",
+  "kind": "world",
+  "nodes": [
+    {
+      "id": "mcu",
+      "board": "stm32g071",
+      "system": "mcu/system.yaml",
+      "chip": "mcu/chip.yaml",
+      "pads": {
+        "PB0": {
+          "peripheral": "gpiob",
+          "pin": 0
+        },
+        "PB1": {
+          "peripheral": "gpiob",
+          "pin": 1
+        },
+        "PB4": {
+          "peripheral": "gpiob",
+          "pin": 4
+        }
+      },
+      "warnings": [
+        "supply pin 'probe:GND' on 'logic-analyzer' is not connected to anything"
+      ]
+    },
+    {
+      "id": "avr",
+      "board": "atmega328p",
+      "system": "avr/system.yaml",
+      "chip": "avr/chip.yaml",
+      "pads": {
+        "D2": {
+          "peripheral": "portd",
+          "pin": 2
+        },
+        "D3": {
+          "peripheral": "portd",
+          "pin": 3
+        },
+        "D4": {
+          "peripheral": "portd",
+          "pin": 4
+        }
+      },
+      "warnings": [
+        "supply pin 'probe:GND' on 'logic-analyzer' is not connected to anything"
+      ]
+    }
+  ],
+  "world": "world.yaml",
+  "notes": []
+}

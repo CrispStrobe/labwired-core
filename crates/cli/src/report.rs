@@ -158,6 +158,7 @@ mod tests {
             stop_when_assertions_pass: false,
             stop_when_assertions_pass_settle_steps: 0,
             stop_when_assertions_pass_min_steps: 0,
+            peripheral_tick_interval: None,
         }
     }
 

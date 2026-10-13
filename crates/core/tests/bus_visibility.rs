@@ -110,6 +110,16 @@ const EXCLUSIONS: &[(&str, BusKind, &str)] = &[
         "no nRF51 legacy-UART bring-up in this harness (the nRF52 arm drives UARTE \
          EasyDMA); bytes are proven by the microbit-v1 survival smoke",
     ),
+    // ATmega328P: USART0 is mirrored from the AVR CPU, which owns UCSR0x/UBRR0
+    // and forwards each register write and UDR0 byte to the bus-side host. The
+    // harness drives bus MMIO directly, so it never programs the baud divisor the
+    // CPU would forward; peers and RX are proven by the rs485_modbus tests.
+    (
+        "atmega328p",
+        BusKind::Uart,
+        "USART0 registers live on the AVR CPU and are forwarded to the bus-side host; \
+         this harness drives bus MMIO, not the CPU, so no bring-up exists here",
+    ),
     // from_config address-map stubs: no real peripheral bank for the three
     // buses (see the board header). Edges cannot be produced on this path.
     (

@@ -69,6 +69,14 @@ pub trait DevicePins {
         self.output_bit(addr, bit)
     }
 
+    /// A known, actively driven pad level. Unlike an output latch, this does
+    /// not claim that an undriven/muxed/contended wire holds a valid logic
+    /// level. Unsupported ports fail closed. Used by GPIO-controlled displays.
+    fn known_pad_bit(&self, addr: u64, bit: u8) -> Option<bool> {
+        let _ = (addr, bit);
+        None
+    }
+
     /// Configured waveform grid, independent of coalesced tick accounting.
     fn peripheral_tick_interval(&self) -> u64 {
         1
@@ -116,6 +124,15 @@ impl DevicePins for SystemBus {
             .dev
             .read_gpio_pad(bit)
             .or_else(|| self.output_bit(addr, bit))
+    }
+
+    fn known_pad_bit(&self, addr: u64, bit: u8) -> Option<bool> {
+        let idx = self.find_peripheral_index(addr)?;
+        let port = &self.peripherals[idx].dev;
+        if port.read_gpio_pad_drive(bit) != Some(crate::logic_capture::PadDrive::Driven) {
+            return None;
+        }
+        port.read_gpio_pad(bit)
     }
 
     fn peripheral_tick_interval(&self) -> u64 {
@@ -220,6 +237,28 @@ pub trait BusResidentDevice: std::fmt::Debug + Send {
     ///
     /// [`SystemBus::per_cycle_tick_is_trivial`]: crate::bus::SystemBus
     fn needs_per_cycle_service(&self) -> bool {
+        true
+    }
+
+    /// Whether the machine may skip an idle (WFI) window right now without
+    /// this device missing anything, even though it
+    /// [needs per-cycle service](Self::needs_per_cycle_service) while it works.
+    ///
+    /// The default is exactly that predicate negated, so no device changes
+    /// unless it opts in. A device opts in when everything it does on its own
+    /// clock is in its [scheduled edges](Self::next_edge_deadline_cycle) and
+    /// everything else is answered from the write hook: with no edge pending it
+    /// is idle, and a skip moves time it would not have used. With an edge
+    /// pending it must say `false`, so an in-flight waveform stays
+    /// cycle-accurate.
+    fn idle_skip_safe(&self) -> bool {
+        !self.needs_per_cycle_service()
+    }
+
+    /// `false` for a helper that only feeds a model the bus already lists
+    /// under the same id (a servo's pad watcher beside the servo itself), so
+    /// the attached-device walk reports that device once.
+    fn is_attached_device(&self) -> bool {
         true
     }
 

@@ -107,6 +107,9 @@ pub const MODEL_TYPES: &[&str] = &[
     "esp32c3_apb_saradc",
     "esp32c3_ledc",
     "esp32c3_rmt",
+    // MUST be listed: the fuzzy `contains("timer")` fallback would coerce the
+    // SYSTIMER onto an unrelated timer register map.
+    "esp32c3_systimer",
     // MUST be listed: the fuzzy fallback matches `contains("uart")`, which
     // would coerce the C3's UART onto the STM32 register map — the silently
     // wrong model that wedged every `Serial.print` over 128 bytes.
@@ -150,6 +153,10 @@ pub const MODEL_TYPES: &[&str] = &[
     // offsets mean nothing to a SERCOM. That is the silent shape — a console
     // that enables cleanly and never emits a byte.
     "sam_sercom_usart",
+    "sam_sercom_spi",
+    "sam_dmac_byte",
+    // Reserve the full name: never fuzzy-coerce an unqualified SAM DMAC to STM32.
+    "sam_dmac",
     // ⚠️ Load-bearing. Without this entry the fuzzy `contains("spi")` heuristic
     // coerces `nrf54l_spim` onto the shared `spi` arm, which then sees
     // `contains("nrf")` and picks the nRF52 SPIM offset map. That failure is
@@ -289,6 +296,8 @@ pub const MODEL_TYPES: &[&str] = &[
     "sam_mclk",
     // Renesas RA SYSTEM (HOCO / OSCSF).
     "ra_sysc",
+    // Renesas RA pin function select (PmnPFS / PWPR).
+    "ra_pfs",
     // NXP i.MX RT CCM / IOMUXC.
     "imx_ccm",
     "imx_iomuxc",
@@ -523,6 +532,44 @@ pub fn try_build(
         "avr_adc" => Box::new(crate::peripherals::avr_adc::AvrAdcInputs::new()),
         "sam_sercom_usart" => {
             Box::new(crate::peripherals::sam::sercom_usart::SamSercomUsart::new())
+        }
+        "sam_dmac" => {
+            anyhow::bail!("full SAM DMAC is not admitted; sam_dmac_byte is an opt-in software-byte foundation only");
+        }
+        "sam_dmac_byte" => {
+            if p_cfg.irq != Some(31) || p_cfg.base_address != 0x4100a000 {
+                anyhow::bail!("sam_dmac_byte requires SAMD51 base 0x4100a000 and IRQ31");
+            }
+            Box::new(crate::peripherals::sam::dmac_byte::SamDmacByte::new(
+                p_cfg.base_address,
+            ))
+        }
+        "sam_sercom_spi" => {
+            let number = |key: &str| -> anyhow::Result<u64> {
+                p_cfg
+                    .config
+                    .get(key)
+                    .and_then(|v| v.as_u64())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("SAM SPI '{}' requires integer config.{key}", p_cfg.id)
+                    })
+            };
+            let sck = number("sck_bit")?;
+            let mosi = number("mosi_bit")?;
+            let mux = number("pad_mux")?;
+            let dopo = number("dopo")?;
+            if sck >= 32 || mosi >= 32 || mux >= 16 || dopo >= 4 {
+                anyhow::bail!("SAM SPI '{}' has invalid pad configuration", p_cfg.id);
+            }
+            Box::new(crate::peripherals::sam::sercom_spi::SamSercomSpi::new(
+                crate::peripherals::sam::sercom_spi::SamSpiPads {
+                    port_base: number("port_base")?,
+                    sck: sck as u8,
+                    mosi: mosi as u8,
+                    mux: mux as u8,
+                    dopo: dopo as u8,
+                },
+            ))
         }
         "spi" | "stm32spi" => {
             let layout: crate::peripherals::spi::SpiRegisterLayout = if p_cfg.r#type.contains("nrf")
@@ -762,7 +809,18 @@ pub fn try_build(
         // so a read-as-zero stub keeps the enable sequence from bus-faulting.
         // No cache behaviour is modelled — the simulator has flat memory.
         "icache" | "dcache" => Box::new(crate::peripherals::stub::StubPeripheral::new(0x00)),
-        // SYSCFG — mostly EXTI source select (harmless read-0 stub), plus the H7
+        // SYSCFG on STM32F4 (`profile: stm32f4`): a real register file,
+        // because its EXTICR is the EXTI line-source mux external GPIO edges
+        // go through.
+        "syscfg" if p_cfg.config.get("profile").and_then(|v| v.as_str()) == Some("stm32f4") => {
+            Box::new(crate::peripherals::syscfg::Stm32F4Syscfg::new())
+        }
+        // SYSCFG on STM32L0 (`profile: stm32l0`): the same EXTICR line-source
+        // mux, among the L0's own configuration words (RM0367 §10).
+        "syscfg" if p_cfg.config.get("profile").and_then(|v| v.as_str()) == Some("stm32l0") => {
+            Box::new(crate::peripherals::syscfg::Stm32L0Syscfg::new())
+        }
+        // SYSCFG elsewhere — mostly EXTI source select (harmless read-0 stub), plus the H7
         // I/O compensation cell the H7 HAL enables + polls during rcc.freeze:
         // CCCSR @ 0x20, READY = bit 8. Seed it so the poll exits (EN is a
         // read-modify-write the stub drops, but the READY read returns the seed).
@@ -784,6 +842,7 @@ pub fn try_build(
         "sam_gclk" => Box::new(crate::peripherals::sam_clock::SamGclk::new()),
         "sam_mclk" => Box::new(crate::peripherals::sam_clock::SamMclk::new()),
         "ra_sysc" => Box::new(crate::peripherals::ra_clock::RaSysc::new()),
+        "ra_pfs" => Box::new(crate::peripherals::ra_pfs::RaPfs::new()),
         "imx_ccm" => Box::new(crate::peripherals::imx_ccm::ImxCcm::new()),
         "imx_iomuxc" => Box::new(crate::peripherals::imx_iomuxc::ImxIomuxc::new()),
         "imxrt_ccm" => Box::new(crate::peripherals::imxrt::ccm::ImxrtCcm::new()),
@@ -836,7 +895,20 @@ pub fn try_build(
                 .get("mclk_hz")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(crate::peripherals::imxrt::sai::DEFAULT_MCLK_HZ);
-            let sai = crate::peripherals::imxrt::sai::ImxrtSai::new(mclk);
+            let mut sai = crate::peripherals::imxrt::sai::ImxrtSai::new(mclk);
+            if let Some(path) = p_cfg.config.get("rx_wav").and_then(|v| v.as_str()) {
+                let gain = p_cfg
+                    .config
+                    .get("rx_wav_gain")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(1.0);
+                sai = sai
+                    .with_rx_wav(std::path::Path::new(path), gain)
+                    .map_err(|e| anyhow::anyhow!("imxrt_sai rx_wav: {e}"))?;
+            }
+            if let Some(path) = p_cfg.config.get("tx_wav").and_then(|v| v.as_str()) {
+                sai = sai.with_tx_wav(std::path::Path::new(path));
+            }
             match p_cfg.config.get("tx_irq").and_then(|v| v.as_u64()) {
                 Some(line) => Box::new(sai.with_tx_irq(line as u32)),
                 None => Box::new(sai),

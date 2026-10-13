@@ -587,8 +587,8 @@ fn motor_model_descriptors_define_unambiguous_required_pin_contracts() {
         vec![
             ("pwm_pin", "PWM", true),
             ("direction_pin", "DIRECTION", true),
-            ("brake_pin", "BRAKE", true),
-            ("enable_pin", "ENABLE", true),
+            ("brake_pin", "BRAKE", false),
+            ("enable_pin", "ENABLE", false),
             ("encoder_a_pin", "ENC_A", false),
             ("encoder_b_pin", "ENC_B", false),
             ("encoder_index_pin", "INDEX", false),

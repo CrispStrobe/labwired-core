@@ -2,25 +2,27 @@ schema_version: "1.0"
 name: "nucleo_wba52cg"
 chip: "../chips/stm32wba52.yaml"
 
+# LD1..LD3 are ACTIVE LOW: the LED is lit while the pin is driven low (Zephyr
+# nucleo_wba52cg describes them GPIO_ACTIVE_LOW). Buttons are active high.
 board_io:
   - id: "led_blue"
     kind: "led"
     peripheral: "gpiob"
     pin: 4
     signal: "output"
-    active_high: true
+    active_high: false
   - id: "led_green"
     kind: "led"
     peripheral: "gpioa"
     pin: 9
     signal: "output"
-    active_high: true
+    active_high: false
   - id: "led_red"
     kind: "led"
     peripheral: "gpiob"
     pin: 8
     signal: "output"
-    active_high: true
+    active_high: false
   - id: "button_b1"
     kind: "button"
     peripheral: "gpioc"

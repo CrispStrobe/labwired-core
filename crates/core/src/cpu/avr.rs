@@ -81,10 +81,34 @@ pub struct Avr {
     pub ocr0a: u8,
     pub ocr0b: u8,
     pub t0_prescale_acc: u32,
+    /// Timer2, the counter Arduino `tone()` runs in CTC mode.
+    ///
+    /// Normal and CTC count as on silicon. The PWM modes count 0..255; their
+    /// OC2A/OC2B pad levels come from `avr/oc_pins.rs`.
+    pub tcnt2: u8,
+    pub tccr2a: u8,
+    pub tccr2b: u8,
+    pub ocr2a: u8,
+    pub ocr2b: u8,
+    pub timsk2: u8,
+    pub tifr2: u8,
+    /// `ASSR`: only `EXCLK` and `AS2` are stored. Update-busy bits read as 0
+    /// (writes land immediately). `AS2` selects TOSC1, which is not modelled,
+    /// so the counter stops instead of pretending the CPU clock still drives it.
+    pub assr: u8,
+    pub t2_prescale_acc: u32,
+    /// Timer1, the 16-bit counter (`avr/timer1.rs`).
+    t1: timer1::Timer1,
+    /// Port B / port D pads an output-compare unit owns, and the level it
+    /// drives there, as last pushed to the bus-side port model.
+    oc_mask: [u8; 2],
+    oc_level: [u8; 2],
     pub serial_tx: Vec<u8>,
     /// Optional live sink for MachineTrait UART capture.
     pub serial_sink: Option<Arc<Mutex<Vec<u8>>>>,
     pub ucsr0a: u8,
+    /// Step counter for the RX-complete poll.
+    rx_poll: u8,
     pub ucsr0b: u8,
     pub ucsr0c: u8,
     pub ubrr0: u16,
@@ -113,6 +137,27 @@ pub struct Avr {
     pub adcsra: u8,
     pub adcl: u8,
     pub adch: u8,
+    /// External interrupts: `EICRA` (sense control), `EIMSK`, `EIFR`.
+    pub eicra: u8,
+    pub eimsk: u8,
+    pub eifr: u8,
+    /// Pin-change interrupts: `PCICR`, `PCIFR`, `PCMSK0..2`.
+    pub pcicr: u8,
+    pub pcifr: u8,
+    pub pcmsk: [u8; 3],
+    /// `SMCR`: sleep mode and sleep enable.
+    pub smcr: u8,
+    /// Stopped by `SLEEP` until an enabled interrupt wakes it.
+    pub sleeping: bool,
+    /// Pad levels of ports B, C, D at the last boundary sample
+    /// (see `avr/ext_int.rs`). Only the watched ports are kept current.
+    ext_last: [u8; 3],
+    /// Set by `SEI` and `RETI`: the next instruction runs before any pending
+    /// interrupt is taken. This is what makes `sei(); sleep_cpu();` atomic.
+    irq_shadow: bool,
+    /// Ports sampled at every boundary (bit 0 = B, 1 = C, 2 = D); zero while
+    /// no INT/PCINT is configured, which keeps the step cost unchanged.
+    ext_watch: u8,
 }
 
 impl std::fmt::Debug for Avr {
@@ -136,6 +181,10 @@ impl std::fmt::Debug for Avr {
 /// Where the chip descriptor maps the bus-side mirror of the CPU's IO
 /// registers: data-space address `a` is mirrored at `AVR_IO_MIRROR_BASE + a`.
 pub const AVR_IO_MIRROR_BASE: u64 = 0x0001_0000;
+/// `MCUCR` in data space (I/O 0x35), ATmega328P datasheet §14.4.1.
+pub const ADDR_MCUCR: u16 = 0x0055;
+/// `MCUCR.PUD`: pull-up disable for every port.
+pub const MCUCR_PUD: u8 = 1 << 4;
 /// `PINB` data-space address; `DDRB`/`PORTB` follow it.
 pub const AVR_PINB: u16 = 0x0023;
 /// `PINC` data-space address; `DDRC`/`PORTC` follow it.
@@ -151,10 +200,30 @@ const AVR_BANDGAP_MV: u32 = 1100;
 pub const VEC_TIMER0_OVF: u32 = 17; // datasheet 1-based; @0x40 = __vector_16
 /// TWI_vect is `_VECTOR(24)` → PC 0x60; pending bit uses vec=25 (`(vec-1)*4`).
 pub const VEC_TWI: u32 = 25;
+/// USART_RX_vect, datasheet 1-based vector number (@0x24 = `__vector_18`).
+pub const VEC_USART_RX: u32 = 19;
+pub const UCSRA_RXC: u8 = 1 << 7;
+/// UCSR0B bit 7: RX complete interrupt enable.
+const UCSRB_RXCIE: u8 = 1 << 7;
 pub const UCSRA_UDRE: u8 = 1 << 5;
 pub const UCSRA_TXC: u8 = 1 << 6;
 pub const TIMSK_TOIE0: u8 = 1 << 0;
 pub const TIFR_TOV0: u8 = 1 << 0;
+/// `TIMER2_COMPA_vect` (`__vector_7` at byte 0x1C). Datasheet vector 8.
+pub const VEC_TIMER2_COMPA: u32 = 8;
+/// `TIMER2_COMPB_vect` (`__vector_8` at byte 0x20).
+pub const VEC_TIMER2_COMPB: u32 = 9;
+/// `TIMER2_OVF_vect` (`__vector_9` at byte 0x24).
+pub const VEC_TIMER2_OVF: u32 = 10;
+const TIMSK2_TOIE2: u8 = 1 << 0;
+const TIMSK2_OCIE2A: u8 = 1 << 1;
+const TIMSK2_OCIE2B: u8 = 1 << 2;
+const TIFR2_TOV2: u8 = 1 << 0;
+const TIFR2_OCF2A: u8 = 1 << 1;
+const TIFR2_OCF2B: u8 = 1 << 2;
+const ASSR_EXCLK: u8 = 1 << 6;
+const ASSR_AS2: u8 = 1 << 5;
+const T2_IRQ_MASK: u64 = (1 << VEC_TIMER2_COMPA) | (1 << VEC_TIMER2_COMPB) | (1 << VEC_TIMER2_OVF);
 
 // TWCR bits (ATmega328P datasheet).
 const TWINT: u8 = 1 << 7;
@@ -183,6 +252,66 @@ impl Default for Avr {
     }
 }
 
+/// One Timer2 clock: the counter value after the tick and which flags it raises.
+struct T2Step {
+    tcnt: u8,
+    ocfa: bool,
+    ocfb: bool,
+    tov: bool,
+}
+
+/// CTC clears on the clock after TCNT2 has held OCR2A for one timer period,
+/// so matches are `OCR2A + 1` ticks apart. Normal mode wraps at 0xFF.
+fn t2_one_tick(ctc: bool, tcnt: u8, ocr_a: u8, ocr_b: u8) -> T2Step {
+    let tcnt = if ctc && tcnt == ocr_a {
+        0
+    } else {
+        tcnt.wrapping_add(1)
+    };
+    T2Step {
+        tcnt,
+        ocfa: tcnt == ocr_a,
+        ocfb: tcnt == ocr_b,
+        // CTC sets TOV2 on MAX (0xFF), not on the clear back to zero.
+        tov: if ctc { tcnt == 0xFF } else { tcnt == 0 },
+    }
+}
+
+/// `true` when `ticks` clocks land on `target` at least once, starting from
+/// `phase` in a counter of length `period`. The current phase is not a hit.
+fn t2_hits(phase: u64, ticks: u64, period: u64, target: u64) -> bool {
+    if target >= period || ticks == 0 {
+        return false;
+    }
+    let mut dist = (target + period - phase) % period;
+    if dist == 0 {
+        dist = period;
+    }
+    ticks >= dist
+}
+
+/// CTC closed form. `tcnt` must already be in `0..=ocr_a`.
+fn t2_ctc_closed(tcnt: u8, ticks: u64, ocr_a: u8, ocr_b: u8) -> T2Step {
+    let phase = u64::from(tcnt);
+    let period = u64::from(ocr_a) + 1;
+    T2Step {
+        tcnt: ((phase + ticks) % period) as u8,
+        ocfa: t2_hits(phase, ticks, period, u64::from(ocr_a)),
+        ocfb: t2_hits(phase, ticks, period, u64::from(ocr_b)),
+        tov: t2_hits(phase, ticks, period, 0xFF),
+    }
+}
+
+fn t2_normal_closed(tcnt: u8, ticks: u64, ocr_a: u8, ocr_b: u8) -> T2Step {
+    let phase = u64::from(tcnt);
+    T2Step {
+        tcnt: ((phase + ticks) & 0xFF) as u8,
+        ocfa: t2_hits(phase, ticks, 256, u64::from(ocr_a)),
+        ocfb: t2_hits(phase, ticks, 256, u64::from(ocr_b)),
+        tov: t2_hits(phase, ticks, 256, 0),
+    }
+}
+
 impl Avr {
     pub fn new() -> Self {
         Self {
@@ -203,9 +332,22 @@ impl Avr {
             ocr0a: 0,
             ocr0b: 0,
             t0_prescale_acc: 0,
+            tcnt2: 0,
+            tccr2a: 0,
+            tccr2b: 0,
+            ocr2a: 0,
+            ocr2b: 0,
+            timsk2: 0,
+            tifr2: 0,
+            assr: 0,
+            t2_prescale_acc: 0,
+            t1: timer1::Timer1::default(),
+            oc_mask: [0; 2],
+            oc_level: [0; 2],
             serial_tx: Vec::new(),
             serial_sink: None,
             ucsr0a: UCSRA_UDRE,
+            rx_poll: 0,
             ucsr0b: 0,
             ucsr0c: 0,
             ubrr0: 0,
@@ -225,6 +367,17 @@ impl Avr {
             adcsra: 0,
             adcl: 0,
             adch: 0,
+            eicra: 0,
+            eimsk: 0,
+            eifr: 0,
+            pcicr: 0,
+            pcifr: 0,
+            pcmsk: [0; 3],
+            smcr: 0,
+            sleeping: false,
+            ext_last: [0; 3],
+            ext_watch: 0,
+            irq_shadow: false,
         }
     }
 
@@ -258,6 +411,20 @@ impl Avr {
             self.sreg |= 0x80;
         } else {
             self.sreg &= !0x80;
+        }
+    }
+
+    #[inline]
+    fn flag_t(&self) -> bool {
+        self.sreg & 0x40 != 0
+    }
+
+    #[inline]
+    fn set_flag_t(&mut self, on: bool) {
+        if on {
+            self.sreg |= 0x40;
+        } else {
+            self.sreg &= !0x40;
         }
     }
 
@@ -358,18 +525,46 @@ impl Avr {
             0x005E => Ok((self.sp >> 8) as u8),
             0x005F => Ok(self.sreg),
             0x0035 => Ok(self.tifr0),
+            0x0037 => Ok(self.tifr2),
             0x0044 => Ok(self.tccr0a),
             0x0045 => Ok(self.tccr0b),
             0x0046 => Ok(self.tcnt0),
             0x0047 => Ok(self.ocr0a),
             0x0048 => Ok(self.ocr0b),
             0x006E => Ok(self.timsk0),
-            0x00C0 => Ok(self.ucsr0a | UCSRA_UDRE),
+            0x0070 => Ok(self.timsk2),
+            0x00B0 => Ok(self.tccr2a),
+            0x00B1 => Ok(self.tccr2b),
+            0x00B2 => Ok(self.tcnt2),
+            0x00B3 => Ok(self.ocr2a),
+            0x00B4 => Ok(self.ocr2b),
+            0x00B6 => Ok(self.assr),
+            timer1::ADDR_TIFR1
+            | timer1::ADDR_TIMSK1
+            | timer1::ADDR_TCCR1A..=0x0082
+            | 0x0084..=timer1::ADDR_OCR1BH => Ok(self.timer1_read(addr).unwrap_or_default()),
+            // RXC0 comes from the bus-side USART model, which holds the receive
+            // queue (peers and host input). A bus with no USART window reads 0.
+            0x00C0 => {
+                let rxc = if Self::usart_on_bus(bus) {
+                    bus.read_u8(AVR_IO_MIRROR_BASE + 0xC0)? & UCSRA_RXC
+                } else {
+                    0
+                };
+                Ok(self.ucsr0a | UCSRA_UDRE | rxc)
+            }
             0x00C1 => Ok(self.ucsr0b),
             0x00C2 => Ok(self.ucsr0c),
             0x00C4 => Ok((self.ubrr0 & 0xFF) as u8),
             0x00C5 => Ok((self.ubrr0 >> 8) as u8),
-            0x00C6 => Ok(0),
+            // UDR0 read pops one received byte from the bus-side USART model.
+            0x00C6 => {
+                if Self::usart_on_bus(bus) {
+                    bus.read_u8(AVR_IO_MIRROR_BASE + 0xC6)
+                } else {
+                    Ok(0)
+                }
+            }
             // SPI: SPCR/SPSR/SPDR (ATmega328P data space)
             0x004C => Ok(self.spcr),
             0x004D => Ok(self.spsr),
@@ -385,6 +580,13 @@ impl Avr {
             0x0079 => Ok(self.adch),
             0x007A => Ok(self.adcsra),
             0x007C => Ok(self.admux),
+            ext_int::ADDR_PCIFR..=ext_int::ADDR_EIMSK
+            | ext_int::ADDR_SMCR
+            | ext_int::ADDR_PCICR
+            | ext_int::ADDR_EICRA
+            | ext_int::ADDR_PCMSK0..=ext_int::ADDR_PCMSK2 => {
+                Ok(self.ext_read(addr).unwrap_or_default())
+            }
             0x0020..=0x00FF => Ok(self.io[(addr - 0x20) as usize]),
             a if (SRAM_START..=RAMEND).contains(&a) => Ok(self.sram[(a - SRAM_START) as usize]),
             _ => Err(SimulationError::MemoryViolation(addr as u64)),
@@ -413,6 +615,14 @@ impl Avr {
                 self.tifr0 &= !value;
                 Ok(())
             }
+            0x0037 => {
+                // Write-1-to-clear, same as TIFR0. The compare/overflow
+                // interrupt is level-sensitive on the flag, so clearing it
+                // drops a request that has not been taken yet.
+                self.tifr2 &= !(value & 0x07);
+                self.sync_timer2_irq();
+                Ok(())
+            }
             0x0044 => {
                 self.tccr0a = value;
                 Ok(())
@@ -437,15 +647,61 @@ impl Avr {
                 self.timsk0 = value;
                 Ok(())
             }
+            0x0070 => {
+                self.timsk2 = value & 0x07;
+                self.sync_timer2_irq();
+                Ok(())
+            }
+            0x00B0 => {
+                // COM2A/COM2B and WGM21:0. Reserved bits read as 0. In the
+                // PWM modes the COM bits hand OC2A/OC2B to the waveform
+                // (`oc_pins.rs`).
+                self.tccr2a = value & 0xF3;
+                Ok(())
+            }
+            0x00B1 => {
+                // FOC2A/FOC2B are strobes and always read as 0. Force
+                // compare is not modelled, so the strobe is a no-op. WGM22 and CS22:0 stick.
+                self.tccr2b = value & 0x0F;
+                Ok(())
+            }
+            0x00B2 => {
+                self.tcnt2 = value;
+                Ok(())
+            }
+            0x00B3 => {
+                self.ocr2a = value;
+                Ok(())
+            }
+            0x00B4 => {
+                self.ocr2b = value;
+                Ok(())
+            }
+            0x00B6 => {
+                self.assr = value & (ASSR_EXCLK | ASSR_AS2);
+                Ok(())
+            }
+            timer1::ADDR_TIFR1
+            | timer1::ADDR_TIMSK1
+            | timer1::ADDR_TCCR1A..=0x0082
+            | 0x0084..=timer1::ADDR_OCR1BH => {
+                self.timer1_write(addr, value);
+                Ok(())
+            }
             0x00C0 => {
-                if value & UCSRA_TXC != 0 {
-                    self.ucsr0a &= !UCSRA_TXC;
-                }
-                self.ucsr0a |= UCSRA_UDRE;
+                // Writing 1 to TXC0 clears it on silicon, and HardwareSerial does
+                // so after every byte, then `flush()` waits for the flag to come
+                // back when the shift register empties. Transmission is instant
+                // here, so the flag is already back: keeping it set is what lets
+                // `flush()` (and a Modbus master's post-transmission hook) return.
+                self.ucsr0a |= UCSRA_UDRE | UCSRA_TXC;
+                // The bus-side USART needs U2X for its baud; tolerate no window.
+                Self::usart_mirror_write(bus, 0xC0, value)?;
                 Ok(())
             }
             0x00C1 => {
                 self.ucsr0b = value;
+                Self::usart_mirror_write(bus, 0xC1, value)?;
                 Ok(())
             }
             0x00C2 => {
@@ -454,21 +710,32 @@ impl Avr {
             }
             0x00C4 => {
                 self.ubrr0 = (self.ubrr0 & 0xFF00) | value as u16;
+                Self::usart_mirror_write(bus, 0xC4, value)?;
                 Ok(())
             }
             0x00C5 => {
                 self.ubrr0 = (self.ubrr0 & 0x00FF) | ((value as u16) << 8);
+                Self::usart_mirror_write(bus, 0xC5, value)?;
                 Ok(())
             }
             0x00C6 => {
                 self.serial_tx.push(value);
-                if let Some(sink) = &self.serial_sink {
-                    if let Ok(mut g) = sink.lock() {
-                        g.push(value);
-                    }
-                }
                 self.ucsr0a |= UCSRA_UDRE | UCSRA_TXC;
                 bus.write_u8(addr as u64, value)?;
+                // Hand the byte to the bus-side USART, which hosts the peers
+                // (an RS-485 transceiver and its slaves). No window, no peers.
+                Self::usart_mirror_write(bus, 0xC6, value)?;
+                // A byte a transceiver put on an RS-485 bus is a frame, not
+                // console text: the bus-side model says so at +7.
+                let on_bus =
+                    Self::usart_on_bus(bus) && bus.read_u8(AVR_IO_MIRROR_BASE + 0xC7)? & 1 != 0;
+                if !on_bus {
+                    if let Some(sink) = &self.serial_sink {
+                        if let Ok(mut g) = sink.lock() {
+                            g.push(value);
+                        }
+                    }
+                }
                 Ok(())
             }
             0x004C => {
@@ -550,6 +817,26 @@ impl Avr {
                 self.admux = value;
                 Ok(())
             }
+            ext_int::ADDR_PCIFR..=ext_int::ADDR_EIMSK
+            | ext_int::ADDR_SMCR
+            | ext_int::ADDR_PCICR
+            | ext_int::ADDR_EICRA
+            | ext_int::ADDR_PCMSK0..=ext_int::ADDR_PCMSK2 => {
+                self.ext_write(addr, value, bus);
+                Ok(())
+            }
+            ADDR_MCUCR => {
+                // MCUCR: the CPU owns it (IVSEL/IVCE, BODS/BODSE are stored
+                // only), but PUD (bit 4) switches off every pull-up of every
+                // port, so a change goes to the bus-side ports.
+                let old = self.io[usize::from(ADDR_MCUCR - 0x20)];
+                self.io[usize::from(ADDR_MCUCR - 0x20)] = value;
+                if (old ^ value) & MCUCR_PUD != 0 {
+                    bus.set_pull_ups_disabled(value & MCUCR_PUD != 0);
+                }
+                let _mirror = bus.write_u8(addr as u64, value);
+                Ok(())
+            }
             0x0020..=0x00FF => {
                 self.io[(addr - 0x20) as usize] = value;
                 // PORTB/PORTC/PORTD (0x23..0x2B): mirror to the high bus window
@@ -559,7 +846,9 @@ impl Avr {
                 // there (flash@0 swallows low-address bus writes).
                 if (AVR_PINB..=AVR_PIND + 2).contains(&addr) {
                     // High-window mirror is best-effort (must not fail IN/OUT).
-                    let _mirror = bus.write_u8(AVR_IO_MIRROR_BASE + addr as u64, value);
+                    // A pad an output-compare unit owns keeps its waveform level.
+                    let pad = self.port_pad_value(addr, value);
+                    let _mirror = bus.write_u8(AVR_IO_MIRROR_BASE + addr as u64, pad);
                 } else {
                     let _mirror = bus.write_u8(addr as u64, value);
                 }
@@ -618,18 +907,165 @@ impl Avr {
         if div == 0 || cpu_cycles == 0 {
             return;
         }
-        self.t0_prescale_acc = self.t0_prescale_acc.saturating_add(cpu_cycles);
-        while self.t0_prescale_acc >= div {
-            self.t0_prescale_acc -= div;
-            let (next, overflowed) = self.tcnt0.overflowing_add(1);
-            self.tcnt0 = next;
-            if overflowed {
-                self.tifr0 |= TIFR_TOV0;
-                if self.timsk0 & TIMSK_TOIE0 != 0 {
-                    self.pending_irq |= 1u64 << VEC_TIMER0_OVF;
-                }
+        // Closed form of "one TCNT0 increment per `div` clocks": an idle
+        // fast-forward hands this millions of cycles at once.
+        let acc = u64::from(self.t0_prescale_acc) + u64::from(cpu_cycles);
+        let ticks = acc / u64::from(div);
+        self.t0_prescale_acc = (acc % u64::from(div)) as u32;
+        if ticks == 0 {
+            return;
+        }
+        let count = u64::from(self.tcnt0) + ticks;
+        self.tcnt0 = (count & 0xFF) as u8;
+        if count > 0xFF {
+            self.tifr0 |= TIFR_TOV0;
+            if self.timsk0 & TIMSK_TOIE0 != 0 {
+                self.pending_irq |= 1u64 << VEC_TIMER0_OVF;
             }
         }
+    }
+
+    /// clk_I/O prescaler for Timer2. `AS2` freezes it: the asynchronous TOSC1
+    /// clock is not modelled. Timer2's dividers are not Timer0's — `/32` and
+    /// `/128` exist here and `/256` is CS = 6, not 4.
+    fn t2_prescaler(&self) -> u32 {
+        if self.assr & ASSR_AS2 != 0 {
+            return 0;
+        }
+        match self.tccr2b & 0x07 {
+            0 => 0,
+            1 => 1,
+            2 => 8,
+            3 => 32,
+            4 => 64,
+            5 => 128,
+            6 => 256,
+            7 => 1024,
+            _ => 0,
+        }
+    }
+
+    /// WGM22:0 == 2. Every other mode counts like normal (TOP = 0xFF).
+    fn t2_is_ctc(&self) -> bool {
+        let wgm = (self.tccr2a & 0x03) | ((self.tccr2b & 0x08) >> 1);
+        wgm == 0b010
+    }
+
+    /// Compare-match interrupts stay pending while the flag and its enable
+    /// are both set, including when firmware sets the enable after the flag.
+    fn sync_timer2_irq(&mut self) {
+        let mut want = 0u64;
+        if self.timsk2 & TIMSK2_OCIE2A != 0 && self.tifr2 & TIFR2_OCF2A != 0 {
+            want |= 1 << VEC_TIMER2_COMPA;
+        }
+        if self.timsk2 & TIMSK2_OCIE2B != 0 && self.tifr2 & TIFR2_OCF2B != 0 {
+            want |= 1 << VEC_TIMER2_COMPB;
+        }
+        if self.timsk2 & TIMSK2_TOIE2 != 0 && self.tifr2 & TIFR2_TOV2 != 0 {
+            want |= 1 << VEC_TIMER2_OVF;
+        }
+        self.pending_irq = (self.pending_irq & !T2_IRQ_MASK) | want;
+    }
+
+    fn t2_absorb(&mut self, step: T2Step) {
+        self.tcnt2 = step.tcnt;
+        if step.ocfa {
+            self.tifr2 |= TIFR2_OCF2A;
+        }
+        if step.ocfb {
+            self.tifr2 |= TIFR2_OCF2B;
+        }
+        if step.tov {
+            self.tifr2 |= TIFR2_TOV2;
+        }
+    }
+
+    fn t2_apply_ticks(&mut self, mut ticks: u64) {
+        if ticks == 0 {
+            return;
+        }
+        if self.t2_is_ctc() {
+            // OCR2A was lowered under the count: climb back into 0..=OCR2A
+            // (at most 256 ticks) and then the CTC cycle is closed-form.
+            while ticks > 0 && self.tcnt2 > self.ocr2a {
+                let step = t2_one_tick(true, self.tcnt2, self.ocr2a, self.ocr2b);
+                self.t2_absorb(step);
+                ticks -= 1;
+            }
+            if ticks > 0 {
+                self.t2_absorb(t2_ctc_closed(self.tcnt2, ticks, self.ocr2a, self.ocr2b));
+            }
+        } else {
+            self.t2_absorb(t2_normal_closed(self.tcnt2, ticks, self.ocr2a, self.ocr2b));
+        }
+        self.sync_timer2_irq();
+    }
+
+    /// Advance Timer2 by CPU clocks. Called beside [`Self::tick_timer0`].
+    pub fn tick_timer2(&mut self, cpu_cycles: u32) {
+        let div = self.t2_prescaler();
+        if div == 0 || cpu_cycles == 0 {
+            return;
+        }
+        let acc = u64::from(self.t2_prescale_acc) + u64::from(cpu_cycles);
+        let ticks = acc / u64::from(div);
+        self.t2_prescale_acc = (acc % u64::from(div)) as u32;
+        self.t2_apply_ticks(ticks);
+    }
+
+    fn tick_io_timers(&mut self, cpu_cycles: u32) {
+        self.tick_timer0(cpu_cycles);
+        self.tick_timer1(cpu_cycles);
+        self.tick_timer2(cpu_cycles);
+    }
+
+    /// CPU cycles until the next Timer2 interrupt that can wake a sleeper.
+    /// `None` when the counter cannot raise an enabled flag (stopped, async,
+    /// or the programmed TOP never reaches it).
+    fn timer2_wake_cycles(&self) -> Option<u64> {
+        if !self.flag_i() || !self.io_clock_running() {
+            return None;
+        }
+        let div = u64::from(self.t2_prescaler());
+        if div == 0 {
+            return None;
+        }
+        let mask = self.timsk2 & (TIMSK2_OCIE2A | TIMSK2_OCIE2B | TIMSK2_TOIE2);
+        if mask == 0 {
+            return None;
+        }
+        let ctc = self.t2_is_ctc();
+        let mut tcnt = self.tcnt2;
+        for n in 1..=512u64 {
+            let step = t2_one_tick(ctc, tcnt, self.ocr2a, self.ocr2b);
+            tcnt = step.tcnt;
+            let hit = (mask & TIMSK2_OCIE2A != 0 && step.ocfa)
+                || (mask & TIMSK2_OCIE2B != 0 && step.ocfb)
+                || (mask & TIMSK2_TOIE2 != 0 && step.tov);
+            if hit {
+                let cycles = n * div - u64::from(self.t2_prescale_acc).min(div - 1);
+                return Some(cycles.max(1));
+            }
+        }
+        None
+    }
+
+    fn timer0_wake_cycles(&self) -> Option<u64> {
+        let div = u64::from(self.t0_prescaler());
+        if self.io_clock_running() && div != 0 && self.timsk0 & TIMSK_TOIE0 != 0 && self.flag_i() {
+            let ticks = 256 - u64::from(self.tcnt0);
+            let cycles = ticks * div - u64::from(self.t0_prescale_acc).min(div - 1);
+            Some(cycles.max(1))
+        } else {
+            None
+        }
+    }
+
+    /// An interrupt the core would take now: global enable set and a vector
+    /// pending. This is also what wakes a sleeping core.
+    #[inline]
+    fn wake_pending(&self) -> bool {
+        self.flag_i() && self.pending_irq & 0xFFFF_FFFE != 0
     }
 
     pub fn portb(&self) -> u8 {
@@ -794,6 +1230,21 @@ impl Avr {
         self.pc = image.entry_point as u32 & !1;
     }
 
+    /// Whether the bus maps the USART0 host window. A chip yaml without it has
+    /// no peers to serve and the CPU's own registers are the whole USART.
+    fn usart_on_bus(bus: &dyn Bus) -> bool {
+        bus.has_mmio_window(AVR_IO_MIRROR_BASE + 0xC0)
+    }
+
+    /// Forward a USART register write to the bus-side USART model, when there
+    /// is one. A refused write on a bus that does have the window is an error.
+    fn usart_mirror_write(bus: &mut dyn Bus, reg: u64, value: u8) -> SimResult<()> {
+        if Self::usart_on_bus(bus) {
+            bus.write_u8(AVR_IO_MIRROR_BASE + reg, value)?;
+        }
+        Ok(())
+    }
+
     fn push_byte(&mut self, value: u8, bus: &mut dyn Bus) -> SimResult<()> {
         self.data_write(self.sp, value, bus)?;
         self.sp = self.sp.wrapping_sub(1);
@@ -841,10 +1292,22 @@ impl Avr {
         }
         self.pending_irq &= !(1u64 << vec);
         self.set_flag_i(false);
-        // Hardware clears the matching timer overflow flag on vector entry.
+        // Hardware clears the matching timer flag on vector entry.
         if vec == VEC_TIMER0_OVF {
             self.tifr0 &= !TIFR_TOV0;
+        } else if vec == VEC_TIMER2_COMPA {
+            self.tifr2 &= !TIFR2_OCF2A;
+            self.sync_timer2_irq();
+        } else if vec == VEC_TIMER2_COMPB {
+            self.tifr2 &= !TIFR2_OCF2B;
+            self.sync_timer2_irq();
+        } else if vec == VEC_TIMER2_OVF {
+            self.tifr2 &= !TIFR2_TOV2;
+            self.sync_timer2_irq();
         }
+        self.timer1_vector_entered(vec);
+        // ... and the INTn / PCIFn flag of an external or pin-change vector.
+        self.ext_vector_entered(vec);
         self.push_pc(bus)?;
         self.pc = vec.saturating_sub(1) * 4;
         Ok(true)
@@ -983,7 +1446,7 @@ impl Avr {
     /// general AVR block executor: the latter would need to reproduce every
     /// instruction boundary at essentially interpreter cost.
     ///
-    /// Timer0 and a takeable interrupt make intermediate cycle boundaries
+    /// Timer0, Timer2 and a takeable interrupt make intermediate cycle boundaries
     /// observable, so callers refuse this path in either case. With those
     /// guards, the loop has no bus accesses and its complete architectural
     /// effect is the final register/flags/PC plus the summed instruction
@@ -1055,7 +1518,54 @@ impl Cpu for Avr {
         4
     }
 
-    fn reset(&mut self, _bus: &mut dyn Bus) -> SimResult<()> {
+    /// A core stopped by `SLEEP` may be skipped until the next thing that can
+    /// wake it: a Timer0 overflow or a Timer1/Timer2 compare/overflow with its
+    /// interrupt enabled (while clk_I/O runs), or a pad change seen at a later
+    /// boundary. Nothing to skip when an interrupt is already takeable, or a
+    /// watched pad moved since the last sample, or the USART receive interrupt
+    /// is on.
+    fn idle_fast_forward_budget(&self, bus: &dyn Bus) -> Option<u64> {
+        if !self.sleeping || self.wake_pending() || self.ext_pins_moved(bus) {
+            return None;
+        }
+        // A byte arriving for RXCIE wakes the core, and its arrival time is the
+        // bus-side USART's to know, not this budget's: with the interrupt on,
+        // stay on the stepped path (which reads UCSR0A with its error).
+        if self.ucsr0b & UCSRB_RXCIE != 0 && Self::usart_on_bus(bus) {
+            return None;
+        }
+        Some(
+            [
+                self.timer0_wake_cycles(),
+                self.timer1_wake_cycles(),
+                self.timer2_wake_cycles(),
+            ]
+            .into_iter()
+            .flatten()
+            .min()
+            .unwrap_or(u64::MAX),
+        )
+    }
+
+    fn fast_forward_idle_cycles(&mut self, cycles: u64) {
+        self.cycles += cycles;
+        if self.io_clock_running() {
+            let mut left = cycles;
+            while left > 0 {
+                let chunk = left.min(u64::from(u32::MAX));
+                self.tick_io_timers(chunk as u32);
+                left -= chunk;
+            }
+        }
+    }
+
+    fn reset(&mut self, bus: &mut dyn Bus) -> SimResult<()> {
+        // MCUCR resets to 0: PUD clear, so the ports' pull-ups come back.
+        let mcucr = &mut self.io[usize::from(ADDR_MCUCR - 0x20)];
+        if *mcucr & MCUCR_PUD != 0 {
+            bus.set_pull_ups_disabled(false);
+        }
+        *mcucr = 0;
         self.r = [0; 32];
         self.pc = 0;
         self.sp = RAMEND;
@@ -1068,6 +1578,18 @@ impl Cpu for Avr {
         self.timsk0 = 0;
         self.tifr0 = 0;
         self.t0_prescale_acc = 0;
+        self.tcnt2 = 0;
+        self.tccr2a = 0;
+        self.tccr2b = 0;
+        self.ocr2a = 0;
+        self.ocr2b = 0;
+        self.timsk2 = 0;
+        self.tifr2 = 0;
+        self.assr = 0;
+        self.t2_prescale_acc = 0;
+        self.t1 = timer1::Timer1::default();
+        self.oc_mask = [0; 2];
+        self.oc_level = [0; 2];
         self.serial_tx.clear();
         self.ucsr0a = UCSRA_UDRE;
         self.ucsr0b = 0;
@@ -1083,6 +1605,8 @@ impl Cpu for Avr {
         self.twcr = 0;
         self.twi_phase = TwiPhase::Idle;
         self.twi_slave = None;
+        self.ext_reset();
+        self.irq_shadow = false;
         // Keep attached SPI/I2C slaves across reset (same wiring as real board).
         Ok(())
     }
@@ -1110,10 +1634,60 @@ impl Cpu for Avr {
     ) -> SimResult<()> {
         let before = self.cycles;
 
-        if self.try_take_irq(bus)? {
+        // RX-complete interrupt: level-sensitive on RXC0 while RXCIE0 is set.
+        // The queue lives on the bus-side USART model, so look at it every 32nd
+        // step instead of every one: a few microseconds of latency at 16 MHz,
+        // and nothing at all on a sketch that never enables the interrupt.
+        if self.ucsr0b & UCSRB_RXCIE != 0 {
+            self.rx_poll = self.rx_poll.wrapping_add(1);
+            // A sleeping core looks every cycle: the step is one idle clock,
+            // and a skipped idle window must wake on the same cycle.
+            if (self.rx_poll & 31 == 0 || self.sleeping)
+                && Self::usart_on_bus(bus)
+                && bus.read_u8(AVR_IO_MIRROR_BASE + 0xC0)? & UCSRA_RXC != 0
+            {
+                self.pending_irq |= 1u64 << VEC_USART_RX;
+            }
+        }
+
+        // The flag was true when it was latched; an ISR that ran in between may
+        // have read the byte. Vectoring then would hand the firmware a phantom
+        // 0x00 from an empty UDR0, so check again at the moment of entry.
+        if self.pending_irq & (1u64 << VEC_USART_RX) != 0
+            && self.flag_i()
+            && bus.read_u8(AVR_IO_MIRROR_BASE + 0xC0)? & UCSRA_RXC == 0
+        {
+            self.pending_irq &= !(1u64 << VEC_USART_RX);
+        }
+
+        // INT0/INT1 and PCINT: sample the pads at this boundary.
+        if self.ext_watch != 0 {
+            self.sample_ext_pins(bus);
+        }
+
+        if self.sleeping {
+            if !self.wake_pending() {
+                // One idle clock: nothing retires, Timer0 counts if clk_I/O runs.
+                self.cycles += 1;
+                if self.io_clock_running() {
+                    self.tick_io_timers(1);
+                    self.sync_oc_pins(bus);
+                }
+                return Ok(());
+            }
+            // "The MCU is then halted for four cycles in addition to the
+            // start-up time" (none in idle mode; oscillator start-up after a
+            // deeper sleep is not modelled), then the vector is entered.
+            self.sleeping = false;
+            self.cycles += 4;
+        }
+
+        let shadow = std::mem::take(&mut self.irq_shadow);
+        if !shadow && self.try_take_irq(bus)? {
             self.cycles += 4;
             let delta = self.cycles.saturating_sub(before) as u32;
-            self.tick_timer0(delta.max(1));
+            self.tick_io_timers(delta.max(1));
+            self.sync_oc_pins(bus);
             return Ok(());
         }
 
@@ -1154,7 +1728,8 @@ impl Cpu for Avr {
             }
         }
 
-        self.tick_timer0(delta.max(1));
+        self.tick_io_timers(delta.max(1));
+        self.sync_oc_pins(bus);
         Ok(())
     }
 
@@ -1165,17 +1740,23 @@ impl Cpu for Avr {
         config: &SimulationConfig,
         max_count: u32,
     ) -> SimResult<u32> {
-        let push_capture = bus.logic_tap().is_some_and(|tap| tap.push_armed());
-        let timer_stopped = self.t0_prescaler() == 0;
+        let push_tap = bus.logic_tap().filter(|tap| tap.push_armed());
+        let timer_stopped =
+            self.t0_prescaler() == 0 && self.t1.prescaler() == 0 && self.t2_prescaler() == 0;
         let irq_takeable = self.flag_i() && self.pending_irq != 0;
-        if config.batch_mode_enabled
-            && observers.is_empty()
-            && !push_capture
-            && timer_stopped
-            && !irq_takeable
-        {
+        // A sleeping core, or pads that must be sampled at every boundary for
+        // INT/PCINT, keep the one-instruction path.
+        let irq_takeable = irq_takeable || self.sleeping || self.ext_watch != 0;
+        // The INC/RJMP spin touches no bus, so it can never push a pad edge:
+        // it stays available under push capture, as long as the tap clock is
+        // carried across the cycles it retires.
+        if config.batch_mode_enabled && observers.is_empty() && timer_stopped && !irq_takeable {
+            let cycles_before = self.cycles;
             let retired = self.try_run_inc_rjmp_spin(max_count);
             if retired > 0 {
+                if let Some(tap) = &push_tap {
+                    tap.set_clock(tap.clock() + (self.cycles - cycles_before));
+                }
                 // The default batch loop publishes one simulated instruction
                 // per retired AVR instruction. This loop performs no bus read,
                 // so one equivalent accumulated update is sufficient.
@@ -1275,6 +1856,13 @@ impl Cpu for Avr {
 
 #[path = "avr/exec/mod.rs"]
 mod exec;
+#[path = "avr/ext_int.rs"]
+mod ext_int;
+#[path = "avr/oc_pins.rs"]
+mod oc_pins;
+#[path = "avr/timer1.rs"]
+mod timer1;
+pub use ext_int::{VEC_INT0, VEC_INT1, VEC_PCINT0, VEC_PCINT1, VEC_PCINT2};
 
 #[cfg(test)]
 mod tests {
@@ -1572,6 +2160,71 @@ mod tests {
         );
     }
 
+    /// avr-gcc compares a 32-bit value with `cpi` plus three `sbci`. SBCI's Z
+    /// is sticky, so a zero byte result must not set Z after an earlier
+    /// mismatch. Adafruit DHT `expectPulse` treats `count == 0xFFFFFFFF` as a
+    /// timeout; a non-sticky Z made every small count look like that timeout.
+    #[test]
+    fn sbci_sticky_z_on_32bit_compare_with_minus_one() {
+        const Z: u8 = 0x02;
+        // cpi r22,0xFF; sbci r23,0xFF; sbci r24,0xFF; sbci r25,0xFF
+        const WORDS: [u16; 4] = [0x3F6F, 0x4F7F, 0x4F8F, 0x4F9F];
+
+        let z_set = |bytes: [u8; 4]| {
+            let mut cpu = Avr::new();
+            cpu.load_words(0, &WORDS);
+            cpu.r[22] = bytes[0];
+            cpu.r[23] = bytes[1];
+            cpu.r[24] = bytes[2];
+            cpu.r[25] = bytes[3];
+            let mut bus = MockBus::new();
+            let cfg = SimulationConfig::default();
+            for _ in 0..4 {
+                cpu.step(&mut bus, &[], &cfg).unwrap();
+            }
+            cpu.sreg & Z != 0
+        };
+
+        assert!(
+            z_set([0xFF, 0xFF, 0xFF, 0xFF]),
+            "0xFFFFFFFF == 0xFFFFFFFF sets Z"
+        );
+        assert!(
+            !z_set([0x05, 0x00, 0x00, 0x00]),
+            "a small count is not equal to 0xFFFFFFFF"
+        );
+        assert!(
+            !z_set([0xFF, 0xFF, 0xFF, 0x00]),
+            "a mismatch in the top byte clears Z"
+        );
+    }
+
+    /// BSET/BCLR are one-cycle SREG bit ops. Only SEI/CLI used to be decoded,
+    /// so `clt` (0x94E8) from avr-libc `__floatsisf` was a decode error.
+    #[test]
+    fn bset_bclr_round_trip_takes_one_cycle() {
+        // (BSET, BCLR, SREG mask). I is SEI/CLI and stays on its own path.
+        let pairs = [
+            (0x9408u16, 0x9488u16, 0x01u8), // SEC / CLC
+            (0x9468, 0x94E8, 0x40),         // SET / CLT
+        ];
+        let mut bus = MockBus::new();
+        let cfg = SimulationConfig::default();
+        for (bset, bclr, mask) in pairs {
+            let mut cpu = Avr::new();
+            // I stays set across the round trip; these ops must not clear it.
+            cpu.sreg = 0x80;
+            cpu.load_words(0, &[bset, bclr]);
+            cpu.step(&mut bus, &[], &cfg).unwrap();
+            assert_eq!(cpu.cycles, 1, "BSET is one cycle (op {bset:#06x})");
+            assert_eq!(cpu.sreg, 0x80 | mask, "BSET {bset:#06x}");
+            cpu.step(&mut bus, &[], &cfg).unwrap();
+            assert_eq!(cpu.cycles, 2, "BCLR is one cycle (op {bclr:#06x})");
+            assert_eq!(cpu.sreg, 0x80, "BCLR {bclr:#06x} restores SREG");
+            assert_eq!(cpu.pc, 4);
+        }
+    }
+
     /// A conversion reads the selected channel's millivolts from the bus-side
     /// `avr_adc` window, honours ADLAR, and answers the bandgap mux code
     /// without touching the bus.
@@ -1705,6 +2358,109 @@ mod tests {
     }
 
     #[test]
+    fn bst_copies_register_bit_into_t() {
+        let mut cpu = Avr::new();
+        // BST r25, 7 = 0xFB97 (avr-libc __divmodsi4 prologue; host ELF PC 0x93c)
+        cpu.load_words(0, &[0xFB97]);
+        cpu.r[25] = 0x80;
+        let mut bus = MockBus::new();
+        cpu.step(&mut bus, &[], &SimulationConfig::default())
+            .unwrap();
+        assert!(cpu.flag_t());
+        assert_eq!(cpu.pc, 2);
+
+        cpu.pc = 0;
+        cpu.r[25] = 0x00;
+        cpu.step(&mut bus, &[], &SimulationConfig::default())
+            .unwrap();
+        assert!(!cpu.flag_t());
+    }
+
+    #[test]
+    fn bld_copies_t_into_register_bit() {
+        let mut cpu = Avr::new();
+        // BLD r16, 0 = 0xF900 (1111 100d dddd 0bbb with d=16, b=0)
+        cpu.load_words(0, &[0xF900]);
+        cpu.r[16] = 0xFE;
+        cpu.set_flag_t(true);
+        let mut bus = MockBus::new();
+        cpu.step(&mut bus, &[], &SimulationConfig::default())
+            .unwrap();
+        assert_eq!(cpu.r[16], 0xFF);
+
+        cpu.pc = 0;
+        cpu.r[16] = 0xFF;
+        cpu.set_flag_t(false);
+        cpu.step(&mut bus, &[], &SimulationConfig::default())
+            .unwrap();
+        assert_eq!(cpu.r[16], 0xFE);
+    }
+
+    #[test]
+    fn morning_divmodsi4_prologue_steps_past_bst() {
+        // Regression for Uno pot/bargraph prove: DecodeError at byte PC 0x93c
+        // was BST from avr-libc __divmodsi4 (map() → signed division). Hosted
+        // morning ELF faults at 0x93c; this fixture (same sketch, local
+        // arduino:avr core) places the same BST word nearby — without BST the
+        // twin hard-stops before LEDs/gpio_edges can move.
+        let mut cpu = Avr::new();
+        let elf_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/avr/arduino-uno-morning-bargraph.elf");
+        let elf = std::fs::read(&elf_path).expect("morning bargraph fixture ELF");
+        assert_eq!(&elf[0..4], b"\x7fELF");
+        let e_phoff = u32::from_le_bytes(elf[28..32].try_into().unwrap()) as usize;
+        let e_phentsize = u16::from_le_bytes(elf[42..44].try_into().unwrap()) as usize;
+        let e_phnum = u16::from_le_bytes(elf[44..46].try_into().unwrap()) as usize;
+        let mut loaded = false;
+        for i in 0..e_phnum {
+            let off = e_phoff + i * e_phentsize;
+            let p_type = u32::from_le_bytes(elf[off..off + 4].try_into().unwrap());
+            if p_type != 1 {
+                continue;
+            }
+            let p_offset = u32::from_le_bytes(elf[off + 4..off + 8].try_into().unwrap()) as usize;
+            let p_vaddr = u32::from_le_bytes(elf[off + 8..off + 12].try_into().unwrap());
+            let p_filesz = u32::from_le_bytes(elf[off + 16..off + 20].try_into().unwrap()) as usize;
+            if p_vaddr != 0 || p_filesz == 0 {
+                continue;
+            }
+            let src = &elf[p_offset..p_offset + p_filesz];
+            cpu.flash[..src.len()].copy_from_slice(src);
+            loaded = true;
+            break;
+        }
+        assert!(loaded, "no flash PT_LOAD");
+        let mut bst_pc = None;
+        let mut pc = 0usize;
+        while pc + 1 < cpu.flash.len() {
+            let op = u16::from_le_bytes([cpu.flash[pc], cpu.flash[pc + 1]]);
+            let is32 = (op & 0xFE0F) == 0x9000
+                || (op & 0xFE0F) == 0x9200
+                || (op & 0xFE0E) == 0x940C
+                || (op & 0xFE0E) == 0x940E;
+            if pc >= 0x100 && (op & 0xFE08) == 0xFA00 {
+                bst_pc = Some(pc as u32);
+                break;
+            }
+            pc += if is32 { 4 } else { 2 };
+        }
+        let bst_pc = bst_pc.expect("morning ELF should contain BST");
+        // Fixture places BST at 0x944; hosted morning prove faulted at 0x93c —
+        // same opcode family (0xFBxx BST).
+        assert_eq!(
+            u16::from_le_bytes([cpu.flash[bst_pc as usize], cpu.flash[bst_pc as usize + 1]]),
+            0xFB97
+        );
+        cpu.pc = bst_pc;
+        cpu.r[25] = 0x80;
+        let mut bus = MockBus::new();
+        cpu.step(&mut bus, &[], &SimulationConfig::default())
+            .unwrap_or_else(|e| panic!("must step past BST at {bst_pc:#x}: {e:?}"));
+        assert!(cpu.flag_t());
+        assert_eq!(cpu.pc, bst_pc + 2);
+    }
+
+    #[test]
     fn unknown_opcode_decode_error() {
         let mut cpu = Avr::new();
         cpu.load_words(0, &[0xFFFF]);
@@ -1722,6 +2478,225 @@ mod tests {
         cpu.timsk0 = TIMSK_TOIE0;
         cpu.tick_timer0(16384);
         assert!(cpu.pending_irq & (1 << VEC_TIMER0_OVF) != 0);
+    }
+
+    /// The closed form has to agree with one timer clock at a time, including
+    /// a counter left above TOP and a chunk large enough to skip the loop.
+    #[test]
+    fn timer2_closed_form_matches_one_tick_at_a_time() {
+        let cases = [
+            (true, 177u8, 0u8, 0u8, 178u64),
+            (true, 177, 50, 10, 5_000),
+            (true, 0, 0, 0, 10),
+            (true, 255, 1, 0, 1_000),
+            (true, 10, 200, 50, 300),
+            (true, 1, 1, 1, 4),
+            (false, 177, 3, 200, 10_000),
+            (false, 0, 255, 0, 256),
+            (false, 1, 1, 255, 2),
+            (false, 128, 128, 0, 256 * 3 + 7),
+        ];
+        for (ctc, ocr_a, ocr_b, start, ticks) in cases {
+            let mut tcnt = start;
+            let mut ocfa = false;
+            let mut ocfb = false;
+            let mut tov = false;
+            for _ in 0..ticks {
+                let step = t2_one_tick(ctc, tcnt, ocr_a, ocr_b);
+                tcnt = step.tcnt;
+                ocfa |= step.ocfa;
+                ocfb |= step.ocfb;
+                tov |= step.tov;
+            }
+            let mut cpu = Avr::new();
+            cpu.tccr2a = if ctc { 0x02 } else { 0 };
+            cpu.tccr2b = 1;
+            cpu.ocr2a = ocr_a;
+            cpu.ocr2b = ocr_b;
+            cpu.tcnt2 = start;
+            cpu.tick_timer2(ticks as u32);
+            assert_eq!(
+                cpu.tcnt2, tcnt,
+                "ctc={ctc} ocr={ocr_a} start={start} ticks={ticks}"
+            );
+            assert_eq!(cpu.tifr2 & TIFR2_OCF2A != 0, ocfa, "OCF2A");
+            assert_eq!(cpu.tifr2 & TIFR2_OCF2B != 0, ocfb, "OCF2B");
+            assert_eq!(cpu.tifr2 & TIFR2_TOV2 != 0, tov, "TOV2");
+        }
+    }
+
+    /// Arduino `tone(6, 700, _)` at 16 MHz lands on OCR2A = 177, clk/64.
+    /// Matches are (OCR+1) * prescaler CPU cycles apart.
+    #[test]
+    fn timer2_ctc_match_period_is_ocr_plus_one_times_prescaler() {
+        let mut cpu = Avr::new();
+        let mut bus = MockBus::new();
+        cpu.data_write(0xB0, 1 << 1, &mut bus).unwrap(); // WGM21, CTC
+        cpu.data_write(0xB1, 0x04, &mut bus).unwrap(); // CS22, clk/64
+        cpu.data_write(0xB3, 177, &mut bus).unwrap();
+        cpu.data_write(0x70, TIMSK2_OCIE2A, &mut bus).unwrap();
+        cpu.sreg = 0x80;
+        // From 0 the first compare is the clock that lands on OCR2A. After
+        // that, matches are (OCR2A + 1) timer clocks apart.
+        let first = 177 * 64;
+        let period = 178 * 64;
+        cpu.tick_timer2(first - 1);
+        assert_eq!(cpu.tifr2 & TIFR2_OCF2A, 0, "the match is on the last clock");
+        assert_eq!(cpu.pending_irq & (1 << VEC_TIMER2_COMPA), 0);
+        cpu.tick_timer2(1);
+        assert_ne!(cpu.tifr2 & TIFR2_OCF2A, 0);
+        assert_ne!(cpu.pending_irq & (1 << VEC_TIMER2_COMPA), 0);
+        assert_eq!(cpu.tcnt2, 177);
+        cpu.data_write(0x37, TIFR2_OCF2A, &mut bus).unwrap();
+        cpu.tick_timer2(period - 1);
+        assert_eq!(cpu.tifr2 & TIFR2_OCF2A, 0, "steady period has not elapsed");
+        cpu.tick_timer2(1);
+        assert_ne!(cpu.tifr2 & TIFR2_OCF2A, 0);
+        assert_eq!(cpu.tcnt2, 177);
+
+        // Vector entry clears the flag and lands on TIMER2_COMPA_vect.
+        cpu.load_words(0, &[0x0000]);
+        cpu.step(&mut bus, &[], &SimulationConfig::default())
+            .unwrap();
+        assert_eq!(cpu.pc, (VEC_TIMER2_COMPA - 1) * 4);
+        assert_eq!(cpu.tifr2 & TIFR2_OCF2A, 0);
+        assert_eq!(cpu.pending_irq & (1 << VEC_TIMER2_COMPA), 0);
+    }
+
+    #[test]
+    fn timer2_prescalers_include_32_and_128_and_foc_reads_zero() {
+        let mut cpu = Avr::new();
+        let mut bus = MockBus::new();
+        cpu.data_write(0xB1, 0xFF, &mut bus).unwrap();
+        assert_eq!(cpu.data_read(0xB1, &bus).unwrap() & 0xC0, 0, "FOC2A/FOC2B");
+        assert_eq!(cpu.t2_prescaler(), 1024);
+        for (cs, div) in [
+            (1, 1),
+            (2, 8),
+            (3, 32),
+            (4, 64),
+            (5, 128),
+            (6, 256),
+            (7, 1024),
+        ] {
+            cpu.tccr2b = cs;
+            assert_eq!(cpu.t2_prescaler(), div, "CS={cs}");
+        }
+    }
+
+    #[test]
+    fn timer2_assr_keeps_only_as2_and_stops_the_cpu_clock() {
+        let mut cpu = Avr::new();
+        let mut bus = MockBus::new();
+        cpu.data_write(0xB6, 0xFF, &mut bus).unwrap();
+        assert_eq!(cpu.data_read(0xB6, &bus).unwrap(), ASSR_EXCLK | ASSR_AS2);
+        cpu.tccr2b = 1;
+        cpu.tick_timer2(1000);
+        assert_eq!(cpu.tcnt2, 0, "AS2 is not the CPU clock");
+        cpu.data_write(0xB6, 0, &mut bus).unwrap();
+        cpu.tick_timer2(5);
+        assert_eq!(cpu.tcnt2, 5);
+    }
+
+    #[test]
+    fn timer2_compare_b_and_overflow_vectors() {
+        let mut cpu = Avr::new();
+        let mut bus = MockBus::new();
+        cpu.sreg = 0x80;
+        cpu.tccr2b = 1;
+        cpu.ocr2b = 1;
+        cpu.timsk2 = TIMSK2_OCIE2B;
+        cpu.tick_timer2(1);
+        assert_eq!(cpu.tcnt2, 1);
+        assert_ne!(cpu.pending_irq & (1 << VEC_TIMER2_COMPB), 0);
+        cpu.load_words(0, &[0x0000]);
+        cpu.step(&mut bus, &[], &SimulationConfig::default())
+            .unwrap();
+        assert_eq!(cpu.pc, (VEC_TIMER2_COMPB - 1) * 4);
+
+        let mut cpu = Avr::new();
+        cpu.sreg = 0x80;
+        cpu.tccr2b = 1;
+        cpu.tcnt2 = 255;
+        cpu.timsk2 = TIMSK2_TOIE2;
+        cpu.tick_timer2(1);
+        assert_eq!(cpu.tcnt2, 0);
+        assert_ne!(cpu.tifr2 & TIFR2_TOV2, 0);
+        cpu.load_words(0, &[0x0000]);
+        cpu.step(&mut bus, &[], &SimulationConfig::default())
+            .unwrap();
+        assert_eq!(cpu.pc, (VEC_TIMER2_OVF - 1) * 4);
+    }
+
+    /// Enabling OCIE2A while OCF2A is already set requests the interrupt.
+    #[test]
+    fn timer2_late_enable_sees_a_sticky_flag() {
+        let mut cpu = Avr::new();
+        let mut bus = MockBus::new();
+        cpu.tccr2a = 0x02;
+        cpu.tccr2b = 1;
+        cpu.ocr2a = 0;
+        cpu.tick_timer2(1);
+        assert_ne!(cpu.tifr2 & TIFR2_OCF2A, 0);
+        assert_eq!(cpu.pending_irq & (1 << VEC_TIMER2_COMPA), 0);
+        cpu.data_write(0x70, TIMSK2_OCIE2A, &mut bus).unwrap();
+        assert_ne!(cpu.pending_irq & (1 << VEC_TIMER2_COMPA), 0);
+        cpu.data_write(0x37, TIFR2_OCF2A, &mut bus).unwrap();
+        assert_eq!(cpu.tifr2 & TIFR2_OCF2A, 0);
+        assert_eq!(cpu.pending_irq & (1 << VEC_TIMER2_COMPA), 0);
+    }
+
+    /// The idle skip lands the Timer2 compare on the same cycle as stepping
+    /// the sleeping core one idle clock at a time.
+    #[test]
+    fn timer2_sleep_budget_matches_the_stepped_wake() {
+        let setup = || {
+            let mut cpu = Avr::new();
+            cpu.tccr2a = 0x02;
+            cpu.tccr2b = 0x04;
+            cpu.ocr2a = 10;
+            cpu.tcnt2 = 3;
+            cpu.t2_prescale_acc = 5;
+            cpu.timsk2 = TIMSK2_OCIE2A;
+            cpu.sreg = 0x80;
+            cpu.smcr = 1;
+            cpu.load_words(0x100, &[0x9588, 0xCFFF]);
+            cpu.pc = 0x100;
+            let mut bus = MockBus::new();
+            cpu.step(&mut bus, &[], &SimulationConfig::default())
+                .unwrap();
+            assert!(cpu.sleeping);
+            (cpu, bus)
+        };
+        let (mut stepped, mut sbus) = setup();
+        for _ in 0..10_000 {
+            if stepped.pc == (VEC_TIMER2_COMPA - 1) * 4 {
+                break;
+            }
+            stepped
+                .step(&mut sbus, &[], &SimulationConfig::default())
+                .unwrap();
+        }
+        assert_eq!(
+            stepped.pc,
+            (VEC_TIMER2_COMPA - 1) * 4,
+            "compare A woke the core"
+        );
+        let (mut skipped, mut kbus) = setup();
+        let budget = skipped.idle_fast_forward_budget(&kbus).expect("asleep");
+        skipped.fast_forward_idle_cycles(budget);
+        assert_eq!(
+            skipped.idle_fast_forward_budget(&kbus),
+            None,
+            "OCF2A pending"
+        );
+        skipped
+            .step(&mut kbus, &[], &SimulationConfig::default())
+            .unwrap();
+        assert_eq!(skipped.pc, stepped.pc);
+        assert_eq!(skipped.cycles, stepped.cycles, "same wake cycle");
+        assert_eq!(skipped.tcnt2, stepped.tcnt2);
+        assert_eq!(skipped.t2_prescale_acc, stepped.t2_prescale_acc);
     }
 
     #[test]

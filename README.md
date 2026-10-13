@@ -255,7 +255,10 @@ short-circuit hardware, and where we hold up. One e-paper panel matches silicon 
 ## Boards and examples
 
 ARM Cortex-M and RISC-V have the deepest coverage. Some ESP32/Xtensa paths exist for
-specific examples.
+specific examples. The optional native [QEMU-derived Cortex-A7 backend](docs/qemu-arm-core.md)
+runs bounded instruction fixtures through the same CPU and bus interfaces. The
+[Luckfox Pico Mini A dossier](docs/boards/luckfox-pico-mini-a.md) includes vendor assets,
+pins and declared memory geometry; RV1103 peripherals and Linux boot remain unimplemented.
 
 Check the per-board status before you assume a peripheral is modeled. It is in
 [docs/boards](docs/boards/), the
@@ -330,6 +333,12 @@ repository workflow, and [SECURITY.md](SECURITY.md) for security issues.
 [new-issue]: https://github.com/w1ne/labwired-core/issues/new
 
 ## Repository scope
+
+This fork's [SAMD51 byte-DMA checkpoint](docs/receipts/2026-10-12-samd-dmac-byte/README.md)
+qualifies an opt-in software-triggered RAM-transfer foundation through authored
+CPU guests. Live SPI DMA, no-ASF runtime integration and active PyBadge/Arcade
+performance remain separate [next tasks](docs/engineering/samd-dmac-byte-foundation.md#next-bounded-lane--live-sercom4-tx-byte-requests).
+This source checkpoint does not update a released engine or application pin.
 
 This repository owns the core simulator and its validation assets: CPU, bus, memory,
 peripheral, and external device execution; chip and system descriptors; CLI, test runner,

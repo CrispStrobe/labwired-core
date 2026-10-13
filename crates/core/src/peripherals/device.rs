@@ -450,6 +450,26 @@ pub trait UartStreamDevice: Send {
         1
     }
 
+    /// True when this peer is paced by its OWN baud in real simulated time
+    /// instead of the host's nominal one-byte-per-tick. Default `false`: every
+    /// existing peer keeps the historical pacing byte for byte.
+    ///
+    /// A peer that returns `true` is handed `elapsed_us` of real device time
+    /// (cycles since the last service at the machine's core clock) on the first
+    /// `poll` of a service, and is responsible for releasing at most one byte
+    /// per character time itself.
+    fn paced_by_device(&self) -> bool {
+        false
+    }
+
+    /// The line rate this peer runs at, for a host that wants to check its own
+    /// programmed baud against it. Only reported by peers that
+    /// [`paced_by_device`](UartStreamDevice::paced_by_device); `None` otherwise,
+    /// so a host never raises a mismatch for a peer that did not opt in.
+    fn declared_baud(&self) -> Option<u32> {
+        None
+    }
+
     /// The system.yaml `external_devices` id of this peer, if it has one. A
     /// test script names the peer by this id (`uart_injections: device:`).
     fn device_id(&self) -> Option<&str> {

@@ -56,6 +56,18 @@ pub(crate) fn reconcile_nvic_level(
     }
 }
 
+/// Which direction(s) of a multi-line level source's lines a reconcile applies.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LevelSync {
+    /// Pend-and-mark asserted lines, drop marked pends of deasserted ones.
+    Both,
+    /// Only drop marked pends of deasserted lines. The MMIO write choke uses
+    /// this so a store that RAISES an EXTI line (SWIER, IMR unmask) is still
+    /// delivered at the next walk tick / event, as before — only the
+    /// deassert, which must land before the handler returns, is immediate.
+    DropOnly,
+}
+
 fn pend_nvic(
     nvic: &Option<Arc<crate::peripherals::nvic::NvicState>>,
     interrupts: &mut Vec<u32>,
@@ -73,6 +85,55 @@ fn pend_nvic(
 }
 
 impl SystemBus {
+    /// Reconcile every NVIC line peripheral `idx` reports through
+    /// [`Peripheral::irq_line_levels`] (multi-line level sources: the STM32
+    /// EXTI). One call per choke: the walk and the event path after they
+    /// deliver the model's non-empty `explicit_irqs` (`Both`), the MMIO write choke after
+    /// a store (`DropOnly`). Inert without an NVIC, and for every model that
+    /// keeps the default (reports nothing).
+    #[inline]
+    fn reconcile_multi_irq_levels(&self, idx: usize, sync: LevelSync) {
+        if self.nvic.is_none() {
+            return;
+        }
+        self.peripherals[idx]
+            .dev
+            .irq_line_levels(&mut |irq, level| {
+                if level && sync == LevelSync::DropOnly {
+                    return;
+                }
+                reconcile_nvic_level(&self.nvic, irq, level);
+            });
+    }
+
+    /// [`Self::reconcile_multi_irq_levels`] in both directions: the walk and
+    /// the event path call it right after delivering a model's non-empty
+    /// `explicit_irqs`, so the pends a multi-line level source raises are
+    /// marked as level pends. (A multi-line source must therefore deliver
+    /// through `explicit_irqs`; the bus-tick pass does not call it.)
+    #[inline]
+    pub(crate) fn mark_multi_irq_levels(&self, idx: usize) {
+        self.reconcile_multi_irq_levels(idx, LevelSync::Both);
+    }
+
+    /// The MMIO write-choke level reconcile for peripheral `idx`: its single
+    /// configured line ([`Peripheral::irq_line_level`], both directions) and
+    /// any multi-line levels ([`Peripheral::irq_line_levels`], drops only).
+    /// For a LEVEL source the store that clears its status flag IS the
+    /// deassert, and the pend must drop before the handler returns —
+    /// otherwise the stale pend re-enters the handler once per event
+    /// (measured 1.95 entries/update on the F0 timer against an exact grid;
+    /// two entries per edge on the STM32 EXTI).
+    #[inline]
+    pub(crate) fn reconcile_irq_levels_after_write(&self, idx: usize) {
+        if let Some(irq_line) = self.peripherals[idx].irq {
+            if let Some(level) = self.peripherals[idx].dev.irq_line_level() {
+                reconcile_nvic_level(&self.nvic, irq_line, level);
+            }
+        }
+        self.reconcile_multi_irq_levels(idx, LevelSync::DropOnly);
+    }
+
     /// Config-time derivation of walk-deletability (issue: browser-perf chain).
     ///
     /// Returns `true` iff EVERY peripheral currently on the bus is provably
@@ -266,14 +327,21 @@ impl SystemBus {
         let mut bus_tick_pos = 0;
         while bus_tick_pos < self.bus_tick_indices.len() {
             let i = self.bus_tick_indices[bus_tick_pos];
+            // Bus-assisted transfer work must obey the same live clock gate
+            // as register accesses and the legacy walk. In particular, a
+            // completed frame must not reach its slave while its clock is off.
+            if !self.is_peripheral_clocked(i) {
+                bus_tick_pos += 1;
+                continue;
+            }
             let placeholder: Box<dyn Peripheral> =
                 Box::new(crate::peripherals::stub::StubPeripheral::new(0));
             let mut dev = std::mem::replace(&mut self.peripherals[i].dev, placeholder);
             dev.tick_with_bus(self);
             self.peripherals[i].dev = dev;
-            // A LEVEL source may have raised its line inside the bus tick
-            // (e.g. nRF52 UARTE EasyDMA completion); reconcile it here as the
-            // walk and the MMIO write choke do.
+            // A level source may have raised its line inside the bus tick
+            // (nRF52 UARTE EasyDMA completion). Reconcile it here, the same
+            // way the walk and the MMIO write path do.
             if let Some(irq_line) = self.peripherals[i].irq {
                 if let Some(level) = self.peripherals[i].dev.irq_line_level() {
                     reconcile_nvic_level(&self.nvic, irq_line, level);
@@ -309,6 +377,10 @@ impl SystemBus {
         let mut pos = 0;
         while pos < forced.len() {
             let i = forced[pos];
+            if self.peripherals[i].dev.requires_clocked_tick() && !self.is_peripheral_clocked(i) {
+                pos += 1;
+                continue;
+            }
             let placeholder: Box<dyn Peripheral> =
                 Box::new(crate::peripherals::stub::StubPeripheral::new(0));
             let mut dev = std::mem::replace(&mut self.peripherals[i].dev, placeholder);
@@ -334,8 +406,8 @@ impl SystemBus {
     /// [`Peripheral::idle_poll_bus_tick`]) — currently a medium-mode WiFi MAC.
     /// Only the tiny `bus_tick_indices` set is scanned (empty on every non-WiFi
     /// bus, so this is ~free on the idle-fast-forward hot check). Only the
-    /// event-scheduler fast-forward path consults it.
-    #[cfg(feature = "event-scheduler")]
+    /// event-scheduler fast-forward path, and a world asking whether a
+    /// sleeping node is quiet, consult it.
     pub(crate) fn idle_poll_bus_tick_active(&self) -> bool {
         self.bus_tick_indices
             .iter()
@@ -440,6 +512,18 @@ impl SystemBus {
         } else {
             self.legacy_tick_indices.get(tick_pos).copied()
         } {
+            // A bus pass alone cannot freeze a clocked countdown: otherwise
+            // tick_elapsed consumes gated time and completes immediately on
+            // resume. Opt-in tick models use the same central gate as events;
+            // other legacy models retain their historical behavior.
+            if self.peripherals[peripheral_index]
+                .dev
+                .requires_clocked_tick()
+                && !self.is_peripheral_clocked(peripheral_index)
+            {
+                tick_pos += 1;
+                continue;
+            }
             let Some((res, irq, base, refresh_after_tick)) =
                 self.peripherals.get_mut(peripheral_index).map(|p| {
                     // Phase 2B.2 (issue #192): scheduler-driven peripherals are advanced
@@ -528,6 +612,12 @@ impl SystemBus {
                 }
                 // Plan 3: stash source IDs for pass-2 intmatrix routing.
                 explicit_source_ids.extend(irqs);
+                // A multi-line LEVEL source (STM32 EXTI) marks the pends it
+                // just raised, so the write choke can drop them when firmware
+                // clears the pending latch inside the handler. Only after an
+                // emission: a line is asserted only while it emits, and the
+                // drop belongs to the write choke.
+                self.mark_multi_irq_levels(peripheral_index);
             }
 
             // System exceptions (SysTick = 15, etc) bypass NVIC and are

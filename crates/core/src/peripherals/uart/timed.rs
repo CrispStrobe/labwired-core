@@ -4,7 +4,7 @@
 // This software is released under the MIT License.
 // See the LICENSE file in the project root for full license information.
 
-//! Timed mode of the STM32 (F1/F2/F4 register layout) USART, used when the
+//! Timed mode of STM32 legacy and modern-register USARTs, used when the
 //! USART is attached to a [`TimedUartNet`](crate::network::timed_uart) link.
 //!
 //! The default model hands a written byte to the sink at once and keeps TXE
@@ -127,12 +127,15 @@ impl TimedRegs {
 }
 
 impl Uart {
-    /// Put this USART on a timed link. Only the STM32 F1/F2/F4 register
-    /// layout has a timed mode.
+    /// Put a legacy or modern STM32 USART on a timed link. Modern mode uses
+    /// ISR/ICR/RQR/RDR/TDR, with FIFO disabled and PRESC at its reset divisor.
     pub fn attach_timed_port(&mut self, port: TimedUartPort) -> anyhow::Result<()> {
-        if !matches!(self.layout, super::UartRegisterLayout::Stm32F1) {
+        if !matches!(
+            self.layout,
+            super::UartRegisterLayout::Stm32F1 | super::UartRegisterLayout::Stm32V2
+        ) {
             anyhow::bail!(
-                "a timed UART link needs the STM32 F1/F2/F4 USART register layout; this UART is {:?}",
+                "a timed UART link needs an STM32 USART register layout; this UART is {:?}",
                 self.layout
             );
         }
@@ -176,7 +179,13 @@ impl Uart {
         } else {
             0
         };
-        let word = if self.cr1 & CR1_M != 0 { 9 } else { 8 };
+        let word = if self.modern_timed() && self.cr1 & (1 << 28) != 0 {
+            7
+        } else if self.cr1 & CR1_M != 0 {
+            9
+        } else {
+            8
+        };
         let (data_bits, parity) = if self.cr1 & CR1_PCE != 0 {
             (
                 word - 1,
@@ -195,7 +204,7 @@ impl Uart {
             2 => 4,
             _ => 3,
         };
-        let ue = self.cr1 & CR1_UE != 0;
+        let ue = self.timed_enabled();
         LineFormat {
             bit_ps,
             data_bits,
@@ -221,6 +230,21 @@ impl Uart {
     pub(crate) fn timed_read(&self, offset: u64) -> Option<u8> {
         let t = self.timed.as_ref()?;
         let mut r = t.regs.lock().unwrap_or_else(|e| e.into_inner());
+        if self.modern_timed() {
+            match offset {
+                0x1c..=0x1f => {
+                    return Some((self.modern_status(&r) >> ((offset - 0x1c) * 8)) as u8)
+                }
+                0x24 => {
+                    r.rxne = false;
+                    r.irq_prev &= self.timed_enabled() && r.level(self.cr1, self.cr3);
+                    return Some(r.rdr as u8);
+                }
+                0x25 => return Some(((r.rdr >> 8) & 1) as u8),
+                0x26..=0x2b | 0x18..=0x1b | 0x20..=0x23 => return Some(0),
+                _ => return self.modern_config_byte(offset),
+            }
+        }
         match offset {
             0x00 => {
                 let sr = r.sr();
@@ -239,7 +263,7 @@ impl Uart {
                     r.pe = false;
                     r.sr_read_armed = false;
                 }
-                let level = r.level(self.cr1, self.cr3);
+                let level = self.timed_enabled() && r.level(self.cr1, self.cr3);
                 r.irq_prev &= level;
                 Some(v)
             }
@@ -253,6 +277,15 @@ impl Uart {
     pub(crate) fn timed_peek(&self, offset: u64) -> Option<u8> {
         let t = self.timed.as_ref()?;
         let r = t.regs.lock().unwrap_or_else(|e| e.into_inner());
+        if self.modern_timed() {
+            return match offset {
+                0x1c..=0x1f => Some((self.modern_status(&r) >> ((offset - 0x1c) * 8)) as u8),
+                0x24 => Some(r.rdr as u8),
+                0x25 => Some(((r.rdr >> 8) & 1) as u8),
+                0x26..=0x2b | 0x18..=0x1b | 0x20..=0x23 => Some(0),
+                _ => self.modern_config_byte(offset),
+            };
+        }
         match offset {
             0x00 => Some(r.sr()),
             0x01..=0x03 | 0x06 | 0x07 => Some(0),
@@ -272,6 +305,43 @@ impl Uart {
             return false;
         };
         let mut r = t.regs.lock().unwrap_or_else(|e| e.into_inner());
+        if self.modern_timed() {
+            match offset {
+                0x28 => {
+                    if fmt.tx_enabled {
+                        r.tdr = Some(u16::from(value));
+                        r.tdr_written_cycle = now;
+                        r.tc_cleared = false;
+                    }
+                }
+                0x18 => {
+                    if value & (1 << 3) != 0 {
+                        r.rxne = false;
+                    }
+                    if value & (1 << 4) != 0 {
+                        r.tdr = None;
+                    }
+                }
+                0x20 => {
+                    if value & SR_PE != 0 {
+                        r.pe = false;
+                    }
+                    if value & SR_FE != 0 {
+                        r.fe = false;
+                    }
+                    if value & SR_ORE != 0 {
+                        r.ore = false;
+                    }
+                    if value & SR_TC != 0 {
+                        r.tc_cleared = true;
+                    }
+                }
+                0x19..=0x1f | 0x21..=0x27 | 0x29..=0x2b => {}
+                _ => return false,
+            }
+            r.irq_prev &= self.timed_enabled() && r.level(cr1, cr3);
+            return true;
+        }
         match offset {
             // SR: RXNE and TC are rc_w0 — writing 0 clears them.
             0x00 => {
@@ -293,7 +363,7 @@ impl Uart {
             }
             _ => return false,
         }
-        let level = r.level(cr1, cr3);
+        let level = self.timed_enabled() && r.level(cr1, cr3);
         r.irq_prev &= level;
         true
     }
@@ -304,14 +374,71 @@ impl Uart {
         self.timed_publish();
         let now = self.timed_now();
         let cr3 = self.cr3;
+        let enabled = self.timed_enabled();
         if let Some(t) = &self.timed {
             let mut r = t.regs.lock().unwrap_or_else(|e| e.into_inner());
+            if !enabled {
+                if r.tx_active && now < r.shift_busy_until {
+                    t.port.abort_tx(now);
+                }
+                *r = TimedRegs::default();
+            }
             if cr3 & CR3_DMAR != 0 && !r.dmar_noted {
                 r.dmar_noted = true;
                 t.port
                     .note_unmodelled(now, "USART DMA reception (CR3.DMAR)");
             }
         }
+    }
+
+    fn modern_timed(&self) -> bool {
+        matches!(self.layout, super::UartRegisterLayout::Stm32V2)
+    }
+
+    fn timed_enabled(&self) -> bool {
+        self.cr1 & if self.modern_timed() { 1 } else { CR1_UE } != 0
+    }
+
+    fn modern_status(&self, regs: &TimedRegs) -> u32 {
+        let mut status = u32::from(regs.sr());
+        if self.timed_enabled() {
+            if self.cr1 & CR1_TE != 0 {
+                status |= 1 << 21;
+            }
+            if self.cr1 & CR1_RE != 0 {
+                status |= 1 << 22;
+            }
+        }
+        status
+    }
+
+    fn modern_config_byte(&self, offset: u64) -> Option<u8> {
+        let (base, value) = match offset {
+            0x00..=0x03 => (0, self.cr1),
+            0x04..=0x07 => (4, self.cr2),
+            0x08..=0x0b => (8, self.cr3),
+            0x0c..=0x0f => (12, self.brr),
+            0x10..=0x13 => (16, self.gtpr),
+            _ => return None,
+        };
+        Some((value >> ((offset - base) * 8)) as u8)
+    }
+
+    pub(crate) fn timed_config_write(&mut self, offset: u64, value: u8) -> bool {
+        if !self.modern_timed() {
+            return self.f1_config_write(offset, value);
+        }
+        let (base, reg) = match offset {
+            0x00..=0x03 => (0, &mut self.cr1),
+            0x04..=0x07 => (4, &mut self.cr2),
+            0x08..=0x0b => (8, &mut self.cr3),
+            0x0c..=0x0f => (12, &mut self.brr),
+            0x10..=0x13 => (16, &mut self.gtpr),
+            _ => return false,
+        };
+        let shift = (offset - base) * 8;
+        *reg = (*reg & !(0xff << shift)) | (u32::from(value) << shift);
+        true
     }
 
     /// Bring the USART up to `now`: finish or start transmissions, receive
@@ -327,6 +454,9 @@ impl Uart {
         // TX: a finished character frees the shifter; a waiting TDR moves in.
         if r.tx_active && now >= r.shift_busy_until {
             r.tx_active = false;
+            // Hardware completion sets TC even if software cleared it while
+            // the shift register was busy.
+            r.tc_cleared = false;
         }
         if let Some(value) = r.tdr {
             if !r.tx_active {
@@ -339,6 +469,7 @@ impl Uart {
                         r.shift_busy_until = start + frame_cycles;
                         if now >= r.shift_busy_until {
                             r.tx_active = false;
+                            r.tc_cleared = false;
                         }
                     }
                 }
@@ -352,10 +483,16 @@ impl Uart {
         if let Some(d) = loaded {
             r.rdr = d.value;
             r.rxne = true;
-            r.fe = d.framing_error;
-            r.pe = d.parity_error;
+            if self.modern_timed() {
+                // Modern USART errors are sticky until their ICR bits clear.
+                r.fe |= d.framing_error;
+                r.pe |= d.parity_error;
+            } else {
+                r.fe = d.framing_error;
+                r.pe = d.parity_error;
+            }
         }
-        let level = r.level(cr1, cr3);
+        let level = self.timed_enabled() && r.level(cr1, cr3);
         let rising = level && !r.irq_prev;
         r.irq_prev = level;
         if rising && cr1 & CR1_RXNEIE != 0 && (r.rxne || r.ore) {
@@ -405,7 +542,7 @@ impl Uart {
     pub(crate) fn timed_level(&self) -> Option<bool> {
         let t = self.timed.as_ref()?;
         let r = t.regs.lock().unwrap_or_else(|e| e.into_inner());
-        Some(r.level(self.cr1, self.cr3))
+        Some(self.timed_enabled() && r.level(self.cr1, self.cr3))
     }
 
     /// Node reset (NRST/SYSRESETREQ): every USART register returns to its

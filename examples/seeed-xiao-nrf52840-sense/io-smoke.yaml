@@ -1,0 +1,24 @@
+# LabWired - Seeed XIAO nRF52840 Sense demo firmware smoke
+#
+# Build: cargo build -p firmware-xiao-nrf52840-sense-demo --release --target thumbv7em-none-eabi
+#
+# The firmware cycles the RGB LED (red P0.26, green P0.30, blue P0.06, all
+# active low) and prints one heartbeat line per step, with the pad state READ
+# BACK from GPIO OUT, so `uart_ordered` asserts each pad really went low and
+# high again, in order.
+schema_version: "1.0"
+inputs:
+  firmware: "../../target/thumbv7em-none-eabi/release/firmware-xiao-nrf52840-sense-demo"
+  system: "../../configs/systems/seeed-xiao-nrf52840-sense.yaml"
+limits:
+  max_steps: 5000000
+assertions:
+  - uart_contains: "XIAO nRF52840 Sense ready"
+  - uart_ordered:
+      - "hb=0 red=on"
+      - "hb=1 red=off"
+      - "hb=2 green=on"
+      - "hb=3 green=off"
+      - "hb=4 blue=on"
+      - "hb=5 blue=off"
+  - expected_stop_reason: max_steps

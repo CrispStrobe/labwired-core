@@ -337,6 +337,37 @@ mod logic_capture_tests {
         assert_eq!(batch.cursor, total as u64);
     }
 
+    /// The per-channel totals the `gpio_edges` early-stop reads are CUMULATIVE:
+    /// an edge that overflowed the bounded ring away still counts. Counting
+    /// retained edges instead would make a "has this pad toggled twice?" check
+    /// go backwards after a long capture — the assertion would silently never
+    /// pass on a busy pad.
+    #[test]
+    fn channel_edge_counts_survive_ring_overflow_and_reads() {
+        let mut cap = LogicCapture::new();
+        cap.install(&[Some(LogicSource::pad(0, 0))], &[Some(false)], &[false]);
+
+        let total = LOGIC_RING_CAPACITY + 100;
+        for i in 0..total {
+            cap.sample(i as u64 + 1, |_| Some(i % 2 == 0));
+        }
+        let batch = cap.read_edges(0);
+        assert_eq!(batch.edges.len(), LOGIC_RING_CAPACITY, "ring is bounded");
+        assert_eq!(
+            cap.channel_edge_counts(),
+            &[total as u64],
+            "totals count every edge, dropped ones included",
+        );
+
+        // Acknowledging the window must not decrement the totals.
+        let _ = cap.read_edges(batch.cursor);
+        assert_eq!(cap.channel_edge_counts(), &[total as u64]);
+
+        // Re-installing a watch set starts a fresh count.
+        cap.install(&[Some(LogicSource::pad(0, 0))], &[Some(false)], &[false]);
+        assert_eq!(cap.channel_edge_counts(), &[0]);
+    }
+
     #[test]
     fn acknowledged_reads_free_ring_capacity_for_continuous_capture() {
         let mut cap = LogicCapture::new();
@@ -478,5 +509,70 @@ mod logic_capture_tests {
         assert!(batch.edges.is_empty(), "no watch, no capture");
         assert_eq!(batch.cursor, 0);
         assert_eq!(batch.dropped, 0);
+    }
+
+    /// The universal per-pin block: one output-high pin, one input pin held
+    /// high by the outside world, one pin handed to a peripheral (AF), each
+    /// reported from the model's own accessors with `null` where it cannot say.
+    #[test]
+    fn gpio_pin_states_report_output_input_and_af_pins() {
+        use crate::logic_capture::{collect_gpio_pins, LogicChannelMeta};
+
+        let mut machine = machine_with_gpio();
+        // MODER: pin0 output, pin1 input, pin2 alternate function.
+        machine
+            .bus
+            .write_u32(GPIO_BASE + MODER, 0b10_00_01)
+            .unwrap();
+        set_pin0(&mut machine, true);
+        let idx = machine
+            .bus
+            .find_peripheral_index_by_name("gpio_test")
+            .unwrap();
+        assert!(machine.bus.peripherals[idx].dev.set_gpio_input(1, true));
+
+        let meta: Vec<LogicChannelMeta> = (0..3u8)
+            .map(|pin| LogicChannelMeta {
+                ch: u32::from(pin),
+                peripheral: "gpio_test".into(),
+                pin,
+                initial: None,
+            })
+            .chain(std::iter::once(LogicChannelMeta {
+                ch: 3,
+                peripheral: "nonexistent".into(),
+                pin: 0,
+                initial: None,
+            }))
+            .collect();
+        let pins = collect_gpio_pins(&machine.bus, &meta);
+        assert_eq!(pins.len(), 4);
+
+        assert_eq!(pins[0].pin, "CH0");
+        assert_eq!(pins[0].mode, "output");
+        assert_eq!(pins[0].output, Some(true));
+        assert_eq!(pins[0].pad, Some(true));
+        assert_eq!(pins[0].drive.as_deref(), Some("1"));
+
+        assert_eq!(pins[1].mode, "input");
+        assert_eq!(pins[1].input, Some(true));
+        assert_eq!(pins[1].pad, Some(true));
+        assert!(pins[1].drive.is_some());
+
+        assert_eq!(pins[2].mode, "af");
+
+        // A watch that never resolved to a peripheral stays honest: all null.
+        assert_eq!(pins[3].mode, "unknown");
+        assert_eq!(pins[3].func, None);
+        assert_eq!(pins[3].output, None);
+        assert_eq!(pins[3].input, None);
+        assert_eq!(pins[3].pad, None);
+        assert_eq!(pins[3].drive, None);
+
+        // The serialized shape is the contract the builder reads.
+        let v = serde_json::to_value(&pins[0]).unwrap();
+        for k in ["pin", "mode", "func", "output", "input", "pad", "drive"] {
+            assert!(v.get(k).is_some(), "missing key {k}: {v}");
+        }
     }
 }

@@ -30,13 +30,15 @@ Run **real firmware** on a **digital twin** of the board — in the browser, fro
 | **Board / MCU** | New chip or Nucleo / Pico / ESP board | [Board playbook](board_onboarding_playbook.md) |
 | **On-chip peripheral** | New timer / UART model inside a chip | [Peripheral modeling](peripherals.md) |
 
+Declared experimental boards: [Luckfox Pico Mini A](boards/luckfox-pico-mini-a.md) · [Native QEMU-derived Cortex-A7 prototype](qemu-arm-core.md). Mini A board execution and Linux boot remain unavailable.
+
 Parts catalog: [Parts](parts/index.md) · Support levels: [Target rubric](target_support_rubric.md)
 
 ---
 
 ## Boards (popular)
 
-[Arduino Uno R3](boards/arduino-uno.md) · [ESP32-C3](boards/esp32c3.md) · [ESP32-S3](boards/esp32s3.md) · [nRF52840](boards/nrf52840.md) · [RP2040](boards/rp2040.md) · [RP2350-Zero](boards/rp2350-zero.md) · [STM32F401](boards/stm32f401.md)
+[Arduino Uno R3](boards/arduino-uno.md) · [ESP32-C3](boards/esp32c3.md) · [ESP32-S3](boards/esp32s3.md) · [nRF52840](boards/nrf52840.md) · [RP2040](boards/rp2040.md) · [RP2350-Zero](boards/rp2350-zero.md) · [STM32F401](boards/stm32f401.md) · [NUCLEO-U545RE-Q](boards/nucleo-u545re.md)
 
 ---
 

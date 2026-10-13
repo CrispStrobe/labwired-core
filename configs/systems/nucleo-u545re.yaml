@@ -1,0 +1,27 @@
+# LabWired - NUCLEO-U545RE-Q board system (STM32U545RET6Q, MB1841).
+# Sources (ST-published; st.com was unreachable when written):
+# - stm32u5xx-nucleo-bsp stm32u5xx_nucleo.h, board MB1841A: LED2 = PA5,
+#   BUTTON_USER = PC13, COM1 = USART1 PA9 (TX) / PA10 (RX), AF7.
+# - ST open pin data boards/B56_Nucleo_NUCLEO-U545RE-Q_STM32U545RE_Board_AllConfig.ioc:
+#   PA5 label LED_GREEN (GPIO_Output), PC13 label USER_BUTTON (pull-down),
+#   PA9/PA10 USART1_TX/RX.
+# - Zephyr boards/st/nucleo_u545re_q: led0 = PA5 active high, sw0 = PC13
+#   active high + pull-down, console = USART1.
+# The board has ONE user LED (LD2 green); the 144-pin NUCLEO-U575ZI-Q has three.
+name: "nucleo-u545re"
+chip: "../chips/stm32u545.yaml"
+debug_uart: "usart1"
+external_devices: []
+board_io:
+  - id: "led_green_ld2"
+    kind: "led"
+    peripheral: "gpioa"
+    pin: 5
+    signal: "output"
+    active_high: true
+  - id: "button_user_pc13"
+    kind: "button"
+    peripheral: "gpioc"
+    pin: 13
+    signal: "input"
+    active_high: true

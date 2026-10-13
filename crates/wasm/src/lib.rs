@@ -25,6 +25,7 @@ mod playground_repro;
 #[cfg(test)]
 mod rtt_arch_tests;
 mod softdevice;
+mod source_debug;
 mod traces;
 mod world;
 // CortexM and XtensaLx7 are used via Box<dyn Cpu>; the concrete types are
@@ -469,6 +470,9 @@ impl WasmSimulator {
         let family = machine_family(&chip)
             .map_err(|e| JsValue::from_str(&format!("Chip architecture error: {e:#}")))?;
         let mut sim = match family {
+            MachineFamily::CortexA => return Err(JsValue::from_str(
+                "Cortex-A7 requires the native qemu-arm backend; browser execution is unavailable",
+            )),
             MachineFamily::CortexM => {
                 Self::new_from_config_arm(&chip, &manifest, firmware, blob_map)
             }
@@ -528,9 +532,11 @@ impl WasmSimulator {
         firmware: &[u8],
         blob_map: &std::collections::HashMap<String, Vec<u8>>,
     ) -> Result<WasmSimulator, JsValue> {
-        // A named blob fills the chip's `image_env` region of that name — the
-        // browser has no filesystem to read a ROM dump from, so this is the
-        // only way an RP2040's `bootrom` region exists here at all.
+        // A named blob fills the chip's `image_env` region of that name. The
+        // RP2040 mask ROM is also compiled into the core crate, so a browser
+        // that does not pass a `bootrom` blob still maps it at 0 (pico-sdk
+        // `rom_func_lookup` would otherwise read stage-2 through the flash
+        // alias). A supplied blob still wins over that default.
         let mut bus = SystemBus::from_config_with_region_images(chip, manifest, &[], blob_map)
             .map_err(|e| JsValue::from_str(&format!("Bus config error: {:#}", e)))?;
 
@@ -1227,7 +1233,10 @@ impl WasmSimulator {
             //   binary image header(16384k). Probe failed.
             // The `.max(image len)` floor stays so a chip YAML that understates
             // the part still cannot truncate the image itself.
-            flash_size: esp32s3_flash_backing_size(chip.flash.size, flash.len()),
+            flash_size: labwired_core::system::builder::esp32s3_flash_backing_size(
+                chip.flash.size,
+                flash.len(),
+            ),
             // Core clock from the same descriptor, for the same reason: the
             // chip YAML is the one home for `cpu_hz` and the SYSTIMER divides
             // the CPU cycle stream by it.
@@ -1569,14 +1578,18 @@ impl WasmSimulator {
         );
     }
 
+    /// The pc of the core a debugger follows: core 0, or the second core of a
+    /// dual-core chip after a breakpoint stopped it (see
+    /// [`source_debug::focused_cpu`]).
     #[wasm_bindgen]
     pub fn get_pc(&self) -> Result<u32, JsValue> {
-        Ok(self.machine_or_err()?.cpu.get_pc())
+        Ok(source_debug::focused_cpu(self.machine_or_err()?).get_pc())
     }
 
+    /// A register of the core `get_pc` reads.
     #[wasm_bindgen]
     pub fn get_register(&self, id: u8) -> Result<u32, JsValue> {
-        Ok(self.machine_or_err()?.cpu.get_register(id))
+        Ok(source_debug::focused_cpu(self.machine_or_err()?).get_register(id))
     }
 
     #[wasm_bindgen]
@@ -2327,23 +2340,7 @@ impl AirBus {
 /// This is the generic on-demand binary-blob channel: a board fetches only the
 /// assets it needs (e.g. the ESP32-S3 boot ROM) and passes them through
 /// `new_from_config`, so no per-board blob is baked into the shared wasm bundle.
-/// Size the ESP32-S3 flash backing for a merged-image (`--rom-boot`) run.
 ///
-/// The chip descriptor is the authority — the part's capacity is a property of
-/// the module, not of how much of it this particular build fills. The model
-/// publishes that capacity as the JEDEC RDID capacity byte
-/// (`peripherals/esp32s3/spi_mem_flash.rs`, `log2(backing.len())`), and
-/// `esp_flash` compares it against the size in the app image header and aborts
-/// the boot on a mismatch. Deriving the backing from the image length instead
-/// made an 8,455,860-byte N16R8 image publish an 8 MiB part against its own
-/// 16 MB header. The image length is only a floor, so a chip YAML that
-/// understates the part cannot truncate the image itself.
-fn esp32s3_flash_backing_size(chip_flash_size: u64, image_len: usize) -> u32 {
-    let declared = u32::try_from(chip_flash_size).unwrap_or(u32::MAX);
-    let image = u32::try_from(image_len).unwrap_or(u32::MAX);
-    declared.max(image).max(4 * 1024 * 1024)
-}
-
 /// Off wasm32 a `JsValue` cannot be inspected at all (every call panics), and
 /// native callers pass `JsValue::NULL`: there are no blobs to read.
 #[cfg(not(target_arch = "wasm32"))]
@@ -2379,7 +2376,7 @@ fn parse_named_blobs(blobs: &JsValue) -> std::collections::HashMap<String, Vec<u
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod esp32s3_flash_backing_tests {
-    use super::esp32s3_flash_backing_size;
+    use labwired_core::system::builder::esp32s3_flash_backing_size;
 
     /// The regression this guards: an ESP-IDF N16R8 image that does not fill
     /// its 16 MiB part. Sizing the backing from the image made RDID report an

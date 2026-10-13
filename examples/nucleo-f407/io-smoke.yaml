@@ -1,0 +1,21 @@
+# LabWired - NUCLEO-F407 (STM32F407VGT6) demo firmware smoke
+#
+# Build: cargo build -p firmware-nucleo-f407-demo --release --target thumbv7em-none-eabi
+#
+# LD2 (PA5, active high) blinks and a heartbeat line goes out on USART2 (PA2).
+# The heartbeat reports the state READ BACK from the GPIO ODR register, so
+# `uart_ordered` asserts the pad really changed level, in order.
+schema_version: "1.0"
+inputs:
+  firmware: "../../target/thumbv7em-none-eabi/release/firmware-nucleo-f407-demo"
+  system: "../../configs/systems/nucleo-f407.yaml"
+limits:
+  max_steps: 4000000
+assertions:
+  - uart_contains: "NUCLEO-F407 ready"
+  - uart_ordered:
+      - "hb=0 ld2=on"
+      - "hb=1 ld2=off"
+      - "hb=2 ld2=on"
+      - "hb=3 ld2=off"
+  - expected_stop_reason: max_steps

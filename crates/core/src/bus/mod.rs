@@ -44,6 +44,7 @@ mod resident_device;
 mod routing;
 pub mod sim_inputs;
 mod tick;
+mod timed_can;
 pub(crate) use tick::reconcile_nvic_level;
 
 pub use can_devices::*;
@@ -58,6 +59,23 @@ pub use interrupt_fabric::{
 pub use motors::MotorSnapshot;
 
 impl SystemBus {
+    /// Cycles until the earliest event an MMIO write armed in the running CPU
+    /// batch (still in `pending_schedule`, not yet on the scheduler heap), or
+    /// `None` when nothing is pending. A batch loop ends at `Some(0)` and
+    /// clamps multi-instruction chunks to the rest, so the post-batch drain
+    /// delivers the event on its own cycle. Without `event-scheduler` nothing
+    /// is ever pending, so this is inert there.
+    #[inline(always)]
+    pub(crate) fn pending_wake_left(&self) -> Option<u64> {
+        if self.pending_schedule.is_empty() {
+            return None;
+        }
+        self.pending_schedule
+            .iter()
+            .map(|&(_, deadline, _)| deadline.saturating_sub(self.current_cycle))
+            .min()
+    }
+
     /// Describe the currently active legacy per-step entries.
     ///
     /// This is intentionally a diagnostic view of the assembled bus, not a
@@ -88,7 +106,6 @@ impl SystemBus {
     /// inert or currently-inactive legacy peripherals have no tick output to
     /// lose. Active non-scheduler legacy work blocks fast-forward until the
     /// normal tick path drains it.
-    #[cfg(feature = "event-scheduler")]
     pub(crate) fn idle_fast_forward_legacy_safe(&self) -> bool {
         self.legacy_walk_disabled
             || self
@@ -117,6 +134,17 @@ impl SystemBus {
     pub fn esp32s3_irq_audit(&self) -> Option<&Esp32s3IrqAudit> {
         self.esp32s3_irq_audit.as_deref()
     }
+}
+
+/// A pin port whose pulls a pad-control block keeps (see
+/// [`crate::pins::PadControl`]): both bus indices and the encoding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PadControlLink {
+    /// Bus index of the pad-control block (PORTx, PFS, IOMUXC).
+    pub(crate) block: usize,
+    /// Bus index of the pin port.
+    pub(crate) port: usize,
+    pub(crate) control: crate::pins::PadControl,
 }
 
 /// One clock-enable bit a peripheral's clock depends on, resolved to a concrete
@@ -405,6 +433,16 @@ pub struct SystemBus {
     esp32c3_gpio_idx: Option<usize>,
     rp2040_io_bank0_idx: Option<usize>,
     rp2040_sio_idx: Option<usize>,
+    /// Pin ports whose pulls live in another block (Kinetis PORTx, RA PFS,
+    /// i.MX RT IOMUXC; [`crate::pins::PadControl`]), resolved by name in
+    /// `rebuild_peripheral_ranges`. A write to a linked block is bracketed
+    /// like the C3 IO_MUX one, and the port takes the decoded pulls. Empty
+    /// on every other bus.
+    pad_control_links: Vec<PadControlLink>,
+    /// Per bus index: the [`PortId`](crate::pins::PortId) of a pin port,
+    /// assigned when the port is attached (`rebuild_peripheral_ranges`). Edge
+    /// sinks are addressed by it; `None` for everything else.
+    pub(crate) pin_port_ids: Vec<Option<crate::pins::PortId>>,
     /// Cached index of the "rcc" peripheral, if one is registered. Recomputed in
     /// `rebuild_peripheral_ranges` (same staleness contract as `dport_idx`). Lets
     /// the clock-gate check on the hot read/write path resolve the RCC peripheral
@@ -496,6 +534,12 @@ pub struct SystemBus {
     /// Run-lifetime peripheral MMIO accesses (read or write), counted at
     /// [`Self::note_mmio_activity`]. Never double-counts memory.
     peripheral_accesses: std::cell::Cell<u64>,
+    /// The run of back-to-back MMIO accesses to ONE peripheral register that
+    /// the firmware is in now: `(peripheral index, offset, accesses, cycle of
+    /// the latest)`. Free-running timer polls do not break or extend it, so a
+    /// status-flag wait with a tick-based timeout still reads as one streak.
+    /// See [`Self::mmio_poll_streak`].
+    poll_streak: std::cell::Cell<(u32, u32, u64, u64)>,
     /// Phase 2B.3c (issue #192): when true, `tick_peripherals_phase1` skips the
     /// entire per-cycle peripheral walk — the actual ~2.4x win. Set ONLY for a
     /// config whose every peripheral is migrated (`uses_scheduler`) or inert
@@ -623,6 +667,10 @@ pub struct SystemBus {
     /// feed a timer input, so the post-write hook drains timer-input edges
     /// only on buses that have any. One predictable false branch elsewhere.
     pub(crate) timer_capture_wired: bool,
+    /// Set when a world `gpio_net` puts a pad on a net (`join_net_pads`):
+    /// from then on the post-write and external-input hooks hand outside pad
+    /// levels to the peripheral lines they are routed to. False elsewhere.
+    pub(crate) wire_inputs_live: bool,
     /// Test/diagnostic override: force conservative resident execution
     /// even under the `event-scheduler` feature. Deadline semantics remain
     /// identical; only CPU batching changes for differential tests.

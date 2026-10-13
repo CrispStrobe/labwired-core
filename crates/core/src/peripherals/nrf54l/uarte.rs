@@ -31,6 +31,12 @@
 //! hangs the boot forever, so a zero-length transfer completes and raises the
 //! same completion events as any other.
 //!
+//! The transfer completes in the wake that runs it, not after a baud frame.
+//! That wake is shared with the RX poll and the IRQ edge, and the forced walk
+//! completes the buffer in one tick. The walk differential requires those two
+//! paths to agree at every instruction, so a baud wait on this peripheral
+//! would desync them and blow the smart-ring fixture's cycle window.
+//!
 //! EVENTS: hardware-generated. SW write-1 is ignored; write-0 clears. Each
 //! event register at `0x100 + 4*n` is gated by INTEN bit `n` — that mapping is
 //! exact on this family (SVD: CTS=0, NCTS=1, TXDRDY=3, RXDRDY=4, ERROR=5,
@@ -385,11 +391,10 @@ impl Nrf54lUarte {
         }
         self.dma_tx_amount = len as u32;
 
-        // The transfer is modelled as instantaneous (whole buffer in one
-        // tick), so the whole TX completion set fires together.
-        // FIDELITY: modeled, NOT HW-validated (2026-07-20) — real silicon
-        // spaces TXDRDY per character at the configured baud and raises
-        // DMA.TX.END only after the last stop bit.
+        // Events still fire together. Per-character TXDRDY during the buffer
+        // is not modelled. A baud-timed wait lives on the nRF52 UARTE; this
+        // wake cannot take one without moving the RX poll and the IRQ edge
+        // with it. FIDELITY: modeled, NOT HW-validated (2026-09-30).
         self.set_event(OFF_EVENTS_TXDRDY);
         self.set_event(OFF_EVENTS_DMA_TX_END);
         self.set_event(OFF_EVENTS_DMA_TX_READY);
@@ -629,6 +634,10 @@ impl Peripheral for Nrf54lUarte {
     fn take_scheduled_events(&mut self) -> Vec<(u64, u32)> {
         if self.has_active_work() && !self.scheduled {
             self.scheduled = true;
+            // Delay 0 on purpose. This token is also the RX poll and the IRQ
+            // edge, and the forced walk finishes a TX in one tick. A frame
+            // wait here would desync those paths. The idle re-arm below is
+            // what paces the RX poll at the bus tick interval.
             vec![(0, UARTE_WAKE_TOKEN)]
         } else {
             Vec::new()

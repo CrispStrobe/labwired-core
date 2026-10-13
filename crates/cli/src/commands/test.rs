@@ -16,6 +16,22 @@ fn itm_capture_enabled(itm_flag: bool, assertions: &[TestAssertion]) -> bool {
             .any(|a| matches!(a, TestAssertion::ItmContains(_)))
 }
 
+fn arm_test_family(
+    system: Option<&labwired_config::ResolvedSystem>,
+    plugins: &[&dyn labwired_core::plugin::ChipPlugin],
+) -> anyhow::Result<labwired_core::system::arch_policy::MachineFamily> {
+    use labwired_core::system::arch_policy::{machine_family, MachineFamily};
+    let Some(system) = system else {
+        return Ok(MachineFamily::CortexM);
+    };
+    let chip = system.chip_with_plugins(&crate::plugin_chip_yaml(plugins))?;
+    let family = machine_family(&chip)?;
+    if !matches!(family, MachineFamily::CortexM | MachineFamily::CortexA) {
+        anyhow::bail!("ARM ELF does not match chip '{}' ({family:?})", chip.name);
+    }
+    Ok(family)
+}
+
 /// Turn on scheduler-safe CPU idle fast-forward for this `labwired test` run.
 ///
 /// `SimulationConfig::idle_fast_forward_enabled` stays **false** in core's
@@ -614,18 +630,22 @@ fn run_c3_rom_boot_no_elf(
     // undeclared. The ELF-bearing `test` path always mirrors CDC into uart_tx
     // so `uart_contains` sees Arduino Serial; this arm now does the same when
     // the yaml omitted `debug_uart` (the hosted playground shape that shipped
-    // silent C3 serial while GPIO still toggled). Mixing UART0 + CDC can
-    // duplicate the BROM banner in uart.log — substring `uart_contains` still
-    // matches; do not copy this mix onto wasm `attach_c3_flash_console`, which
-    // keeps one heard stream on purpose (undeclared = UART0 heard, CDC unheard).
+    // silent C3 serial while GPIO still toggled). Undeclared folds UART0 and
+    // CDC through one `ConsoleMerge`: the mask ROM prints its banner to both,
+    // and a plain shared buffer rendered every ROM line twice, interleaved.
+    // Do not copy this mix onto wasm `attach_c3_flash_console`, which keeps
+    // one heard stream on purpose (undeclared = UART0 heard, CDC unheard).
     // An explicit UART `debug_uart` stays UART-only so a bridge-chip board
     // does not mix CDC into the assertion buffer.
+    let merged = matches!(console, labwired_core::console::HostConsole::Undeclared)
+        && machine.bus.attach_merged_esp_console(uart_tx.clone());
     let tap_cdc = matches!(
         console,
         labwired_core::console::HostConsole::UsbSerialJtag
             | labwired_core::console::HostConsole::Undeclared
     );
     if tap_cdc
+        && !merged
         && !machine.bus.attach_usb_serial_jtag_sink(uart_tx.clone())
         && matches!(console, labwired_core::console::HostConsole::UsbSerialJtag)
     {
@@ -779,6 +799,7 @@ pub(crate) fn run_test(
         script_stop_when_assertions_pass,
         script_stop_when_assertions_pass_settle_steps,
         script_stop_when_assertions_pass_min_steps,
+        script_peripheral_tick_interval,
         assertions,
         faults,
         verdict,
@@ -797,6 +818,7 @@ pub(crate) fn run_test(
             script.limits.stop_when_assertions_pass,
             script.limits.stop_when_assertions_pass_settle_steps,
             script.limits.stop_when_assertions_pass_min_steps,
+            script.limits.peripheral_tick_interval,
             script.assertions,
             script.faults,
             script.verdict,
@@ -819,6 +841,7 @@ pub(crate) fn run_test(
                 false,
                 100_000,
                 0,
+                None,
                 script.assertions,
                 Vec::new(),
                 None,
@@ -869,6 +892,7 @@ pub(crate) fn run_test(
         stop_when_assertions_pass: script_stop_when_assertions_pass,
         stop_when_assertions_pass_settle_steps: script_stop_when_assertions_pass_settle_steps,
         stop_when_assertions_pass_min_steps: script_stop_when_assertions_pass_min_steps,
+        peripheral_tick_interval: script_peripheral_tick_interval,
     };
 
     // Guard against accidentally huge runs from CI misconfiguration. The
@@ -1837,8 +1861,11 @@ pub(crate) fn run_test(
     }
     // ESP32-C3 / S3: Arduino USB-CDC `Serial` writes USB_SERIAL_JTAG, not UART0.
     // Mirror those bytes into the same uart_tx buffer so uart_contains works for
-    // stock sketches (no dual Serial0 prints required).
-    {
+    // stock sketches (no dual Serial0 prints required). With UART0 tapped too,
+    // fold both through one `ConsoleMerge` so output the ROM mirrors onto both
+    // consoles appears once.
+    let merged = debug_uart.is_none() && bus.attach_merged_esp_console(uart_tx.clone());
+    if !merged {
         use labwired_core::peripherals::esp32s3::usb_serial_jtag::UsbSerialJtag;
         for p in bus.peripherals.iter_mut() {
             if p.name == "usb_serial_jtag" {
@@ -1888,6 +1915,39 @@ pub(crate) fn run_test(
             return ExitCode::from(EXIT_CONFIG_ERROR);
         }
     };
+
+    if let Some(system) = &resolved_system {
+        let declaration = system
+            .chip_with_plugins(&crate::plugin_chip_yaml(plugins))
+            .and_then(|chip| labwired_core::system::arch_policy::machine_family(&chip));
+        match declaration {
+            Ok(labwired_core::system::arch_policy::MachineFamily::CortexA)
+                if program.arch != labwired_core::Arch::Arm =>
+            {
+                write_config_error_outputs(
+                    &args,
+                    Some(&firmware_path),
+                    system_path.as_ref(),
+                    Some(&firmware_bytes),
+                    Some(&resolved_limits),
+                    "Cortex-A7 requires a 32-bit ARM ELF; firmware architecture does not match the declared chip".into(),
+                );
+                return ExitCode::from(EXIT_CONFIG_ERROR);
+            }
+            Err(error) => {
+                write_config_error_outputs(
+                    &args,
+                    Some(&firmware_path),
+                    system_path.as_ref(),
+                    Some(&firmware_bytes),
+                    Some(&resolved_limits),
+                    error.to_string(),
+                );
+                return ExitCode::from(EXIT_CONFIG_ERROR);
+            }
+            _ => {}
+        }
+    }
 
     let metrics = std::sync::Arc::new(labwired_core::metrics::PerformanceMetrics::new());
 
@@ -2204,8 +2264,67 @@ pub(crate) fn run_test(
 
     let exit_code = match program.arch {
         labwired_core::Arch::Arm => {
-            let (cpu, _nvic) = labwired_core::system::cortex_m::configure_cortex_m(&mut bus);
-            setup_and_run!(cpu)
+            use labwired_core::system::arch_policy::MachineFamily;
+            let family = match arm_test_family(resolved_system.as_ref(), plugins) {
+                Ok(family) => family,
+                Err(error) => {
+                    write_config_error_outputs(
+                        &args,
+                        Some(&firmware_path),
+                        system_path.as_ref(),
+                        Some(&firmware_bytes),
+                        Some(&resolved_limits),
+                        error.to_string(),
+                    );
+                    return ExitCode::from(EXIT_CONFIG_ERROR);
+                }
+            };
+            if family == MachineFamily::CortexA {
+                if args.rom_boot || args.resume_snapshot.is_some() {
+                    write_config_error_outputs(
+                        &args,
+                        Some(&firmware_path),
+                        system_path.as_ref(),
+                        Some(&firmware_bytes),
+                        Some(&resolved_limits),
+                        "Cortex-A7 ROM/Linux boot and snapshot resume are not implemented; use an initialized-memory ELF without --rom-boot or --resume-snapshot".into(),
+                    );
+                    return ExitCode::from(EXIT_CONFIG_ERROR);
+                }
+                #[cfg(feature = "qemu-arm")]
+                {
+                    let cpu = match labwired_core::cpu::CortexA7::new() {
+                        Ok(cpu) => cpu,
+                        Err(error) => {
+                            write_config_error_outputs(
+                                &args,
+                                Some(&firmware_path),
+                                system_path.as_ref(),
+                                Some(&firmware_bytes),
+                                Some(&resolved_limits),
+                                error.to_string(),
+                            );
+                            return ExitCode::from(EXIT_CONFIG_ERROR);
+                        }
+                    };
+                    setup_and_run!(cpu)
+                }
+                #[cfg(not(feature = "qemu-arm"))]
+                {
+                    write_config_error_outputs(
+                        &args,
+                        Some(&firmware_path),
+                        system_path.as_ref(),
+                        Some(&firmware_bytes),
+                        Some(&resolved_limits),
+                        "Cortex-A7 needs a native build with --features qemu-arm".into(),
+                    );
+                    ExitCode::from(EXIT_CONFIG_ERROR)
+                }
+            } else {
+                let (cpu, _nvic) = labwired_core::system::cortex_m::configure_cortex_m(&mut bus);
+                setup_and_run!(cpu)
+            }
         }
         labwired_core::Arch::RiscV => {
             if let Some(snap_path) = &args.resume_snapshot {

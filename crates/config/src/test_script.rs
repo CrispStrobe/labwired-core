@@ -151,6 +151,10 @@ pub struct TestLimits {
     /// before this many steps have executed.
     #[serde(default)]
     pub stop_when_assertions_pass_min_steps: u64,
+    /// How many CPU cycles elapse between peripheral ticks.
+    /// Absent means one tick per cycle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peripheral_tick_interval: Option<u32>,
 }
 
 pub(crate) fn default_stop_settle_steps() -> u64 {
@@ -223,7 +227,37 @@ pub struct UartOrderedAssertion {
 pub struct MotorSpeedReachedDetails {
     pub id: String,
     pub min_abs_rpm: f64,
+    /// Absent = unbounded (a "spins at least this fast" clause).
+    #[serde(
+        default = "crate::motor::default_motor_speed_unbounded_rpm",
+        skip_serializing_if = "crate::motor::motor_speed_is_unbounded"
+    )]
     pub max_abs_rpm: f64,
+    /// Absent = either direction. `forward` requires positive `speed_rpm`,
+    /// `reverse` negative, so a reversing H-bridge lab can prove both legs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direction: Option<MotorDirection>,
+}
+
+/// Rotation direction for a motor assertion. Forward is positive `speed_rpm`.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MotorDirection {
+    Forward,
+    Reverse,
+}
+
+impl MotorSpeedReachedDetails {
+    /// Whether a signed speed satisfies this clause.
+    pub fn matches_speed(&self, speed_rpm: f64) -> bool {
+        let direction_ok = match self.direction {
+            None => true,
+            Some(MotorDirection::Forward) => speed_rpm > 0.0,
+            Some(MotorDirection::Reverse) => speed_rpm < 0.0,
+        };
+        let speed = speed_rpm.abs();
+        direction_ok && speed >= self.min_abs_rpm && speed <= self.max_abs_rpm
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -540,6 +574,31 @@ pub struct MqttFabricAssertion {
     pub mqtt_fabric: MqttFabricDetails,
 }
 
+/// One pad's transition-count requirement: "this pad must have toggled at
+/// least `min_edges` times". The pin is a `--watch-gpio` ref
+/// (`<peripheral>:<pin>`, e.g. `gpio:4`); a script using this assertion
+/// auto-arms the capture for its pins, so no separate `--watch-gpio` is
+/// required.
+///
+/// This exists so a `gpio_edges` oracle can STOP the run on real evidence
+/// instead of running out the step budget. On boards whose serial is not
+/// captured (ESP32-S3) gpio is the only observable channel: the hosted dual-LED
+/// prove satisfied its oracle at 86M cycles of a 200M budget and still spent
+/// the whole budget.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct GpioEdgesAssertion {
+    pub gpio_edges: GpioEdgesClause,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct GpioEdgesClause {
+    /// `peripheral:pin` watch ref, e.g. `gpio:4` (same spelling `--watch-gpio` takes).
+    pub pin: String,
+    pub min_edges: u64,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ResourceBudgetAssertion {
@@ -589,6 +648,7 @@ pub enum TestAssertion {
     UdsTester(UdsTesterAssertion),
     CanBridge(CanBridgeAssertion),
     MqttFabric(MqttFabricAssertion),
+    GpioEdges(GpioEdgesAssertion),
     DisplayRegion(DisplayRegionAssertion),
     RttContains(RttContainsAssertion),
     SemihostingContains(SemihostingContainsAssertion),
@@ -876,6 +936,9 @@ impl TestScript {
 
         if self.limits.max_steps == 0 {
             anyhow::bail!("Limit 'max_steps' must be greater than zero");
+        }
+        if self.limits.peripheral_tick_interval == Some(0) {
+            anyhow::bail!("Limit 'peripheral_tick_interval' must be greater than zero");
         }
 
         if self.inputs.system.is_some() && self.inputs.chip.is_some() {
@@ -1353,6 +1416,7 @@ impl EnvTestLimits {
                 .stop_when_assertions_pass_min_steps
                 .into_value()
                 .unwrap_or_default(),
+            peripheral_tick_interval: None,
         };
         (limits, explicit_limits)
     }

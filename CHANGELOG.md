@@ -6,8 +6,265 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- ESP32-C3 debug trigger module: `tselect` / `tdata1` / `tdata2` / `tdata3` /
+  `tinfo` / `tcontrol` (CSRs 0x7A0-0x7A5) with 8 `mcontrol` triggers, exact
+  and NAPOT address match on load / store / execute, and action 0 (breakpoint
+  exception, `mcause = 3`, `mtval` = the matched address) raised before the
+  matching instruction retires. `tcontrol.mte` gates M-mode triggers and is
+  saved to `mpte` on trap entry and restored by MRET. esp-hal's default stack
+  guard (a store watchpoint on `__stack_chk_guard`) now arms instead of
+  trapping on its first `csrw tselect`, and a write to the guard traps like
+  silicon. The interpreter's loop-aggregating fast paths and the RV32 JIT
+  stand down while a trigger is armed.
+- Buses over `gpio_net`s, more of them (`docs/howto/gpio-nets.md`, "Buses
+  over nets"; `examples/gpio-net-buses`, `tests/world_gpio_net_buses.rs`):
+  - STM32 F1/F2/F4 legacy I²C (`SR1`/`SR2`/`CCR`) as a bit-level master and
+    slave on open-drain nets: SB/ADDR/TXE/BTF/RXNE/AF/STOPF in the RM0008 /
+    RM0368 sequences (POS two-byte reads, STOP after the byte in flight),
+    slave address match on `OAR1`, `OAR2` (`ENDUAL`) and the general call
+    (`ENGC`), SCL stretching while `ADDR` is up and while `DR` is full/empty,
+    `NOSTRETCH`, CCR timing, event and error interrupts. Tested F103 ↔ F401
+    both ways round (write, repeated-START read, single-byte read, NACK) and
+    a G071 (modern) controller against an F103 target. The wire itself is a
+    new shared engine, `peripherals::i2c_bitbus`.
+  - Modern STM32 I²C: `RELOAD` (transfers above 255 bytes, `TCR`), 10-bit
+    addressing as controller (`ADD10`, `HEAD10R`) and target (`OA1MODE`,
+    ADDCODE `11110xx`), `OAR2` with `OA2MSK`, the general call (`GCEN`) and
+    `NOSTRETCH` (OVR on underrun/overrun). Tested with 300 bytes each way
+    over a 10-bit address.
+  - RP2040 PL022 SPI as a bit-level master (TX FIFO clocked at
+    `CPSDVSR × (1 + SCR)`, CSn pulsed between `SPH = 0` frames) and slave
+    (`SSPCR1.MS`, TX FIFO answers, RX FIFO), with the `SPIn_RX` pads routed
+    and the RP2040 SIO handing net levels to routed peripheral lines. Tested
+    against an STM32G071 SPI both ways round.
+  - RP2040 DW_apb_i2c as a bit-level master (command FIFO with STOP and
+    RESTART, TX_ABRT on NACK, SCL held while the FIFO is empty) and slave
+    (`IC_SAR`, RX FIFO with `FIRST_DATA_BYTE`, `RD_REQ` with SCL stretched).
+    Tested against an STM32G071 both ways round.
+  - Clock stretching tested end to end on the G071, F401 and RP2040 targets
+    with firmware too slow for the clock.
+  - STM32 SPI: end-to-end tests for modes 1-3, LSB-first and 16-bit frames
+    (F401 pair), a slave fed from its TXE interrupt, and a slave underrun.
+  - Every new exchange is checked for the same results and wire history
+    with the nodes swapped and with 37 ns rounds.
+
+### Fixed
+- STM32 SPI slave on a net: a frame that starts with nothing written to
+  `DR` shifts out the shift register (the previous frame received) instead
+  of zeros, and is counted (`Spi::net_slave_underruns`) and logged once;
+  enabling `TXEIE` while TXE is set interrupts at once; a `DR` write while
+  `SPE=0` fills the transmit buffer.
+- A peripheral answering a net edge on the same pad within the cycle (an
+  I²C target starting to stretch the SCL it just saw fall, a master
+  starting on a bus it just saw go free) could have its drive overwritten on
+  the net by the GPIO port's own report of the new input, stamped one cycle
+  later: the stretch was lost. The bus now has the port report the pad's
+  drive again after the owner has answered.
+- A bit-level I²C target that ends a stretch with a new bit on SDA releases
+  SCL a data setup time later instead of in the same cycle, where the
+  change could read as START or STOP.
+- STM32 classic/FIFO SPI: a 32-bit store to `DR` is one frame. It was split
+  into four byte writes and clocked up to four frames.
 
 ### Added
+- Pulls kept outside the GPIO block reach the pad: a GPIO port names its
+  pad-control block (`pad_control:` in the chip yaml, `pins::PadControl`)
+  and the bus hands it the decoded pull after every write there, bracketed
+  for push capture (`PinPort::pad_control` / `set_config_pull`). Wired on
+  `mkw41z4` (`gpioc` ← `PORTC_PCRn` PE/PS), `ra4m1` (`port1`/`port3` ←
+  `PmnPFS.PCR`, new `ra_pfs` block with `PWPR` write protection) and
+  `imxrt1064` (`gpio2` ← IOMUXC `SW_PAD_CTL_PAD_GPIO_B0/B1` PKE/PUE/PUS).
+  Those pulls now count on `gpio_net`s and in PDIR / PIDR / PSR.
+- ATmega `MCUCR.PUD`: the AVR CPU hands it to the bus-side ports
+  (`Bus::set_pull_ups_disabled`, `PinPort::set_pull_ups_disabled`), which
+  drop every pull-up while it is set, on nets too. `MCUCR` resets with the
+  CPU.
+- EXTI layout `stm32l0` and SYSCFG profile `stm32l0`: the F1 register file
+  with the Cortex-M0+ grouped vectors (EXTI0_1 = IRQ 5, EXTI2_3 = 6,
+  EXTI4_15 = 7), and an L0 SYSCFG whose `EXTICR1..4` select the port of each
+  line.
+- `labwired_core::pins`: one interface between a chip's pads and the world.
+  Every GPIO model (STM32 `v2`/`f1`, nRF52/54, Kinetis, EFR32 series 2, SAM,
+  RA, i.MX RT, the ATmega port, RP2040 SIO, ESP32 classic, ESP32-C3/C6,
+  ESP32-S3, the declarative `GPIO` descriptor) implements `PinPort`:
+  `driver(pin)` (the chip's own output stage, from registers only: `Off` /
+  `Low` / `High` plus the internal pull), `external` / `set_external` (what
+  the outside world presents, returning the input before and after),
+  `input` and `level`. `pins::resolve` is the one rule combining the two
+  sides; `Peripheral::pins()` / `pins_mut()` reach it. Logic-analyzer push
+  capture (`pins::PadWatch`), the four-state trace, world `gpio_net`s and
+  EXTI edge routing are written once on top of it, and a conformance suite
+  (`pins::conformance`) runs every model through it, including push capture
+  against the per-cycle poll. See `docs/architecture/pins.md`.
+- `LogicSource::Driver { peripheral, pin }`: a logic channel on the chip's
+  own drive of a pad (`h`/`l` for an internal pull), next to `Pad`.
+- `SystemBus::set_pad_external` presents a level, or releases the pad, and
+  fans the input change out to EXTI (by the port's `PortId`, assigned when
+  the port is attached), timer captures, peripheral lines and the port's own
+  interrupt block.
+
+### Changed
+- A pulled input that nothing outside drives now reads the pull's level in
+  the input register on every GPIO model, as on silicon: STM32 `f1` IDR
+  (input with pull, `CNF = 10`), EFR32 series 2 DIN (`INPUTPULL`), SAM IN
+  (`PINCFG.PULLEN`) and ATmega `PINx` (`PORTx` set on an input) used to read
+  the last latched level, 0 from reset, so `INPUT_PULLUP` with nothing
+  attached read LOW. Firmware now reads HIGH there (LOW for a pull-down). The
+  conformance suite no longer allows the old behaviour for any model.
+- `stm32l073`: EXTI uses the `stm32l0` routing (it used the F1 profile, whose
+  6..10/23/40 vectors are not the L0's), and SYSCFG is a register file
+  (`profile: stm32l0`, gated by `RCC_APB2ENR.SYSCFGEN`) instead of a stub, so
+  GPIO edges reach EXTI through `SYSCFG_EXTICRx`. Before, no external edge
+  reached the L0 EXTI at all.
+- A world `gpio_net` watches each member's own output stage
+  (`PinPort::driver`) instead of marking the pad "net isolated" in its GPIO
+  model: `Peripheral::set_gpio_net_isolated` and every per-model isolation
+  mask are gone, and `Machine::isolate_net_pads` is `join_net_pads` (plus
+  `watch_world_pins`). Results are unchanged.
+- EXTI edge fan-out no longer parses the peripheral name at every edge.
+- The four-state pin trace (`read_gpio_pad_drive`) follows one rule on every
+  model: a pad an external level holds is driven (and `x` against the pad's
+  own opposite output), an undriven input is `z`. The ATmega port and the
+  ESP32 family used to report no four-state lane off a net, and the RP2040
+  SIO used to ignore an external level.
+- An open-drain output holding a 1 reads a level the outside world presents
+  on it (STM32 `IDR` probe level, ESP32-family `GPIO_IN`) on every pad, not
+  only on a `gpio_net` member; with nothing outside it still reads its latch.
+- The ESP32-C3/C6 and ESP32-S3 IO_MUX `FUN_WPU` pull-up counts as a weak
+  source on a `gpio_net`, as the STM32, nRF, EFR32, SAM and ATmega pulls do.
+- GPIO-net worlds (`gpio_net`) run on one clock per node instead of lockstep
+  rounds (conservative parallel discrete-event simulation): a node may run
+  until the slowest member of each of its nets plus that net's latency, and
+  the bookkeeping between runs is a few array reads. Every counter, UART
+  transcript, applied delivery cycle and net report is bit-identical to the
+  lockstep driver, which a test now compares at each step. At the default
+  100 ns latency `examples/gpio-net-two-boards` no longer runs at about half
+  the speed of its two machines run alone (see the GPIO nets how-to, Timing).
+  `World::run_until_ps` runs a round-based world to a time in one call.
+  `World::gpio_net_applied` is ordered by due time, then node id.
+- The GPIO-net per-node scheduler no longer holds a node to one latency past
+  its own time. A node runs until its own next net pad drive change (a push
+  on a net pad ends the CPU batch it happens in, and
+  `Machine::advance_to_cycle_or_net_drive_change` stops at that boundary), so
+  a node on a net keeps its wide batches and idle fast-forward; and a node
+  asleep until a scheduled event with idle fast-forward on
+  (`Machine::idle_quiet_until`) lets its peers run up to that event, or to
+  whatever input could wake it first. Every counter, UART transcript, applied
+  delivery cycle, net report and node cycle count stays bit-identical to the
+  lockstep driver, now also with idle fast-forward on and in the ESP32-C6
+  world and the SPI/I²C bus worlds. `World::step_all_into` steps one round
+  into a reused `StepResults` (no map of node ids per round); `labwired test`
+  and the Python world step with it. `World::gpio_net_scheduler_stats` counts
+  the pieces the scheduler cut a run into. Figures and what is still slower
+  than the machines alone: the GPIO nets how-to, Speed.
+
+### Fixed
+- ESP32-C3 SYSTIMER is the real timer on every boot path: the chip YAML now
+  declares `esp32c3_systimer` (the shared SYSTIMER model with the C3's matrix
+  sources 37-39, 16 MHz against the 160 MHz core) instead of a register stub,
+  so a bare-ELF fast boot and a world node see the counter advance and the
+  UNITx_OP UPDATE / VALUE_VALID handshake complete -- esp-hal's `Delay` and
+  `Instant` work there. The ROM-boot path replaces that entry in place rather
+  than stacking a second `systimer`.
+- STM32 EXTI (F1, F4, L4, G0, U5): an EXTI interrupt handler runs once per
+  edge. The NVIC kept a pend the held EXTI level raised while the handler was
+  running after the handler cleared `EXTI_PR` (`RPR1`/`FPR1` on G0/U5), so a
+  handler that cleared the pending bit without re-checking it ran twice per
+  edge. A peripheral that drives several NVIC lines can now report a level
+  per line (`Peripheral::irq_line_levels`), and the NVIC drops each line's
+  pend when it deasserts, as a single-line level source already did. A byte
+  store (`STRB`) to a level source's register now reconciles its line too.
+- STM32G071: the EXTI uses the G0 register file and IRQ routing
+  (`profile: stm32g0`, as on the G0B1). It used the F1 one, so G0 firmware
+  never armed an EXTI line and line 0 was routed to the EXTI2_3 IRQ.
+- Cortex-M4F/M7: `VMOV Dm, Rt, Rt2`, `VMOV Rt, Rt2, Dm` and their single-precision pair forms decode as register moves. They used to run as a 16-word VSTM/VLDM below `Rt2`, so `Serial.print(float)` on STM32duino 3 (NUCLEO-L476RG, -F401RE) HardFaulted with a BusFault at an address made of the float's high word.
+- The RISC-V cycle counter (ESP32-C3 `PCCR` CSR 0x7E2/0x802, standard `cycle`) counts one tick per simulated CPU clock, the clock SYSTIMER and `micros()` run on. It counted 256 per clock, so Arduino `pulseIn` on the ESP32-C3 gave up after about 117 µs and an HC-SR04 always read 0 (timeout).
+- A `servo` on the ESP32-C3 follows the C3 LEDC duty (`ledcWrite`, ESP32Servo `write()`), as it already did on the classic ESP32. Before, the shaft stayed at its minimum angle.
+- ATmega328P Timer2 now counts in normal and CTC modes (`TCCR2A`/`TCCR2B`/`TCNT2`/`OCR2A`/`OCR2B`/`TIMSK2`/`TIFR2`/`ASSR`, including the `/32` and `/128` prescalers). Compare-match A/B and overflow raise the datasheet vectors, so Arduino `tone()` / `noTone()` on an Uno toggles the requested pin. OC2A/OC2B PWM outputs and Timer1 are still not driven.
+- ESP32-C3/C6 GPIO `FUNCn_OUT_SEL_CFG` resets to 0x80 (`SIG_GPIO_OUT`, the
+  matrix bypass, per `esp32c3.svd`) instead of 0, so a bare-metal output pad
+  reads as a plain GPIO output rather than as routed to matrix signal 0.
+- STM32F1 and F4 EXTI now raise edge interrupts for external GPIO input
+  changes (`gpio_net` deliveries, board buttons), with RTSR/FTSR/IMR/PR
+  honoured and the port taken from `AFIO_EXTICRx` (F1) or `SYSCFG_EXTICRx`
+  (F4). The F4 `SYSCFG` is now a register model (`type: syscfg`,
+  `profile: stm32f4`) on the F401, F401CDU6, F405, F407 and F411CEU6. Before,
+  it was a write-dropping stub or absent.
+- `gpio_net`: a chip's internal pull-up / pull-down is part of the net as a
+  weak drive (STM32 `PUPDR` and F1 input-pull, nRF52, EFR32, SAM, ATmega
+  `PORTx` on an input). Pulls to both rails with no driver are reported as
+  `GPIO_NET_PULL_CONFLICT`, and the wire reads the net's own `pull` or 0.
+  Net reports show `pull_up` / `pull_down` member drives, and a pulled net
+  pad's four-state trace reads `h` / `l`. A net that starts in contention is
+  now also recorded from time 0.
+- AVR `BST` / `BLD` (SREG.T bit transfer). Arduino `map()` / signed division
+  (`__divmodsi4`) hard-stopped prove with `DecodeError` at the BST word
+  (hosted morning Uno bargraph at byte PC `0x93c`).
+- AVR `SBI`/`CBI` on `PINx`, `TIFRn`, `PCIFR` and `EIFR` act on the named
+  bit only, as the ATmega328P datasheet specifies. `SBI PINB,5` used to toggle
+  every other `PORTB` pad that read high as well.
+- AVR `SEI` and `RETI` now let the next instruction run before a pending
+  interrupt is taken, so `sei(); sleep_cpu();` cannot lose a wake-up.
+
+
+### Added
+- `gpio_net` members on ESP32-family and RP2040 chips. The classic ESP32,
+  ESP32-S3 and ESP32-C3/C6 `gpio` block (GPIO0..31; C3/C6 GPIO0..25) and the
+  RP2040 `sio` (GP0..29) report a net pad's own drive (output enable and
+  latch; `GPIO_PINn.PAD_DRIVER` open drain on the ESP family), take the net's
+  level through `set_gpio_input`, and push their edges, so idle
+  fast-forward stays on. A pad routed to a peripheral signal whose wire is
+  not published has no known drive and is refused, as on `GpioPort`.
+- GPIO interrupts from pad edges on those chips: classic ESP32
+  (`GPIO_STATUS`, `GPIO_ACPU_INT`/`GPIO_PCPU_INT`, matrix source 22), ESP32-S3
+  (`GPIO_PCPU_INT`, source 16), ESP32-C6 (source 30, the C3 stays 16), and
+  RP2040 IO_BANK0 (`INTR0..3`, `PROC0_INTE/INTF/INTS`, `IO_IRQ_BANK0` on
+  NVIC 13). An edge applied from outside (a board button, a net) now re-derives
+  the interrupt matrix on a walk-free bus.
+- `examples/gpio-net-two-boards`: `env-rp2040.yaml` and `env-esp32c6.yaml` put
+  an RP2040 or an ESP32-C6 in place of the ATmega328P; both count the
+  STM32's edges with GPIO interrupts.
+- Hardware SPI and I²C between chips over `gpio_net`s, bit by bit at the
+  pads. An STM32 SPI (classic/FIFO register file) whose pads are on nets is a
+  real master or slave: the master samples MISO off the net at its sampling
+  edge, the slave shifts on the SCK/MOSI/NSS edges the net delivers (all four
+  modes, RXNE/OVR, RXNEIE interrupt, hardware or software NSS) and drives
+  MISO only while selected. The STM32 modern I²C (L4/G0 `TIMINGR` file) on
+  nets is an open-drain bit-level controller (START, address, ACK/NACK,
+  repeated START, STOP, `TIMINGR` timing, clock stretching by the target,
+  arbitration loss) and target (own-address ACK, `ADDR`/`DIR`, SCL stretched
+  until firmware services it). Peripheral lines now say how they drive a pad
+  (push-pull, open drain, input) and receive the level a net applies to it;
+  the net reports and the logic analyzer see the real waveform, with
+  contention where two chips fight. The STM32G071 routes SPI1/SPI2 (with NSS)
+  and I2C1/I2C2 by its own AF tables (`pad_map: stm32g0`). Example and tests:
+  `examples/gpio-net-buses`, `tests/world_gpio_net_buses.rs`; how-to:
+  "Buses over nets" in `docs/howto/gpio-nets.md`.
+- ATmega328P external interrupts INT0/INT1 (`EICRA` low level, any change,
+  falling, rising; `EIMSK`, `EIFR`) and pin-change interrupts PCINT0..2
+  (`PCICR`, `PCIFR`, `PCMSK0..2`). They fire on levels driven from outside
+  (`set_gpio_input`: a `board_io` button, a `gpio_net` delivery) and on pads
+  the firmware drives itself. Flags latch while masked, clear on a written 1
+  and on vector entry.
+- ATmega328P `SLEEP` (`SMCR`): the core stops until an enabled interrupt wakes
+  it, four cycles later, and with idle fast-forward on the sleep is skipped up
+  to the next Timer0 overflow or pad change. The `gpio-net-two-boards` Uno
+  firmware now counts `ready` with INT1 and `alert` with PCINT2 and sleeps
+  between edges instead of polling `PIND`.
+- Source-level stepping in `labwired-dap`, the adapter behind hosted debug
+  sessions: `next` / `stepIn` / `stepOut` step one source line (calls stepped
+  over run at engine speed with idle fast-forward, and code inlined from
+  another file runs through as in the browser), `granularity:
+  "instruction"` keeps the single-instruction step, a source breakpoint covers
+  every address its line compiled to, `stackTrace` reports the function and
+  first-statement line the browser shows, and the Locals scope reads
+  register-held values from the stopped core. The stepping algorithm moved to
+  `labwired_loader::source_step` over a new `SourceStepTarget` machine trait.
+  The adapter now builds a board's machine through `build_machine` (AVR,
+  dual-core ESP32, every family) and boots a classic-ESP32 Arduino ELF through
+  the shared Arduino fast boot; its thread-local boot hooks follow the machine
+  to the thread that runs `continue`.
 - BT201 Bluetooth module (`type: bt201`, Jieli KT1025A): a UART part from the
   BT201 V2.3 manual. AT commands with `OK` / `ER+n` replies, names and radio
   switches kept in module flash and applied at `AT+CZ`, the start-up block,

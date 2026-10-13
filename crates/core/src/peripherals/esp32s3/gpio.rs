@@ -22,8 +22,10 @@
 //!   (GPIO0 high), captured from silicon over JTAG — the SVD reset value (0)
 //!   would send the boot ROM into download mode
 //! - PIN0..31 int_type/int_ena fields (bits [9:7] / bit 13) kept in sync with
-//!   the stored register word (GPIO-input IRQs not yet routed to the
-//!   intmatrix in Plan 3)
+//!   the stored register word, and the GPIO interrupt for GPIO0..31:
+//!   `GPIO_STATUS` latched per INT_TYPE from changes of `GPIO_IN`,
+//!   `GPIO_PCPU_INT`, and interrupt-matrix source 16 while it is non-zero
+//! - `gpio_net` membership for GPIO0..31 (see `crate::peripherals::esp_gpio_net`)
 //!
 //! ## Register file
 //!
@@ -63,6 +65,7 @@
 //! captures pad-level edges identically no matter which source or bank flips the
 //! pad. Bank 1 matters because the onboard NeoPixel on most S3 boards is GPIO48.
 
+use crate::pins::{External, InputChange, PinPort};
 use crate::{CycleClock, Peripheral, PeripheralTickResult, SimResult};
 use std::sync::Arc;
 
@@ -94,6 +97,7 @@ const STATUS1_W1TS: u64 = 0x54;
 const STATUS1_W1TC: u64 = 0x58;
 /// PCPU_INT (0x5C), PCPU_NMI_INT (0x60), CPUSDIO_INT (0x64) — RO.
 const PCPU_INT: u64 = 0x5C;
+const PCPU_NMI_INT: u64 = 0x60;
 /// PCPU_INT1 (0x68), PCPU_NMI_INT1 (0x6C), CPUSDIO_INT1 (0x70) — RO.
 const CPUSDIO_INT1: u64 = 0x70;
 /// PIN0..PIN53 @ 0x74 + n*4 (SVD dim=54, stride 4).
@@ -109,6 +113,9 @@ const FUNC255_IN_SEL_CFG: u64 = FUNC0_IN_SEL_CFG + 255 * 4;
 const FUNC0_OUT_SEL_CFG: u64 = 0x554;
 const FUNC53_OUT_SEL_CFG: u64 = FUNC0_OUT_SEL_CFG + 53 * 4;
 const CLOCK_GATE: u64 = 0x62C;
+/// `ETS_GPIO_INTR_SOURCE` on the ESP32-S3 interrupt matrix (esp-idf
+/// `soc/esp32s3/include/soc/interrupts.h`).
+const GPIO_INTR_SOURCE: u32 = 16;
 /// GPIO_DATE (0x6FC) — version stamp, last architected register.
 const REG_DATE: u64 = 0x6FC;
 
@@ -175,6 +182,11 @@ const SIG_U2TXD: u32 = 18;
 const I2C_LINE_SCL: usize = super::i2c::LINE_SCL;
 const I2C_LINE_SDA: usize = super::i2c::LINE_SDA;
 
+/// GPIO-matrix OUTPUT index of LEDC channel 0 — esp-idf
+/// `soc/esp32s3/include/soc/gpio_sig_map.h` :157 `LEDC_LS_SIG_OUT0_IDX`; the
+/// eight channel outputs are contiguous (73..80, :157-164).
+const SIG_LEDC_LS_OUT0: u32 = 73;
+
 pub const RMT_SIG_OUT0: u32 = 81;
 pub const RMT_SIG_OUT1: u32 = 82;
 pub const RMT_SIG_OUT2: u32 = 83;
@@ -187,6 +199,9 @@ fn s3_out_signal_name(idx: u32) -> Option<&'static str> {
     Some(match idx {
         SIG_I2CEXT0_SCL => "I2CEXT0_SCL",
         SIG_I2CEXT0_SDA => "I2CEXT0_SDA",
+        SIG_LEDC_LS_OUT0..=80 => {
+            crate::peripherals::esp32s3::ledc::LEDC_LINES[(idx - SIG_LEDC_LS_OUT0) as usize]
+        }
         RMT_SIG_OUT0 => "RMT_SIG_OUT0",
         RMT_SIG_OUT1 => "RMT_SIG_OUT1",
         RMT_SIG_OUT2 => "RMT_SIG_OUT2",
@@ -239,17 +254,6 @@ const fn spec(word: usize) -> Option<(u32, u32)> {
 pub use crate::peripherals::device::GpioObserver;
 
 /// ESP32-S3 GPIO peripheral. Mapped at 0x6000_4000.
-/// Push-capture state for one S3 GPIO port. `scratch` caches each watched
-/// pad's level across a register write so only real transitions are reported;
-/// `line_chs` caches the per-line channel lists last pushed into the I²C wire,
-/// so unrelated writes cost no mutex traffic.
-#[derive(Debug)]
-struct S3PortTap {
-    tap: crate::logic_capture::LogicTap,
-    watched: Vec<(u8, u32)>,
-    scratch: Vec<Option<bool>>,
-}
-
 pub struct Esp32s3Gpio {
     /// Register file for the architected map (word-indexed; holes stay 0 and
     /// are never read back — `spec()` gates both directions). OUT, ENABLE and
@@ -279,14 +283,17 @@ pub struct Esp32s3Gpio {
     /// Pads bound to peripheral wires, resolved against this port's live
     /// output matrix. Empty until `SystemBus::wire_esp32s3_i2c_pads` binds them.
     pad_routes: crate::peripherals::pad_routing::PadRoutes,
-    /// `Some` while the logic analyzer watches pads on this port in push mode.
-    /// Every register write then reports watched pad-level changes into the
-    /// tap, and matrix-routed pads are registered with the I²C wire so IT
-    /// reports their transitions at the cycles they occurred. Not snapshot
-    /// state — the watch is re-armed by the frontend after a resume.
-    tap: Option<S3PortTap>,
+    /// `Some` while the logic analyzer watches pads on this port in push mode
+    /// ([`PinPort::install_watch`]). Every register write and external input
+    /// is bracketed for it, and matrix-routed pads are registered with the
+    /// I²C wire so IT reports their transitions at the cycles they occurred.
+    /// Not snapshot state — the watch is re-armed by the frontend after a
+    /// resume.
+    watch: Option<crate::pins::PadWatch>,
     int_enable: u32,
     int_type: [u8; 32],
+    /// Matrix-line change detector for the scheduler chain.
+    irq_watch: crate::peripherals::esp_gpio_net::IrqLevelWatch,
     cycle: u64,
     /// Bus cycle clock — stamps pin edges when the walk is deleted.
     clock: Option<CycleClock>,
@@ -316,9 +323,10 @@ impl Esp32s3Gpio {
             external_drive_mask: [0; 2],
             pad_controls: None,
             pad_routes: crate::peripherals::pad_routing::PadRoutes::new(),
-            tap: None,
+            watch: None,
             int_enable: 0,
             int_type: [0; 32],
+            irq_watch: Default::default(),
             cycle: 0,
             clock: None,
             observers: Vec::new(),
@@ -359,7 +367,11 @@ impl Esp32s3Gpio {
                 self.out & !mask
             };
             let states = self.state_snapshot();
+            // The pad's own drive moving is an edge the GPIO interrupt sees
+            // (TRM "GPIO Interrupt", input buffer on), same as a register write.
+            let before = self.effective_input(0);
             self.apply_out(new_out);
+            self.latch_input_edges(before);
             self.state_report(states);
         } else {
             let mask = 1u32 << (pin - 32);
@@ -391,66 +403,109 @@ impl Esp32s3Gpio {
     ///
     /// Passing [`SIG_GPIO_OUT`] (256) would match every pad still at its reset
     /// selector — callers resolving a *peripheral* signal never do that.
-    /// Snapshot every watched pad's level before a mutation. One branch while
-    /// no tap is installed.
+    /// Run a pad mutation bracketed for push capture.
     #[inline]
-    fn tap_snapshot(&mut self) {
-        let Some(mut t) = self.tap.take() else {
-            return;
-        };
-        for (k, &(pin, _)) in t.watched.iter().enumerate() {
-            t.scratch[k] = self.pad_level_for_tap(pin);
-        }
-        self.tap = Some(t);
+    fn mutate_pads<R>(&mut self, mutate: impl FnOnce(&mut Self) -> R) -> R {
+        crate::pins::watch_begin(self);
+        let r = mutate(self);
+        crate::pins::watch_end(self);
+        r
     }
 
-    /// Report watched pads whose level changed since the matching
-    /// [`tap_snapshot`](Self::tap_snapshot), then re-sync the I²C wire
-    /// registration in case the write re-routed a watched pad.
-    #[inline]
-    fn tap_report(&mut self) {
-        let Some(t) = self.tap.take() else {
-            return;
-        };
-        for (k, &(pin, ch)) in t.watched.iter().enumerate() {
-            if let Some(level) = self.pad_level_for_tap(pin) {
-                if t.scratch[k] != Some(level) {
-                    t.tap.push(ch, level);
-                }
-            }
+    /// A bank-0 pad in open drain (`PAD_DRIVER`) whose output latch holds a
+    /// 1 and that the outside world holds ([`PinPort::set_external`]): its
+    /// output stage is off and `GPIO_IN` reads the wire. With nothing outside
+    /// the model keeps its old reading (ENABLE alone decides).
+    fn released_held_pad(&self, pin: u8) -> bool {
+        if pin >= 32 {
+            return false;
         }
-        self.tap = Some(t);
-        self.sync_i2c_line_taps();
+        let mask = 1u32 << pin;
+        self.external_drive_mask[0] & mask != 0
+            && self.out & mask != 0
+            && self.reg(PIN0 + (pin as u64) * 4) & crate::peripherals::esp_gpio_net::PIN_PAD_DRIVER
+                != 0
     }
 
-    /// Who drives bank-0 pad `pin`: ENABLE is the output driver; an enabled
-    /// pad an external device holds at the other level is contention; a
-    /// disabled pad with no external driver is high-Z (the weak pull-up it
-    /// may read through is not a driver). A matrix-routed peripheral wire
-    /// drives its pad.
-    fn pad_drive(&self, pin: u8) -> Option<crate::logic_capture::PadDrive> {
-        use crate::logic_capture::PadDrive;
+    /// The pad's own output stage ([`PinPort::driver`]), bank 0. A pad the
+    /// matrix routes to a peripheral that publishes its wire is driven by it;
+    /// one routed to a peripheral that publishes nothing has no known drive
+    /// (`None`), so a world refuses it. Otherwise ENABLE drives the latch and
+    /// an open-drain (`PAD_DRIVER`) 1 is released. The pull is the IO_MUX
+    /// `FUN_WPU` bit.
+    fn pad_driver(&self, pin: u8) -> Option<crate::pins::PadDriver> {
+        use crate::pins::{PadDriver, Pull};
         if pin >= 32 {
             return None;
         }
         let mask = 1u32 << pin;
-        let ext = self.external_drive_mask[0] & mask != 0;
-        if self.pad_routes.level(pin, |p| self.out_sel(p)).is_some() {
-            return Some(PadDrive::Driven);
-        }
-        Some(if self.enable & mask != 0 {
-            let out = self.out & mask != 0;
-            let ext_level = self.external_levels[0] & mask != 0;
-            if ext && ext_level != out {
-                PadDrive::Contention
-            } else {
-                PadDrive::Driven
-            }
-        } else if ext {
-            PadDrive::Driven
+        let pull = if self.io_mux_pullup_mask()[0] & mask != 0 {
+            Pull::Up
         } else {
-            PadDrive::HighZ
-        })
+            Pull::None
+        };
+        if let Some(level) = self.pad_routes.level(pin, |p| self.out_sel(p)) {
+            return Some(PadDriver::drive(level).with_pull(pull));
+        }
+        if self.enable & mask == 0 {
+            return Some(PadDriver::released(pull));
+        }
+        if self.out_sel(pin) != Some(SIG_GPIO_OUT) {
+            // Routed to a peripheral signal that publishes no wire: nobody
+            // can say what drives the pad.
+            return None;
+        }
+        Some(
+            PadDriver::output(
+                self.out & mask != 0,
+                self.reg(PIN0 + (pin as u64) * 4)
+                    & crate::peripherals::esp_gpio_net::PIN_PAD_DRIVER
+                    != 0,
+            )
+            .with_pull(pull),
+        )
+    }
+
+    /// `GPIO_PCPU_INT_REG` (INT_ENA bit 0 = register bit 13) or
+    /// `GPIO_PCPU_NMI_INT_REG` (bit 14): the pending pins this CPU takes.
+    fn cpu_int(&self, ena_bit: u32) -> u32 {
+        let mut out = 0;
+        let mut pending = self.reg(STATUS);
+        while pending != 0 {
+            let pin = pending.trailing_zeros() as u64;
+            pending &= pending - 1;
+            if self.reg(PIN0 + pin * 4) & (1 << ena_bit) != 0 {
+                out |= 1 << pin;
+            }
+        }
+        out
+    }
+
+    /// The `ETS_GPIO_INTR_SOURCE` matrix line.
+    fn irq_line(&self) -> bool {
+        self.cpu_int(13) != 0
+    }
+
+    /// Latch `GPIO_STATUS` for every bank-0 pin whose `GPIO_IN` bit moved
+    /// from `before` (edge types) or whose level holds (level types). The
+    /// interrupt reads the pad as `GPIO_IN` does.
+    fn latch_input_edges(&mut self, before: u32) {
+        use crate::peripherals::esp_gpio_net::{edge_hits, int_type, level_hits};
+        let after = self.effective_input(0);
+        let mut hit = 0u32;
+        for pin in 0..32u64 {
+            let kind = int_type(self.reg(PIN0 + pin * 4));
+            if kind == 0 {
+                continue;
+            }
+            let (b, a) = ((before >> pin) & 1 != 0, (after >> pin) & 1 != 0);
+            if edge_hits(kind, b, a) || level_hits(kind, a) {
+                hit |= 1 << pin;
+            }
+        }
+        if hit != 0 {
+            self.set_reg_masked(STATUS, self.reg(STATUS) | hit);
+        }
     }
 
     /// Bank-0 (level, four-state) of every pad, taken only while an observer
@@ -465,9 +520,11 @@ impl Esp32s3Gpio {
     fn pad_state(&self, pin: u8) -> (bool, crate::logic_capture::PadState) {
         use crate::logic_capture::{PadDrive, PadState};
         let level = <Self as Peripheral>::read_gpio_pad(self, pin).unwrap_or(false);
-        let state =
-            PadState::from_parts(Some(level), self.pad_drive(pin).unwrap_or(PadDrive::Driven))
-                .unwrap_or(PadState::Low);
+        let state = PadState::from_parts(
+            Some(level),
+            crate::pins::probe_drive(self, pin).unwrap_or(PadDrive::Driven),
+        )
+        .unwrap_or(PadState::Low);
         (level, state)
     }
 
@@ -488,25 +545,19 @@ impl Esp32s3Gpio {
         }
     }
 
-    /// The level a watched pad currently reads, through the same truth
-    /// `read_gpio_pad` uses.
-    fn pad_level_for_tap(&self, pin: u8) -> Option<bool> {
-        <Self as Peripheral>::read_gpio_pad(self, pin)
-    }
-
     /// Re-register watched pads with the wires that drive them, so a pad the
     /// matrix hands over (or takes back) follows its new source.
     fn sync_i2c_line_taps(&mut self) {
         if self.pad_routes.is_empty() {
             return;
         }
-        let Some(t) = self.tap.take() else {
+        let Some(watch) = self.watch.take() else {
             return;
         };
         let mut routes = std::mem::take(&mut self.pad_routes);
-        routes.sync_taps(&t.tap, &t.watched, |pin| self.out_sel(pin));
+        routes.sync_taps(watch.tap(), watch.pairs(), |pin| self.out_sel(pin));
         self.pad_routes = routes;
-        self.tap = Some(t);
+        self.watch = Some(watch);
     }
 
     /// Bind an I²C controller's wire to the pads the output matrix can route it
@@ -603,12 +654,14 @@ impl Esp32s3Gpio {
     /// pin low still reads 0 with `INPUT_PULLUP` configured.
     pub fn set_pin_input(&mut self, pin: u8, level: bool) {
         assert!(pin < 32, "set_pin_input: pin {pin} >= 32");
+        let before = self.effective_input(0);
         if level {
             self.external_levels[0] |= 1u32 << pin;
         } else {
             self.external_levels[0] &= !(1u32 << pin);
         }
         self.external_drive_mask[0] |= 1u32 << pin;
+        self.latch_input_edges(before);
     }
 
     /// Wire the S3 IO_MUX's shared per-pad controls after both peripherals
@@ -640,17 +693,72 @@ impl Esp32s3Gpio {
             })
     }
 
+    /// `FUN_IE` per pad, split into the two GPIO input banks. A pad with no
+    /// `IO_MUX_GPIOn_REG` (49..53), or a GPIO with no IO_MUX wired, has no
+    /// input-buffer control to model and counts as enabled.
+    fn io_mux_input_enable_mask(&self) -> [u32; 2] {
+        let Some(controls) = &self.pad_controls else {
+            return [u32::MAX, BANK1_MASK];
+        };
+        let controls = controls
+            .read()
+            .expect("ESP32-S3 IO_MUX pad controls poisoned");
+        (0..PAD_COUNT).fold([0u32; 2], |mut mask, pin| {
+            let enabled = controls
+                .get(pin as usize)
+                .is_none_or(|word| word & super::io_mux::FUN_IE != 0);
+            if enabled {
+                mask[(pin / 32) as usize] |= 1u32 << (pin % 32);
+            }
+            mask
+        })
+    }
+
+    /// Level the pad's own output driver forces, or `None` while the driver
+    /// is off (or released, see `released_held_pad`).
+    fn driven_level(&self, pin: u8) -> Option<bool> {
+        let bit = 1u32 << (pin % 32);
+        let (enable, out) = if pin < 32 {
+            (self.enable, self.out)
+        } else {
+            (self.reg(ENABLE1), self.out1)
+        };
+        if enable & bit == 0 || self.released_held_pad(pin) {
+            return None;
+        }
+        // Output matrix: a pad handed to a peripheral carries that
+        // peripheral's wire, not the GPIO_OUT latch.
+        if let Some(level) = self.pad_routes.level(pin, |p| self.out_sel(p)) {
+            return Some(level);
+        }
+        Some(out & bit != 0)
+    }
+
     /// Firmware-visible input word for `bank` (0 = `IN`/GPIO0..31,
     /// 1 = `IN1`/GPIO32..53). An explicit external drive always beats a weak
     /// internal pull-up; otherwise the raw IO_MUX `FUN_WPU` bit supplies the
     /// released level, including its SVD-defined cold reset. Without the
     /// pull-up term a released `INPUT_PULLUP` pin reads 0 and every
-    /// button-to-GND lab reads permanently pressed.
+    /// button-to-GND lab reads permanently pressed. A pad whose output driver
+    /// is on and whose input buffer (`FUN_IE`) is enabled samples the level it
+    /// drives itself, so `digitalRead()` on an OUTPUT pin reads it back.
     fn effective_input(&self, bank: usize) -> u32 {
         let valid = if bank == 0 { u32::MAX } else { BANK1_MASK };
-        ((self.external_levels[bank] & self.external_drive_mask[bank])
-            | (self.io_mux_pullup_mask()[bank] & !self.external_drive_mask[bank]))
-            & valid
+        let mut input = (self.external_levels[bank] & self.external_drive_mask[bank])
+            | (self.io_mux_pullup_mask()[bank] & !self.external_drive_mask[bank]);
+        let ie = self.io_mux_input_enable_mask()[bank];
+        for bit in 0..32u8 {
+            let mask = 1u32 << bit;
+            if ie & mask == 0 || valid & mask == 0 {
+                continue;
+            }
+            match self.driven_level(bank as u8 * 32 + bit) {
+                Some(true) => input |= mask,
+                Some(false) => input &= !mask,
+                None => {}
+            }
+        }
+        input & valid
     }
 
     /// Internal: apply a new `out` value, fire observers for each
@@ -734,6 +842,10 @@ impl Esp32s3Gpio {
             OUT1 | OUT1_W1TS | OUT1_W1TC => self.out1,
             ENABLE1_W1TS | ENABLE1_W1TC => self.reg(ENABLE1),
             STATUS_W1TS | STATUS_W1TC => self.reg(STATUS),
+            // GPIO_PCPU_INT / GPIO_PCPU_NMI_INT: the pending pins with this
+            // CPU's INT_ENA bit set (bank 0; bank 1 has no input model).
+            PCPU_INT => self.cpu_int(13),
+            PCPU_NMI_INT => self.cpu_int(14),
             STATUS1_W1TS | STATUS1_W1TC => self.reg(STATUS1),
             // Everything else (incl. STRAP, IN1, PINn, FUNCn_*_SEL_CFG)
             // is served by the register file; holes read 0.
@@ -795,6 +907,15 @@ impl Esp32s3Gpio {
         }
     }
 
+    /// A register store, then the GPIO interrupts it caused: an `IN` write
+    /// moving a pad, a level-type pin re-armed by `STATUS_W1TC` or a `PINn`
+    /// write.
+    fn write_word_latching(&mut self, word_off: u64, value: u32) {
+        let before = self.effective_input(0);
+        self.write_word(word_off, value);
+        self.latch_input_edges(before);
+    }
+
     fn write_inner(&mut self, offset: u64, value: u8) -> SimResult<()> {
         let word_off = offset & !3;
         let byte_off = (offset & 3) * 8;
@@ -811,7 +932,7 @@ impl Esp32s3Gpio {
         };
         word &= !(0xFFu32 << byte_off);
         word |= (value as u32) << byte_off;
-        self.write_word(word_off, word);
+        self.write_word_latching(word_off, word);
         Ok(())
     }
 }
@@ -833,6 +954,91 @@ impl std::fmt::Debug for Esp32s3Gpio {
 impl Default for Esp32s3Gpio {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// The pin interface covers bank 0 (GPIO0..31), the pads with input storage
+/// and a probe level in this model; GPIO32..53 stay on the register file.
+impl PinPort for Esp32s3Gpio {
+    fn pin_count(&self) -> u8 {
+        32
+    }
+
+    fn driver(&self, pin: u8) -> Option<crate::pins::PadDriver> {
+        self.pad_driver(pin)
+    }
+
+    fn external(&self, pin: u8) -> External {
+        let mask = 1u32 << (pin & 31);
+        if pin < 32 && self.external_drive_mask[0] & mask != 0 {
+            External::Level(self.external_levels[0] & mask != 0)
+        } else {
+            External::Released
+        }
+    }
+
+    /// A level is an external drive with authority over the IO_MUX pull-up
+    /// (`set_pin_input`); releasing hands the pad back to the pull-up. An
+    /// input change latches `GPIO_STATUS` per `INT_TYPE`, and the four-state
+    /// observers see it.
+    fn set_external(&mut self, pin: u8, ext: External) -> Option<InputChange> {
+        if pin >= 32 {
+            return None;
+        }
+        let mask = 1u32 << pin;
+        let before = self.effective_input(0);
+        let states = self.state_snapshot();
+        self.mutate_pads(|g| match ext {
+            External::Level(level) => g.set_pin_input(pin, level),
+            External::Released => {
+                g.external_drive_mask[0] &= !mask;
+                g.latch_input_edges(before);
+            }
+        });
+        self.state_report(states);
+        Some(InputChange {
+            before: before & mask != 0,
+            after: self.effective_input(0) & mask != 0,
+        })
+    }
+
+    fn input(&self, pin: u8) -> Option<bool> {
+        Peripheral::read_gpio_input(self, pin)
+    }
+
+    /// The model's probe level (`read_gpio_pad`): a routed pad reads its
+    /// peripheral's wire, an enabled pad its latch, any other `GPIO_IN`.
+    fn level(&self, pin: u8) -> Option<bool> {
+        Peripheral::read_gpio_pad(self, pin)
+    }
+
+    fn install_watch(&mut self, watch: Option<crate::pins::PadWatch>) -> bool {
+        match watch {
+            None => {
+                self.watch = None;
+                self.pad_routes.clear_taps();
+            }
+            Some(watch) => {
+                self.watch = Some(watch);
+                // Seeded stale so the sync below always installs the current
+                // routing into the wire.
+                self.pad_routes.invalidate_registrations();
+                self.sync_i2c_line_taps();
+            }
+        }
+        true
+    }
+
+    fn take_watch(&mut self) -> Option<crate::pins::PadWatch> {
+        self.watch.take()
+    }
+
+    fn put_watch(&mut self, watch: crate::pins::PadWatch) {
+        self.watch = Some(watch);
+    }
+
+    fn routes_changed(&mut self) {
+        self.sync_i2c_line_taps();
     }
 }
 
@@ -858,37 +1064,9 @@ impl Peripheral for Esp32s3Gpio {
 
     fn write(&mut self, offset: u64, value: u8) -> SimResult<()> {
         let states = self.state_snapshot();
-        self.tap_snapshot();
-        let result = self.write_inner(offset, value);
-        self.tap_report();
+        let result = self.mutate_pads(|g| g.write_inner(offset, value));
         self.state_report(states);
         result
-    }
-
-    fn read_gpio_pad_drive(&self, pin: u8) -> Option<crate::logic_capture::PadDrive> {
-        self.pad_drive(pin)
-    }
-
-    fn install_logic_tap(
-        &mut self,
-        tap: &crate::logic_capture::LogicTap,
-        watched: &[(u8, u32)],
-    ) -> bool {
-        if watched.is_empty() {
-            self.tap = None;
-            self.pad_routes.clear_taps();
-        } else {
-            self.tap = Some(S3PortTap {
-                tap: tap.clone(),
-                watched: watched.to_vec(),
-                scratch: vec![None; watched.len()],
-            });
-            // Seeded stale so the sync below always installs the current
-            // routing into the wire.
-            self.pad_routes.invalidate_registrations();
-            self.sync_i2c_line_taps();
-        }
-        true
     }
 
     fn tick(&mut self) -> PeripheralTickResult {
@@ -910,6 +1088,14 @@ impl Peripheral for Esp32s3Gpio {
         Some((self.out & (1u32 << pin)) != 0)
     }
 
+    fn pins(&self) -> Option<&dyn PinPort> {
+        Some(self)
+    }
+
+    fn pins_mut(&mut self) -> Option<&mut dyn PinPort> {
+        Some(self)
+    }
+
     fn read_gpio_pad(&self, pin: u8) -> Option<bool> {
         if pin >= 32 {
             return None;
@@ -922,14 +1108,29 @@ impl Peripheral for Esp32s3Gpio {
         if let Some(level) = self.pad_routes.level(pin, |p| self.out_sel(p)) {
             return Some(level);
         }
-        let mask = 1u32 << pin;
         // ENABLE is the output driver: enabled pins show the OUT latch,
-        // everything else shows the (externally driven) input level.
-        Some(if (self.enable & mask) != 0 {
-            (self.out & mask) != 0
-        } else {
-            (self.effective_input(0) & mask) != 0
-        })
+        // everything else shows the (externally driven) input level. A pad
+        // in open drain holding a 1 that the outside holds is released and
+        // shows the wire.
+        Some(
+            self.driven_level(pin)
+                .unwrap_or_else(|| (self.effective_input(0) & (1u32 << pin)) != 0),
+        )
+    }
+
+    /// Matrix-only outputs (the LEDC channels): one span route per pad, so
+    /// which line a pad shows is decided by its `FUNCn_OUT_SEL_CFG` through
+    /// the shared routing seam, exactly like the I²C/SPI/UART bindings.
+    fn bind_matrix_output_lines(
+        &mut self,
+        first_signal: u32,
+        lines: &std::sync::Arc<crate::peripherals::pad_lines::PadLines>,
+    ) -> bool {
+        for pin in 0..PAD_COUNT {
+            self.pad_routes
+                .bind_span(lines, pin, first_signal, 0, lines.names());
+        }
+        true
     }
 
     fn gpio_routing(&self, pin: u8) -> Option<crate::peripherals::gpio::GpioRouting> {
@@ -965,14 +1166,26 @@ impl Peripheral for Esp32s3Gpio {
         }
     }
 
-    fn set_gpio_input(&mut self, pin: u8, level: bool) -> bool {
-        if pin >= 32 {
-            return false;
-        }
-        let states = self.state_snapshot();
-        self.set_pin_input(pin, level);
-        self.state_report(states);
+    /// A scheduler peripheral only so the interrupt matrix polls its GPIO
+    /// line (`matrix_irq_sources_into`); it schedules nothing but one event
+    /// per change of that line, which is what re-derives the matrix on a
+    /// walk-free bus after an edge from outside.
+    fn uses_scheduler(&self) -> bool {
         true
+    }
+
+    fn matrix_irq_sources_into(&self, out: &mut Vec<u32>) {
+        if self.irq_line() {
+            out.push(GPIO_INTR_SOURCE);
+        }
+    }
+
+    fn take_scheduled_events(&mut self) -> Vec<(u64, u32)> {
+        let level = self.irq_line();
+        self.irq_watch
+            .take(level)
+            .map(|token| vec![(0, token)])
+            .unwrap_or_default()
     }
 
     fn as_any(&self) -> Option<&dyn std::any::Any> {
@@ -1736,5 +1949,145 @@ mod tests {
             write_u32(&mut g, off, 0xDEAD_BEEF);
             assert_eq!(read_u32(&g, off), 0, "hole at {off:#x}");
         }
+    }
+
+    /// A pad's own drive is its output stage only: the external level is not
+    /// a drive (to a probe it is), and an open-drain 1 releases the pad so it
+    /// reads the wire.
+    #[test]
+    fn the_own_drive_is_the_output_stage_and_open_drain_releases() {
+        use crate::logic_capture::PadDrive;
+        use crate::pins::own_drive;
+        let mut g = Esp32s3Gpio::new();
+        g.set_gpio_input(7, true);
+        assert_eq!(g.read_gpio_pad_drive(7), Some(PadDrive::Driven), "probe");
+        assert_eq!(own_drive(&g, 7), Some(PadDrive::HighZ), "own");
+        assert_eq!(g.set_external(32, External::Level(true)), None);
+        write_u32(&mut g, PIN0 + 7 * 4, 1 << 2); // PAD_DRIVER
+        write_u32(&mut g, OUT_W1TS, 1 << 7);
+        write_u32(&mut g, ENABLE_W1TS, 1 << 7);
+        assert_eq!(own_drive(&g, 7), Some(PadDrive::HighZ), "released");
+        g.set_gpio_input(7, false);
+        assert_eq!(g.read_gpio_pad(7), Some(false), "reads the wire");
+        write_u32(&mut g, OUT_W1TC, 1 << 7);
+        assert_eq!(own_drive(&g, 7), Some(PadDrive::Driven));
+        // Routed to a matrix signal with no published wire: unknown.
+        write_u32(&mut g, FUNC0_OUT_SEL_CFG + 7 * 4, 71);
+        assert_eq!(own_drive(&g, 7), None);
+    }
+
+    /// An external edge latches GPIO_STATUS per INT_TYPE, shows in
+    /// GPIO_PCPU_INT with INT_ENA bit 13, asserts matrix source 16 and arms
+    /// one scheduler event per change; `STATUS_W1TC` drops it. A push tap
+    /// sees the external edge too (it used to bypass the tap).
+    #[test]
+    fn an_external_edge_raises_matrix_source_16_and_reaches_the_tap() {
+        use crate::logic_capture::LogicTap;
+        let mut g = Esp32s3Gpio::new();
+        assert!(g.uses_scheduler());
+        let tap = LogicTap::new();
+        assert!(g.install_watch(crate::pins::PadWatch::probes(&tap, &[(3, 0)])));
+        tap.set_armed(true);
+        write_u32(&mut g, PIN0 + 3 * 4, (2 << 7) | (1 << 13)); // falling
+        g.set_gpio_input(3, true);
+        assert_eq!(read_u32(&g, STATUS), 0, "rising is not selected");
+        g.set_gpio_input(3, false);
+        assert_eq!(read_u32(&g, STATUS), 1 << 3);
+        assert_eq!(read_u32(&g, PCPU_INT), 1 << 3);
+        assert_eq!(g.matrix_irq_sources(), vec![16]);
+        assert_eq!(g.take_scheduled_events().len(), 1);
+        assert!(g.take_scheduled_events().is_empty());
+        write_u32(&mut g, STATUS_W1TC, 1 << 3);
+        assert!(g.matrix_irq_sources().is_empty());
+        assert_eq!(g.take_scheduled_events().len(), 1);
+        assert!(tap.take_events().len() >= 2, "both external edges pushed");
+    }
+
+    /// `pinMode(p, OUTPUT)` leaves `FUN_IE` set, so `digitalRead(p)` reads the
+    /// level the pad itself drives, on both banks. With `FUN_IE` clear the
+    /// input buffer is off and the released level shows instead.
+    #[test]
+    fn esp32s3_driven_output_pad_reads_back_through_gpio_in_when_fun_ie_is_set() {
+        use crate::Bus;
+        let mut bus = s3_bus();
+        let in_ = GPIO_BASE + IN;
+        let in1 = GPIO_BASE + IN1;
+
+        bus.write_u32(io_mux_gpio(4), 0x0000_1A02).unwrap(); // IE, no WPU
+        bus.write_u32(GPIO_BASE + ENABLE_W1TS, 1 << 4).unwrap();
+        assert_eq!(bus.read_u32(in_).unwrap() & (1 << 4), 0, "driving low");
+        bus.write_u32(GPIO_BASE + OUT_W1TS, 1 << 4).unwrap();
+        assert_ne!(bus.read_u32(in_).unwrap() & (1 << 4), 0, "driving high");
+        with_gpio(&mut bus, |g| assert_eq!(g.read_gpio_input(4), Some(true)));
+        bus.write_u32(GPIO_BASE + OUT_W1TC, 1 << 4).unwrap();
+        assert_eq!(bus.read_u32(in_).unwrap() & (1 << 4), 0);
+
+        // Bank 1: GPIO33 is bit 1 of IN1 / OUT1 / ENABLE1.
+        bus.write_u32(io_mux_gpio(33), 0x0000_1A02).unwrap();
+        bus.write_u32(GPIO_BASE + ENABLE1_W1TS, 1 << 1).unwrap();
+        bus.write_u32(GPIO_BASE + OUT1_W1TS, 1 << 1).unwrap();
+        assert_ne!(bus.read_u32(in1).unwrap() & (1 << 1), 0);
+        bus.write_u32(GPIO_BASE + OUT1_W1TC, 1 << 1).unwrap();
+        assert_eq!(bus.read_u32(in1).unwrap() & (1 << 1), 0);
+
+        // FUN_IE clear: the driven level is not sampled.
+        bus.write_u32(io_mux_gpio(5), 0x0000_1802).unwrap();
+        bus.write_u32(GPIO_BASE + ENABLE_W1TS, 1 << 5).unwrap();
+        bus.write_u32(GPIO_BASE + OUT_W1TS, 1 << 5).unwrap();
+        assert_eq!(bus.read_u32(in_).unwrap() & (1 << 5), 0);
+    }
+    /// ESP32-S3 TRM, GPIO Matrix "GPIO Interrupt": with the input buffer on
+    /// (`FUN_IE`), the interrupt logic samples the pad itself, so the pad's
+    /// own output edge latches `GPIO_STATUS` when `PINn.INT_TYPE` selects it.
+    #[test]
+    fn own_output_edge_latches_status_when_fun_ie_is_set() {
+        use crate::Bus;
+        let mut bus = s3_bus();
+        bus.write_u32(io_mux_gpio(4), 0x0000_1A02).unwrap(); // FUN_IE
+        bus.write_u32(GPIO_BASE + PIN0 + 4 * 4, (1 << 7) | (1 << 13))
+            .unwrap(); // rising, INT_ENA
+        bus.write_u32(GPIO_BASE + ENABLE_W1TS, 1 << 4).unwrap();
+        with_gpio(&mut bus, |g| {
+            assert_eq!(g.reg(STATUS), 0);
+            assert!(!g.irq_line());
+        });
+        bus.write_u32(GPIO_BASE + OUT_W1TS, 1 << 4).unwrap();
+        with_gpio(&mut bus, |g| {
+            assert_eq!(g.reg(STATUS), 1 << 4, "rising output edge latched");
+            assert!(g.irq_line());
+            assert_eq!(g.matrix_irq_sources(), vec![16]);
+        });
+    }
+
+    #[test]
+    fn own_output_edge_does_not_latch_when_fun_ie_is_clear() {
+        use crate::Bus;
+        let mut bus = s3_bus();
+        bus.write_u32(io_mux_gpio(5), 0x0000_1802).unwrap(); // no FUN_IE
+        bus.write_u32(GPIO_BASE + PIN0 + 5 * 4, (1 << 7) | (1 << 13))
+            .unwrap();
+        bus.write_u32(GPIO_BASE + ENABLE_W1TS, 1 << 5).unwrap();
+        bus.write_u32(GPIO_BASE + OUT_W1TS, 1 << 5).unwrap();
+        with_gpio(&mut bus, |g| {
+            assert_eq!(g.reg(STATUS), 0);
+            assert!(!g.irq_line());
+        });
+    }
+
+    /// A matrix-routed peripheral driving the pad (`drive_pad_output`) is the
+    /// same own-output edge.
+    #[test]
+    fn peripheral_driven_output_edge_latches_status_when_fun_ie_is_set() {
+        use crate::Bus;
+        let mut bus = s3_bus();
+        bus.write_u32(io_mux_gpio(6), 0x0000_1A02).unwrap();
+        bus.write_u32(GPIO_BASE + PIN0 + 6 * 4, (1 << 7) | (1 << 13))
+            .unwrap();
+        bus.write_u32(GPIO_BASE + ENABLE_W1TS, 1 << 6).unwrap();
+        with_gpio(&mut bus, |g| {
+            assert!(g.drive_pad_output(6, true));
+            assert_eq!(g.reg(STATUS), 1 << 6);
+            assert!(g.irq_line());
+        });
     }
 }

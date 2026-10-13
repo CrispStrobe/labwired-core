@@ -32,6 +32,12 @@ pub struct InputChannel {
     pub min: f64,
     /// Inclusive maximum accepted value, in `unit`.
     pub max: f64,
+    /// Value the device reports on power-on, before any `set_input`, in
+    /// `unit`. UIs must seed their control from this, never from a
+    /// hand-kept preset, or the control and the device disagree until the
+    /// first drag. `None` means the model does not declare one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default: Option<f64>,
 }
 
 /// Why a [`SimInput::set_input`] / [`crate::Machine::set_input`] call failed.
@@ -41,7 +47,7 @@ pub enum SimInputError {
     UnknownChannel(String),
     /// The prospective input makes an exact derived producer fail.
     Evaluation(String),
-    /// `value` is outside the channel's `[min, max]`.
+    /// `value` is non-finite or outside the channel's `[min, max]`.
     OutOfRange {
         key: String,
         value: f64,
@@ -116,7 +122,7 @@ pub trait SimInput {
             .find(|c| c.key == key)
             .cloned()
             .ok_or_else(|| SimInputError::UnknownChannel(key.to_string()))?;
-        if value < ch.min || value > ch.max {
+        if !value.is_finite() || value < ch.min || value > ch.max {
             return Err(SimInputError::OutOfRange {
                 key: key.to_string(),
                 value,

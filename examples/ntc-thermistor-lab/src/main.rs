@@ -10,6 +10,10 @@ use panic_halt as _;
 const ADC1_BASE: u32 = 0x4001_2400;
 const ADC1_SR: *mut u32 = (ADC1_BASE + 0x00) as *mut u32;
 const ADC1_CR1: *mut u32 = (ADC1_BASE + 0x04) as *mut u32;
+const CR2_ADON: u32 = 1 << 0;
+const CR2_EXTSEL_SWSTART: u32 = 0b111 << 17;
+const CR2_EXTTRIG: u32 = 1 << 20;
+const CR2_SWSTART: u32 = 1 << 22;
 const ADC1_CR2: *mut u32 = (ADC1_BASE + 0x08) as *mut u32;
 const ADC1_DR: *const u32 = (ADC1_BASE + 0x4C) as *const u32;
 
@@ -72,9 +76,15 @@ fn uart2_u32(mut n: u32) {
 fn adc1_read() -> u16 {
     unsafe {
         // Enable ADC (ADON = bit 0)
-        core::ptr::write_volatile(ADC1_CR2, 1);
-        // Trigger SW start (SWSTART = bit 30)
-        core::ptr::write_volatile(ADC1_CR2, 1 | (1 << 30));
+        core::ptr::write_volatile(ADC1_CR2, CR2_ADON | CR2_EXTSEL_SWSTART | CR2_EXTTRIG);
+        // Software start on STM32F1 (RM0008 §11.12.3, ADC_CR2): EXTSEL[19:17]
+        // = 0b111 selects SWSTART as the regular trigger, EXTTRIG (bit 20)
+        // enables it, and SWSTART is bit 22. Bit 30 is the F2/F4 SWSTART and
+        // does nothing on this part.
+        core::ptr::write_volatile(
+            ADC1_CR2,
+            CR2_ADON | CR2_EXTSEL_SWSTART | CR2_EXTTRIG | CR2_SWSTART,
+        );
         // Wait for EOC
         let mut timeout = 100_000u32;
         loop {
@@ -140,7 +150,7 @@ fn adc1_init() {
         core::ptr::write_volatile(RCC_APB2ENR, apb2 | (1 << 9));
         // Set ADC CR1: no interrupts, single channel mode.
         core::ptr::write_volatile(ADC1_CR1, 0);
-        // CR2: ADON = 0 initially; software trigger (EXTSEL = 0b111, EXTTRIG = 1).
+        // CR2: ADON = 0 initially; the trigger selection is set per conversion.
         core::ptr::write_volatile(ADC1_CR2, 0);
     }
 }

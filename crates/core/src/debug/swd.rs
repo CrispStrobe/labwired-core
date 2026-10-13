@@ -961,5 +961,170 @@ mod tests {
         m.reset().unwrap();
         assert!(!m.cpu.debug_halted());
         assert_eq!(m.bus.read_u32(0xE000_EDF0).unwrap() & (1 << 17), 0);
+        // C_DEBUGEN stays across the reset. VC_CORERESET was clear, so the
+        // core comes out running.
+        assert_eq!(m.bus.read_u32(0xE000_EDF0).unwrap() & 1, 1);
+    }
+
+    #[test]
+    fn c_step_retires_one_instruction_then_halts() {
+        use crate::Bus;
+        use crate::Cpu;
+        let (_dp, mut m) = port();
+        // adds r2, #1; adds r2, #1; b .
+        m.bus.write_u16(0x2000_0000, 0x3201).unwrap();
+        m.bus.write_u16(0x2000_0002, 0x3201).unwrap();
+        m.bus.write_u16(0x2000_0004, 0xE7FE).unwrap();
+        m.cpu.r2 = 0;
+        m.cpu.set_pc(0x2000_0000);
+        m.cpu.set_sp(0x2000_2000);
+        m.bus.write_u32(0xE000_EDF0, 0xA05F_0003).unwrap();
+        assert!(m.cpu.debug_halted());
+        m.bus.write_u32(0xE000_EDF0, 0xA05F_0005).unwrap();
+        assert!(m.cpu.debug_step_pending());
+        assert!(!m.cpu.debug_halted());
+        let config = crate::SimulationConfig::default();
+        let observers: Vec<std::sync::Arc<dyn crate::SimulationObserver>> = Vec::new();
+        let n = m
+            .cpu
+            .step_batch(&mut m.bus, &observers, &config, 8)
+            .unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(m.cpu.r2, 1);
+        assert_eq!(m.cpu.pc, 0x2000_0002);
+        assert!(m.cpu.debug_halted());
+        m.cpu
+            .step_batch(&mut m.bus, &observers, &config, 8)
+            .unwrap();
+        assert_eq!(m.cpu.r2, 1);
+        assert_eq!(m.cpu.pc, 0x2000_0002);
+    }
+
+    #[test]
+    fn firmware_c_step_does_not_consume_the_arming_store() {
+        use crate::Bus;
+        use crate::Cpu;
+        let (_dp, mut m) = port();
+        // str r0, [r1]; adds r2, #1; adds r2, #1; b .
+        m.bus.write_u16(0x2000_0000, 0x6008).unwrap();
+        m.bus.write_u16(0x2000_0002, 0x3201).unwrap();
+        m.bus.write_u16(0x2000_0004, 0x3201).unwrap();
+        m.bus.write_u16(0x2000_0006, 0xE7FE).unwrap();
+        m.cpu.r0 = 0xA05F_0005;
+        m.cpu.r1 = 0xE000_EDF0;
+        m.cpu.r2 = 0;
+        m.cpu.set_pc(0x2000_0000);
+        m.cpu.set_sp(0x2000_2000);
+        let config = crate::SimulationConfig::default();
+        let observers: Vec<std::sync::Arc<dyn crate::SimulationObserver>> = Vec::new();
+        m.cpu
+            .step_batch(&mut m.bus, &observers, &config, 8)
+            .unwrap();
+        assert_eq!(
+            m.cpu.r2, 0,
+            "the arming store is not the stepped instruction"
+        );
+        assert_eq!(m.cpu.pc, 0x2000_0002);
+        assert!(m.cpu.debug_step_pending());
+        m.cpu
+            .step_batch(&mut m.bus, &observers, &config, 8)
+            .unwrap();
+        assert_eq!(m.cpu.r2, 1);
+        assert_eq!(m.cpu.pc, 0x2000_0004);
+        assert!(m.cpu.debug_halted());
+    }
+
+    #[test]
+    fn c_maskints_blocks_systick_and_lets_nmi_through() {
+        use crate::Bus;
+        use crate::Cpu;
+        let (_dp, mut m) = port();
+        // movs r0, #7
+        m.bus.write_u16(0x2000_0000, 0x2007).unwrap();
+        m.cpu.r0 = 0;
+        m.cpu.set_pc(0x2000_0000);
+        m.cpu.set_sp(0x2000_2000);
+        m.cpu.set_vtor(0x2000_1000);
+        // NMI handler: movs r3, #1
+        m.bus.write_u32(0x2000_1008, 0x2000_2001).unwrap();
+        m.bus.write_u16(0x2000_2000, 0x2301).unwrap();
+        m.bus.write_u32(0xE000_EDF0, 0xA05F_0009).unwrap();
+        m.cpu.pending_exceptions[0] |= 1 << 15;
+        let config = crate::SimulationConfig::default();
+        let observers: Vec<std::sync::Arc<dyn crate::SimulationObserver>> = Vec::new();
+        m.cpu
+            .step_batch(&mut m.bus, &observers, &config, 1)
+            .unwrap();
+        assert_eq!(m.cpu.r0, 7, "SysTick must not preempt under C_MASKINTS");
+        assert_eq!(m.cpu.pc, 0x2000_0002);
+
+        m.cpu.pending_exceptions[0] |= 1 << 2;
+        m.cpu.set_pc(0x2000_0000);
+        m.cpu.r0 = 0;
+        m.cpu
+            .step_batch(&mut m.bus, &observers, &config, 1)
+            .unwrap();
+        assert_eq!(m.cpu.r0, 0, "NMI is taken before the movs");
+        assert_eq!(m.cpu.pc & !1, 0x2000_2000);
+    }
+
+    #[test]
+    fn vc_corereset_halts_on_reset() {
+        use crate::Bus;
+        let (_dp, mut m) = port();
+        m.bus.write_u32(0xE000_EDF0, 0xA05F_0001).unwrap();
+        m.bus.write_u32(0xE000_EDFC, 1).unwrap();
+        assert!(!m.cpu.debug_halted());
+        m.reset().unwrap();
+        assert!(m.cpu.debug_halted());
+        assert_eq!(m.bus.read_u32(0xE000_EDF0).unwrap() & 1, 1);
+    }
+
+    #[test]
+    fn vc_buserr_halts_instead_of_pending_the_fault() {
+        use crate::Bus;
+        use crate::Cpu;
+        let (_dp, mut m) = port();
+        // str r0, [r1] — past the 256 KB nRF52840 SRAM.
+        m.bus.write_u16(0x2000_0000, 0x6008).unwrap();
+        m.cpu.r0 = 0x11;
+        m.cpu.r1 = 0x2010_0000;
+        m.cpu.set_pc(0x2000_0000);
+        m.cpu.set_sp(0x2000_2000);
+        m.bus.write_u32(0xE000_EDF0, 0xA05F_0001).unwrap();
+        m.bus.write_u32(0xE000_EDFC, 1 << 8).unwrap();
+        let config = crate::SimulationConfig::default();
+        let observers: Vec<std::sync::Arc<dyn crate::SimulationObserver>> = Vec::new();
+        m.cpu
+            .step_batch(&mut m.bus, &observers, &config, 4)
+            .unwrap();
+        assert!(m.cpu.debug_halted());
+        assert_eq!(m.cpu.pc, 0x2000_0000);
+        assert_eq!(m.cpu.pending_exceptions[0] & ((1 << 5) | (1 << 3)), 0);
+    }
+
+    #[test]
+    fn wfi_sets_dhcsr_s_sleep_until_the_next_instruction() {
+        use crate::Bus;
+        use crate::Cpu;
+        let (_dp, mut m) = port();
+        // wfi (0xBF30); movs r0, #1. 0xBF20 is WFE.
+        m.bus.write_u16(0x2000_0000, 0xBF30).unwrap();
+        m.bus.write_u16(0x2000_0002, 0x2001).unwrap();
+        m.cpu.r0 = 0;
+        m.cpu.set_pc(0x2000_0000);
+        m.cpu.set_sp(0x2000_2000);
+        m.bus.write_u32(0xE000_EDF0, 0xA05F_0001).unwrap();
+        let config = crate::SimulationConfig::default();
+        let observers: Vec<std::sync::Arc<dyn crate::SimulationObserver>> = Vec::new();
+        m.cpu
+            .step_batch(&mut m.bus, &observers, &config, 1)
+            .unwrap();
+        assert_ne!(m.bus.read_u32(0xE000_EDF0).unwrap() & (1 << 18), 0);
+        m.cpu
+            .step_batch(&mut m.bus, &observers, &config, 1)
+            .unwrap();
+        assert_eq!(m.cpu.r0, 1);
+        assert_eq!(m.bus.read_u32(0xE000_EDF0).unwrap() & (1 << 18), 0);
     }
 }

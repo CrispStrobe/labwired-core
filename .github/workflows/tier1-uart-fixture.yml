@@ -1,0 +1,38 @@
+name: Source-built Tier1 UART fixture repair
+on:
+  pull_request:
+    paths:
+      - examples/tier1-fixture/nrf52832/**
+      - examples/tier1-fixture/stm32f103/**
+      - scripts/tier1/uart-repair/**
+      - .github/workflows/tier1-uart-fixture.yml
+permissions:
+  contents: read
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Mock-only qualification controls
+        run: python3 scripts/tier1/uart-repair/test_qualify.py
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          targets: thumbv7m-none-eabi,thumbv7em-none-eabi
+      - uses: Swatinem/rust-cache@v2
+      - name: Build only the two corrected authored fixtures
+        run: |
+          (cd examples/tier1-fixture/nrf52832 && cargo build --locked --release --target thumbv7em-none-eabi)
+          (cd examples/tier1-fixture/stm32f103 && cargo build --locked --release --target thumbv7m-none-eabi)
+          cp target/thumbv7em-none-eabi/release/tier1-fixture-nrf52832 tests/fixtures/tier1/nrf52832.elf
+          cp examples/tier1-fixture/stm32f103/target/thumbv7m-none-eabi/release/tier1-fixture-stm32f103 tests/fixtures/tier1/stm32f103.elf
+      - name: Build the unchanged release CLI
+        run: cargo build --locked --release -p labwired-cli
+      - name: Qualify every existing reported class in both execution modes
+        run: python3 scripts/tier1/uart-repair/qualify.py
+      - name: Retain original source-bound logs, no binaries
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: tier1-uart-repair
+          path: uart-repair-results/*

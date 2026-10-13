@@ -29,6 +29,11 @@ Cycles are not steps: a step that hits a wait-stated peripheral costs more than
 one cycle, so `max_cycles` has to be set from a cycle budget, not scaled off
 `max_steps`.
 
+`peripheral_tick_interval` does not stop the run. Omit it and the machine ticks
+peripherals once per CPU cycle. Set it to N and the machine ticks peripherals
+every N CPU cycles. Zero is rejected. A wider interval runs faster. It can
+change when a peripheral event is observed.
+
 ## Early stop on assertions
 
 A run can finish as soon as its assertions hold, rather than burning the full

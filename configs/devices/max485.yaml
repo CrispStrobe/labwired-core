@@ -1,0 +1,36 @@
+# MAX485 RS-485 transceiver, on the `uart_transceiver` primitive.
+#
+# DI is the MCU's TX and RO its RX, so the part attaches to the UART those two
+# pins reach (`connection:`). DE is active high, /RE is active low. The
+# placement names the pad on each (`de: "PD2"`, `re: "PD2"`), or `high` / `low`
+# for a pin tied to a rail; the usual wiring ties DE and /RE to one pad.
+#
+# What follows from those two pins is in `crates/core/src/peripherals/rs485.rs`:
+# a byte the MCU sends reaches the bus only while DE is enabled; DE and /RE both
+# enabled echoes the MCU's own frame back; a slave answering while DE is still
+# enabled, or two slaves answering together, is a collision and is not
+# delivered. Every slave on the A/B pair is another peer on the same UART, so
+# one pair is one multi-drop segment.
+#
+# Not modelled: line levels, termination, bias, reflections, driver slew and
+# turn-around time.
+type: max485
+
+behavior:
+  primitive: uart_transceiver
+  transceiver:
+    driver_enable: { config: de, active: high }
+    receiver_enable: { config: re, active: low }
+
+metadata:
+  label: "MAX485 RS-485 transceiver"
+  summary: "Half-duplex RS-485 transceiver between a UART and a shared A/B pair."
+  detail: "UART pass-through gated by DE and /RE. A byte the MCU sends reaches the bus only while DE is high; with DE high and /RE low the MCU hears its own frame, as on hardware. A slave byte reaches the MCU only while /RE is low. A slave answering while DE is still high, or two slaves answering together, is reported as bus contention and the colliding bytes are not delivered. Every slave on the A/B pair is one more peer on the UART behind the transceiver. NOT modelled: line levels, termination, bias, reflections and driver turn-around time."
+  category: uart
+  config_keys:
+    - name: de
+      ty: str
+      doc: "Pad on the driver-enable pin (`PD2`), or `high` / `low` when tied to a rail."
+    - name: re
+      ty: str
+      doc: "Pad on the active-low receiver-enable pin /RE, or `high` / `low` when tied to a rail."

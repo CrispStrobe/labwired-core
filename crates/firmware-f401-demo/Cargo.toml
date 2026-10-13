@@ -17,3 +17,9 @@ name = "firmware-f401-demo"
 path = "src/main.rs"
 test = false
 bench = false
+
+[[bin]]
+name = "firmware-f401-hbridge"
+path = "src/hbridge.rs"
+test = false
+bench = false

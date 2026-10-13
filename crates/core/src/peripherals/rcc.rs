@@ -1107,21 +1107,30 @@ pub struct H5Rcc {
     csicfgr: u32,      // 0x18 — reset 0x00200087 (CSITRIM=0x20, CSICAL factory)
     cfgr1: u32,        // 0x1C — SW[2:0] → SWS[5:3]
     cfgr2: u32,        // 0x20
-    pllcfgr: [u32; 3], // 0x28 / 0x2C / 0x30
-    ahb1rstr: u32,     // 0x60
-    ahb2rstr: u32,     // 0x64
-    apb1lrstr: u32,    // 0x74
-    apb1hrstr: u32,    // 0x78
-    apb2rstr: u32,     // 0x7C
-    apb3rstr: u32,     // 0x80
-    ahb1enr: u32,      // 0x88 — reset 0xD0000100
-    ahb2enr: u32,      // 0x8C — reset 0xC0000000 (SRAM2EN|SRAM3EN)
-    apb1lenr: u32,     // 0x9C
-    apb1henr: u32,     // 0xA0
-    apb2enr: u32,      // 0xA4
-    apb3enr: u32,      // 0xA8
-    bdcr: u32,         // 0xF0
-    rsr: u32,          // 0xF4 — reset 0x0C000000 (PINRST|BORRST)
+    pllcfgr: [u32; 3], // 0x28 / 0x2C / 0x30 — PLL1CFGR / PLL2CFGR / PLL3CFGR
+    // PLL divider block (RM0481 / stm32h563xx.h). HAL_RCC_GetSysClockFreq
+    // reads PLL1DIVR for N and P and PLL1FRACR for the fractional part.
+    // HAL_RCC_DeInit restores each DIVR to 0x01010280 and clears each FRACR.
+    pll1divr: u32,  // 0x34
+    pll1fracr: u32, // 0x38
+    pll2divr: u32,  // 0x3C
+    pll2fracr: u32, // 0x40
+    pll3divr: u32,  // 0x44
+    pll3fracr: u32, // 0x48
+    ahb1rstr: u32,  // 0x60
+    ahb2rstr: u32,  // 0x64
+    apb1lrstr: u32, // 0x74
+    apb1hrstr: u32, // 0x78
+    apb2rstr: u32,  // 0x7C
+    apb3rstr: u32,  // 0x80
+    ahb1enr: u32,   // 0x88 — reset 0xD0000100
+    ahb2enr: u32,   // 0x8C — reset 0xC0000000 (SRAM2EN|SRAM3EN)
+    apb1lenr: u32,  // 0x9C
+    apb1henr: u32,  // 0xA0
+    apb2enr: u32,   // 0xA4
+    apb3enr: u32,   // 0xA8
+    bdcr: u32,      // 0xF0
+    rsr: u32,       // 0xF4 — reset 0x0C000000 (PINRST|BORRST)
 }
 
 impl H5Rcc {
@@ -1133,6 +1142,12 @@ impl H5Rcc {
             cfgr1: 0,
             cfgr2: 0,
             pllcfgr: [0; 3],
+            pll1divr: 0x0101_0280,
+            pll1fracr: 0,
+            pll2divr: 0x0101_0280,
+            pll2fracr: 0,
+            pll3divr: 0x0101_0280,
+            pll3fracr: 0,
             ahb1rstr: 0,
             ahb2rstr: 0,
             apb1lrstr: 0,
@@ -1190,6 +1205,12 @@ impl RccModel for H5Rcc {
             0x28 => self.pllcfgr[0],
             0x2C => self.pllcfgr[1],
             0x30 => self.pllcfgr[2],
+            0x34 => self.pll1divr,
+            0x38 => self.pll1fracr,
+            0x3C => self.pll2divr,
+            0x40 => self.pll2fracr,
+            0x44 => self.pll3divr,
+            0x48 => self.pll3fracr,
             0x60 => self.ahb1rstr,
             0x64 => self.ahb2rstr,
             0x74 => self.apb1lrstr,
@@ -1250,6 +1271,12 @@ impl RccModel for H5Rcc {
             0x28 => self.pllcfgr[0] = value,
             0x2C => self.pllcfgr[1] = value,
             0x30 => self.pllcfgr[2] = value,
+            0x34 => self.pll1divr = value,
+            0x38 => self.pll1fracr = value,
+            0x3C => self.pll2divr = value,
+            0x40 => self.pll2fracr = value,
+            0x44 => self.pll3divr = value,
+            0x48 => self.pll3fracr = value,
             0x60 => self.ahb1rstr = value,
             0x64 => self.ahb2rstr = value,
             0x74 => self.apb1lrstr = value,
@@ -2431,6 +2458,10 @@ impl crate::Peripheral for Rcc {
         }
     }
 
+    fn stm32_uart_pad_af_override(&self) -> Option<u8> {
+        matches!(self, Self::Stm32G0(_)).then_some(1)
+    }
+
     /// The RCC is this chip's clock controller: resolve `clock:` register names
     /// through the family map that already exists for them.
     fn clock_gate_reg_offset(&self, name: &str) -> Option<u64> {
@@ -3144,6 +3175,16 @@ mod tests {
         assert_ne!(rcc.read_u32(0xF0).unwrap() & (1 << 27), 0);
         rcc.write_u32(0xF0, 0).unwrap();
         assert_eq!(rcc.read_u32(0xF0).unwrap(), 0);
+        // PLL1DIVR/PLL1FRACR are what HAL_RCC_GetSysClockFreq reads back after
+        // OscConfig. Reset matches the constant HAL_RCC_DeInit writes.
+        assert_eq!(rcc.read_u32(0x34).unwrap(), 0x0101_0280, "PLL1DIVR reset");
+        assert_eq!(rcc.read_u32(0x38).unwrap(), 0, "PLL1FRACR reset");
+        assert_eq!(rcc.read_u32(0x3C).unwrap(), 0x0101_0280, "PLL2DIVR reset");
+        assert_eq!(rcc.read_u32(0x44).unwrap(), 0x0101_0280, "PLL3DIVR reset");
+        rcc.write_u32(0x34, 0x0200_31F9).unwrap();
+        rcc.write_u32(0x38, 0x0000_2000).unwrap();
+        assert_eq!(rcc.read_u32(0x34).unwrap(), 0x0200_31F9);
+        assert_eq!(rcc.read_u32(0x38).unwrap(), 0x0000_2000);
     }
 
     #[test]

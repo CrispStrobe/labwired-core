@@ -1,0 +1,25 @@
+# Pinned customer ELF built by iolinki-reference.yml; overridden with --firmware.
+# Register observations prove startup and CLI descriptor reachability only.
+schema_version: "1.0"
+inputs:
+  firmware: ../../.iolinki-g0-build/reference-device.elf
+  system: ../../configs/systems/iolinki-g0-startup.yaml
+limits:
+  max_steps: 500000
+assertions:
+  - expected_stop_reason: max_steps
+  - memory_value:
+      address: 0x40021860
+      expected_value: 1
+      mask: 7
+  - memory_value:
+      address: 0x40021804
+      expected_value: 1
+      mask: 1
+  - memory_value:
+      address: 0x40021880
+      expected_value: 1
+      mask: 1
+  - memory_value:
+      address: 0x40000028
+      expected_value: 15

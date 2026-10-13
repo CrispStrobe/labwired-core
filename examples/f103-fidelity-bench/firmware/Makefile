@@ -1,7 +1,11 @@
-# Builds the three fidelity-benchmark variants from one source.
-#   build/control.elf   correct firmware (positive control)
-#   build/clockbug.elf  forgets RCC_APB2ENR.USART1EN
-#   build/rambug.elf    stores past the end of the 20 KB SRAM
+# Builds the fidelity-benchmark variants from one source.
+#   build/control.elf    USART1 prints BENCH_UART_OK
+#   build/clockbug.elf   BENCH_UART_OK only if TXE stays clear while USART1 is gated
+#   build/gpiobug.elf    BENCH_GPIO_OK only if a gated GPIOA drops the ODR write
+#   build/rambug.elf     BENCH_RAM_OK only from the fault handler past 20 KB
+#   build/irqtime.elf    TIM2 UIF still clear prints BENCH_UIF_OK
+#   build/nvicclear.elf  cleared NVIC pending prints BENCH_NVIC_OK
+#   build/usartmux.elf   BENCH_UART_OK, and BENCH_POISON must not leave a GPIO PA9
 BUILD_DIR := build
 CROSS ?= arm-none-eabi-
 CC := $(CROSS)gcc
@@ -14,7 +18,9 @@ LDFLAGS := -nostdlib -T bench.ld -Wl,--gc-sections
 SRCS := startup.c main.c
 
 ELVES := $(BUILD_DIR)/control.elf $(BUILD_DIR)/clockbug.elf \
-         $(BUILD_DIR)/gpiobug.elf $(BUILD_DIR)/rambug.elf
+         $(BUILD_DIR)/gpiobug.elf $(BUILD_DIR)/rambug.elf \
+         $(BUILD_DIR)/irqtime.elf $(BUILD_DIR)/nvicclear.elf \
+         $(BUILD_DIR)/usartmux.elf
 
 all: $(ELVES)
 
@@ -32,6 +38,15 @@ $(BUILD_DIR)/gpiobug.elf: $(SRCS) bench.ld | $(BUILD_DIR)
 
 $(BUILD_DIR)/rambug.elf: $(SRCS) bench.ld | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -DRAM_OVERFLOW $(LDFLAGS) $(SRCS) -o $@
+
+$(BUILD_DIR)/irqtime.elf: $(SRCS) bench.ld | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -DIRQ_TIME $(LDFLAGS) $(SRCS) -o $@
+
+$(BUILD_DIR)/nvicclear.elf: $(SRCS) bench.ld | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -DNVIC_CLEAR $(LDFLAGS) $(SRCS) -o $@
+
+$(BUILD_DIR)/usartmux.elf: $(SRCS) bench.ld | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -DUSART_MUX_BUG $(LDFLAGS) $(SRCS) -o $@
 
 clean:
 	rm -rf $(BUILD_DIR)

@@ -14,18 +14,35 @@ use labwired_config::{ChipDescriptor, SystemManifest};
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
 
-/// Default on-disk dumps when `image_env` is unset. Keeps copyrighted ROMs out
-/// of the repo path contract (env still wins) while letting matrix/CLI find the
-/// in-tree `crates/core/roms/esp32c3/*` copies used by e2e gates.
+/// Mask ROMs compiled into the binary. Used when `image_env` is unset so a
+/// process with no repo checkout (the browser, a lab worker whose cwd is not
+/// the workspace) still maps the window. An explicit env path still wins;
+/// an explicit empty env still opts out.
+fn embedded_region_image(env: &str) -> Option<&'static [u8]> {
+    match env {
+        // Minimal B0-compatible RP2040 bootrom. Pico `rom_func_lookup` reads
+        // the table-lookup pointer as a halfword at 0x18. If this window is
+        // absent, that read hits the stage-2 bootloader through the Cortex-M
+        // flash alias — the halfword there is a boot2 opcode (`movs r1, #0`
+        // = 0x2100 on the W25Q080 stage 2) — and the lookup branches into
+        // flash and BusFaults (PC just past that entry, e.g. 0x2106).
+        "LABWIRED_RP2040_BOOTROM" => Some(include_bytes!("../../roms/rp2040/bootrom.bin")),
+        _ => None,
+    }
+}
+
+/// Default on-disk dumps when `image_env` is unset and the image is not
+/// compiled in. Keeps copyrighted ROMs out of the repo path contract (env
+/// still wins) while letting matrix/CLI find the in-tree
+/// `crates/core/roms/esp32c3/*` copies used by e2e gates.
 fn default_region_image_path(env: &str) -> Option<PathBuf> {
     let rel = match env {
         "LABWIRED_ESP32C3_ROM" => "roms/esp32c3/esp32c3_rom.bin",
         "LABWIRED_ESP32C3_ROM_DATA" => "roms/esp32c3/esp32c3_drom.bin",
-        // In-tree minimal B0 bootrom so Arduino/Zephyr `rom_func_lookup` works
-        // on plain `labwired test` without exporting the env. Bare-metal ELFs
-        // that need the Cortex-M flash boot alias at 0 (PIO onboarding) can
-        // set LABWIRED_RP2040_BOOTROM= (empty) to skip the image — from_config
-        // then leaves the region out so flash alias wins.
+        // Same image as `embedded_region_image`; kept so an operator can
+        // still point the env var at a replacement file. Bare-metal ELFs
+        // that need the Cortex-M flash boot alias at 0 (PIO onboarding) set
+        // LABWIRED_RP2040_BOOTROM= (empty) to skip the image.
         "LABWIRED_RP2040_BOOTROM" => "roms/rp2040/bootrom.bin",
         _ => return None,
     };
@@ -140,13 +157,12 @@ impl SystemBus {
     /// mask ROM is `bootrom`). A supplied image wins over the env var and the
     /// in-tree default path.
     ///
-    /// This is how a runtime with no filesystem fills a ROM window: the
-    /// browser cannot read `LABWIRED_RP2040_BOOTROM` or `roms/rp2040/…`, so
-    /// without it the RP2040's base-0 bootrom region was dropped as empty and
-    /// every pico-sdk `rom_func_lookup` read the flash alias instead of the
-    /// ROM's function table. Only `image_env` regions are filled — the ones a
-    /// chip declares as waiting for an image — so an unrelated name in the map
-    /// cannot overwrite RAM.
+    /// This is how a runtime with no filesystem fills a ROM window. The RP2040
+    /// mask ROM is also embedded, so an unset `LABWIRED_RP2040_BOOTROM` still
+    /// maps it when the caller passes no `bootrom` bytes; a supplied image
+    /// wins over that default. Only `image_env` regions are filled — the ones
+    /// a chip declares as waiting for an image — so an unrelated name in the
+    /// map cannot overwrite RAM.
     pub fn from_config_with_region_images(
         chip: &ChipDescriptor,
         manifest: &SystemManifest,
@@ -184,17 +200,13 @@ impl SystemBus {
                 mem.data[..n].copy_from_slice(&bytes[..n]);
                 loaded_image = n > 0;
             } else if let Some(env) = &region.image_env {
-                // Env pin first; else well-known in-tree dumps so Arduino-matrix
-                // / plain `labwired test` can call C3 ROM helpers without
-                // requiring the operator to export LABWIRED_ESP32C3_ROM*.
-                // Explicit empty env → skip image (opt-out of in-tree default).
-                let path_owned = match std::env::var(env) {
-                    Ok(p) if p.is_empty() => None,
-                    Ok(p) => Some(p),
-                    Err(_) => default_region_image_path(env).map(|p| p.display().to_string()),
-                };
-                if let Some(path) = path_owned {
-                    match std::fs::read(&path) {
+                // Env pin first; else the image compiled into this binary; else
+                // a well-known on-disk dump (ESP32-C3 ROMs are not embedded).
+                // Explicit empty env → skip image (opt-out of the in-tree
+                // default, so the Cortex-M flash alias at 0 stays available).
+                match std::env::var(env) {
+                    Ok(p) if p.is_empty() => {}
+                    Ok(path) => match std::fs::read(&path) {
                         Ok(bytes) => {
                             let n = bytes.len().min(mem.data.len());
                             mem.data[..n].copy_from_slice(&bytes[..n]);
@@ -209,6 +221,32 @@ impl SystemBus {
                             "region '{}' image {path} (${env}) unreadable: {e}",
                             region.name
                         ),
+                    },
+                    Err(_) => {
+                        if let Some(bytes) = embedded_region_image(env) {
+                            let n = bytes.len().min(mem.data.len());
+                            mem.data[..n].copy_from_slice(&bytes[..n]);
+                            loaded_image = n > 0;
+                        } else if let Some(path) = default_region_image_path(env) {
+                            match std::fs::read(&path) {
+                                Ok(bytes) => {
+                                    let n = bytes.len().min(mem.data.len());
+                                    mem.data[..n].copy_from_slice(&bytes[..n]);
+                                    loaded_image = n > 0;
+                                    tracing::info!(
+                                        "loaded {n} bytes into '{}' region @ {:#010x} from {}",
+                                        region.name,
+                                        region.base,
+                                        path.display()
+                                    );
+                                }
+                                Err(e) => tracing::warn!(
+                                    "region '{}' image {} (${env}) unreadable: {e}",
+                                    region.name,
+                                    path.display()
+                                ),
+                            }
+                        }
                     }
                 }
             }
@@ -263,6 +301,8 @@ impl SystemBus {
             esp32c3_gpio_idx: None,
             rp2040_io_bank0_idx: None,
             rp2040_sio_idx: None,
+            pad_control_links: Vec::new(),
+            pin_port_ids: Vec::new(),
             rcc_idx: None,
             clock_gating_bypass: false,
             fault_unclocked: std::collections::HashMap::new(),
@@ -286,6 +326,7 @@ impl SystemBus {
             memory_reads: Cell::new(0),
             memory_writes: Cell::new(0),
             peripheral_accesses: Cell::new(0),
+            poll_streak: Cell::new((u32::MAX, 0, 0, 0)),
             legacy_walk_disabled: false,
             resident_tick_interval_override: None,
             gpio_devices: Vec::new(),
@@ -308,6 +349,7 @@ impl SystemBus {
             flash_models_ops: false,
             nordic_gpio_service: false,
             timer_capture_wired: false,
+            wire_inputs_live: false,
             resident_scheduling_disabled: false,
             flash_error_flags_idx: None,
             u5_program_gate_idx: None,
@@ -569,6 +611,10 @@ impl SystemBus {
                     if let Some(err_irq) = p_cfg.config.get("irq_error").and_then(|v| v.as_u64()) {
                         ctl.set_error_irq(err_irq as u32);
                     }
+                    // Which datasheet AF map routes SCL/SDA (`pad_map: stm32g0`).
+                    if let Some(pad_map) = p_cfg.config.get("pad_map").and_then(|v| v.as_str()) {
+                        ctl.set_pad_map(pad_map)?;
+                    }
                     Box::new(ctl)
                 };
                 bus.push_peripheral(p_cfg, controller)?;
@@ -663,7 +709,9 @@ impl SystemBus {
                     // For nRF52 ports, an optional `num_pins` config key caps the
                     // valid-pin range (e.g. 16 for nRF52840 P1 which has P1.0–P1.15).
                     // Writes outside that range are discarded; reads return 0.
-                    if layout == GpioRegisterLayout::Nrf52 || layout == GpioRegisterLayout::Nrf54l {
+                    let port = if layout == GpioRegisterLayout::Nrf52
+                        || layout == GpioRegisterLayout::Nrf54l
+                    {
                         let num_pins: u32 = p_cfg
                             .config
                             .get("num_pins")
@@ -675,7 +723,7 @@ impl SystemBus {
                         } else {
                             crate::peripherals::gpio::GpioPort::new_nrf52(num_pins)
                         };
-                        Box::new(port.with_window_offset(window_offset))
+                        port.with_window_offset(window_offset)
                     } else if layout == GpioRegisterLayout::Stm32V2
                         && p_cfg.config.contains_key("reset_moder")
                     {
@@ -689,19 +737,22 @@ impl SystemBus {
                                 .map(|n| n as u32)
                                 .unwrap_or(0)
                         };
-                        Box::new(
-                            crate::peripherals::gpio::GpioPort::new_stm32v2_with_resets(
-                                cfg_u32("reset_moder"),
-                                cfg_u32("reset_ospeedr"),
-                                cfg_u32("reset_pupdr"),
-                            )
-                            .with_window_offset(window_offset),
+                        crate::peripherals::gpio::GpioPort::new_stm32v2_with_resets(
+                            cfg_u32("reset_moder"),
+                            cfg_u32("reset_ospeedr"),
+                            cfg_u32("reset_pupdr"),
                         )
+                        .with_window_offset(window_offset)
                     } else {
-                        Box::new(
-                            crate::peripherals::gpio::GpioPort::new_with_layout(layout)
-                                .with_window_offset(window_offset),
-                        )
+                        crate::peripherals::gpio::GpioPort::new_with_layout(layout)
+                            .with_window_offset(window_offset)
+                    };
+                    // Optional `pad_control`: the id of the block that keeps
+                    // this port's pulls (Kinetis PORTx, RA PFS, i.MX RT
+                    // IOMUXC). See `crate::pins::PadControl`.
+                    match Self::gpio_pad_control_for(p_cfg, layout)? {
+                        Some((block, control)) => Box::new(port.with_pad_control(block, control)),
+                        None => Box::new(port),
                     }
                 }
                 // ESP32-C3 behavioral GP-SPI2 controller (CPU/W-buffer
@@ -1007,10 +1058,15 @@ impl SystemBus {
         // the UART indices 14/17/198 are the classic part's alone.
         bus.wire_esp32_spi_pads();
         bus.wire_esp32_uart_pads();
+        // And every ESP matrix-only output — the LEDC channels (classic
+        // 71..86, C3 45..50, S3 73..80) — so PWM duty reaches the pad it was
+        // routed to. One capability-driven pass for all three chips.
+        bus.wire_esp_matrix_outputs();
         // RP2040: bind I²C wires to the pads IO_BANK0's FUNCSEL can route them to.
         bus.wire_rp2040_i2c_pads();
         // Same for the RP2040 UARTs' TX/RX, so serial output is a waveform on
-        // the routed pad and not just console text.
+        // the routed pad and not just console text. This pass also pairs the
+        // SIO with IO_BANK0 for the GPIO interrupt.
         bus.wire_rp2040_uart_pads();
         // And the RP2040 SPI controllers' SCK/MOSI/CSn, so a probe on an SPI pad
         // measures the shifted bytes rather than the SIO output latch. MISO is
@@ -1163,7 +1219,8 @@ impl SystemBus {
     ///
     /// Public so kits (`Transport::GpioGroup`) and hand arms share one choke
     /// point — the same path `AttachCtx::install_gpio_observer` uses.
-    pub fn install_gpio_observer<T>(bus: &mut SystemBus, observer: std::sync::Arc<T>)
+    /// Returns whether an observer-capable GPIO block took it.
+    pub fn install_gpio_observer<T>(bus: &mut SystemBus, observer: std::sync::Arc<T>) -> bool
     where
         T: crate::peripherals::device::GpioObserver + 'static,
     {
@@ -1173,7 +1230,7 @@ impl SystemBus {
                 any.and_then(|a| a.downcast_mut::<crate::peripherals::esp32s3::gpio::Esp32s3Gpio>())
             {
                 gpio.add_observer(observer);
-                return;
+                return true;
             }
         }
         // Classic ESP32 GPIO (separate type).
@@ -1184,8 +1241,10 @@ impl SystemBus {
                 .and_then(|a| a.downcast_mut::<crate::peripherals::esp32::gpio::Esp32Gpio>())
             {
                 gpio.add_observer(observer);
+                return true;
             }
         }
+        false
     }
 
     #[allow(dead_code)] // residual GPIO helpers kept for CAN/tester arms that may re-use them

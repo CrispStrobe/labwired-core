@@ -6,8 +6,10 @@ import json
 import re
 
 from ._native import Machine, StopReason, ExpectTimeout, NotSupported, NativeSession
+from ._lower import LowerUnavailable, DiagramError, lower as lower_diagram, meter_readings
 
-__all__ = ['Sim', 'Machine', 'StopReason', 'Match', 'Run', 'ExpectTimeout', 'NotSupported', 'run_firmware']
+__all__ = ['Sim', 'World', 'Machine', 'StopReason', 'Match', 'Run', 'Edge', 'ExpectTimeout', 'NotSupported',
+           'LowerUnavailable', 'DiagramError', 'lower_diagram', 'run_firmware']
 
 @dataclass(frozen=True)
 class Match:
@@ -23,6 +25,44 @@ class Run:
     time: float
     cycles: int
     matches: list
+
+
+@dataclass(frozen=True)
+class Edge:
+    """One level change on a watched pad."""
+    pad: str
+    level: bool
+    cycle: int
+    time: float
+
+
+def _pad_ref(pad, pads):
+    """A pad as (peripheral, pin): a diagram pin name, 'gpiob:4', or a tuple."""
+    if isinstance(pad, (tuple, list)) and len(pad) == 2:
+        return str(pad[0]), int(pad[1])
+    text = str(pad)
+    if text in pads:
+        ref = pads[text]
+        return ref['peripheral'], int(ref['pin'])
+    match = re.fullmatch(r'([A-Za-z0-9_]+):(\d+)', text)
+    if match:
+        return match.group(1), int(match.group(2))
+    known = ', '.join(sorted(pads)) or 'none: the drawing wires no pin of this chip'
+    raise ValueError(f'unknown pad {text!r}; use a pin the diagram wires ({known}) or "peripheral:pin"')
+
+
+class _Edges:
+    """Pad watching shared by a Sim and a World machine."""
+    def _arm(self, pads, arm):
+        self._watched = [_pad_ref(p, self._pads) for p in pads]
+        self._watch_names = [p if isinstance(p, str) else f'{p[0]}:{p[1]}' for p in pads]
+        self._edge_cursor = 0
+        return arm(self._watched)
+
+    def _drain(self, read, hz):
+        batch = json.loads(read(self._edge_cursor))
+        self._edge_cursor = batch['cursor']
+        return [Edge(self._watch_names[e['ch']], bool(e['value']), e['cycle'], e['cycle'] / hz) for e in batch['edges']]
 
 
 def _nanoseconds(value):
@@ -46,13 +86,28 @@ def _nanoseconds(value):
     return nanos
 
 
-class Sim:
+class Sim(_Edges):
     """One ELF, one machine. Execution only advances during run_for/expect.
 
     ``uart`` is a peripheral ID, and ``set_pin`` takes a board_io binding ID.
     ``expect``, ``read_uart`` and ``read_uart_bytes`` consume one shared stream; transcripts do not.
+
+    ``Sim(elf, diagram="board.json")`` runs a drawing: the diagram is lowered by
+    ``labwired-lower`` (the compiler the playground and the hosted API use), its
+    analog island and bench instruments included. A diagram with several MCUs
+    returns a :class:`World`, and ``elf`` is then a mapping from part id to ELF.
     """
-    def __init__(self, elf, *, chip=None, system=None, uart=None, coverage=False):
+    def __new__(cls, elf=None, *, diagram=None, chip_yaml=None, **kw):
+        if diagram is None:
+            return super().__new__(cls)
+        from ._diagram import open_diagram
+        return open_diagram(cls, elf, diagram, chip_yaml, kw)
+
+    def __init__(self, elf, *, chip=None, system=None, diagram=None, chip_yaml=None, uart=None, coverage=False):
+        if getattr(self, '_ready', False):
+            return  # opened from a diagram by __new__
+        if diagram is not None:
+            raise TypeError('diagram is handled in __new__')
         if (chip is None) == (system is None):
             raise ValueError('provide exactly one of chip or system')
         chip_path = None
@@ -70,6 +125,8 @@ class Sim:
                 system_path = candidate
         self._session = NativeSession(Path(elf), chip_path, system_path, uart, root, bool(coverage))
         self._transcript = ''
+        self._pads = {}
+        self._ready = True
 
     @property
     def closed(self):
@@ -140,6 +197,14 @@ class Sim:
     def list_inputs(self):
         return [dict(device=device, **channel)
                 for device, channel in json.loads(self._open().list_inputs())]
+
+    def set_signal(self, path, value):
+        """Set a signal of the analog island, such as ``"ui.touch.pressed"``.
+
+        The value is a number (``True`` and ``False`` count as 1 and 0) and
+        stays until set again. A path no circuit reads raises ``ValueError``.
+        """
+        self._open().set_signal(path, float(value))
 
     def set_pin(self, binding, active):
         self._open().set_pin(binding, active)
@@ -220,6 +285,41 @@ class Sim:
         raw = self._open().fault_verdict()
         return None if raw is None else json.loads(raw)
 
+    def watch(self, *pads):
+        """Watch GPIO pads for level changes; returns each pad's level now.
+
+        A pad is a pin the diagram wires (``"PB4"``), ``"gpiob:4"``, or a
+        ``(peripheral, pin)`` pair. ``edges()`` then returns what changed.
+        """
+        return self._arm(pads, lambda refs: self._open().watch_logic(refs))
+
+    def edges(self):
+        """Level changes on the watched pads since the last call, oldest first."""
+        session = self._open()
+        return self._drain(session.logic_edges, session.cpu_hz)
+
+    @property
+    def cpu_hz(self):
+        return self._open().cpu_hz
+
+    def analog_trace(self):
+        """The analog island's waveform as CSV, as `labwired test --analog-trace` writes it."""
+        return self._open().analog_trace()
+
+    def meters(self):
+        """Readings of every multimeter in the drawing, from the playground's own function.
+
+        One dict per meter: ``meter``, ``mode``, ``unit``, ``value`` (``None``
+        when there is no reading), ``display``, ``overload``, ``settled``.
+        """
+        return meter_readings(self.analog_trace())
+
+    def meter(self, name):
+        for reading in self.meters():
+            if reading['meter'] == name:
+                return reading
+        raise KeyError(f'no multimeter {name!r} in the analog trace')
+
     def coverage(self):
         """Firmware coverage so far, as a dict: per-file lines, per-function
         summary, branch counts, percentages, and the LCOV text under ``lcov``.
@@ -235,3 +335,6 @@ def run_firmware(elf, *, duration='1s', chip=None, system=None, uart=None,
         matches = [sim.expect(pattern, timeout=timeout) for pattern in patterns]
         reason = sim.run_for(duration)
         return Run(sim.uart_transcript(), reason, sim.time, sim.cycles, matches)
+
+
+from .world import World  # noqa: E402  (World needs the names above)
