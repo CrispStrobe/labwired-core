@@ -128,6 +128,7 @@ impl SystemBus {
             io_voltage_v: None,
             gpio_input_thresholds: None,
             supply: crate::power::SupplySupervisor::default(),
+            supply_domains: Default::default(),
             external_device_decls: Vec::new(),
             semihost: SemihostState::new(),
         };
@@ -223,6 +224,7 @@ impl SystemBus {
             io_voltage_v: None,
             gpio_input_thresholds: None,
             supply: crate::power::SupplySupervisor::default(),
+            supply_domains: Default::default(),
             external_device_decls: Vec::new(),
             semihost: SemihostState::new(),
         };
@@ -418,14 +420,13 @@ impl SystemBus {
     /// [`crate::Machine::inspect`] can name the live models it finds.
     ///
     /// The ONE home for this. Every path that attaches manifest-declared
-    /// external devices must call it, and there are exactly two:
-    /// [`Self::from_config`] (every MCU family that loads peripherals from a
-    /// chip descriptor) and
-    /// [`crate::system::xtensa::attach_esp32_external_devices`] (classic ESP32,
-    /// whose peripheral bank is built in Rust and bypasses `from_config`'s
-    /// peripheral loop). `record_external_devices_has_one_home` in
-    /// `crates/core/tests/inspect_external_devices.rs` fails if a third path
-    /// appears.
+    /// external devices must call it, and there are exactly three:
+    /// [`Self::from_config`] (descriptor-built MCU platforms),
+    /// [`crate::system::xtensa::attach_esp32_external_devices`] (the classic
+    /// ESP32 programmatic peripheral bank), and
+    /// [`Self::attach_manifest_external_devices`] (other programmatic platforms).
+    /// `record_external_devices_has_one_home` in
+    /// `crates/core/tests/inspect_external_devices.rs` guards these callers.
     ///
     /// Idempotent: recording replaces, so a bus built through both paths does
     /// not list a device twice.
