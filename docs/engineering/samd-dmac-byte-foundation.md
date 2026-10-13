@@ -1,15 +1,17 @@
 # SAMD51 DMAC byte foundation
 
-Status: implementation lane claimed after the qualified
+Status: bounded software-triggered byte foundation landed in
+[PR210](https://github.com/CrispStrobe/labwired-core/pull/210), after the qualified
 [split-IRQ checkpoint](../receipts/2026-10-12-samd-sercom-split-irq/README.md).
-The opt-in candidate implementation and tests are authored; hosted correctness,
-actual guest qualification and merge remain pending. No passing DMA result is
-claimed from source declarations or local formatting.
+Both final-source guest profiles passed90 cases and36 interrupt entries/returns
+each; all22 enabled checks passed. Read the
+[source-bound receipt](../receipts/2026-10-12-samd-dmac-byte/README.md).
+Live peripheral DMA, production clock binding and native Arcade remain unqualified.
 
 ## Selected first boundary
 
-Author an MIT, explicitly opt-in `sam_dmac_byte` model from primary register
-facts. Do not copy ASF4 implementations or import vendor-restricted headers.
+The authored MIT, explicitly opt-in `sam_dmac_byte` model uses primary register
+facts; no ASF4 implementation or vendor-restricted header was copied/imported.
 Do not change the production PyBadge descriptor, application pins or captures.
 Reserve `sam_dmac` with an explicit not-admitted refusal; it must not silently
 fall through the generic name heuristic to an unrelated STM32 DMA register map.
@@ -26,7 +28,7 @@ single unlinked descriptors, fixed or unit-increment addresses, and NOACT/INT
 block actions. Fetch descriptors through the real bus. Observe each byte's
 read/write result before decrementing the count. On transfer bus error, retain
 the failed beat's count, write back progress, disable the channel and expose
-TERR without TCMPL. Clear VALID in final/error writeback. Completion interrupt
+TERR without newly raising TCMPL. Clear VALID in final/error writeback. Completion interrupt
 depends on the selected block action and enabled interrupt, not host injection.
 
 Mapped descriptor, data and writeback targets are limited to primary SystemBus
@@ -81,6 +83,38 @@ width description need care for wider beats. The byte-only slice has an
 unambiguous unit increment; wider beat/address math remains a separate review.
 
 ## Follow-on, not reached
+
+### Next bounded lane — live SERCOM4 TX byte requests
+
+**Files:** `crates/core/src/peripherals/sam/dmac_byte.rs`,
+`crates/core/src/peripherals/sam/sercom_spi.rs`, `crates/core/src/lib.rs`,
+`crates/core/src/bus/accessors.rs`, bus scheduling/IRQ reconciliation, and a
+separate authored integration guest. Preserve the software-only profile and its
+refusal tests; add explicitly selected peripheral admission, not arbitrary MMIO.
+
+Primary facts: DS60001507F section22.8.16 assigns SERCOM4 TX trigger0x0d,
+RX0x0c and BURST action2; section35.6.4.1 makes TX requests depend on an empty
+TX DATA buffer, independently of CPU interrupt enable. The selected board's
+SERCOM4 DATA is0x43000028. DMAC's MCLK AHBMASK gate is bit9; SERCOM4's current
+APBDMASK bit0 and GCLK channel34 are separate gates. Qualify the selected clock
+bindings without claiming nominal SPI delay is a derived CPU/kernel frequency.
+
+Introduce a reviewed endpoint readiness/accepted-beat capability. Existing SPI
+register stores return `Ok` even when an occupied/disabled controller ignores
+DATA: bus success alone must not decrement BTCNT or establish completion.
+Not-ready, accepted and actual transfer faults must remain distinct. Retain
+descriptor/writeback RAM checks and scheduler wake harvesting after accepted
+DATA writes. No host-injected request or IRQ may substitute for guest execution.
+
+**Done when:** a CPU-authored descriptor feeds an owned SPI device exact ordered
+bytes, stalls without count/writeback progress while not ready, and resumes
+after each admitted gate reopens. Test disabled/full endpoints, wrong trigger/
+width/direction, reset and IRQ masks. Observe last DATA acceptance, final DMA
+writeback/TC flag, last device frame and SPI TXC separately; do not release CS
+or report a CODAL success callback at DMA completion alone. Compare both feature
+profiles and relevant forced-walk/batch1/64/1024 controls. Preserve original
+failures, source/job/tree bindings and every enabled check before landing.
+RX, links, abort/suspend, physical arbitration and CODAL fibers remain separate.
 
 Add live SERCOM DRE/RXC triggers, production AHB clock gating, descriptor
 chaining/abort/suspend/error distinctions and final SPI TXC controls. Then

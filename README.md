@@ -334,6 +334,12 @@ repository workflow, and [SECURITY.md](SECURITY.md) for security issues.
 
 ## Repository scope
 
+This fork's [SAMD51 byte-DMA checkpoint](docs/receipts/2026-10-12-samd-dmac-byte/README.md)
+qualifies an opt-in software-triggered RAM-transfer foundation through authored
+CPU guests. Live SPI DMA, no-ASF runtime integration and active PyBadge/Arcade
+performance remain separate [next tasks](docs/engineering/samd-dmac-byte-foundation.md#next-bounded-lane--live-sercom4-tx-byte-requests).
+This source checkpoint does not update a released engine or application pin.
+
 This repository owns the core simulator and its validation assets: CPU, bus, memory,
 peripheral, and external device execution; chip and system descriptors; CLI, test runner,
 debug adapters, and snapshot/trace tooling; and hardware-target validation metadata.

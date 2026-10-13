@@ -178,6 +178,13 @@ this lane alone does not qualify the native DMA driver.
 
 ## P4 — SAM DMAC and driver completion (after P1/P2)
 
+**Bounded prerequisite reached:** [PR210](https://github.com/CrispStrobe/labwired-core/pull/210)
+landed the opt-in software-triggered BYTE/RAM foundation. Both final-source
+profiles passed90 guest cases/36 interrupt entries and returns each, after all22
+enabled checks passed. Read its [receipt](../receipts/2026-10-12-samd-dmac-byte/README.md)
+and [next live-TX lane](samd-dmac-byte-foundation.md#next-bounded-lane--live-sercom4-tx-byte-requests).
+This does not complete P4 or admit the production descriptor/native runtime.
+
 **Files:** new SAM DMAC peripheral/factory/descriptor, bus request/IRQ seams,
 PyBadge chip descriptor and authored descriptor guests.
 
