@@ -86,11 +86,22 @@ unambiguous unit increment; wider beat/address math remains a separate review.
 
 ### Next bounded lane — live SERCOM4 TX byte requests
 
-The bus acceptance prerequisite is now claimed separately. Its candidate must
-reuse the byte-MMIO write bookkeeping, explicitly deny unsupported/shadowed/
-aliased routes, honor live clocks, and distinguish accepted from not-ready.
-No hardware-triggered DMAC profile or production descriptor is admitted by
-this claim. Qualification and bus-source merge remain pending.
+The bus acceptance prerequisite landed in
+[PR214](https://github.com/CrispStrobe/labwired-core/pull/214), after both
+final-source profiles and all22 enabled checks passed. Read the
+[bounded bus receipt](../receipts/2026-10-13-samd-spi-bus/README.md).
+It shares byte-MMIO bookkeeping, denies unsupported/shadowed/aliased routes,
+honors live clocks, and distinguishes accepted from not-ready. These are host
+bus controls with CPU time advancement, not a CPU-programmed peripheral DMA
+guest. No hardware-triggered profile or production descriptor is admitted yet.
+
+**Claimed next implementation:** an explicitly opt-in SAMD51 SERCOM4 TX byte
+profile, using the landed bus acceptance seam. Preserve the software-only
+profile and its90 guest cases. CPU-authored descriptors must exercise actual
+hardware-request polling, count/writeback progress, clock stalls, reset and IRQ
+return without host-injected requests or completion. Final wire delivery/TXC,
+CS release and callback/fiber integration remain separately observed boundaries;
+no native Arcade or performance result follows from this claim.
 
 The controller-local endpoint prerequisite landed in
 [PR212](https://github.com/CrispStrobe/labwired-core/pull/212):
