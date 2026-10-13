@@ -92,11 +92,14 @@ aliased routes, honor live clocks, and distinguish accepted from not-ready.
 No hardware-triggered DMAC profile or production descriptor is admitted by
 this claim. Qualification and bus-source merge remain pending.
 
-Endpoint prerequisite implementation is claimed for the next change: expose
-controller-local TX readiness and explicit byte acceptance with default refusal
-for other peripherals. It is not yet connected to Bus/DMAC or qualified;
-existing guest and new endpoint controls must pass hosted checks first.
-Bus clock/alias/observer/scheduler integration remains a separate admission step.
+The controller-local endpoint prerequisite landed in
+[PR212](https://github.com/CrispStrobe/labwired-core/pull/212):
+`Peripheral::dma_tx_request` and `try_dma_write_tx_u8` expose readiness and
+explicit acceptance, with default refusal for other peripherals. Both profile
+host controls and existing SPI/byte-DMA guests passed; all22 enabled checks
+succeeded. Read the [bounded receipt](../receipts/2026-10-13-samd-spi-endpoint/README.md).
+These methods are not connected to Bus/DMAC. Bus clock/alias/observer/scheduler
+integration remains a separate admission step, not a reached DMA capability.
 
 **Files:** `crates/core/src/peripherals/sam/dmac_byte.rs`,
 `crates/core/src/peripherals/sam/sercom_spi.rs`, `crates/core/src/lib.rs`,
@@ -111,12 +114,22 @@ SERCOM4 DATA is0x43000028. DMAC's MCLK AHBMASK gate is bit9; SERCOM4's current
 APBDMASK bit0 and GCLK channel34 are separate gates. Qualify the selected clock
 bindings without claiming nominal SPI delay is a derived CPU/kernel frequency.
 
-Introduce a reviewed endpoint readiness/accepted-beat capability. Existing SPI
+Integrate the landed readiness/accepted-beat capability through the bus seam. Existing SPI
 register stores return `Ok` even when an occupied/disabled controller ignores
 DATA: bus success alone must not decrement BTCNT or establish completion.
 Not-ready, accepted and actual transfer faults must remain distinct. Retain
 descriptor/writeback RAM checks and scheduler wake harvesting after accepted
 DATA writes. No host-injected request or IRQ may substitute for guest execution.
+
+**Next bus prerequisite:** reuse the landed controller hooks through a
+default-refusing bus operation. Share the existing byte-MMIO write choke's
+clock checks, non-consuming observer sample, scheduler synchronization/wakes,
+IRQ reconciliation and dynamic pump-index updates. Preserve ordinary CPU store
+behavior. Reject aliases, memory-shadowed routes and unsupported endpoints
+before transfer; do not use a raw peripheral call or concrete-type downcast to
+bypass those guards. No observer write or DMA progress may be reported for a
+not-ready result. Qualify accepted/rejected writes, paused clocks, reset,
+observer notifications and both feature profiles before wiring hardware DMA.
 
 **Done when:** a CPU-authored descriptor feeds an owned SPI device exact ordered
 bytes, stalls without count/writeback progress while not ready, and resumes
