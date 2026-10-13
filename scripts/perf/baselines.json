@@ -1,7 +1,7 @@
 {
   "atmega328p": {
     "batch": 6.4,
-    "step": 861.2
+    "step": 922.6
   },
   "atsamd21": {
     "batch": 1.3,
@@ -17,11 +17,11 @@
   },
   "atsamd51-pybadge": {
     "batch": 1.3,
-    "step": 845.5
+    "step": 871.3
   },
   "efr32mg26": {
     "batch": 2.5,
-    "step": 1875.5
+    "step": 1480.7
   },
   "esp32": {
     "batch": 1.3,
@@ -51,7 +51,7 @@
   },
   "nrf51822": {
     "batch": 2.1,
-    "step": 1577.4
+    "step": 1298.7
   },
   "nrf52832": {
     "batch": 1.9,
