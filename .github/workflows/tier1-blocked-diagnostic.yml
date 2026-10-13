@@ -1,0 +1,49 @@
+name: Source-bound Tier1 blocked-cell diagnostic
+on:
+  pull_request:
+    paths: ['scripts/tier1-diagnostic/**', '.github/workflows/tier1-blocked-diagnostic.yml']
+permissions:
+  contents: read
+jobs:
+  observe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: baseline
+            source: 97a8cd99b27539d2ea28e3746998e4d993b18bba
+          - label: candidate
+            source: 9b819fe1cf9c616936cb06515839f8d831c05527
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ matrix.source }}
+          path: engine-source
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: engine-source -> target
+      - name: Build pinned diagnostic CLI
+        working-directory: engine-source
+        env:
+          EXPECTED_SOURCE: ${{ matrix.source }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE"
+          cargo build --locked --release -p labwired-cli
+      - name: Capture bounded execution-mode comparisons
+        env:
+          EXPECTED_SOURCE: ${{ matrix.source }}
+          DIAGNOSTIC_LABEL: ${{ matrix.label }}
+        run: |
+          python3 scripts/tier1-diagnostic/test_capture.py
+          python3 scripts/tier1-diagnostic/capture.py
+      - name: Preserve bounded diagnostic observations (no ELF)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: tier1-blocked-${{ matrix.label }}
+          path: tier1-observations/*
