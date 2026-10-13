@@ -8,7 +8,7 @@ concurrency:
   group: real-services-${{ github.ref }}
   cancel-in-progress: true
 env:
-  LABWIRED_SERVICES_SOURCE: 1b860754fee56c0e66f066ac8eb1b65e8e633da3
+  LABWIRED_SERVICES_SOURCE: e94763d5dca864e706a8896e32a5d38529ac3b4d
 jobs:
   services-guest:
     runs-on: ubuntu-24.04
@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: CrispStrobe/codal-samd
-          ref: 1b860754fee56c0e66f066ac8eb1b65e8e633da3
+          ref: e94763d5dca864e706a8896e32a5d38529ac3b4d
           path: owned-services-source
           persist-credentials: false
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
