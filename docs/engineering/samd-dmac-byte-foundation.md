@@ -86,6 +86,12 @@ unambiguous unit increment; wider beat/address math remains a separate review.
 
 ### Next bounded lane — live SERCOM4 TX byte requests
 
+Endpoint prerequisite implementation is claimed for the next change: expose
+controller-local TX readiness and explicit byte acceptance with default refusal
+for other peripherals. It is not yet connected to Bus/DMAC or qualified;
+existing guest and new endpoint controls must pass hosted checks first.
+Bus clock/alias/observer/scheduler integration remains a separate admission step.
+
 **Files:** `crates/core/src/peripherals/sam/dmac_byte.rs`,
 `crates/core/src/peripherals/sam/sercom_spi.rs`, `crates/core/src/lib.rs`,
 `crates/core/src/bus/accessors.rs`, bus scheduling/IRQ reconciliation, and a
