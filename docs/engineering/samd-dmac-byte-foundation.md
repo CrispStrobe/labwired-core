@@ -95,14 +95,14 @@ honors live clocks, and distinguishes accepted from not-ready. These are host
 bus controls with CPU time advancement, not a CPU-programmed peripheral DMA
 guest. No hardware-triggered profile or production descriptor is admitted yet.
 
-**Implemented, landed-source qualification pending:** an explicitly opt-in SAMD51 SERCOM4 TX byte
+**Qualified and landed:** an explicitly opt-in SAMD51 SERCOM4 TX byte
 profile, using the landed bus acceptance seam. Preserve the software-only
 profile and its90 guest cases. CPU-authored descriptors must exercise actual
 hardware-request polling, count/writeback progress, clock stalls, reset and IRQ
 return without host-injected requests or completion. See the
 [original qualification and concurrent landing drift](../receipts/2026-10-13-samd-sercom4-tx/README.md).
-PR216 landed, but its frozen final tree/parent audit failed after concurrent
-main advancement; fresh qualification is required before claiming completion.
+PR216's concurrent landing drift is preserved; PR217's fresh both-profile
+qualification and successful exact-tree landed audit close that gap.
 Final wire delivery/TXC,
 CS release and callback/fiber integration remain separately observed boundaries;
 no native Arcade or performance result follows from this claim.
@@ -155,6 +155,18 @@ or report a CODAL success callback at DMA completion alone. Compare both feature
 profiles and relevant forced-walk/batch1/64/1024 controls. Preserve original
 failures, source/job/tree bindings and every enabled check before landing.
 RX, links, abort/suspend, physical arbitration and CODAL fibers remain separate.
+
+**Claimed completion-order lane:** add focused CPU-authored TX guests that
+separately observe final accepted DATA, zero-count writeback/TC, last slave
+byte, TXC, GPIO CS release and an actual guest driver callback call/return.
+Use existing read-only bus/instruction observers and owned slave hooks, not
+injected completion. Require a genuine DMA-complete/TXC-low window and an
+exactly caught premature-release/callback mutant. Exercise paused clocks,
+masked interrupts and reset/error outcomes under both profiles and admitted
+walk/batch controls. An authored driver callback is not actual CODAL
+events/fibers; that integration and selected no-ASF4 runtime qualification
+remain the next separate boundary. No native Arcade, performance, physical
+timing or app-adoption claim follows from these ordering fixtures.
 
 Add live SERCOM DRE/RXC triggers, production AHB clock gating, descriptor
 chaining/abort/suspend/error distinctions and final SPI TXC controls. Then
