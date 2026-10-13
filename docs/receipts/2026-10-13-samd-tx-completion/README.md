@@ -53,3 +53,22 @@ This is an authored CPU-driver callback, not CODAL events/fibers or native
 Arcade. Deliberately slow byte timing is not representative throughput, RTx or
 physical timing. No engine implementation, app pin, drift acknowledgement,
 capture, expiry or performance threshold changed.
+
+## Subsequent real-service clock qualification — pending
+
+The separate real CODAL service candidate has preserved two actual clock
+failures, rather than treating baseline fiber success as runtime completion.
+[Run38450843463](https://github.com/CrispStrobe/labwired-core/actions/runs/38450843463)
+reproduced stale Event delivery from an IRQ already pending at disable.
+[Run38453968112](https://github.com/CrispStrobe/labwired-core/actions/runs/38453968112)
+retired that disabled IRQ without an Event, but failed after resume with three
+IRQ entry/return pairs instead of two. Later clock cases did not execute.
+
+The next candidate pins
+[`c153f8dab17742588b1ad1a49ede26f3cf04ae14`](https://github.com/CrispStrobe/codal-samd/commit/c153f8dab17742588b1ad1a49ede26f3cf04ae14),
+whose [standalone build38456953523](https://github.com/CrispStrobe/codal-samd/actions/runs/38456953523)
+passed for all four images. It stops periodic SysTick at handler entry and
+defers compare rearming until the actual CODAL callback finishes. The expected
+eight guest cases, exact clock counts, masked-pending boundaries and two
+scheduler profiles are unchanged. Build success is not guest qualification,
+whole-image admission, native Arcade, app adoption or a performance result.
