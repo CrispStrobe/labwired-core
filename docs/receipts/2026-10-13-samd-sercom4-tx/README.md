@@ -60,11 +60,36 @@ The difference is limited to `scripts/perf/baselines.json`,
 implementation, guest tests and workflow are unchanged. This identity check
 does not substitute for qualification of the actual refreshed source.
 
-## Required follow-up before completion-order integration
+## Refreshed qualification closes the landing gap
 
-Qualify the actual refreshed base through both existing PR guest profiles and
-the complete enabled check census. Preserve the old originals; bind fresh
-results to their own source/base/tree and actual checkout. Record any further
+[PR217](https://github.com/CrispStrobe/labwired-core/pull/217) qualified the actual
+landed base, then merged as `c8b0fc554ba881e3c9bab267dfcee774c47aa93d`.
+Source `95bb3e86c859a4f30e33948eada4d6267157e368`, base
+`709eb97f259434b736623744d7fa18f7fde1bd77` and actual checkout
+`7ebdd61e79824fab36b785758d8240674e41fec2` share reviewed/tested/landed tree
+`c7c642521b90d2f71277f075bbd402d6bfed2ab2`.
+[Rust run38389018352](https://github.com/CrispStrobe/labwired-core/actions/runs/38389018352)
+passed all15 enabled documentation-PR checks and four declared skips. Both
+fresh profiles passed the same228/456 cases and84/168 actual exception
+entries/returns,456/912 wire bytes,3 named tests and preserved controls, with
+no missing or duplicate cases. Source code and app pins did not change.
+
+The new sole official originals are
+[off115267852712](https://github.com/CrispStrobe/labwired-core/actions/runs/38389018352/job/115267852712),
+700393 bytes/SHA256`cc0c0dde51deed4abf8717e40ae8c7f6dd22b2aa578b3dee905a1705e6e2e07b`,
+and [on115267852625](https://github.com/CrispStrobe/labwired-core/actions/runs/38389018352/job/115267852625),
+207219 bytes/SHA256`edae26f86bfe021ae7aae16f1a9ee559328f19a5eb62d4bfcdcdee4333f1034a`.
+Separate PR217-bound readers were frozen before acquisition: original reader
+SHA256`649efc3a5966d6f83fd529f6939be9cd64f3fb2f02d18f49c4657d49079fe4ff`
+passed3 synthetic positives/53 refusals; final admission reader
+SHA256`c8b5762989390ca456b4274efc585fb3374df6853ad25c6fbfbf24337ff9acde`
+passed1 census positive/9 refusals. Both source-bound original audits and final
+landed admission passed. The PR216 drift failure above remains preserved.
+
+## Next: completion-order integration
+
+Preserve the old originals; bind new results to their own source/base/tree and
+actual checkout. Record any further
 merge drift explicitly, rather than weakening an admission reader or erasing
 failures. The [DMA engineering contract](../../engineering/samd-dmac-byte-foundation.md)
 remains authoritative for final DATA/count/writeback/TC, wire/TXC, CS and
