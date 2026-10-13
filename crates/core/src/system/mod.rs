@@ -8,3 +8,6 @@ pub mod node;
 pub mod riscv;
 pub mod wifi;
 pub mod xtensa;
+
+pub mod rv1103_basket;
+pub mod rv1103_linux;
