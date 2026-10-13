@@ -86,6 +86,36 @@ unambiguous unit increment; wider beat/address math remains a separate review.
 
 ### Next bounded lane — live SERCOM4 TX byte requests
 
+The bus acceptance prerequisite landed in
+[PR214](https://github.com/CrispStrobe/labwired-core/pull/214), after both
+final-source profiles and all22 enabled checks passed. Read the
+[bounded bus receipt](../receipts/2026-10-13-samd-spi-bus/README.md).
+It shares byte-MMIO bookkeeping, denies unsupported/shadowed/aliased routes,
+honors live clocks, and distinguishes accepted from not-ready. These are host
+bus controls with CPU time advancement, not a CPU-programmed peripheral DMA
+guest. No hardware-triggered profile or production descriptor is admitted yet.
+
+**Qualified and landed:** an explicitly opt-in SAMD51 SERCOM4 TX byte
+profile, using the landed bus acceptance seam. Preserve the software-only
+profile and its90 guest cases. CPU-authored descriptors must exercise actual
+hardware-request polling, count/writeback progress, clock stalls, reset and IRQ
+return without host-injected requests or completion. See the
+[original qualification and concurrent landing drift](../receipts/2026-10-13-samd-sercom4-tx/README.md).
+PR216's concurrent landing drift is preserved; PR217's fresh both-profile
+qualification and successful exact-tree landed audit close that gap.
+Final wire delivery/TXC,
+CS release and callback/fiber integration remain separately observed boundaries;
+no native Arcade or performance result follows from this claim.
+
+The controller-local endpoint prerequisite landed in
+[PR212](https://github.com/CrispStrobe/labwired-core/pull/212):
+`Peripheral::dma_tx_request` and `try_dma_write_tx_u8` expose readiness and
+explicit acceptance, with default refusal for other peripherals. Both profile
+host controls and existing SPI/byte-DMA guests passed; all22 enabled checks
+succeeded. Read the [bounded receipt](../receipts/2026-10-13-samd-spi-endpoint/README.md).
+These methods are not connected to Bus/DMAC. Bus clock/alias/observer/scheduler
+integration remains a separate admission step, not a reached DMA capability.
+
 **Files:** `crates/core/src/peripherals/sam/dmac_byte.rs`,
 `crates/core/src/peripherals/sam/sercom_spi.rs`, `crates/core/src/lib.rs`,
 `crates/core/src/bus/accessors.rs`, bus scheduling/IRQ reconciliation, and a
@@ -99,12 +129,22 @@ SERCOM4 DATA is0x43000028. DMAC's MCLK AHBMASK gate is bit9; SERCOM4's current
 APBDMASK bit0 and GCLK channel34 are separate gates. Qualify the selected clock
 bindings without claiming nominal SPI delay is a derived CPU/kernel frequency.
 
-Introduce a reviewed endpoint readiness/accepted-beat capability. Existing SPI
+Integrate the landed readiness/accepted-beat capability through the bus seam. Existing SPI
 register stores return `Ok` even when an occupied/disabled controller ignores
 DATA: bus success alone must not decrement BTCNT or establish completion.
 Not-ready, accepted and actual transfer faults must remain distinct. Retain
 descriptor/writeback RAM checks and scheduler wake harvesting after accepted
 DATA writes. No host-injected request or IRQ may substitute for guest execution.
+
+**Next bus prerequisite:** reuse the landed controller hooks through a
+default-refusing bus operation. Share the existing byte-MMIO write choke's
+clock checks, non-consuming observer sample, scheduler synchronization/wakes,
+IRQ reconciliation and dynamic pump-index updates. Preserve ordinary CPU store
+behavior. Reject aliases, memory-shadowed routes and unsupported endpoints
+before transfer; do not use a raw peripheral call or concrete-type downcast to
+bypass those guards. No observer write or DMA progress may be reported for a
+not-ready result. Qualify accepted/rejected writes, paused clocks, reset,
+observer notifications and both feature profiles before wiring hardware DMA.
 
 **Done when:** a CPU-authored descriptor feeds an owned SPI device exact ordered
 bytes, stalls without count/writeback progress while not ready, and resumes
@@ -115,6 +155,29 @@ or report a CODAL success callback at DMA completion alone. Compare both feature
 profiles and relevant forced-walk/batch1/64/1024 controls. Preserve original
 failures, source/job/tree bindings and every enabled check before landing.
 RX, links, abort/suspend, physical arbitration and CODAL fibers remain separate.
+
+**Completion-order lane qualified and landed:** [PR220](https://github.com/CrispStrobe/labwired-core/pull/220)
+passed22/44 final-source cases, both independent original audits and all21
+enabled checks, with reviewed/tested/landed tree equality. See the
+[final receipt and retained failures](../receipts/2026-10-13-samd-tx-completion/README.md).
+The focused CPU-authored TX guests
+separately observe final accepted DATA, zero-count writeback/TC, last slave
+byte, TXC, GPIO CS release and an actual guest driver callback call/return.
+Use existing read-only bus/instruction observers and owned slave hooks, not
+injected completion. Require a genuine DMA-complete/TXC-low window and an
+exactly caught premature-release/callback mutant. Exercise paused clocks,
+masked interrupts and reset/error outcomes under both profiles and admitted
+walk/batch controls. An authored driver callback is not actual CODAL
+events/fibers; that integration and selected no-ASF4 runtime qualification
+remain the next separate boundary. No native Arcade, performance, physical
+timing or app-adoption claim follows from these ordering fixtures.
+
+**Next claimed integration:** [CODAL PR16](https://github.com/CrispStrobe/codal-samd/pull/16)
+introduces a separate prospective real-service build. Qualify actual Timer,
+heap, component, MessageBus and fiber behavior through source-bound guest
+execution before connecting final-TXC notification. Its adapters/build are
+not yet qualified and do not admit a native Arcade image. Full selected-build
+provenance/notices, board services and consumer adoption remain separate gates.
 
 Add live SERCOM DRE/RXC triggers, production AHB clock gating, descriptor
 chaining/abort/suspend/error distinctions and final SPI TXC controls. Then
