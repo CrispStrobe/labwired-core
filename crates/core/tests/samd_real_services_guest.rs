@@ -81,7 +81,12 @@ fn actual_services_deliver_timer_event_to_real_waiting_fibers_and_refuse_closed_
     let directory = PathBuf::from(std::env::var("LABWIRED_SERVICES_FIXTURE_DIR").unwrap());
     let source = std::env::var("LABWIRED_SERVICES_SOURCE").unwrap();
     assert!(source.len() == 40 && source.bytes().all(|b| b.is_ascii_hexdigit()));
-    for (mode, name) in [(0, "positive"), (1, "closed-switch")] {
+    for (mode, name) in [
+        (0, "positive"),
+        (1, "closed-switch"),
+        (2, "clock-irq-disable"),
+        (3, "clock-disable"),
+    ] {
         let folder = directory.join(name);
         let provenance: serde_json::Value =
             serde_json::from_slice(&std::fs::read(folder.join("build-provenance.json")).unwrap())
@@ -111,6 +116,19 @@ fn actual_services_deliver_timer_event_to_real_waiting_fibers_and_refuse_closed_
             matches[0].st_value
         };
         let addresses: Vec<_> = NAMES.iter().map(|name| symbol(name)).collect();
+        let clock_addresses = if mode >= 2 {
+            Some(
+                [
+                    "runtime_clock_stage",
+                    "runtime_clock_pending_seen",
+                    "runtime_clock_before",
+                    "runtime_clock_after",
+                ]
+                .map(symbol),
+            )
+        } else {
+            None
+        };
         let mut distinct = addresses.clone();
         distinct.sort_unstable();
         distinct.dedup();
@@ -119,6 +137,14 @@ fn actual_services_deliver_timer_event_to_real_waiting_fibers_and_refuse_closed_
         let data = symbol("_data_start")..symbol("_data_end");
         assert!(data.start >= 0x20000000 && data.end <= bss.start && bss.end < 0x2002e000);
         assert!(addresses.iter().all(|a| bss.contains(a) && a % 4 == 0));
+        if let Some(extra) = clock_addresses {
+            assert!(extra.iter().all(|a| bss.contains(a) && a % 4 == 0));
+            let mut all = addresses.clone();
+            all.extend(extra);
+            all.sort_unstable();
+            all.dedup();
+            assert_eq!(all.len(), NAMES.len() + 4);
+        }
         assert_eq!(symbol("runtime_vectors"), 0);
         assert_eq!(symbol("runtime_vectors_end"), 1024);
         let calls = Arc::new(Calls {
@@ -169,6 +195,9 @@ fn actual_services_deliver_timer_event_to_real_waiting_fibers_and_refuse_closed_
         let mut entries = 0;
         let mut returns = 0;
         let mut final_step = None;
+        let mut clock_stage = 0;
+        let mut pending_under_mask = false;
+        let mut disabled_without_event = false;
         for step in 1..=4_000_000 {
             machine.step().expect("real services guest must not fault");
             if u64::from(machine.cpu.pc & !1) == entry && !startup {
@@ -202,7 +231,47 @@ fn actual_services_deliver_timer_event_to_real_waiting_fibers_and_refuse_closed_
                 .collect();
             let swaps = calls.swaps.load(Ordering::Relaxed);
             let restores = calls.restores.load(Ordering::Relaxed);
-            if mode == 0 {
+            if let Some(clock_addresses) = clock_addresses {
+                let c = clock_addresses.map(|a| machine.bus.read_u32(a).unwrap());
+                let pending = machine.cpu.pending_exceptions[0] & (1u64 << 15) != 0;
+                if pending && machine.cpu.primask && [1, 2].contains(&c[0]) {
+                    if !pending_under_mask {
+                        println!("SAMD_SERVICE_CLOCK_BOUNDARY mode={name} kind=pending stage={} step={step} mask=1 exception={exception} pending=true event_calls={} irq_entries={entries} irq_returns={returns}", c[0], v[6]);
+                    }
+                    pending_under_mask = true;
+                }
+                if c[0] != clock_stage {
+                    assert_eq!(c[0], clock_stage + 1, "actual ordered clock stages");
+                    clock_stage = c[0];
+                    println!("SAMD_SERVICE_CLOCK_BOUNDARY mode={name} kind=stage stage={clock_stage} step={step} mask={} exception={exception} pending={pending} event_calls={} irq_entries={entries} irq_returns={returns} counter_before={} counter_after={}", u32::from(machine.cpu.primask), v[6], c[2], c[3]);
+                    if clock_stage == 2 {
+                        assert!(pending && machine.cpu.primask && exception == 0);
+                        assert_eq!(entries, 0);
+                        assert_eq!(returns, 0);
+                        assert_eq!(v[6], 0);
+                    }
+                    if clock_stage == 3 {
+                        disabled_without_event = v[6] == 0;
+                    }
+                }
+                if ![0, 0x100, 0x600d].contains(&v[0]) {
+                    println!("SAMD_SERVICE_CLOCK_FAILURE mode={name} source={source} core={CORE} elf_sha256={hash} steps={step} status={:#x} stage={clock_stage} pending_seen={} event_calls={} irq_entries={entries} irq_returns={returns} counter_before={} counter_after={}", v[0], c[1], v[6], c[2], c[3]);
+                    panic!("actual clock adversary failure {:#x}", v[0]);
+                }
+                if v[0] != 0x600d {
+                    continue;
+                }
+                assert!(pending_under_mask && disabled_without_event);
+                assert_eq!(clock_stage, 5);
+                assert_eq!(c[1], 1);
+                assert!(c[2] > 0);
+                assert!(if mode == 2 { c[3] > c[2] } else { c[3] == c[2] });
+                assert_eq!(v[0..7], [0x600d, 3, 1, 0, 0, 2, 1]);
+                assert_eq!(v[7..11], [15, 0, 0, 0]);
+                assert!(v[11] != 0 && v[12] == 0);
+                assert_eq!((entries, returns, swaps, restores), (2, 2, 0, 0));
+                println!("SAMD_SERVICE_CLOCK mode={name} source={source} core={CORE} elf_sha256={hash} steps={step} bss_clear=true data_copy=true vectors=true stages=5 pending_under_mask=true disabled_without_event=true counter_before={} counter_after={} event_calls=1 irq_entries=2 irq_returns=2 actual_swaps=0 actual_restores=0 final_mask=1 final_exception=0", c[2], c[3]);
+            } else if mode == 0 {
                 assert!(
                     [0, 0x100, 0x600d].contains(&v[0]),
                     "explicit services failure {:#x}",
@@ -230,7 +299,9 @@ fn actual_services_deliver_timer_event_to_real_waiting_fibers_and_refuse_closed_
             assert!(machine.cpu.primask && exception == 0);
             assert_eq!(machine.bus.read_u32(0xe000ed28).unwrap(), 0);
             assert_eq!(machine.bus.read_u32(0xe000ed2c).unwrap(), 0);
-            println!("SAMD_REAL_SERVICES mode={name} source={source} core={CORE} elf_sha256={hash} steps={step} bss_clear=true data_copy=true vectors=true witnesses={v:?} irq_entries={entries} irq_returns={returns} actual_swaps={swaps} actual_restores={restores} final_mask=1 final_exception=0");
+            if mode < 2 {
+                println!("SAMD_REAL_SERVICES mode={name} source={source} core={CORE} elf_sha256={hash} steps={step} bss_clear=true data_copy=true vectors=true witnesses={v:?} irq_entries={entries} irq_returns={returns} actual_swaps={swaps} actual_restores={restores} final_mask=1 final_exception=0");
+            }
             final_step = Some(step);
             break;
         }
