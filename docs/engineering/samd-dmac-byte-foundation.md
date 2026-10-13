@@ -156,7 +156,11 @@ profiles and relevant forced-walk/batch1/64/1024 controls. Preserve original
 failures, source/job/tree bindings and every enabled check before landing.
 RX, links, abort/suspend, physical arbitration and CODAL fibers remain separate.
 
-**Claimed completion-order lane:** add focused CPU-authored TX guests that
+**Completion-order lane qualified and landed:** [PR220](https://github.com/CrispStrobe/labwired-core/pull/220)
+passed22/44 final-source cases, both independent original audits and all21
+enabled checks, with reviewed/tested/landed tree equality. See the
+[final receipt and retained failures](../receipts/2026-10-13-samd-tx-completion/README.md).
+The focused CPU-authored TX guests
 separately observe final accepted DATA, zero-count writeback/TC, last slave
 byte, TXC, GPIO CS release and an actual guest driver callback call/return.
 Use existing read-only bus/instruction observers and owned slave hooks, not
@@ -167,6 +171,13 @@ walk/batch controls. An authored driver callback is not actual CODAL
 events/fibers; that integration and selected no-ASF4 runtime qualification
 remain the next separate boundary. No native Arcade, performance, physical
 timing or app-adoption claim follows from these ordering fixtures.
+
+**Next claimed integration:** [CODAL PR16](https://github.com/CrispStrobe/codal-samd/pull/16)
+introduces a separate prospective real-service build. Qualify actual Timer,
+heap, component, MessageBus and fiber behavior through source-bound guest
+execution before connecting final-TXC notification. Its adapters/build are
+not yet qualified and do not admit a native Arcade image. Full selected-build
+provenance/notices, board services and consumer adoption remain separate gates.
 
 Add live SERCOM DRE/RXC triggers, production AHB clock gating, descriptor
 chaining/abort/suspend/error distinctions and final SPI TXC controls. Then
