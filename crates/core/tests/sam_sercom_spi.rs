@@ -227,6 +227,29 @@ fn dma_tx_bus_acceptance_preserves_gates_observers_irqs_and_pump() {
             panic!("owner-alias admission must fail before invoking its write hook")
         }
     }
+    #[derive(Debug)]
+    struct OwnerAlias(usize);
+    impl labwired_core::Peripheral for OwnerAlias {
+        fn read(&self, _offset: u64) -> labwired_core::SimResult<u8> {
+            Ok(0)
+        }
+        fn write(&mut self, _offset: u64, _value: u8) -> labwired_core::SimResult<()> {
+            Ok(())
+        }
+        fn scheduler_wake_owner(&self) -> Option<usize> {
+            Some(self.0)
+        }
+        fn dma_tx_request(&self, _offset: u64) -> Option<bool> {
+            Some(true)
+        }
+        fn try_dma_write_tx_u8(
+            &mut self,
+            _offset: u64,
+            _value: u8,
+        ) -> labwired_core::SimResult<bool> {
+            panic!("owner-alias admission must fail before invoking its write hook")
+        }
+    }
     for legacy in [true, false] {
         for interval in [1, 64, 1024] {
             if interval > 1 && (legacy || !event_scheduler_enabled()) {
