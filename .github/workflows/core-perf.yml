@@ -55,6 +55,8 @@ on:
       - "Cargo.lock"
       - "rust-toolchain*"
       - ".cargo/**"
+  # The cheap scope job selects runtime/build/perf changes and preserves the
+  # existing owned upstream-sync branch admission. Other PRs skip the build.
   pull_request:
     branches:
       - main
@@ -62,6 +64,11 @@ on:
     # Nightly, after core-ci's 02:30 slot.
     - cron: "45 3 * * *"
   workflow_dispatch:
+    inputs:
+      samd_profile_only:
+        description: 'Owned SAMD source controls and initial selected measurements; normal PR gates are unchanged'
+        type: boolean
+        default: false
 
 concurrency:
   group: core-perf-${{ github.ref }}
