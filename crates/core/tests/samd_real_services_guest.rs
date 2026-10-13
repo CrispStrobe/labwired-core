@@ -86,6 +86,7 @@ fn actual_services_deliver_timer_event_to_real_waiting_fibers_and_refuse_closed_
         (1, "closed-switch"),
         (2, "clock-irq-disable"),
         (3, "clock-disable"),
+        (4, "long-gap"),
     ] {
         let folder = directory.join(name);
         let provenance: serde_json::Value =
@@ -130,6 +131,15 @@ fn actual_services_deliver_timer_event_to_real_waiting_fibers_and_refuse_closed_
             None
         };
         let mut distinct = addresses.clone();
+        let timer_addresses = (mode == 4).then(|| {
+            [
+                "runtime_timer_before",
+                "runtime_timer_after",
+                "runtime_ms_before",
+                "runtime_ms_after",
+            ]
+            .map(symbol)
+        });
         distinct.sort_unstable();
         distinct.dedup();
         assert_eq!(distinct.len(), NAMES.len());
@@ -141,9 +151,13 @@ fn actual_services_deliver_timer_event_to_real_waiting_fibers_and_refuse_closed_
             assert!(extra.iter().all(|a| bss.contains(a) && a % 4 == 0));
             let mut all = addresses.clone();
             all.extend(extra);
+            if let Some(timer) = timer_addresses {
+                assert!(timer.iter().all(|a| bss.contains(a) && a % 4 == 0));
+                all.extend(timer);
+            }
             all.sort_unstable();
             all.dedup();
-            assert_eq!(all.len(), NAMES.len() + 4);
+            assert_eq!(all.len(), NAMES.len() + 4 + if mode == 4 { 4 } else { 0 });
         }
         assert_eq!(symbol("runtime_vectors"), 0);
         assert_eq!(symbol("runtime_vectors_end"), 1024);
@@ -198,7 +212,10 @@ fn actual_services_deliver_timer_event_to_real_waiting_fibers_and_refuse_closed_
         let mut clock_stage = 0;
         let mut pending_under_mask = false;
         let mut disabled_without_event = false;
-        for step in 1..=4_000_000 {
+        // The existing eight cases retain their original bound. An80ms guest
+        // necessarily needs its separately named larger execution budget.
+        let step_bound = if mode == 4 { 12_000_000 } else { 4_000_000 };
+        for step in 1..=step_bound {
             machine.step().expect("real services guest must not fault");
             if u64::from(machine.cpu.pc & !1) == entry && !startup {
                 for address in bss.clone().step_by(4) {
@@ -231,6 +248,56 @@ fn actual_services_deliver_timer_event_to_real_waiting_fibers_and_refuse_closed_
                 .collect();
             let swaps = calls.swaps.load(Ordering::Relaxed);
             let restores = calls.restores.load(Ordering::Relaxed);
+            if mode == 4 {
+                let c = clock_addresses
+                    .unwrap()
+                    .map(|a| machine.bus.read_u32(a).unwrap());
+                let t = timer_addresses
+                    .unwrap()
+                    .map(|a| machine.bus.read_u32(a).unwrap());
+                let pending = machine.cpu.pending_exceptions[0] & (1u64 << 15) != 0;
+                if pending && machine.cpu.primask && [1, 2].contains(&c[0]) {
+                    if !pending_under_mask {
+                        println!("SAMD_SERVICE_LONG_FIXED_BOUNDARY kind=pending stage={} step={step} mask=1 exception={exception} pending=true event_calls={} irq_entries={entries} irq_returns={returns}", c[0], v[6]);
+                    }
+                    pending_under_mask = true;
+                }
+                if c[0] != clock_stage {
+                    assert_eq!(c[0], clock_stage + 1);
+                    clock_stage = c[0];
+                    println!("SAMD_SERVICE_LONG_FIXED_BOUNDARY kind=stage stage={clock_stage} step={step} mask={} exception={exception} pending={pending} event_calls={} irq_entries={entries} irq_returns={returns} counter_before={} counter_after={} timer_before={} timer_after={} ms_before={} ms_after={}", u32::from(machine.cpu.primask), v[6], c[2], c[3], t[0], t[1], t[2], t[3]);
+                    if clock_stage == 2 {
+                        assert!(pending && machine.cpu.primask && exception == 0);
+                        assert_eq!((entries, returns, v[6]), (0, 0, 0));
+                    }
+                }
+                if [0, 0x100].contains(&v[0]) {
+                    continue;
+                }
+                // Separately named positive qualification. The old exact bug
+                // diagnostic remains preserved on its own source and branch.
+                assert_eq!(v[0..7], [0x600d, 3, 1, 0, 0, 1, 1]);
+                assert_eq!(v[7..11], [15, 0, 0, 0]);
+                assert!(v[11] != 0 && v[12] == 0);
+                assert_eq!((entries, returns, swaps, restores), (1, 1, 0, 0));
+                assert_eq!(c[0..2], [4, 1]);
+                assert!(pending_under_mask && !pending && machine.cpu.primask && exception == 0);
+                assert!(c[2] > 0 && t[0] > 0 && c[3] >= c[2] && t[1] >= t[0]);
+                let low_elapsed = c[3] - c[2];
+                let timer_elapsed = t[1] - t[0];
+                assert!((80_000..81_000).contains(&low_elapsed));
+                assert!(timer_elapsed >= 80_000 && timer_elapsed <= low_elapsed + 1000);
+                assert!(t[3] >= t[2]);
+                let ms_elapsed = t[3] - t[2];
+                assert!((80..=82).contains(&ms_elapsed));
+                assert!(ms_elapsed * 1000 + 1000 >= timer_elapsed);
+                assert!(ms_elapsed * 1000 <= timer_elapsed + 1000);
+                assert_eq!(machine.bus.read_u32(0xe000ed28).unwrap(), 0);
+                assert_eq!(machine.bus.read_u32(0xe000ed2c).unwrap(), 0);
+                println!("SAMD_SERVICE_LONG_FIXED source={source} core={CORE} elf_sha256={hash} steps={step} status=0x600d stage=4 low_before={} low_after={} timer_before={} timer_after={} ms_before={} ms_after={} pending_under_mask=true source_countflag=true event_calls=1 irq_entries=1 irq_returns=1 actual_swaps=0 actual_restores=0 final_mask=1 final_exception=0 step_bound={step_bound} bss_clear=true data_copy=true vectors=true", c[2], c[3], t[0], t[1], t[2], t[3]);
+                final_step = Some(step);
+                break;
+            }
             if let Some(clock_addresses) = clock_addresses {
                 let c = clock_addresses.map(|a| machine.bus.read_u32(a).unwrap());
                 let pending = machine.cpu.pending_exceptions[0] & (1u64 << 15) != 0;
