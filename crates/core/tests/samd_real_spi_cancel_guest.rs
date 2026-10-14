@@ -448,7 +448,16 @@ fn actual_codal_spi_cancellation_and_recovery() {
         if pc == symbol("restore_register_context") as u32 & !1 {
             restores += 1;
         }
-        machine.step().expect("actual SPI guest must not fault");
+        if let Err(error) = machine.step() {
+            println!("SAMD_REAL_SPI_CANCEL_STEP_ERROR step={step} source={source} elf_sha256={image} pc={:#x} error={error:?}", machine.cpu.pc);
+            for row in trace.rows.lock().unwrap().iter() {
+                println!(
+                    "SAMD_REAL_SPI_CANCEL_FAILURE_ROW step={} kind={} value={}",
+                    row.step, row.kind, row.value
+                );
+            }
+            panic!("actual SPI guest must not fault: {error:?}");
+        }
         if !startup && machine.cpu.pc & !1 == symbol("runtime_probe") as u32 & !1 {
             for a in bss.clone().step_by(4) {
                 assert_eq!(machine.bus.read_u32(a).unwrap(), 0);
