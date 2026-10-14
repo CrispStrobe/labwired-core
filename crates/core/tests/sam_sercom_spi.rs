@@ -190,11 +190,18 @@ fn dma_tx_endpoint_reports_acceptance_not_generic_store_success() {
 
 #[test]
 fn dma_tx_bus_acceptance_preserves_gates_observers_irqs_and_pump() {
-    #[derive(Debug, Default)]
-    struct Writes(Mutex<Vec<(u64, u8, u8)>>);
+    #[derive(Debug)]
+    struct Writes(
+        Mutex<Vec<(u64, u8, u8)>>,
+        Arc<Mutex<Seen>>,
+        Mutex<Vec<usize>>,
+    );
     impl labwired_core::SimulationObserver for Writes {
         fn on_memory_write(&self, addr: u64, old: u8, new: u8) {
             self.0.lock().unwrap().push((addr, old, new));
+            if addr == SPI + 0x28 {
+                self.2.lock().unwrap().push(self.1.lock().unwrap().selects);
+            }
         }
     }
     #[derive(Debug)]
@@ -245,7 +252,11 @@ fn dma_tx_bus_acceptance_preserves_gates_observers_irqs_and_pump() {
                 machine.step().unwrap();
             }
             assert!(split_pending(&machine.bus)[0]);
-            let writes = Arc::new(Writes::default());
+            let writes = Arc::new(Writes(
+                Mutex::new(Vec::new()),
+                seen.clone(),
+                Mutex::new(Vec::new()),
+            ));
             machine.bus.add_observer(writes.clone());
             // Explicit host bus controls: these are not CPU-driven DMA guests.
             for gate in [MCLK, GCLK] {
@@ -254,6 +265,7 @@ fn dma_tx_bus_acceptance_preserves_gates_observers_irqs_and_pump() {
                 assert_eq!(machine.bus.dma_tx_request(SPI + 0x28), Some(false));
                 assert!(!machine.bus.try_dma_write_tx_u8(SPI + 0x28, 0x99).unwrap());
                 assert_eq!(writes.0.lock().unwrap().len(), before);
+                assert_eq!(seen.lock().unwrap().selects, 0);
                 machine
                     .bus
                     .write_u32(gate, if gate == MCLK { 1 } else { 1 << 6 })
@@ -262,6 +274,9 @@ fn dma_tx_bus_acceptance_preserves_gates_observers_irqs_and_pump() {
             assert_eq!(machine.bus.dma_tx_request(SPI + 0x28), Some(true));
             let before = writes.0.lock().unwrap().len();
             assert!(machine.bus.try_dma_write_tx_u8(SPI + 0x28, 0x31).unwrap());
+            assert_eq!(*writes.2.lock().unwrap(), [1]);
+            assert_eq!(seen.lock().unwrap().selects, 1);
+            assert!(seen.lock().unwrap().bytes.is_empty()); // Preparation is not a wire tick.
             assert_eq!(writes.0.lock().unwrap().len(), before + 1);
             assert_eq!(
                 writes.0.lock().unwrap().last().copied(),
@@ -271,7 +286,8 @@ fn dma_tx_bus_acceptance_preserves_gates_observers_irqs_and_pump() {
             let before = writes.0.lock().unwrap().len();
             assert!(!machine.bus.try_dma_write_tx_u8(SPI + 0x28, 0x32).unwrap());
             assert_eq!(writes.0.lock().unwrap().len(), before);
-            // CPU stores retain their old successful/dropped behavior and notification.
+            assert_eq!(seen.lock().unwrap().selects, 1); // No duplicate select while blocked.
+                                                         // CPU stores retain their old successful/dropped behavior and notification.
             machine.bus.write_u8(SPI + 0x28, 0x55).unwrap();
             assert_eq!(writes.0.lock().unwrap().len(), before + 1);
             for gate in [MCLK, GCLK] {
