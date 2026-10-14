@@ -34,3 +34,13 @@ result is claimed. Follow-up adds read-only stage/terminal MMIO and observed
 failure-row diagnostics while retaining the original image, source pin, step
 budget and positive predicates. Diagnostic observations are not admission and
 must not be invented when an earlier original did not record them.
+
+The diagnostic run also failed: its terminal DMA-register read reported the
+model's explicit refusal of mapped sources other than primary RAM. Source
+review found the caller's constant TX bytes in flash. The next candidate pins
+runtime `490b6bd8286609109eb03ad8022862ff581108bd`, uses startup-copied RAM
+bytes and explicitly tests flash-buffer refusal before starting hardware.
+Diagnostic reads now retain their actual errors rather than masking final
+state and rows with an unwrap panic. Positive predicates and the four-million
+step bound are unchanged; this candidate is not qualified until both actual
+guest profiles pass. Flash DMA remains a separate unimplemented extension.

@@ -8,7 +8,7 @@ concurrency:
   group: real-spi-${{ github.ref }}
   cancel-in-progress: true
 env:
-  LABWIRED_SPI_SOURCE: ea40961a4681f42a3338fc3c8164ae9db17560f6
+  LABWIRED_SPI_SOURCE: 490b6bd8286609109eb03ad8022862ff581108bd
 jobs:
   spi-services-guest:
     runs-on: ubuntu-24.04
@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: CrispStrobe/codal-samd
-          ref: ea40961a4681f42a3338fc3c8164ae9db17560f6
+          ref: 490b6bd8286609109eb03ad8022862ff581108bd
           path: owned-spi-source
           persist-credentials: false
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683

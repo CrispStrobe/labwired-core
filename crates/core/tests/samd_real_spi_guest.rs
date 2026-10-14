@@ -355,13 +355,14 @@ fn actual_codal_spi_callback_and_blocking_fiber_ordering() {
         let v = addresses.map(|a| machine.bus.read_u32(a).unwrap());
         if v[6] != diagnostic_stage || step == 4_000_000 || ![0, 0x100, 0x600d].contains(&v[0]) {
             diagnostic_stage = v[6];
-            let wb = machine.bus.read_u32(0x4100a038).unwrap();
-            let wb_count = if bss.contains(&u64::from(wb)) && wb % 16 == 0 {
-                Some(machine.bus.read_u16(u64::from(wb + 2)).unwrap())
-            } else {
-                None
-            };
-            println!("SAMD_REAL_SPI_DIAGNOSTIC step={step} source={source} elf_sha256={image} pc={:#x} lr={:#x} sp={:#x} mask={} exception={exception} witnesses={v:?} irq_entries={entries:?} irq_returns={returns:?} swaps={swaps} restores={restores} dma_control={:#x} dma_channel={:#x} dma_flags={:#x} wb={wb:#x} wb_count={wb_count:?} spi_control={:#x} spi_flags={:#x} ahb={:#x} apbd={:#x} gclk={:#x} port_out={:#x}", machine.cpu.pc, machine.cpu.lr, machine.cpu.sp, u32::from(machine.cpu.primask), machine.bus.read_u32(0x4100a000).unwrap(), machine.bus.read_u32(0x4100a040).unwrap(), machine.bus.read_u8(0x4100a04e).unwrap(), machine.bus.read_u32(0x43000000).unwrap(), machine.bus.read_u8(0x43000018).unwrap(), machine.bus.read_u32(0x40000810).unwrap(), machine.bus.read_u32(0x40000820).unwrap(), machine.bus.read_u32(0x40001d08).unwrap(), machine.bus.read_u32(0x41008090).unwrap());
+            // A refused controller can reject diagnostic reads too. Preserve
+            // the actual Err rather than panicking before state/rows are logged.
+            let wb = machine.bus.read_u32(0x4100a038);
+            let wb_count = wb.as_ref().ok().and_then(|wb| {
+                (bss.contains(&u64::from(*wb)) && wb % 16 == 0)
+                    .then(|| machine.bus.read_u16(u64::from(wb + 2)))
+            });
+            println!("SAMD_REAL_SPI_DIAGNOSTIC step={step} source={source} elf_sha256={image} pc={:#x} lr={:#x} sp={:#x} mask={} exception={exception} witnesses={v:?} irq_entries={entries:?} irq_returns={returns:?} swaps={swaps} restores={restores} dma_control={:?} dma_channel={:?} dma_flags={:?} wb={wb:?} wb_count={wb_count:?} spi_control={:?} spi_flags={:?} ahb={:?} apbd={:?} gclk={:?} port_out={:?}", machine.cpu.pc, machine.cpu.lr, machine.cpu.sp, u32::from(machine.cpu.primask), machine.bus.read_u32(0x4100a000), machine.bus.read_u32(0x4100a040), machine.bus.read_u8(0x4100a04e), machine.bus.read_u32(0x43000000), machine.bus.read_u8(0x43000018), machine.bus.read_u32(0x40000810), machine.bus.read_u32(0x40000820), machine.bus.read_u32(0x40001d08), machine.bus.read_u32(0x41008090));
             if step == 4_000_000 || ![0, 0x100, 0x600d].contains(&v[0]) {
                 for row in trace.rows.lock().unwrap().iter() {
                     println!(
