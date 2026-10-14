@@ -44,3 +44,14 @@ Diagnostic reads now retain their actual errors rather than masking final
 state and rows with an unwrap panic. Positive predicates and the four-million
 step bound are unchanged; this candidate is not qualified until both actual
 guest profiles pass. Flash DMA remains a separate unimplemented extension.
+
+That RAM candidate reached successful guest completion, including the actual
+callback and both fiber resumes, but failed the unchanged raw ordering gate:
+external CS selection was notified one step after the first accepted DATA byte
+in each transfer. It is not a passing qualification. The follow-up refreshes
+bus-sourced CS before an admitted DMA byte, without advancing time or draining
+wire data. It shares the existing CS resolver with the tick path. Blocked or
+clock-gated requests do not invoke preparation; ordinary CPU stores retain their
+existing behavior. Both scheduler profiles exercise source-bound bus controls
+for selection-before-observer, no premature wire data, no duplicate selection
+and no gated side effects, followed by the unchanged actual guest ordering gate.
