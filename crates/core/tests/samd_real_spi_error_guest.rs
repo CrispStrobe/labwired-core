@@ -616,7 +616,7 @@ fn actual_codal_spi_dma_error_and_recovery() {
         {
             diagnostic_stage = v[6];
             diagnostic_error_stage = f[0];
-            println!("SAMD_REAL_SPI_ERROR_FAILURE_WITNESSES step={step} source={source} elf_sha256={image} fault={f:?}");
+            println!("SAMD_REAL_SPI_ERROR_FAILURE_WITNESSES step={step} source={source} elf_sha256={image} fault={f:?} fault_context={g:?}");
             // A refused controller can reject diagnostic reads too. Preserve
             // the actual Err rather than panicking before state/rows are logged.
             let wb = machine.bus.read_u32(0x4100a038);
