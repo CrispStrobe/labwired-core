@@ -8,7 +8,7 @@ concurrency:
   group: real-services-${{ github.ref }}
   cancel-in-progress: true
 env:
-  LABWIRED_SERVICES_SOURCE: 0c95081222a840af0701b25417a8f73bf6842225
+  LABWIRED_SERVICES_SOURCE: 92e99cc881db3e5d8f0186821d8c83bc241eb3b2
 jobs:
   services-guest:
     runs-on: ubuntu-24.04
@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: CrispStrobe/codal-samd
-          ref: 0c95081222a840af0701b25417a8f73bf6842225
+          ref: 92e99cc881db3e5d8f0186821d8c83bc241eb3b2
           path: owned-services-source
           persist-credentials: false
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -54,6 +54,12 @@ jobs:
           ref: 2ed19d64ec3359143409a4b0a9758b4aeef3ee7d
           path: owned-long-gap-core
           persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: lancaster-university/codal-core
+          ref: 2ed19d64ec3359143409a4b0a9758b4aeef3ee7d
+          path: owned-heap-alignment-core
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
       - name: Build actual services and explicit source-bound refusal
@@ -68,6 +74,7 @@ jobs:
           bash runtime-services/build.sh ../owned-clock-irq-core "$RUNNER_TEMP/runtime-services/clock-irq-disable" 2
           bash runtime-services/build.sh ../owned-clock-stop-core "$RUNNER_TEMP/runtime-services/clock-disable" 3
           bash runtime-services/build.sh ../owned-long-gap-core "$RUNNER_TEMP/runtime-services/long-gap" 4
+          bash runtime-services/build.sh ../owned-heap-alignment-core "$RUNNER_TEMP/runtime-services/heap-alignment" 5
       - name: Execute actual services in both scheduler profiles
         env:
           LABWIRED_SERVICES_FIXTURE_DIR: ${{ runner.temp }}/runtime-services

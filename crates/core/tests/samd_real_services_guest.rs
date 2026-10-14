@@ -75,6 +75,90 @@ fn manufactured_missing_services_witness_refuses() {
     }
 }
 
+// An exact old-allocator bug witness, never a positive runtime admission.
+fn heap_alignment_bug(
+    v: &[u32],
+    a: [u32; 4],
+    counts: [u32; 4],
+    masked: bool,
+    exception: u32,
+    pending: bool,
+) {
+    assert_eq!(v, &[0xe0000c60, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    assert_eq!(counts, [0; 4]);
+    assert!(masked && exception == 0 && !pending);
+    assert_eq!(a[2..4], [8, 1]);
+    for address in &a[..2] {
+        assert!((0x20000000..=0x2002dff8).contains(address) && address % 4 == 0);
+    }
+    assert_eq!(
+        a[0].checked_add(12),
+        Some(a[1]),
+        "actual raw allocation stride"
+    );
+    assert!(
+        a[0] % 8 == 4 || a[1] % 8 == 4,
+        "observed missing fundamental alignment"
+    );
+}
+
+#[test]
+fn manufactured_heap_alignment_bug_witness_refuses() {
+    let good = [0xe0000c60, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let allocation = [0x20001004, 0x20001010, 8, 1];
+    heap_alignment_bug(&good, allocation, [0; 4], true, 0, false);
+    heap_alignment_bug(
+        &good,
+        [0x20001000, 0x2000100c, 8, 1],
+        [0; 4],
+        true,
+        0,
+        false,
+    );
+    for index in 0..good.len() {
+        let mut bad = good;
+        bad[index] = if good[index] == 0 { 1 } else { 0 };
+        assert!(std::panic::catch_unwind(|| heap_alignment_bug(
+            &bad, allocation, [0; 4], true, 0, false
+        ))
+        .is_err());
+    }
+    for bad in [
+        [0, allocation[1], 8, 1],
+        [allocation[0], 0, 8, 1],
+        [allocation[0], allocation[0], 8, 1],
+        [allocation[1], allocation[0], 8, 1],
+        [0x20001000, 0x20001010, 8, 1],
+        [0x20001002, 0x2000100e, 8, 1],
+        [0x1ffffffc, 0x20000008, 8, 1],
+        [0x2002dff8, 0x2002e004, 8, 1],
+        [0xfffffff8, 4, 8, 1],
+        [allocation[0], allocation[1], 0, 1],
+        [allocation[0], allocation[1], 4, 1],
+        [allocation[0], allocation[1], 8, 0],
+        [allocation[0], allocation[1], 8, 2],
+    ] {
+        assert!(std::panic::catch_unwind(|| heap_alignment_bug(
+            &good, bad, [0; 4], true, 0, false
+        ))
+        .is_err());
+    }
+    for index in 0..4 {
+        let mut counts = [0; 4];
+        counts[index] = 1;
+        assert!(std::panic::catch_unwind(|| heap_alignment_bug(
+            &good, allocation, counts, true, 0, false
+        ))
+        .is_err());
+    }
+    for (masked, exception, pending) in [(false, 0, false), (true, 15, false), (true, 0, true)] {
+        assert!(std::panic::catch_unwind(|| heap_alignment_bug(
+            &good, allocation, [0; 4], masked, exception, pending
+        ))
+        .is_err());
+    }
+}
+
 #[test]
 #[ignore = "prospective real services; dedicated source-bound hosted execution required"]
 fn actual_services_deliver_timer_event_to_real_waiting_fibers_and_refuse_closed_switch() {
@@ -87,6 +171,7 @@ fn actual_services_deliver_timer_event_to_real_waiting_fibers_and_refuse_closed_
         (2, "clock-irq-disable"),
         (3, "clock-disable"),
         (4, "long-gap"),
+        (5, "heap-alignment"),
     ] {
         let folder = directory.join(name);
         let provenance: serde_json::Value =
@@ -117,7 +202,7 @@ fn actual_services_deliver_timer_event_to_real_waiting_fibers_and_refuse_closed_
             matches[0].st_value
         };
         let addresses: Vec<_> = NAMES.iter().map(|name| symbol(name)).collect();
-        let clock_addresses = if mode >= 2 {
+        let clock_addresses = if (2..=4).contains(&mode) {
             Some(
                 [
                     "runtime_clock_stage",
@@ -131,6 +216,15 @@ fn actual_services_deliver_timer_event_to_real_waiting_fibers_and_refuse_closed_
             None
         };
         let mut distinct = addresses.clone();
+        let alignment_addresses = (mode == 5).then(|| {
+            [
+                "runtime_alignment_first",
+                "runtime_alignment_second",
+                "runtime_alignment_size",
+                "runtime_alignment_stage",
+            ]
+            .map(symbol)
+        });
         let timer_addresses = (mode == 4).then(|| {
             [
                 "runtime_timer_before",
@@ -147,6 +241,14 @@ fn actual_services_deliver_timer_event_to_real_waiting_fibers_and_refuse_closed_
         let data = symbol("_data_start")..symbol("_data_end");
         assert!(data.start >= 0x20000000 && data.end <= bss.start && bss.end < 0x2002e000);
         assert!(addresses.iter().all(|a| bss.contains(a) && a % 4 == 0));
+        if let Some(extra) = alignment_addresses {
+            assert!(extra.iter().all(|a| bss.contains(a) && a % 4 == 0));
+            let mut all = addresses.clone();
+            all.extend(extra);
+            all.sort_unstable();
+            all.dedup();
+            assert_eq!(all.len(), NAMES.len() + 4);
+        }
         if let Some(extra) = clock_addresses {
             assert!(extra.iter().all(|a| bss.contains(a) && a % 4 == 0));
             let mut all = addresses.clone();
@@ -248,6 +350,35 @@ fn actual_services_deliver_timer_event_to_real_waiting_fibers_and_refuse_closed_
                 .collect();
             let swaps = calls.swaps.load(Ordering::Relaxed);
             let restores = calls.restores.load(Ordering::Relaxed);
+            if mode == 5 {
+                let a = alignment_addresses
+                    .unwrap()
+                    .map(|address| machine.bus.read_u32(address).unwrap());
+                let pending = machine.cpu.pending_exceptions[0] & (1u64 << 15) != 0;
+                if a[3] != clock_stage {
+                    assert_eq!(a[3], 1);
+                    assert_eq!(clock_stage, 0);
+                    clock_stage = a[3];
+                    println!("SAMD_HEAP_ALIGNMENT_BOUNDARY stage=1 step={step} first={} second={} size={} mask={} exception={exception} pending={pending} irq_entries={entries} irq_returns={returns} actual_swaps={swaps} actual_restores={restores}", a[0], a[1], a[2], u32::from(machine.cpu.primask));
+                }
+                if [0, 0x100].contains(&v[0]) {
+                    continue;
+                }
+                heap_alignment_bug(
+                    &v,
+                    a,
+                    [entries, returns, swaps, restores],
+                    machine.cpu.primask,
+                    exception,
+                    pending,
+                );
+                assert_eq!(clock_stage, 1);
+                assert_eq!(machine.bus.read_u32(0xe000ed28).unwrap(), 0);
+                assert_eq!(machine.bus.read_u32(0xe000ed2c).unwrap(), 0);
+                println!("SAMD_HEAP_ALIGNMENT_BUG source={source} core={CORE} elf_sha256={hash} steps={step} status=0xe0000c60 stage=1 first={} second={} size=8 stride=12 missing_alignment=true checks=1 heap_reused=1 irq_entries=0 irq_returns=0 actual_swaps=0 actual_restores=0 final_mask=1 final_exception=0 pending=false step_bound={step_bound} bss_clear=true data_copy=true vectors=true runtime_admission=false", a[0], a[1]);
+                final_step = Some(step);
+                break;
+            }
             if mode == 4 {
                 let c = clock_addresses
                     .unwrap()
