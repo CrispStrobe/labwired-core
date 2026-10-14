@@ -1,7 +1,7 @@
 {
   "atmega328p": {
-    "batch": 6.4,
-    "step": 922.6
+    "batch": 7.2,
+    "step": 987.7
   },
   "atsamd21": {
     "batch": 1.3,
