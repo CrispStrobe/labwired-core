@@ -27,3 +27,10 @@ steps before any positive claim. Error/cancel/gated-timeout/stale-IRQ/ownership
 and recovery controls remain subsequent required qualification, followed by
 native board/CF2 APIs/notices, actual frames/input/debugger, representative
 performance and qualified installed consumer adoption.
+
+The first actual guest run reached the unchanged four-million-step bound
+without terminal success. Its original failure is retained; no positive SPI
+result is claimed. Follow-up adds read-only stage/terminal MMIO and observed
+failure-row diagnostics while retaining the original image, source pin, step
+budget and positive predicates. Diagnostic observations are not admission and
+must not be invented when an earlier original did not record them.

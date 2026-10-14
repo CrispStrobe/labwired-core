@@ -295,6 +295,7 @@ fn actual_codal_spi_callback_and_blocking_fiber_ordering() {
     let mut resumed = false;
     let mut blocked = false;
     let mut terminal = None;
+    let mut diagnostic_stage = 0;
     for step in 1..=4_000_000 {
         *trace.step.lock().unwrap() = step;
         let pc = machine.cpu.pc & !1;
@@ -352,6 +353,24 @@ fn actual_codal_spi_callback_and_blocking_fiber_ordering() {
             continue;
         }
         let v = addresses.map(|a| machine.bus.read_u32(a).unwrap());
+        if v[6] != diagnostic_stage || step == 4_000_000 || ![0, 0x100, 0x600d].contains(&v[0]) {
+            diagnostic_stage = v[6];
+            let wb = machine.bus.read_u32(0x4100a038).unwrap();
+            let wb_count = if bss.contains(&u64::from(wb)) && wb % 16 == 0 {
+                Some(machine.bus.read_u16(u64::from(wb + 2)).unwrap())
+            } else {
+                None
+            };
+            println!("SAMD_REAL_SPI_DIAGNOSTIC step={step} source={source} elf_sha256={image} pc={:#x} lr={:#x} sp={:#x} mask={} exception={exception} witnesses={v:?} irq_entries={entries:?} irq_returns={returns:?} swaps={swaps} restores={restores} dma_control={:#x} dma_channel={:#x} dma_flags={:#x} wb={wb:#x} wb_count={wb_count:?} spi_control={:#x} spi_flags={:#x} ahb={:#x} apbd={:#x} gclk={:#x} port_out={:#x}", machine.cpu.pc, machine.cpu.lr, machine.cpu.sp, u32::from(machine.cpu.primask), machine.bus.read_u32(0x4100a000).unwrap(), machine.bus.read_u32(0x4100a040).unwrap(), machine.bus.read_u8(0x4100a04e).unwrap(), machine.bus.read_u32(0x43000000).unwrap(), machine.bus.read_u8(0x43000018).unwrap(), machine.bus.read_u32(0x40000810).unwrap(), machine.bus.read_u32(0x40000820).unwrap(), machine.bus.read_u32(0x40001d08).unwrap(), machine.bus.read_u32(0x41008090).unwrap());
+            if step == 4_000_000 || ![0, 0x100, 0x600d].contains(&v[0]) {
+                for row in trace.rows.lock().unwrap().iter() {
+                    println!(
+                        "SAMD_REAL_SPI_FAILURE_ROW step={} kind={} value={}",
+                        row.step, row.kind, row.value
+                    );
+                }
+            }
+        }
         if v[6] == 2 && !resumed {
             resumed = true;
             trace.record("async-resume", v[12]);
@@ -383,13 +402,13 @@ fn actual_codal_spi_callback_and_blocking_fiber_ordering() {
         assert_eq!(machine.bus.read_u32(0xe000ed28).unwrap(), 0);
         assert_eq!(machine.bus.read_u32(0xe000ed2c).unwrap(), 0);
         let rows = trace.rows.lock().unwrap();
-        ordering(&rows);
         for row in rows.iter() {
             println!(
                 "SAMD_REAL_SPI_ROW step={} kind={} value={}",
                 row.step, row.kind, row.value
             );
         }
+        ordering(&rows);
         println!("SAMD_REAL_SPI_RESULT source={source} elf_sha256={image} steps={step} status=0x600d startup=true vectors=true data_copy=true bss_clear=true witnesses={v:?} irq_entries={entries:?} irq_returns={returns:?} actual_swaps={swaps} actual_restores={restores} final_mask=1 final_exception=0 runtime_admission=false");
         terminal = Some(step);
         break;
