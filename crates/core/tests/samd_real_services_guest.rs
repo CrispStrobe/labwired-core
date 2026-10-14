@@ -159,6 +159,57 @@ fn manufactured_heap_alignment_bug_witness_refuses() {
     }
 }
 
+fn public_heap_terminal(mode: u32, v: &[u32], w: [u32; 4], counts: [u32; 4]) {
+    assert!([6, 7].contains(&mode));
+    assert_eq!(v.len(), NAMES.len());
+    assert_eq!(counts, [0; 4]);
+    assert_eq!(&v[2..], &[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    if mode == 6 {
+        assert_eq!(&v[..2], &[0x600d, 2]);
+        assert_eq!(w, [641, 1, 0, 0]);
+    } else {
+        assert_eq!(&v[..2], &[0xe0000014, 1]);
+        assert_eq!(&w[..2], &[0, 2]);
+        assert!(w[2] != w[3]);
+        assert!(w[2..]
+            .iter()
+            .all(|a| (0x20000000..0x2002e000).contains(a) && a % 8 == 0));
+    }
+}
+
+#[test]
+fn manufactured_public_heap_terminal_refuses() {
+    for (mode, status, checks, w) in [
+        (6, 0x600d, 2, [641, 1, 0, 0]),
+        (7, 0xe0000014, 1, [0, 2, 0x20001008, 0x20001040]),
+    ] {
+        let good = [status, checks, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        public_heap_terminal(mode, &good, w, [0; 4]);
+        for index in 0..good.len() {
+            let mut bad = good;
+            bad[index] = if good[index] == 0 { 1 } else { 0 };
+            assert!(
+                std::panic::catch_unwind(|| public_heap_terminal(mode, &bad, w, [0; 4])).is_err()
+            );
+        }
+        for index in 0..w.len() {
+            let mut bad = w;
+            bad[index] = if w[index] == 0 { 1 } else { 0 };
+            assert!(
+                std::panic::catch_unwind(|| public_heap_terminal(mode, &good, bad, [0; 4]))
+                    .is_err()
+            );
+        }
+        for index in 0..4 {
+            let mut bad = [0; 4];
+            bad[index] = 1;
+            assert!(
+                std::panic::catch_unwind(|| public_heap_terminal(mode, &good, w, bad)).is_err()
+            );
+        }
+    }
+}
+
 #[test]
 #[ignore = "prospective real services; dedicated source-bound hosted execution required"]
 fn actual_services_deliver_timer_event_to_real_waiting_fibers_and_refuse_closed_switch() {
@@ -172,6 +223,8 @@ fn actual_services_deliver_timer_event_to_real_waiting_fibers_and_refuse_closed_
         (3, "clock-disable"),
         (4, "long-gap"),
         (5, "heap-alignment"),
+        (6, "public-heap"),
+        (7, "public-heap-oom"),
     ] {
         let folder = directory.join(name);
         let provenance: serde_json::Value =
@@ -216,6 +269,15 @@ fn actual_services_deliver_timer_event_to_real_waiting_fibers_and_refuse_closed_
             None
         };
         let mut distinct = addresses.clone();
+        let public_heap_addresses = (mode >= 6).then(|| {
+            [
+                "runtime_public_heap_checks",
+                "runtime_public_heap_stage",
+                "runtime_public_heap_old",
+                "runtime_public_heap_guard",
+            ]
+            .map(symbol)
+        });
         let alignment_addresses = (mode == 5).then(|| {
             [
                 "runtime_alignment_first",
@@ -241,6 +303,14 @@ fn actual_services_deliver_timer_event_to_real_waiting_fibers_and_refuse_closed_
         let data = symbol("_data_start")..symbol("_data_end");
         assert!(data.start >= 0x20000000 && data.end <= bss.start && bss.end < 0x2002e000);
         assert!(addresses.iter().all(|a| bss.contains(a) && a % 4 == 0));
+        if let Some(extra) = public_heap_addresses {
+            assert!(extra.iter().all(|a| bss.contains(a) && a % 4 == 0));
+            let mut all = addresses.clone();
+            all.extend(extra);
+            all.sort_unstable();
+            all.dedup();
+            assert_eq!(all.len(), NAMES.len() + 4);
+        }
         if let Some(extra) = alignment_addresses {
             assert!(extra.iter().all(|a| bss.contains(a) && a % 4 == 0));
             let mut all = addresses.clone();
@@ -350,6 +420,69 @@ fn actual_services_deliver_timer_event_to_real_waiting_fibers_and_refuse_closed_
                 .collect();
             let swaps = calls.swaps.load(Ordering::Relaxed);
             let restores = calls.restores.load(Ordering::Relaxed);
+            if mode >= 6 {
+                let w = public_heap_addresses
+                    .unwrap()
+                    .map(|address| machine.bus.read_u32(address).unwrap());
+                let pending = machine.cpu.pending_exceptions[0] & (1u64 << 15) != 0;
+                if w[1] != clock_stage {
+                    assert!(machine.cpu.primask && exception == 0 && !pending);
+                    assert_eq!(clock_stage, 0);
+                    assert_eq!(w[1], if mode == 6 { 1 } else { 2 });
+                    clock_stage = w[1];
+                    println!("SAMD_PUBLIC_HEAP_BOUNDARY mode={name} stage={} step={step} checks={} old={} guard={} mask=1 exception=0 pending=false irq_entries={entries} irq_returns={returns} actual_swaps={swaps} actual_restores={restores}", w[1], w[0], w[2], w[3]);
+                }
+                if [0, 0x100].contains(&v[0]) {
+                    continue;
+                }
+                assert!(machine.cpu.primask && exception == 0 && !pending);
+                public_heap_terminal(mode, &v, w, [entries, returns, swaps, restores]);
+                assert_eq!(clock_stage, if mode == 6 { 1 } else { 2 });
+                assert_eq!(machine.bus.read_u32(0xe000ed28).unwrap(), 0);
+                assert_eq!(machine.bus.read_u32(0xe000ed2c).unwrap(), 0);
+                if mode == 7 {
+                    let heap_start = u32::try_from(symbol("_heap_start")).unwrap();
+                    let heap_end = 0x2002e000;
+                    let extent = heap_end - heap_start;
+                    assert!(extent > 0x20000 + 32 + 2 * 19 && extent < 2 * 0x20000);
+                    for (pointer, requested) in [(w[2], 32), (w[3], 0x20000)] {
+                        assert!(
+                            pointer >= heap_start + 12
+                                && pointer
+                                    .checked_add(requested)
+                                    .is_some_and(|end| end <= heap_end)
+                        );
+                        let raw = machine.bus.read_u32(u64::from(pointer - 8)).unwrap();
+                        assert_eq!(
+                            machine.bus.read_u32(u64::from(pointer - 4)).unwrap(),
+                            requested
+                        );
+                        assert!(
+                            raw >= heap_start + 4
+                                && raw % 4 == 0
+                                && raw <= pointer - 8
+                                && pointer - raw <= 15
+                        );
+                        let block = machine.bus.read_u32(u64::from(raw - 4)).unwrap();
+                        assert_eq!(
+                            block & 0x80000000,
+                            0,
+                            "actual old/guard allocation remains live"
+                        );
+                        assert!(block > 1);
+                        let capacity = (block - 1).checked_mul(4).unwrap();
+                        assert!(raw.checked_add(capacity).is_some_and(|end| end <= heap_end));
+                        assert!(pointer.checked_add(requested).unwrap() <= raw + capacity);
+                    }
+                    for offset in 0..32 {
+                        assert_eq!(machine.bus.read_u8(u64::from(w[2] + offset)).unwrap(), 0x69);
+                    }
+                    println!("SAMD_PUBLIC_HEAP_OOM_BINDING heap_start={heap_start} heap_end={heap_end} heap_extent={extent} old={} old_size=32 old_live=true old_payload_69=true guard={} guard_size=131072 guard_live=true", w[2], w[3]);
+                }
+                println!("SAMD_PUBLIC_HEAP_RESULT mode={name} source={source} core={CORE} elf_sha256={hash} steps={step} status={:#x} stage={} checks={} old={} guard={} heap_reused=1 irq_entries=0 irq_returns=0 actual_swaps=0 actual_restores=0 final_mask=1 final_exception=0 pending=false step_bound={step_bound} bss_clear=true data_copy=true vectors=true runtime_admission=false", v[0], w[1], w[0], w[2], w[3]);
+                final_step = Some(step);
+                break;
+            }
             if mode == 5 {
                 let a = alignment_addresses
                     .unwrap()
