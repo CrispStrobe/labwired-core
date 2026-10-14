@@ -1,7 +1,7 @@
 # Prospective actual SPI writeback AHB fault
 
 The fixture separately selects caller mode 12 from immutable runtime
-`cd7dd3532f5757f4b2028c8e63f1a40050c073d8`. It adds no driver/model repair.
+`e81fa3b95a3f3e0a32975273f7da0d176ffd61b8`. It adds no driver/model repair.
 This is a controller-corruption/writeback fault, not an ordinary valid-buffer
 request or physical fault. The real guest worker globally disables DMAC before
 snapshotting remaining count and retargeting enable-protected WBADDR to aligned

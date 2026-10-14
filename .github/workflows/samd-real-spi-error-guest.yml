@@ -8,7 +8,7 @@ concurrency:
   group: real-spi-error-${{ github.ref }}
   cancel-in-progress: true
 env:
-  LABWIRED_SPI_SOURCE: cd7dd3532f5757f4b2028c8e63f1a40050c073d8
+  LABWIRED_SPI_SOURCE: e81fa3b95a3f3e0a32975273f7da0d176ffd61b8
 jobs:
   spi-error-guest:
     runs-on: ubuntu-24.04
@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: CrispStrobe/codal-samd
-          ref: cd7dd3532f5757f4b2028c8e63f1a40050c073d8
+          ref: e81fa3b95a3f3e0a32975273f7da0d176ffd61b8
           path: owned-error-source
           persist-credentials: false
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
