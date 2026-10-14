@@ -346,6 +346,41 @@ fn manufactured_timeout_ordering_refuses() {
     timeout_ordering(&gclk, 30, 64);
     gclk[5].value = 64;
     assert!(std::panic::catch_unwind(|| timeout_ordering(&gclk, 30, 64)).is_err());
+    // Declared exclusive cleanup temporarily restores the clock to retire SPI,
+    // then retains the caller's old gate before delivering failure. Do not hide
+    // either edge or the earlier clock-dependent slave CS notification.
+    let repaired = [
+        ("clock-on", 1),
+        ("select", 0),
+        ("accept", 0x91),
+        ("accept", 0x82),
+        ("gate-worker", 0x20002200),
+        ("clock-off", 0),
+        ("gpio-release", 1),
+        ("clock-on", 1),
+        ("release", 0),
+        ("clock-off", 0),
+        ("failure", 0x20001000),
+        ("clock-on", 1),
+        ("failure-return", 0x800),
+        ("timeout-resume", 0x20002000),
+        ("wait-begin", 120000),
+        ("wait-end", 300000),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(i, (kind, value))| Row {
+        step: i + 1,
+        kind,
+        value,
+    })
+    .collect::<Vec<_>>();
+    timeout_ordering(&repaired, 30, 1);
+    for i in 0..repaired.len() {
+        let mut bad = repaired.clone();
+        bad.remove(i);
+        assert!(std::panic::catch_unwind(|| timeout_ordering(&bad, 30, 1)).is_err());
+    }
 }
 #[test]
 #[ignore = "actual source-bound CODAL clock-gated timeout callers requires dedicated hosted build and both scheduler profiles"]
@@ -662,14 +697,14 @@ fn actual_codal_spi_clock_gated_timeout_and_recovery() {
         assert_eq!(f[7], (-1006_i32) as u32);
         assert!(f[8] != 0 && f[8] != v[12] && f[9] != 0);
         assert_ne!(f[10] & u32::from(trace.gate_mask), 0);
-        assert_eq!(f[11] & u32::from(trace.gate_mask), 0);
+        assert_eq!(f[11], f[10] & !u32::from(trace.gate_mask));
         assert_eq!(f[12], f[10]);
-        assert_eq!(f[13] & 2, 0);
+        assert_eq!(f[13], 0x2000c);
         assert_eq!(f[14], 0);
-        assert_eq!(f[15] & 2, 0);
+        assert_eq!(f[15], 0x200d00);
         assert!(f[16] > 0 && f[16] < 32);
         assert_eq!(f[16], f[17]);
-        assert!(f[18] < f[19] && f[19] < f[20]);
+        assert!(f[18] > 0 && f[18] < f[19] && f[19] < f[20]);
         assert_eq!(f[21], (-1006_i32) as u32);
         assert_eq!(f[22], 1);
         assert!(

@@ -1,11 +1,23 @@
 # Prospective actual clock-gated SPI timeout
 
 This fixture separately selects MCLK mode 10 and GCLK mode 11 from immutable
-runtime `6f71d879fa3add9bfb8013cb71754b5d597f7186`, with the same reviewed core,
+runtime `d7a5f5a4e2607d1b5c19a3a6168bb0d286efc92a`, with the same reviewed core,
 explicit patches and source/toolchain provenance gates as the landed SPI
-checkpoint. Both modes must execute under both scheduler profiles. The first
-candidate deliberately retains the existing driver: preserve any actual cleanup
-failure before repair, and do not mistake compiler success for guest admission.
+checkpoint. Positive mode 8, cancellation mode 9 and timeout modes 10/11 must
+all execute under both scheduler profiles on this same corrected source.
+
+The original candidate `6f71d879fa3add9bfb8013cb71754b5d597f7186` failed
+[all four actual timeout cases](https://github.com/CrispStrobe/labwired-core/actions/runs/38554696298).
+Each accepted two bytes with no wire bytes and writeback remaining 30. The
+typed timeout entered exception 15 with PRIMASK zero, but restored-clock reads
+found SPI still enabled (`0x2000e`); assertion `0xe0000cb5` stopped execution
+before callback return or recovery. Those original failures remain evidence.
+
+The repair disables DMA and releases GPIO CS before temporarily restoring the
+exclusive SERCOM4 clocks to disable SPI and clear its flags. It then restores
+the exact prior clock gates and entry interrupt mask before notification.
+DMAC remains clocked in this profile. Source review is not guest qualification;
+all eight affected cases and every enabled final-head check remain required.
 
 The real worker gates an active transfer, then atomically snapshots writeback
 and clock witnesses. DWT/SysTick, DMA and GPIO remain clocked. The actual Timer
