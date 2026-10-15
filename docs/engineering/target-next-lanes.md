@@ -260,7 +260,7 @@ independent capture. Browser adoption still requires the consumer lanes.
 
 ## A10: nRF52 UARTE transmit-buffer lifetime — 2026-10-15
 
-CLAIMED — Codex, branch `lane/a10-nrf52-serial-20261015`, base `3f54e1ee7`.
+IMPLEMENTED candidate — Codex, branch `lane/a10-nrf52-serial-20261015`, base `3f54e1ee7`.
 Capture the active EasyDMA transmit descriptor and bytes before the producer
 can reuse its stack buffer. Preserve the existing stop-bit completion deadline,
 UART publication and completion events, legacy UART personality, receive path,
@@ -283,3 +283,13 @@ correctness/performance checks. Do not weaken baselines, hardware ACKs, captured
 results or thresholds. The later deterministic WASM release and explicit
 bw-board/Lite adoption are separate consumer boundaries; native source tests
 do not qualify the released artifact, physical timing or the whole board.
+
+The claim and its qualification extension landed at `72a2d6a82` and
+`b6cb3b632`. The candidate latches PTR/MAXCNT at STARTTX, captures bytes at
+the first scheduler boundary, and retains the original frame-count completion
+deadline. At most one capture/completion pair is armed per pending transfer;
+zero-length transfers retain one completion wake. Host controls cover changed
+staging descriptors, stack reuse, fresh rearm and absence of early completion.
+The original 168-byte guest assembles; Rust formatting and workflow parsing
+pass. Engine execution, host controls, compiled guest results and enabled
+exact-head CI remain pending. No released-engine or consumer result is claimed.
