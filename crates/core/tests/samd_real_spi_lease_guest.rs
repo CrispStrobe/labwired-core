@@ -287,7 +287,7 @@ fn lease_ordering(rows: &[Row], remaining: u32, event: u32) {
         "owner-return",
     ] {
         let v = rows[at(role)].value;
-        assert!(v > 0 && v < 0x100000 && v % 2 == 0);
+        assert!(v > 0 && v < 0x100000 && v.is_multiple_of(2));
     }
     for role in [
         "owner-call",
@@ -303,7 +303,7 @@ fn lease_ordering(rows: &[Row], remaining: u32, event: u32) {
         "main-resume",
     ] {
         let v = rows[at(role)].value;
-        assert!((0x20000000..0x2002e000).contains(&v) && v % 8 == 0);
+        assert!((0x20000000..0x2002e000).contains(&v) && v.is_multiple_of(8));
     }
     for role in [
         "owner-call",
