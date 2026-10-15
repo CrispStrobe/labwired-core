@@ -268,8 +268,12 @@ and bounded scheduler ownership. No generic bus/scheduler behavior change.
 Envelope: `crates/core/src/peripherals/nrf52/uarte.rs`, focused peripheral controls,
 new `crates/core/tests/microbit_v2_uarte_stack_guest.rs`, an original source-built
 `examples/microbit-v2/uarte-stack-buffer.S` using the existing board linker,
-its provenance/validation notes, and this contract. If an engine-wide hook is
-necessary, expand the envelope explicitly before editing that shared boundary.
+its provenance/validation notes, this contract, and an added ARM GCC setup plus
+nonvacuous guest command in the existing `.github/workflows/core-ci.yml`
+feature-off job. Workspace integration shards already provide ARM GCC and run
+the scheduler-enabled target; the feature-off lib suite cannot reach guests.
+If an engine-wide hook is necessary, expand the envelope explicitly before
+editing that shared boundary.
 
 Qualification: host controls must detect late reads and wrong descriptors while
 retaining delayed completion; a real compiled Cortex-M4 guest must overwrite
