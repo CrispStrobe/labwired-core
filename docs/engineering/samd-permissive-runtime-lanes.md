@@ -98,7 +98,7 @@ aligned public allocator have landed; the older diagnostic fixtures above are
 not relabelled as those results. Actual SPI callers now qualify success,
 cancellation/recovery, MCLK/GCLK-gated timeout cleanup, writeback AHB error,
 software-pended idle IRQ dispatch and bounded blocking terminal-result ownership.
-Read the [latest actual qualification and exact source/image bindings](samd-real-spi-lease-qualification.md).
+Read the [blocking-result qualification and exact source/image bindings](samd-real-spi-lease-qualification.md).
 Runtime [PR32](https://github.com/CrispStrobe/codal-samd/pull/32) and engine
 [PR237](https://github.com/CrispStrobe/labwired-core/pull/237) landed after both
 runtime and all23 enabled engine checks passed, including all workspace shards
@@ -106,10 +106,17 @@ and final aggregates. Four final-source lease/positive cases and a frozen
 independent original-log audit passed both scheduler profiles. No driver/model
 repair, consumer pin or performance threshold changed in this caller slice.
 
+The later [actual destruction-policy and idle-reconstruction checkpoint](samd-real-spi-lifetime-qualification.md)
+now landed through Runtime34/Core239: all ten actual cases and a frozen independent
+audit pass both profiles, and both Runtime/all23 engine enabled checks pass.
+The earlier conditional-site ratchet failure is retained; the corrected harness
+uses the existing central scheduler query without raising the ceiling.
+
 This is not a complete no-ASF runtime or native Arcade image. Keep the selected
-Timer, MessageBus, driver and buffers alive. Next qualify explicit active and
-delivering destruction refusal, pending blocking-result lifetime and idle
-reconstruction; do not assume destruction cancels safely. Then complete R1a's
+Timer, MessageBus, driver and buffers alive. Active-token, delivering-callback
+and unconsumed blocking-result destruction deliberately fail-stop; only settled
+idle reconstruction completes new transfers. Do not assume destruction cancels
+safely. Next complete R1a's
 required board/API/header/build closure, R1d's remaining services and R3's exact
 component/notices/map/image/CF2 admission, actual frames/input/debugger and
 consumer qualification. An excluded required service still blocks the image.

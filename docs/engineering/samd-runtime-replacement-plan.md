@@ -142,21 +142,29 @@ The [actual service/SPI checkpoint](samd-permissive-runtime-lanes.md#actual-serv
 supersedes the old foundation starting point below. Preserve its original
 source-bound guests; do not repeat reached allocator, callback/fiber, timeout,
 DMA-error or software-pended idle-dispatch implementation just to read evidence.
-Blocking cancellation/result ownership is now qualified separately from lifetime.
+Blocking cancellation/result ownership and bounded lifetime now have separate
+qualified [actual checkpoints](samd-real-spi-lifetime-qualification.md).
 
-1. Qualify actual destruction policy: active asynchronous token, delivering
-   callback and pending blocking terminal result must reach the selected driver's
-   explicit panic reason `0xc42`, not fabricated success or an arbitrary fault.
-   An idle positive must return from
-   destruction, reconstruct a fresh instance against live Timer/MessageBus and
-   complete a new transfer. Bind actual destructor/panic/return PC, reason,
-   fiber/mask/exception, raw MMIO and both profiles. Keep expected-panic callers
-   separate from normal-success cases; retain the first failures. A shared
+1. Preserve reached Runtime34/Core239 lifetime qualification: active token,
+   delivering callback and pending blocking-result deletion deliberately reach
+   actual panic `0xc42`; settled idle deletion/free/reconstruction completes new
+   transfers. All ten source-bound cases and the frozen reader pass both profiles.
+   Keep finite observation limits, live dependencies, expected-panic versus
+   success separation, and original ratchet failure/correction. Do not replay
+   unchanged guests or claim safe active cancellation-and-delete. A later shared
    driver/model repair requires affected earlier clean caller qualification.
 2. Close required board/reset/NVM/serial and other R1a/R1d APIs against declared
    compatible immutable dependencies. Deliver the source/header/consumer manifest
    and explicit no-ASF build selection; compile every affected consumer. No
    vendor include fallback, invented initialization or silently missing service.
+   Start with the concrete gaps: selected `target_reset` currently refuses;
+   engine AIRCR reset covers core-local state, not complete peripheral reset.
+   Qualify real reset reentry before broadening that promise. The historical
+   pointer/copy NVM interface differs from the current integer/read interface;
+   compile actual board/settings consumers against the declared compatible pair.
+   The PyBadge descriptor has no NVM-controller entry and explicit USB/QSPI
+   stubs; a plain flash region does not implement NVM commands. Any required
+   native-image service still blocks admission until implemented and qualified.
 3. Bind exact components, retained headers/inlines, toolchain obligations,
    compiler/map/binary and effective CF2/renderer path, preserving historical
    restricted-image rejection. Qualify the admitted image through actual guest
