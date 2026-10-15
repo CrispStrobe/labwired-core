@@ -379,10 +379,25 @@ fn manufactured_blocking_lease_epoch_refuses() {
         })
         .collect::<Vec<_>>();
     lease_ordering(&rows, 30, 7);
+    // Cancellation may release CS before any accepted byte reaches the slave.
+    // Removing an optional wire row is another valid prefix, not a refusal.
+    let no_wire = rows
+        .iter()
+        .filter(|row| row.kind != "wire")
+        .cloned()
+        .collect::<Vec<_>>();
+    lease_ordering(&no_wire, 30, 7);
     for i in 0..rows.len() {
+        if rows[i].kind == "wire" {
+            continue;
+        }
         let mut bad = rows.clone();
         bad.remove(i);
-        assert!(std::panic::catch_unwind(|| lease_ordering(&bad, 30, 7)).is_err());
+        assert!(
+            std::panic::catch_unwind(|| lease_ordering(&bad, 30, 7)).is_err(),
+            "missing required lease observation {}",
+            rows[i].kind
+        );
     }
     for i in 0..rows.len() {
         let mut bad = rows.clone();
