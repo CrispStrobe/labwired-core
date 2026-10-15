@@ -1,6 +1,24 @@
 # Actual CODAL core-reset qualification lane
 
-## Qualified core-local slice; integration pending
+## Landed core-local checkpoint — 2026-10-15
+
+[PR242](https://github.com/CrispStrobe/labwired-core/pull/242) landed as
+`73f8475f8e406b1ff4475bc9886e22479881d67a` after all 27 enabled final-head
+checks passed; seven declared optional jobs skipped. Final reviewed head was
+`7da58a8d43347e490209710267f95aca3bdda087`. Its
+[actual reset guest run38723902862](https://github.com/CrispStrobe/labwired-core/actions/runs/38723902862)
+also passed. Executable and guest/workflow inputs are unchanged from the
+separately audited source and original described below; the final-head changes
+only bind the approved acknowledgements and update documentation.
+
+Reviewed merge `7c2abfe700d8a4a5f7e8f26dfe5f370ceb388c99` had tree
+`61b880705eea66ade30c54d446fa0d3a7fd512fc`. Main advanced during landing;
+actual parents are `b6cb3b632d2b297f84fcbbde3f8e87b20a660972` and the final
+reviewed head, with landed tree `cf8251039ffe7fbaa07179df014e2cfc82447e23`.
+The reviewed-to-landed tree delta is solely 26 added lines in
+`docs/engineering/target-next-lanes.md`, another worker's lane documentation.
+There is no executable or workflow difference. Preserve both tree identities;
+do not claim whole-tree equality or overwrite that concurrent lane update.
 
 The [actual run38709086550](https://github.com/CrispStrobe/labwired-core/actions/runs/38709086550)
 passed all42 cases at engine source
@@ -28,8 +46,9 @@ previously acknowledged captured-board content bindings were refreshed with
 operator approval. Their acknowledgement age remains2026-10-13 and their
 expiry is explicitly2026-11-12; physical captures and results are unchanged.
 Physical re-capture remains owed. These are not new hardware qualifications.
-Core integration still requires every enabled final-head check and a matched
-merge; no consumer package pin is advanced by this checkpoint.
+The matched-head integration is complete; no consumer package pin is advanced
+by this checkpoint. Whole-board reset and the remaining native-image work are
+still separate qualifications.
 
 ## Original contract and retained failures
 
