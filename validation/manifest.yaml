@@ -457,7 +457,11 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 21dbece7e477efad38cda46821e78c7c0ac9d46bea618f01a4439f3000904857
+    # 2026-10-15: core-local reset guest and 38 affected caller cases passed;
+    # reset mask/IT/xPSR/LR semantics changed. ACK, NOT a physical capture.
+    # Preserve the existing acknowledgement age; physical re-capture is owed.
+    drift_ack_expires: 2026-11-12
+    drift_ack_digest: d124495433bd38f47a23d263d0209b5e1be21d736d76b1cdea22536e31ff1b10
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -924,7 +928,11 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 21dbece7e477efad38cda46821e78c7c0ac9d46bea618f01a4439f3000904857
+    # 2026-10-15: core-local reset guest and 38 affected caller cases passed;
+    # reset mask/IT/xPSR/LR semantics changed. ACK, NOT a physical capture.
+    # Preserve the existing acknowledgement age; physical re-capture is owed.
+    drift_ack_expires: 2026-11-12
+    drift_ack_digest: d124495433bd38f47a23d263d0209b5e1be21d736d76b1cdea22536e31ff1b10
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -1537,7 +1545,11 @@ boards:
     # receives the same explicit GPIO edge through a capability. Captured
     # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
     # physical re-capture remains pending.
-    drift_ack_digest: 42d5f5e82d3fc6ee86dd1efd657bc2062c63fe13c98ceb23d654dd67e5fd064f
+    # 2026-10-15: core-local reset guest and 38 affected caller cases passed;
+    # reset mask/IT/xPSR/LR semantics changed. ACK, NOT a physical capture.
+    # Preserve the existing acknowledgement age; physical re-capture is owed.
+    drift_ack_expires: 2026-11-12
+    drift_ack_digest: fbb8031c2fe4e78b1f0616c63d0a85599fc3f95ddc597988fb18fca8887cce9c
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3401,7 +3413,11 @@ boards:
     # receives the same explicit GPIO edge through a capability. Captured
     # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
     # physical re-capture remains pending.
-    drift_ack_digest: c7bca302cba1c188026e32b5a35ea4ee1b59fb2057413b1f7847779c1d606683
+    # 2026-10-15: core-local reset guest and 38 affected caller cases passed;
+    # reset mask/IT/xPSR/LR semantics changed. ACK, NOT a physical capture.
+    # Preserve the existing acknowledgement age; physical re-capture is owed.
+    drift_ack_expires: 2026-11-12
+    drift_ack_digest: d919ebf45f291a42bf5636ef2e6356c8480f8cbd0cdf0edeaf691aa329cf8a5f
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4277,7 +4293,11 @@ boards:
     # receives the same explicit GPIO edge through a capability. Captured
     # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
     # physical re-capture remains pending.
-    drift_ack_digest: 2305cc444c629bcf5eca3abd11f948a94cffac57ba36dc7cad2f3a1695f6f378
+    # 2026-10-15: core-local reset guest and 38 affected caller cases passed;
+    # reset mask/IT/xPSR/LR semantics changed. ACK, NOT a physical capture.
+    # Preserve the existing acknowledgement age; physical re-capture is owed.
+    drift_ack_expires: 2026-11-12
+    drift_ack_digest: 2ba706ff89868f21914cea313879dbea6d8301187beceb108267e9b37b957961
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5149,7 +5169,11 @@ boards:
     # receives the same explicit GPIO edge through a capability. Captured
     # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
     # physical re-capture remains pending.
-    drift_ack_digest: c0c0547fc3055c7cfb66d5c219cb04cce641e3f81ec5c9783688d39d92dbb431
+    # 2026-10-15: core-local reset guest and 38 affected caller cases passed;
+    # reset mask/IT/xPSR/LR semantics changed. ACK, NOT a physical capture.
+    # Preserve the existing acknowledgement age; physical re-capture is owed.
+    drift_ack_expires: 2026-11-12
+    drift_ack_digest: d3c9381c201fd4ecd497d2923a88d89f1c3cbd7df793e7798a854db6c83eff69
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -6060,7 +6084,11 @@ boards:
     # receives the same explicit GPIO edge through a capability. Captured
     # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
     # physical re-capture remains pending.
-    drift_ack_digest: ded619d7dd623a411f70f2e5b1698116b84efb67ed80fc49e994f05a481aa089
+    # 2026-10-15: core-local reset guest and 38 affected caller cases passed;
+    # reset mask/IT/xPSR/LR semantics changed. ACK, NOT a physical capture.
+    # Preserve the existing acknowledgement age; physical re-capture is owed.
+    drift_ack_expires: 2026-11-12
+    drift_ack_digest: ca0ff88787f2ee677312e707ac679031bde594fa2aeb1d3eed8a7cd00a5d3fdb
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
