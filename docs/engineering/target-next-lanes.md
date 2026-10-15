@@ -260,7 +260,7 @@ independent capture. Browser adoption still requires the consumer lanes.
 
 ## A10: nRF52 UARTE transmit-buffer lifetime — 2026-10-15
 
-CLAIMED — Codex, branch `lane/a10-nrf52-serial-20261015`, base `3f54e1ee7`.
+IMPLEMENTED candidate — Codex, branch `lane/a10-nrf52-serial-20261015`, base `3f54e1ee7`.
 Capture the active EasyDMA transmit descriptor and bytes before the producer
 can reuse its stack buffer. Preserve the existing stop-bit completion deadline,
 UART publication and completion events, legacy UART personality, receive path,
@@ -270,7 +270,10 @@ new `crates/core/tests/microbit_v2_uarte_stack_guest.rs`, an original source-bui
 `examples/microbit-v2/uarte-stack-buffer.S` using the existing board linker,
 its provenance/validation notes, this contract, and an added ARM GCC setup plus
 nonvacuous guest command in the existing `.github/workflows/core-ci.yml`
-feature-off job. Workspace integration shards already provide ARM GCC and run
+feature-off job, and the two explicitly approved model-digest bindings for
+`nrf52840` and `seeed-xiao-nrf52840-sense` plus affected generated status rows.
+Acknowledgement dates, expiry, capture records and watch lists stay unchanged.
+Workspace integration shards already provide ARM GCC and run
 the scheduler-enabled target; the feature-off lib suite cannot reach guests.
 If an engine-wide hook is necessary, expand the envelope explicitly before
 editing that shared boundary.
@@ -283,3 +286,21 @@ correctness/performance checks. Do not weaken baselines, hardware ACKs, captured
 results or thresholds. The later deterministic WASM release and explicit
 bw-board/Lite adoption are separate consumer boundaries; native source tests
 do not qualify the released artifact, physical timing or the whole board.
+
+The claim and its qualification extension landed at `72a2d6a82` and
+`b6cb3b632`. The candidate latches PTR/MAXCNT at STARTTX, captures bytes at
+the first scheduler boundary, and retains the original frame-count completion
+deadline. At most one capture/completion pair is armed per pending transfer;
+zero-length transfers retain one completion wake. Host controls cover changed
+staging descriptors, stack reuse, fresh rearm and absence of early completion.
+The original guest has 168 loadable bytes (5272-byte ELF). Hosted run
+`38727112401`, workspace shard 1, passed its source-built guest at scheduler
+intervals 1 and 64, asserting all 19 original serial bytes and every reused
+stack slot. Source-bound library controls passed except for the new test
+adding one conditional-compilation site above the existing policy ceiling;
+that failure is retained and repaired with an explicit CI interval selection.
+The operator approved the two digest updates after guest qualification; their
+existing October 13 acknowledgement and November 12 expiry remain unchanged.
+The final head integrates qualified reset changes from PR242 and must pass
+all enabled checks, including feature-off and scheduler guests, before merge.
+No released-engine, consumer or physical re-capture result is claimed.

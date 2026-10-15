@@ -741,6 +741,19 @@ jobs:
       - name: Unit tests (labwired-core, FEATURE-OFF)
         run: cargo test -p labwired-core --lib
 
+      - name: ARM C compiler for the UARTE stack-lifetime guest (FEATURE-OFF)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi
+
+      - name: UARTE stack-lifetime guest (FEATURE-OFF)
+        env:
+          LABWIRED_UARTE_STACK_INTERVALS: "1"
+        run: >
+          scripts/ci/cargo-test-nonvacuous.sh
+          -p labwired-core --no-default-features --test microbit_v2_uarte_stack_guest
+          -- --nocapture
+
       # The workspace shards exercise SPI with event-scheduler. Keep its
       # reference/MMIO/guest cancellation tests nonvacuous without the feature,
       # too; lib-only feature-off tests do not reach integration targets.

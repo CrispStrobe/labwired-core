@@ -461,7 +461,9 @@ boards:
     # reset mask/IT/xPSR/LR semantics changed. ACK, NOT a physical capture.
     # Preserve the existing acknowledgement age; physical re-capture is owed.
     drift_ack_expires: 2026-11-12
-    drift_ack_digest: d124495433bd38f47a23d263d0209b5e1be21d736d76b1cdea22536e31ff1b10
+    # A10 / PR244: source-built stack-reuse guest passed under the scheduler.
+    # UARTE buffer capture changes; physical re-capture remains owed.
+    drift_ack_digest: 8b83281aa7ebece7b9a8ff7186b566c37cbcc5d7f34b964a10a84eb9642ec206
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -932,7 +934,9 @@ boards:
     # reset mask/IT/xPSR/LR semantics changed. ACK, NOT a physical capture.
     # Preserve the existing acknowledgement age; physical re-capture is owed.
     drift_ack_expires: 2026-11-12
-    drift_ack_digest: d124495433bd38f47a23d263d0209b5e1be21d736d76b1cdea22536e31ff1b10
+    # A10 / PR244: source-built stack-reuse guest passed under the scheduler.
+    # UARTE buffer capture changes; physical re-capture remains owed.
+    drift_ack_digest: 8b83281aa7ebece7b9a8ff7186b566c37cbcc5d7f34b964a10a84eb9642ec206
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
