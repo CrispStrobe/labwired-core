@@ -413,3 +413,13 @@ Require disabled-channel, wrong-event/task, last configurable channel, remapped
 addresses and enabled primary/fork route controls, both bus-tick and event
 paths, then all affected clean guests and exact-head checks. This extension
 permits no threshold, baseline, firmware-byte or ACK/date relaxation.
+
+The classic-PPI candidate now resolves both bases and admits a local stop only
+through an enabled configurable channel's exact EEP and primary/fork endpoint.
+Controls cover disabled and mismatched routes, channel 19 versus fixed channel
+20, missing controller, remapped addresses and address overflow, in scheduler
+and bus-tick modes. UART buffer capture/publication deadlines stay intact.
+Failure-only Zephyr diagnostics rethrow the original payload; wrapper expansion
+preserves the original normal test source and all comparisons/budgets exactly.
+This is a candidate pending fresh clean qualification, not a resolved RTC or
+full PPI-fabric claim. All earlier passing and failing originals remain retained.
