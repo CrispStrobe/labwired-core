@@ -294,7 +294,7 @@ fn actual_codal_core_reset_and_invalid_key() {
         let mut manifest =
             SystemManifest::from_file(root.join("configs/systems/pybadge.yaml")).unwrap();
         // Core-local reset, not external-device reset. The full board's
-        // NeoPixel resident requires per-cycle service and prevents the real
+        // button-shift-register resident requires per-cycle service and prevents the real
         // multi-instruction CPU-window adversary. Earlier fixtures stay wired.
         assert_eq!(manifest.external_devices.len(), 2);
         manifest.external_devices.clear();
