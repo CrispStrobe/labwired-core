@@ -136,6 +136,40 @@ Distribution obligations and exact selected component review remain required.
 
 ## Next bounded foundation and integration tasks
 
+### Current continuation after actual SPI callers
+
+The [actual service/SPI checkpoint](samd-permissive-runtime-lanes.md#actual-service-integration-checkpoint--2026-10-15)
+supersedes the old foundation starting point below. Preserve its original
+source-bound guests; do not repeat reached allocator, callback/fiber, timeout,
+DMA-error or software-pended idle-dispatch implementation just to read evidence.
+Blocking cancellation/result ownership is now qualified separately from lifetime.
+
+1. Qualify actual destruction policy: active asynchronous token, delivering
+   callback and pending blocking terminal result must reach the selected driver's
+   explicit panic reason `0xc42`, not fabricated success or an arbitrary fault.
+   An idle positive must return from
+   destruction, reconstruct a fresh instance against live Timer/MessageBus and
+   complete a new transfer. Bind actual destructor/panic/return PC, reason,
+   fiber/mask/exception, raw MMIO and both profiles. Keep expected-panic callers
+   separate from normal-success cases; retain the first failures. A shared
+   driver/model repair requires affected earlier clean caller qualification.
+2. Close required board/reset/NVM/serial and other R1a/R1d APIs against declared
+   compatible immutable dependencies. Deliver the source/header/consumer manifest
+   and explicit no-ASF build selection; compile every affected consumer. No
+   vendor include fallback, invented initialization or silently missing service.
+3. Bind exact components, retained headers/inlines, toolchain obligations,
+   compiler/map/binary and effective CF2/renderer path, preserving historical
+   restricted-image rejection. Qualify the admitted image through actual guest
+   frames, input press/release and debugger pause/step/reset, not host frames or
+   this small SPI control caller. R3 remains the admission contract.
+4. Measure representative active native/WASM RTx, frame rate and input latency
+   repeatedly on declared runners with unchanged floors/baselines. Qualify an
+   exact installed consumer artifact/pin separately, then optimize an observed
+   bottleneck with repeated controlled A/B and affected correctness evidence.
+   Natural stale IRQs/timeouts and physical captures remain separate obligations.
+
+### Retained foundation acceptance contracts
+
 Start with the [landed foundation checkpoint](samd-permissive-runtime-lanes.md#authored-foundations-checkpoint--not-runtime-admission).
 Do not repeat successful original acquisitions or infer runtime integration
 from the small fixture results. Work these tasks in order, with each source

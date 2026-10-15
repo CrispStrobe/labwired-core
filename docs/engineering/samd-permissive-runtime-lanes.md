@@ -1,4 +1,4 @@
-# SAMD simulation-runtime admission lanes — 2026-10-09
+# SAMD simulation-runtime admission lanes — 2026-10-15
 
 This is a prerequisite for original native PyBadge runtime execution and app
 adoption, not a prerequisite for authored permissive MMIO guest tests. Keep
@@ -90,6 +90,33 @@ Next execute the ordered foundation/integration tasks in the
 [replacement plan](samd-runtime-replacement-plan.md#next-bounded-foundation-and-integration-tasks).
 None of these results moves an app pin, admits a whole runtime, qualifies a
 physical board or establishes active PyBadge/native/WASM RTx.
+
+## Actual service integration checkpoint — 2026-10-15
+
+Later, separately selected actual Timer/MessageBus/Fiber/Heap callers and the
+aligned public allocator have landed; the older diagnostic fixtures above are
+not relabelled as those results. Actual SPI callers now qualify success,
+cancellation/recovery, MCLK/GCLK-gated timeout cleanup, writeback AHB error,
+software-pended idle IRQ dispatch and bounded blocking terminal-result ownership.
+Read the [latest actual qualification and exact source/image bindings](samd-real-spi-lease-qualification.md).
+Runtime [PR32](https://github.com/CrispStrobe/codal-samd/pull/32) and engine
+[PR237](https://github.com/CrispStrobe/labwired-core/pull/237) landed after both
+runtime and all23 enabled engine checks passed, including all workspace shards
+and final aggregates. Four final-source lease/positive cases and a frozen
+independent original-log audit passed both scheduler profiles. No driver/model
+repair, consumer pin or performance threshold changed in this caller slice.
+
+This is not a complete no-ASF runtime or native Arcade image. Keep the selected
+Timer, MessageBus, driver and buffers alive. Next qualify explicit active and
+delivering destruction refusal, pending blocking-result lifetime and idle
+reconstruction; do not assume destruction cancels safely. Then complete R1a's
+required board/API/header/build closure, R1d's remaining services and R3's exact
+component/notices/map/image/CF2 admission, actual frames/input/debugger and
+consumer qualification. An excluded required service still blocks the image.
+Natural stale IRQs/timeouts, physical behavior and distribution clearance are
+separate. Only after admitted active execution measure repeated native/WASM RTx,
+adopt the exact installed consumer artifact and optimize a measured bottleneck.
+Historical image classifications and the legacy default build remain unchanged.
 
 ## R0 — capture actual linked provenance
 

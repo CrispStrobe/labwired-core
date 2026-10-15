@@ -69,6 +69,11 @@ in the engine first, followed by an explicit qualified consumer pin.
   PyBadge median **61.036527x**, minimum **60.630180x** and 42/82 passing gates;
   it is not a new current-main, active PyBadge, controlled A/B or WASM result.
   Read the [production evidence lanes S1–S4](st7735-production-next-lanes.md).
+- Actual selected CODAL service/heap and SPI callers now cover success,
+  cancellation, gated timeout, DMA error, software-pended idle IRQs and bounded
+  blocking-result ownership. The [current admission checkpoint and next lanes](samd-permissive-runtime-lanes.md#actual-service-integration-checkpoint--2026-10-15)
+  link final source/images, both engine profiles and preserved failures. These
+  are bounded callers, not an admitted board image, RTx result or consumer pin.
 - The actual ST7735 production panel, DMA-driven native Arcade, QSPI, USB and audio are not qualified by
   buttons/controller tests. CP13 and CP14 remain open.
 
