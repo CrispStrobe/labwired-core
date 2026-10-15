@@ -372,3 +372,27 @@ remapped-controller, channel-enable alias, and positive configured-route
 controls. Both feature-off and scheduler guest paths, the original complete
 nRF5340 Zephyr greeting and all enabled final checks remain mandatory.
 New physical results or weakened assertions/ACK dates are not authorized.
+
+### A10 classic PPI and differential regression boundary — 2026-10-15
+
+The DPPI candidate's feature-off job now passes both compiled UART guests and
+the unchanged nRF5340 Zephyr greeting. Scheduler-observable qualification still
+fails two nRF52840 Zephyr JIT/interpreter comparisons at the existing RTC live-
+event ceiling. Preserve that failure, the ceiling of eight, the instruction
+budget and all architectural, UART, cycle and memory comparisons.
+
+Expand the existing local-route envelope before implementation to classic
+nRF52 PPI: resolve the PPI controller and this UART's base through the factory,
+and recognize an enabled configurable channel only when its EEP is this
+UART's ENDTX and its TEP or FORK names this UART's STOPTX. No unconditional
+stop, general event fabric, cross-instance route or RTC/scheduler change.
+Own `nrf52/uarte.rs` and `nrf52/factory.rs` for this subset and controls, plus
+`crates/core/tests/cortex_m_jit_nrf_differential.rs` for failure-only UART/PPI
+register observations that rethrow the original panic. Successful execution
+must not acquire extra observations or altered comparisons. Keep the full
+Zephyr markers and configured-cycle/JIT assertions mandatory.
+
+Require disabled-channel, wrong-event/task, last configurable channel, remapped
+addresses and enabled primary/fork route controls, both bus-tick and event
+paths, then all affected clean guests and exact-head checks. This extension
+permits no threshold, baseline, firmware-byte or ACK/date relaxation.
