@@ -1,6 +1,24 @@
 # Actual SPI destruction-policy qualification contract
 
-This source-only fixture selects immutable Runtime
+## Landed actual checkpoint — 2026-10-15
+
+Runtime [PR34](https://github.com/CrispStrobe/codal-samd/pull/34) landed as
+`580931ac258ffa4b1949165247418b4e2eeb4b99`; engine
+[PR239](https://github.com/CrispStrobe/labwired-core/pull/239) landed as
+`6cc18e36497423993e0224114f1bc759160d3631`. Both Runtime checks and all23 enabled
+engine checks passed, with only seven declared optional jobs skipped. Reviewed,
+actual-tested and landed trees and merge parents/default refs matched.
+[Final actual run38688077422](https://github.com/CrispStrobe/labwired-core/actions/runs/38688077422)
+and the frozen independent source/image/provider-bound reader pass all ten cases.
+Read the [exact sources/images, original hashes, preserved ratchet failure,
+results and concrete next board/API blockers](https://github.com/CrispStrobe/codal-samd/blob/2677b3795a3d5dd989bddb89c5285db06d2c13a0/docs/REAL-SPI-LIFETIME-RESULTS.md).
+No driver/model, consumer pin, threshold, ACK or physical capture changed.
+This is deliberate invalid-destruction fail-stop plus settled idle reconstruction,
+not safe active cancellation-and-delete, native Arcade, RTx or image admission.
+
+## Retained fixture and observation contract
+
+This fixture selects immutable Runtime
 `932d476344107386d56dfd2d595d74d713780563` and unchanged driver/model.
 Modes15/16/17 require exact deliberate reason `0xc42` at the actual panic PC,
 never a timeout, bus fault or arbitrary panic. They respectively retain an active
