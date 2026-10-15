@@ -346,9 +346,35 @@ Then qualify and publish a distinct deterministic engine release and requalify
 Lite's original complete serial assertions. The published first engine and all
 original failures stay retained; no weakening or relabelling of their results.
 
-The follow-up candidate removes only the unsolicited completion-time TXSTOPPED
-assignment. STOPTX still raises that event. Added controls exercise two chained
-buffers, no early publication, no phantom stop IRQ, and the explicit stop IRQ.
-The new independently authored interrupt guest requires every byte of
-`A10 IRQ chain OK\n`, zero unsolicited stops and final explicit-stop completion.
-Hosted guest qualification is pending; no replacement engine is published yet.
+### A10 shared nRF5340 UART regression boundary — 2026-10-15
+
+The first follow-up's feature-off run passed both original ARM UART guests
+and 4,368 library tests, but the unchanged nRF5340 Zephyr survival case then
+failed its full greeting (only `*` was emitted). Keep the original failure.
+Zephyr's enhanced polling routes ENDTX to STOPTX through DPPI; the nRF5340
+DPPIC is currently a zero-returning stub. The old unconditional stop event
+masked this missing configured route. Do not restore an unsolicited stop for
+unconfigured nRF52 transfers or weaken the Zephyr greeting assertion.
+
+Expand this lane before implementation to a bounded UART-local DPPI subset:
+`crates/core/src/peripherals/nrf52/dppic.rs` for CHEN/CHENSET/CHENCLR state;
+its declaration in `nrf52/mod.rs` and construction in `nrf52/factory.rs`;
+`configs/chips/nrf5340.yaml` promotes that controller to the native subset;
+remove its obsolete zero-stub entry from `crates/core/src/bus/known_stubs.rs`.
+The UARTE resolves the sibling base from the existing ChipMap and triggers
+its own STOPTX only when PUBLISH_ENDTX and SUBSCRIBE_STOPTX enable the same
+valid channel and DPPIC.CHEN enables it. Preserve ordinary explicit STOPTX.
+No generic bus/CPU/scheduler algorithm, cross-instance DPPI routing or full
+DPPI support is included. Document that limited route and remaining gaps.
+
+Require disabled-publisher/subscriber/channel, mismatched/out-of-range channel,
+remapped-controller, channel-enable alias, and positive configured-route
+controls. Both feature-off and scheduler guest paths, the original complete
+nRF5340 Zephyr greeting and all enabled final checks remain mandatory.
+New physical results or weakened assertions/ACK dates are not authorized.
+
+The first candidate removed the unsolicited completion-time TXSTOPPED assignment;
+explicit STOPTX stayed live. Its feature-off original stack-reuse and new IRQ
+guest passed, including exact 19-byte and 17-byte streams. The unchanged nRF5340
+Zephyr greeting then failed. The scoped DPPI follow-up above remains pending;
+no replacement engine, updated model ACK or consumer completion is claimed.
