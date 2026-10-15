@@ -319,7 +319,7 @@ No physical re-capture, full-board or physical-timing result is claimed.
 
 ### A10 follow-up: interrupt-chained transmit completion — 2026-10-15
 
-CLAIMED — Codex, branch `lane/a10-uarte-completion-irq-20261015`.
+IMPLEMENTED candidate — Codex, branch `lane/a10-uarte-completion-irq-20261015`.
 The first source-built stack guest and deterministic release remain passing
 bounded evidence. Lite PR988's actual compiled MakeCode CLI guest nevertheless
 failed both complete-line checks: serial begins `hl bw` rather than `hello bw`.
@@ -345,3 +345,10 @@ keep acknowledgement dates, expiry, physical captures and watch lists intact.
 Then qualify and publish a distinct deterministic engine release and requalify
 Lite's original complete serial assertions. The published first engine and all
 original failures stay retained; no weakening or relabelling of their results.
+
+The follow-up candidate removes only the unsolicited completion-time TXSTOPPED
+assignment. STOPTX still raises that event. Added controls exercise two chained
+buffers, no early publication, no phantom stop IRQ, and the explicit stop IRQ.
+The new independently authored interrupt guest requires every byte of
+`A10 IRQ chain OK\n`, zero unsolicited stops and final explicit-stop completion.
+Hosted guest qualification is pending; no replacement engine is published yet.
