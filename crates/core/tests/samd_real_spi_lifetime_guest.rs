@@ -414,6 +414,67 @@ fn predicate(mode: u32, rows: &[Row], g: &[u32; 18], entries: [u32; 3], returns:
         assert_eq!(r.value, payload[i]);
         assert!(accepted[i].step <= r.step);
     }
+    if mode == 16 || mode == 18 {
+        let phases = if mode == 18 { 4 } else { 1 };
+        assert_eq!(accepted.len(), phases * 4, "complete accepted bytes");
+        assert_eq!(wire.len(), phases * 4, "complete wire bytes");
+        let indices = |kind: &str, value: Option<u32>| {
+            rows.iter()
+                .enumerate()
+                .filter(|(_, r)| r.kind == kind && value.is_none_or(|v| r.value == v))
+                .map(|(i, _)| i)
+                .collect::<Vec<_>>()
+        };
+        let select = indices("select", None);
+        let release = indices("release", None);
+        let accept = indices("accept", None);
+        let wire = indices("wire", None);
+        let dma = indices("irq-enter", Some(47));
+        let dma_return = indices("irq-return", Some(47));
+        let txc = indices("irq-enter", Some(79));
+        let txc_return = indices("irq-return", Some(79));
+        let callback = indices("callback", None);
+        let callback_return = indices("callback-return", None);
+        let resumed = indices("async-resume", None);
+        let blocking_call = indices("blocking-call", None);
+        let blocking_return = indices("blocking-return", None);
+        for phase in 0..phases {
+            assert!(
+                select[phase] < accept[phase * 4]
+                    && accept[phase * 4 + 3] < dma[phase]
+                    && dma[phase] < wire[phase * 4 + 3]
+                    && wire[phase * 4 + 3] < txc[phase]
+                    && txc[phase] < release[phase],
+                "DMA/wire/TXC/release phase{phase}"
+            );
+            assert!(dma[phase] < dma_return[phase] && dma_return[phase] < txc[phase]);
+            for byte in phase * 4..phase * 4 + 4 {
+                assert!(
+                    select[phase] < accept[byte]
+                        && accept[byte] < wire[byte]
+                        && wire[byte] < release[phase]
+                );
+            }
+            if mode == 18 {
+                assert!(release[phase] < txc_return[phase]);
+                if phase.is_multiple_of(2) {
+                    let i = phase / 2;
+                    assert!(
+                        release[phase] < callback[i]
+                            && callback[i] < callback_return[i]
+                            && callback_return[i] < txc_return[phase]
+                            && txc_return[phase] < resumed[i]
+                            && resumed[i] < blocking_call[i]
+                            && blocking_call[i] < select[phase + 1]
+                    );
+                } else {
+                    assert!(txc_return[phase] < blocking_return[phase / 2]);
+                }
+            } else {
+                assert!(release[0] < callback[0] && callback[0] < at(rows, "destroy-call"));
+            }
+        }
+    }
     if mode == 17 {
         assert_eq!(accepted.len(), 32 - g[16] as usize);
         let release = at(rows, "release");
@@ -513,12 +574,12 @@ fn manufactured_all_lifetime_modes_refuse_missing_or_extra_effects() {
             raw.push(("select", 0));
             for (i, value) in [0x12, 0x34, 0x56, 0x78].into_iter().enumerate() {
                 raw.push(("accept", value));
-                raw.push(("wire", value));
                 if i == 3 {
-                    raw.extend([("irq-enter", 47), ("irq-return", 47), ("irq-enter", 79)]);
+                    raw.extend([("irq-enter", 47), ("irq-return", 47)]);
                 }
+                raw.push(("wire", value));
             }
-            raw.extend([("release", 0), ("callback", 0)]);
+            raw.extend([("irq-enter", 79), ("release", 0), ("callback", 0)]);
             g[4] = 0;
             g[5] = 79;
             entries = [0, 1, 1];
@@ -544,15 +605,14 @@ fn manufactured_all_lifetime_modes_refuse_missing_or_extra_effects() {
                     raw.push(("blocking-call", 0));
                 }
                 raw.push(("select", 0));
-                for value in [0x12, 0x34, 0x56, 0x78] {
-                    raw.extend([("accept", value), ("wire", value)]);
+                for (i, value) in [0x12, 0x34, 0x56, 0x78].into_iter().enumerate() {
+                    raw.push(("accept", value));
+                    if i == 3 {
+                        raw.extend([("irq-enter", 47), ("irq-return", 47)]);
+                    }
+                    raw.push(("wire", value));
                 }
-                raw.extend([
-                    ("irq-enter", 47),
-                    ("irq-return", 47),
-                    ("irq-enter", 79),
-                    ("release", 0),
-                ]);
+                raw.extend([("irq-enter", 79), ("release", 0)]);
                 if phase == 0 {
                     raw.extend([("callback", 0), ("callback-return", 0)]);
                 }
@@ -618,6 +678,33 @@ fn manufactured_all_lifetime_modes_refuse_missing_or_extra_effects() {
             })
             .collect();
         predicate(mode, &rows, &g, entries, returns);
+        if mode == 16 || mode == 18 {
+            let last_wire = rows
+                .iter()
+                .position(|r| r.kind == "wire" && r.value == 0x78)
+                .unwrap();
+            let dma = rows
+                .iter()
+                .position(|r| r.kind == "irq-enter" && r.value == 47)
+                .unwrap();
+            let txc = rows
+                .iter()
+                .position(|r| r.kind == "irq-enter" && r.value == 79)
+                .unwrap();
+            let release = rows.iter().position(|r| r.kind == "release").unwrap();
+            for (a, b) in [(dma, last_wire), (txc, last_wire), (txc, release)] {
+                let mut bad = rows.clone();
+                bad.swap(a, b);
+                for (i, row) in bad.iter_mut().enumerate() {
+                    row.step = i + 1;
+                }
+                assert!(
+                    std::panic::catch_unwind(|| predicate(mode, &bad, &g, entries, returns))
+                        .is_err(),
+                    "wrong physical epoch mode{mode}"
+                );
+            }
+        }
         for i in 0..rows.len() {
             if rows[i].kind == "wire" && (mode == 15 || mode == 17) {
                 continue;
