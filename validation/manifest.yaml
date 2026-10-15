@@ -7664,6 +7664,8 @@ boards:
       # claim for the corrected digest to invalidate — no ack is implied.
       - crates/core/src/peripherals/gpio.rs
       - crates/core/src/peripherals/nrf52/clock.rs
+      # PR247: explicitly cover the newly registered channel-enable model.
+      - crates/core/src/peripherals/nrf52/dppic.rs
       - crates/core/src/peripherals/nrf52/rtc.rs
       - crates/core/src/peripherals/nrf52/timer.rs
       - crates/core/src/peripherals/nrf52/uarte.rs

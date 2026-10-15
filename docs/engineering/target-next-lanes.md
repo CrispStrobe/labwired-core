@@ -423,3 +423,9 @@ Failure-only Zephyr diagnostics rethrow the original payload; wrapper expansion
 preserves the original normal test source and all comparisons/budgets exactly.
 This is a candidate pending fresh clean qualification, not a resolved RTC or
 full PPI-fabric claim. All earlier passing and failing originals remain retained.
+
+The model-path gate additionally requires the new DPPIC source to appear
+explicitly in the uncaptured `nrf5340` board's `models:` list in
+`validation/manifest.yaml`. Add that coverage entry without changing the gate,
+any captured board's watch list, ACK field or silicon record. The original
+workspace failure remains retained; no allowlist exception is introduced.
