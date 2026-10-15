@@ -443,7 +443,7 @@ fn actual_codal_spi_blocking_result_lease_and_recovery() {
         )
     );
     let elf = goblin::elf::Elf::parse(&bytes).unwrap();
-    let symbol = |name| {
+    let symbol = |name: &str| {
         let matching: Vec<_> = elf
             .syms
             .iter()
