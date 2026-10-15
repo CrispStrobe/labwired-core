@@ -22,7 +22,9 @@ byte events or read the bus through an aliased observer reference. This is
 diagnostic instrumentation, not a measured performance optimization.
 
 The retained first run also had one CPU batch per instruction at quantum64:
-the complete board manifest's NeoPixel resident requires per-cycle service.
+the board's declarative button-shift-register resident drives DATA and the
+current resident predicate requires per-cycle service. This is not a NeoPixel
+resident: that separate model uses the GPIO-observer attachment path.
 The new reset-only fixture explicitly clears external board devices in both
 quantums, retains the chip/core models, and reports that fixture identity and
 zero external-device count. It still requires actual multi-instruction windows;
