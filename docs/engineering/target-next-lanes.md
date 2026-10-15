@@ -257,3 +257,25 @@ observations; no host-forced data-ready flags.
 negative cases pass and active hosted RTx is measured without weakening motion
 or forty-chip gates. Physical noise/calibration/audio remain excluded without
 independent capture. Browser adoption still requires the consumer lanes.
+
+## A10: nRF52 UARTE transmit-buffer lifetime — 2026-10-15
+
+CLAIMED — Codex, branch `lane/a10-nrf52-serial-20261015`, base `3f54e1ee7`.
+Capture the active EasyDMA transmit descriptor and bytes before the producer
+can reuse its stack buffer. Preserve the existing stop-bit completion deadline,
+UART publication and completion events, legacy UART personality, receive path,
+and bounded scheduler ownership. No generic bus/scheduler behavior change.
+Envelope: `crates/core/src/peripherals/nrf52/uarte.rs`, focused peripheral controls,
+new `crates/core/tests/microbit_v2_uarte_stack_guest.rs`, an original source-built
+`examples/microbit-v2/uarte-stack-buffer.S` using the existing board linker,
+its provenance/validation notes, and this contract. If an engine-wide hook is
+necessary, expand the envelope explicitly before editing that shared boundary.
+
+Qualification: host controls must detect late reads and wrong descriptors while
+retaining delayed completion; a real compiled Cortex-M4 guest must overwrite
+its stack transmit buffer and still produce the original ordered serial bytes.
+Run affected tests in both scheduler configurations and all enabled exact-head
+correctness/performance checks. Do not weaken baselines, hardware ACKs, captured
+results or thresholds. The later deterministic WASM release and explicit
+bw-board/Lite adoption are separate consumer boundaries; native source tests
+do not qualify the released artifact, physical timing or the whole board.
