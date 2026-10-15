@@ -359,6 +359,7 @@ unconfigured nRF52 transfers or weaken the Zephyr greeting assertion.
 Expand this lane before implementation to a bounded UART-local DPPI subset:
 `crates/core/src/peripherals/nrf52/dppic.rs` for CHEN/CHENSET/CHENCLR state;
 its declaration in `nrf52/mod.rs` and construction in `nrf52/factory.rs`;
+its required canonical type entry in `peripherals/generic_factory.rs`;
 `configs/chips/nrf5340.yaml` promotes that controller to the native subset;
 remove its obsolete zero-stub entry from `crates/core/src/bus/known_stubs.rs`.
 The UARTE resolves the sibling base from the existing ChipMap and triggers
