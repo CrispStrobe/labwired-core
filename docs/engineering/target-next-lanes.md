@@ -378,3 +378,13 @@ explicit STOPTX stayed live. Its feature-off original stack-reuse and new IRQ
 guest passed, including exact 19-byte and 17-byte streams. The unchanged nRF5340
 Zephyr greeting then failed. The scoped DPPI follow-up above remains pending;
 no replacement engine, updated model ACK or consumer completion is claimed.
+
+The DPPI candidate now promotes the DPPIC channel-enable subset and resolves
+its base through ChipMap. UARTE's local event/task route checks both endpoint
+enable bits, a matching channel below 32, and live CHEN at ENDTX. Explicit and
+configured STOPTX share one task action. Controls cover byte/word controller
+aliases, disabled or mismatched routes, channels 31/32, missing DPPIC,
+remapped controller addresses, and channel changes between capture/completion
+in both scheduler and bus-tick modes. No generic scheduling algorithm changed.
+Fresh clean guest and nRF5340 Zephyr qualification is pending; earlier passing
+native streams and the original later survival failure stay retained.
