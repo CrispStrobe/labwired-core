@@ -260,7 +260,7 @@ independent capture. Browser adoption still requires the consumer lanes.
 
 ## A10: nRF52 UARTE transmit-buffer lifetime — 2026-10-15
 
-IMPLEMENTED candidate — Codex, branch `lane/a10-nrf52-serial-20261015`, base `3f54e1ee7`.
+DONE (source) — [PR244](https://github.com/CrispStrobe/labwired-core/pull/244), merged as `6a769a59694ec8920de559f9e3fffa2f5375ac6b`.
 Capture the active EasyDMA transmit descriptor and bytes before the producer
 can reuse its stack buffer. Preserve the existing stop-bit completion deadline,
 UART publication and completion events, legacy UART personality, receive path,
@@ -301,6 +301,18 @@ adding one conditional-compilation site above the existing policy ceiling;
 that failure is retained and repaired with an explicit CI interval selection.
 The operator approved the two digest updates after guest qualification; their
 existing October 13 acknowledgement and November 12 expiry remain unchanged.
-The final head integrates qualified reset changes from PR242 and must pass
-all enabled checks, including feature-off and scheduler guests, before merge.
-No released-engine, consumer or physical re-capture result is claimed.
+The final head integrated qualified reset changes from PR242 and passed all
+27 enabled checks before the matched-head merge; seven optional checks were
+explicitly skipped. The feature-off guest and scheduler intervals 1 and 64
+passed all 19 ordered serial bytes and stack-reuse assertions. Aggregate
+workspace results were 7,860 passes and no failures across 473 test targets;
+105 existing ignored cases remain ignored. The landed tree and parents matched
+the reviewed merge prediction.
+
+The separate deterministic release `labwired-wasm-6a769a59` is now published
+through [bw-board PR621](https://github.com/CrispStrobe/bw-board/pull/621):
+its retained-byte hosted qualification passed all 123 tests without skips,
+and original-byte lineage plus release digests were independently checked.
+[Lite PR988](https://github.com/CrispStrobe/brickwright-lite/pull/988) still
+requires actual CLI/browser qualification before consumer integration.
+No physical re-capture, full-board or physical-timing result is claimed.
