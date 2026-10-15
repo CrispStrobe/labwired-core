@@ -11,44 +11,44 @@ The models column is a content digest over everything that board's `models` list
 |-------|------|----------------------|--------|--------|
 | `nrf52840` | 🟢 silicon-verified | 2026-08-09 | `8b83281aa7ebece7` | ⚠ drift acked 2026-10-13, expires 2026-11-12 (re-capture pending) |
 | `seeed-xiao-nrf52840-sense` | 🟢 silicon-verified | 2026-08-09 | `8b83281aa7ebece7` | ⚠ drift acked 2026-10-13, expires 2026-11-12 (re-capture pending) |
-| `stm32h563` | 🟢 silicon-verified | 2026-08-10 | `fbb8031c2fe4e78b` | ⚠ drift acked 2026-10-13, expires 2026-11-12 (re-capture pending) |
+| `stm32h563` | 🟢 silicon-verified | 2026-08-10 | `95fb949e9e52ca41` | ⚠ drift acked 2026-10-15, expires 2026-11-12 (re-capture pending) |
 | `esp32c3` | 🟢 silicon-verified | 2026-08-09 | `a3524376e76a254b` | ⚠ drift acked 2026-10-12, expires 2026-11-11 (re-capture pending) |
-| `nucleo-l476rg` | 🟢 silicon-verified | 2026-08-09 | `d919ebf45f291a42` | ⚠ drift acked 2026-10-13, expires 2026-11-12 (re-capture pending) |
-| `nucleo-l073rz` | 🟢 silicon-verified | 2026-08-09 | `2ba706ff89868f21` | ⚠ drift acked 2026-10-13, expires 2026-11-12 (re-capture pending) |
-| `stm32f103` | 🟢 silicon-verified | 2026-08-09 | `d3c9381c201fd4ec` | ⚠ drift acked 2026-10-13, expires 2026-11-12 (re-capture pending) |
-| `stm32f407` | 🟢 silicon-smoke | 2026-06-20 | `ca0ff88787f2ee67` | ⚠ drift acked 2026-10-13, expires 2026-11-12 (re-capture pending) |
+| `nucleo-l476rg` | 🟢 silicon-verified | 2026-08-09 | `831a0aaaf196ca57` | ⚠ drift acked 2026-10-15, expires 2026-11-12 (re-capture pending) |
+| `nucleo-l073rz` | 🟢 silicon-verified | 2026-08-09 | `0dc13f01e354cdfd` | ⚠ drift acked 2026-10-15, expires 2026-11-12 (re-capture pending) |
+| `stm32f103` | 🟢 silicon-verified | 2026-08-09 | `071cefb294b0b01e` | ⚠ drift acked 2026-10-15, expires 2026-11-12 (re-capture pending) |
+| `stm32f407` | 🟢 silicon-smoke | 2026-06-20 | `5f1cad0f6b538be0` | ⚠ drift acked 2026-10-15, expires 2026-11-12 (re-capture pending) |
 | `esp32s3` | 🟢 silicon-verified | 2026-08-09 | `7fff43fcf6d9eebc` | ⚠ drift acked 2026-10-12, expires 2026-11-11 (re-capture pending) |
 | `esp32s3-zero` | 🔵 sim-validated (deep model, no HW diff) | — | `ee9e6500f78548e5` | no silicon capture |
-| `stm32f401` | 🟡 smoke-manual | — | `b9a21a74b13e693d` | no silicon capture |
-| `stm32wba52` | 🟡 smoke-manual | — | `7ed7c11a5e71b156` | no silicon capture |
-| `nrf52832` | ⚪ structural | — | `944ce8061df085ec` | no silicon capture |
-| `microbit-v1` | 🟡 smoke-manual | — | `a114c721a071bb4b` | no silicon capture |
-| `microbit-v2` | 🟡 smoke-manual | — | `e4d235cc01e42231` | no silicon capture |
+| `stm32f401` | 🟡 smoke-manual | — | `971d1a38be0c6432` | no silicon capture |
+| `stm32wba52` | 🟡 smoke-manual | — | `78d9285ac8ed1414` | no silicon capture |
+| `nrf52832` | ⚪ structural | — | `5394b945f4b00c3a` | no silicon capture |
+| `microbit-v1` | 🟡 smoke-manual | — | `b5ddd7acb29f8e69` | no silicon capture |
+| `microbit-v2` | 🟡 smoke-manual | — | `73f5b40bcb32183d` | no silicon capture |
 | `rp2040` | ⚪ structural | — | `64c607822c78f698` | no silicon capture |
 | `rp2350` | 🟡 smoke-manual | — | `4ead5ca51d13d727` | no silicon capture |
-| `nrf5340` | 🔵 sim-validated (deep model, no HW diff) | — | `967fb73a944d0116` | no silicon capture |
-| `stm32h735` | 🔵 sim-validated (deep model, no HW diff) | — | `a9ad309065a35667` | no silicon capture |
-| `stm32u575` | 🔵 sim-validated (deep model, no HW diff) | — | `8e72e547072d65cd` | no silicon capture |
-| `nucleo-u545re` | 🔵 sim-validated (deep model, no HW diff) | — | `0b25089b5d8fd9db` | no silicon capture |
-| `stm32f411ceu6` | 🔵 sim-validated (deep model, no HW diff) | — | `bc48795c7ff52f57` | no silicon capture |
-| `brd2709a` | 🟡 smoke-manual | — | `342b3e0a2c704b9d` | no silicon capture |
-| `esp32` | ⚪ structural | — | `1ace8bed6161f592` | no silicon capture |
-| `mkw41z4` | 🔵 sim-validated (deep model, no HW diff) | — | `ff143629eb5f1c68` | no silicon capture |
-| `stm32f405` | 🔵 sim-validated (deep model, no HW diff) | — | `b4965f6022f8d37f` | no silicon capture |
-| `stm32f767` | 🔵 sim-validated (deep model, no HW diff) | — | `76d5e67a3f4175b5` | no silicon capture |
-| `stm32f401cdu6` | 🔵 sim-validated (deep model, no HW diff) | — | `fe8ceadab21e49c2` | no silicon capture |
-| `atsamd21g18a` | 🔵 sim-validated (deep model, no HW diff) | — | `d4325552f08d1783` | no silicon capture |
-| `nrf54l15` | 🔵 sim-validated (deep model, no HW diff) | — | `0e7b0ea149d1ae94` | no silicon capture |
-| `stm32g474re` | 🔵 sim-validated (deep model, no HW diff) | — | `2b8c5e2814d3fcd5` | no silicon capture |
-| `stm32wb55` | 🔵 sim-validated (deep model, no HW diff) | — | `ae3bcb321ee42802` | no silicon capture |
+| `nrf5340` | 🔵 sim-validated (deep model, no HW diff) | — | `b81b53fd0d289d06` | no silicon capture |
+| `stm32h735` | 🔵 sim-validated (deep model, no HW diff) | — | `87f748066d37113b` | no silicon capture |
+| `stm32u575` | 🔵 sim-validated (deep model, no HW diff) | — | `e46a8d8087d18f7a` | no silicon capture |
+| `nucleo-u545re` | 🔵 sim-validated (deep model, no HW diff) | — | `1ffcd429e61767be` | no silicon capture |
+| `stm32f411ceu6` | 🔵 sim-validated (deep model, no HW diff) | — | `1b61884991f492a3` | no silicon capture |
+| `brd2709a` | 🟡 smoke-manual | — | `b3c0fb67976ee454` | no silicon capture |
+| `esp32` | ⚪ structural | — | `4739e0b44cb95063` | no silicon capture |
+| `mkw41z4` | 🔵 sim-validated (deep model, no HW diff) | — | `0a73bfd06cda9e4f` | no silicon capture |
+| `stm32f405` | 🔵 sim-validated (deep model, no HW diff) | — | `c6f3805975d1821e` | no silicon capture |
+| `stm32f767` | 🔵 sim-validated (deep model, no HW diff) | — | `f53e4867eb1919ad` | no silicon capture |
+| `stm32f401cdu6` | 🔵 sim-validated (deep model, no HW diff) | — | `046be22cb0d086a5` | no silicon capture |
+| `atsamd21g18a` | 🔵 sim-validated (deep model, no HW diff) | — | `b7e09602bcd20b3e` | no silicon capture |
+| `nrf54l15` | 🔵 sim-validated (deep model, no HW diff) | — | `c89baf254d4ac4e1` | no silicon capture |
+| `stm32g474re` | 🔵 sim-validated (deep model, no HW diff) | — | `c909d4f94e67bbd9` | no silicon capture |
+| `stm32wb55` | 🔵 sim-validated (deep model, no HW diff) | — | `9b93d389e5fd2255` | no silicon capture |
 | `ci-fixture-riscv` | ⚪ structural | — | `e519faf4d2cb48f0` | no silicon capture |
-| `nano-33-iot` | 🟡 smoke-manual | — | `57e889eaae0b1169` | no silicon capture |
-| `metro-m4` | 🟡 smoke-manual | — | `328248c3a58f7ee5` | no silicon capture |
-| `arduino-uno-r4-minima` | 🟡 smoke-manual | — | `097daed753583349` | no silicon capture |
-| `teensy-41` | 🟡 smoke-manual | — | `4f8b07782befd505` | no silicon capture |
-| `stm32f7-discovery` | 🟡 smoke-manual | — | `045552153c6addee` | no silicon capture |
-| `nucleo-g071rb` | 🟡 smoke-manual | — | `924d0eee7a5f6af6` | no silicon capture |
-| `esp32c6-devkitc` | 🟡 smoke-manual | — | `b411a8e50906919d` | no silicon capture |
+| `nano-33-iot` | 🟡 smoke-manual | — | `4b7d7c5571e3d9a0` | no silicon capture |
+| `metro-m4` | 🟡 smoke-manual | — | `4753f5227bca303f` | no silicon capture |
+| `arduino-uno-r4-minima` | 🟡 smoke-manual | — | `ea5fed1a89db2007` | no silicon capture |
+| `teensy-41` | 🟡 smoke-manual | — | `bdddc95f7cafccc6` | no silicon capture |
+| `stm32f7-discovery` | 🟡 smoke-manual | — | `e0cfc80bd6cb0f81` | no silicon capture |
+| `nucleo-g071rb` | 🟡 smoke-manual | — | `08f727d1282ad730` | no silicon capture |
+| `esp32c6-devkitc` | 🟡 smoke-manual | — | `01d6cdac9cef489b` | no silicon capture |
 
 ## `nrf52840` — 🟢 silicon-verified
 
@@ -72,7 +72,7 @@ The models column is a content digest over everything that board's `models` list
 - Silicon: **2026-08-10** on STLINK-V3 (V3J13, serial 002100174741500220383733, USB 0483:374e, NUCLEO-H563ZI on-board CN1/STLK, dapdirect AP1 recipe) — Re-captured live 2026-08-10 with H563_STRICT=1 on merge commit e1851d80 (a clean tree — see the caveat below): h563_mmio_diff 8/8, h563_parity_diff 48/48, h563_class_diff 65/65, 121 cases total, 0 divergence / 0 both_disagree / 0 sim_err. Clean on arrival; nothing to fix. Target answered SWD DPIDR 0x6ba02477, Cortex-M33 r0p4, target voltage 3.289 V. Probe serial is recorded from this run on — the 2026-06-22 entry named the USB PID but no serial, so whether this is the same physical NUCLEO as that capture cannot be established either way. SCOPE CAVEAT, read before treating this as a full re-validation: this run re-executed the MMIO/parity/class register diff ONLY. The FLASH program-behaviour live-diff described below (real program/erase driven over SWD) was NOT re-run on 2026-08-10; its findings are carried forward from 2026-06-22 and are older than this date stamp implies. TREE CAVEAT: an initial run of the same 121 cases also passed, but was executed while another session had an uncommitted merge of origin/main staged in this worktree, so it was not attributable to any commit; it was discarded and the run recorded here was repeated against a 0-dirty checkout of e1851d80. FLASH program-behaviour live-diff run on the board 2026-06-22 (drives real program/erase over SWD): write buffer (NSSR.WBNE) accumulates a 16-byte quad-word, commits + sets EOP only on completion; a misaligned quad-word raises INCERR alone and commits nothing; program-over-not-erased is permitted and ANDs the bits (no PGSERR); flags clear via NSCCR (0x30), not by writing NSSR. The sim H5 flash error-flag + read-while-write fidelity gates were CORRECTED to match this capture (earlier datasheet model was wrong on all four points). Prior MMIO/reset diff (h563_mmio_diff + h563_parity_diff + h563_class_diff, 0 divergence) still holds.
   - offline (CI): h563_conformance (6 tests vs frozen 2026-06-10..12 captures)
   - offline (CI): h563_mmio_diff::{h563_mmio_sim_only,h563_parity_sim_only,h563_class_sim_only}
-- Drift status: **⚠ drift acked 2026-10-13, expires 2026-11-12 (re-capture pending)**
+- Drift status: **⚠ drift acked 2026-10-15, expires 2026-11-12 (re-capture pending)**
 
 ## `esp32c3` — 🟢 silicon-verified
 
@@ -90,7 +90,7 @@ The models column is a content digest over everything that board's `models` list
 - Silicon: **2026-08-09** on STLINK-V2.1 (USB 0483:374b serial 0670FF…1747, NUCLEO-L476RG onboard) — re-captured live 2026-08-09 with L476_STRICT=1: l476_mmio_diff 15/15 and l476_parity_diff 104/104, 0 divergence — identical to the 2026-06-20 figures. Clean on arrival; nothing to fix. SAME physical board as that baseline, established by probe serial 0670FF535155878281121747 being recorded in both (the L073 entry could not make that claim, having no serial on file before today). Scope unchanged and still partial: the mmio+parity set, not a full-chip sweep.
   - offline (CI): l476_mmio_diff::{l476_mmio_sim_only,l476_parity_sim_only}
   - offline (CI): firmware_survival L476 cases (UART byte stream)
-- Drift status: **⚠ drift acked 2026-10-13, expires 2026-11-12 (re-capture pending)**
+- Drift status: **⚠ drift acked 2026-10-15, expires 2026-11-12 (re-capture pending)**
 
 ## `nucleo-l073rz` — 🟢 silicon-verified
 
@@ -99,7 +99,7 @@ The models column is a content digest over everything that board's `models` list
 - Silicon: **2026-08-09** on ST-LINK V2.1 (NUCLEO-L073RZ on-board, V2J28S17, serial 066CFF555054877567065340) over SWD; DBGMCU IDCODE read back 0x20086447 — re-captured live 2026-08-09 with L073_STRICT=1: l0_mmio_diff 20/20, 0 divergence (RCC IOPENR/APB1ENR/APB2ENR/AHBENR/CFGR clock switch, GPIOA BSRR/BRR, SPI1 CR1/CR2, TIM2 ARR/PSC/CR1, TIM21 ARR, DBGMCU IDCODE). Clean on arrival — unlike the nRF re-capture the same day, this one found nothing to fix. Scope is UNCHANGED and still partial: RCC/GPIO/SPI1/TIM2/TIM21 only, not a full-chip sweep (see `note`); I2C/UART/ADC on this part remain outside the asserted set. Probe serial is recorded from this run on — the earlier entries named no serial, so whether this is the same physical NUCLEO as the 2026-06-20 capture cannot be established either way.
   - offline (CI): stm32l0_mmio_diff::{l0_mmio_sim_only,l0_parity_sim_only}
   - offline (CI): firmware_survival L073 smoke case
-- Drift status: **⚠ drift acked 2026-10-13, expires 2026-11-12 (re-capture pending)**
+- Drift status: **⚠ drift acked 2026-10-15, expires 2026-11-12 (re-capture pending)**
 
 ## `stm32f103` — 🟢 silicon-verified
 
@@ -108,7 +108,7 @@ The models column is a content digest over everything that board's `models` list
 - Silicon: **2026-08-09** on ST-LINK V2.1 (V2J43S28, serial 066CFF534951775087071123, USB 0483:374b), genuine STM32F103 — chipid 0x410 STM32F1xx_MD, 128K flash / 20K SRAM — re-captured live 2026-08-09 with F103_STRICT=1: stm32f1_mmio_diff 102/102 (24 reset + 26 R/W + 52 sweep), 0 divergence, and f103_conformance reports no sim-vs-silicon gaps — identical to the 2026-06-20 figures. Clean on arrival; nothing to fix. f103_conformance needed firmware-f103-conformance built for thumbv7m-none-eabi first; without it the test panics in 0.00s, which reads like a failure but is a missing prerequisite. Probe serial recorded from this run on, so a future capture can tell whether it is the same physical board (the earlier entry named none). (Earlier capture caught + fixed a classic SPI CR1 bug masking CRCNEXT bit 12 — 0xEFFF vs silicon 0xFFFF.)
   - offline (CI): stm32f1_mmio_diff::{f1_reset_sim_only,f1_mmio_sim_only,f1_parity_sim_only,f1_sweep_sim_only}
   - offline (CI): f103_conformance::conformance_sim (digest)
-- Drift status: **⚠ drift acked 2026-10-13, expires 2026-11-12 (re-capture pending)**
+- Drift status: **⚠ drift acked 2026-10-15, expires 2026-11-12 (re-capture pending)**
 
 ## `stm32f407` — 🟢 silicon-smoke
 
@@ -117,7 +117,7 @@ The models column is a content digest over everything that board's `models` list
 - Silicon: **2026-06-20** on ST-LINK/V2 (USB 0483:3748, IDCODE 0x10016413) — connect-under-reset (firmware was holding SWD), adapter 480 kHz — Live re-capture after the v0.17.0 merge: stm32f4_mmio_diff 37/37 (2 reset + 31 sweep + 4 behaviour), 0 divergence. Caught + fixed a real model bug: F407 silicon does NOT latch SPI1 CR1 bit 12 (CRCNEXT) — writes 0xFFFF, reads 0xEFFF — vs F103 which keeps it writable; spi.rs now applies a per-part cr1_mask (F4 0xEFFF). Supersedes the 2026-06-19 drift_ack. (I²C/UART models still smoke-tier — not in the mmio diff.)
   - offline (CI): stm32f4_mmio_diff::{f4_reset_sim_only,f4_sweep_sim_only,f4_behavior_sim_only}
   - offline (CI): firmware_survival F407 smoke + i2c cases (sim-self-pinned)
-- Drift status: **⚠ drift acked 2026-10-13, expires 2026-11-12 (re-capture pending)**
+- Drift status: **⚠ drift acked 2026-10-15, expires 2026-11-12 (re-capture pending)**
 
 ## `esp32s3` — 🟢 silicon-verified
 
