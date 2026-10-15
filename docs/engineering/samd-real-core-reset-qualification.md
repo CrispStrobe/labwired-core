@@ -1,10 +1,43 @@
 # Actual CODAL core-reset qualification lane
 
-This proposed slice is not a passing guest result or complete board reset.
+## Qualified core-local slice; integration pending
+
+The [actual run38709086550](https://github.com/CrispStrobe/labwired-core/actions/runs/38709086550)
+passed all42 cases at engine source
+`7478a36e118f3fad87e2d0b3f1415a96a7f4d7e3`: four reset cases and38 earlier
+caller cases. A separately frozen original-log audit passed. Each reset case
+retired1720 instructions, with terminal1656 plus64 post-terminal instructions,
+two boot epochs and314 raw event/RAM rows. Quantum1 used1720 CPU batches;
+quantum64 used28, in both scheduler profiles. This is real bounded batching,
+not an absolute RTx measurement or a fully wired board result.
+
+The tested merge was `629e06e14108a277a956928a78f76b881a6ae2f1`, tree
+`686e059ec762ade5de81a637b8503f4c25a05f7c`. Compared with the source head,
+it adds only `docs/performance/2026-10-15-core-perf-fork-rules.md` from a
+concurrent main update; executable and workflow inputs match. Preserve this
+distinction rather than claiming source-head/tested-tree equality.
+
+The [twenty-mode build38706839486](https://github.com/CrispStrobe/codal-samd/actions/runs/38706839486)
+passed; modes0–18 were byte-identical to the separately retained baseline.
+Runtime source `12d4759af0bf2b29726cfd79c487474a282cc5b0` landed through
+[PR36](https://github.com/CrispStrobe/codal-samd/pull/36). See the
+[Runtime results](https://github.com/CrispStrobe/codal-samd/blob/master/docs/REAL-CORE-RESET-RESULTS.md).
+
+After the actual guest and all three workspace shards passed, the seven
+previously acknowledged captured-board content bindings were refreshed with
+operator approval. Their acknowledgement age remains2026-10-13 and their
+expiry is explicitly2026-11-12; physical captures and results are unchanged.
+Physical re-capture remains owed. These are not new hardware qualifications.
+Core integration still requires every enabled final-head check and a matched
+merge; no consumer package pin is advanced by this checkpoint.
+
+## Original contract and retained failures
+
+The following records the pre-qualification contract, not complete board reset.
 The actual caller is pinned to Runtime
-`12d4759af0bf2b29726cfd79c487474a282cc5b0`; this revised source needs a new
-twenty-mode build audit. The predecessor's build passed with all old0–18 ELF
-hashes unchanged, but does not qualify this new image or the engine correction.
+`12d4759af0bf2b29726cfd79c487474a282cc5b0`. Its new twenty-mode build and
+actual guest have now passed as recorded above; earlier predecessor builds
+alone did not qualify the revised image or engine correction.
 
 The first actual [run 38698483581](https://github.com/CrispStrobe/labwired-core/actions/runs/38698483581)
 failed before any reset request: the probe incorrectly expected the Thumb bit
@@ -58,4 +91,5 @@ sources, flash commands/persistence, USB/QSPI, physical reset behavior, complete
 board/API/build/image admission, native Arcade, active RTx and installed consumer
 qualification remain separate. The [board/API continuation](samd-runtime-replacement-plan.md#current-continuation-after-actual-spi-callers)
 and [landed lifetime checkpoint](samd-real-spi-lifetime-qualification.md) remain
-authoritative. No consumer pin, ACK, physical capture or threshold change.
+authoritative. No consumer pin, physical capture or threshold change. Only the
+seven approved content-bound acknowledgements described above were refreshed.
