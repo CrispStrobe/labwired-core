@@ -316,3 +316,32 @@ and original-byte lineage plus release digests were independently checked.
 [Lite PR988](https://github.com/CrispStrobe/brickwright-lite/pull/988) still
 requires actual CLI/browser qualification before consumer integration.
 No physical re-capture, full-board or physical-timing result is claimed.
+
+### A10 follow-up: interrupt-chained transmit completion — 2026-10-15
+
+CLAIMED — Codex, branch `lane/a10-uarte-completion-irq-20261015`.
+The first source-built stack guest and deterministic release remain passing
+bounded evidence. Lite PR988's actual compiled MakeCode CLI guest nevertheless
+failed both complete-line checks: serial begins `hl bw` rather than `hello bw`.
+Preserve that failure; consumer integration remains held.
+
+Review found that UARTE completion unconditionally raises TXSTOPPED alongside
+ENDTX, whereas the nRF52833 specification associates TXSTOPPED with STOPTX.
+An interrupt handler that starts its next byte on ENDTX can then process the
+spurious stop event and clear the new transfer's busy state. Correct this event
+separation in `crates/core/src/peripherals/nrf52/uarte.rs`, retain STARTTX buffer
+capture and framed completion, and add nonvacuous interrupt-chain controls.
+Extend the original assembly guest and native guest test to cover that sequence
+at exact and recommended intervals. Update affected UARTE completion tests in
+`crates/core/tests/nrf52_easydma_tick512_fidelity.rs` to request STOPTX explicitly
+when asserting TXSTOPPED; keep completion-cycle and byte assertions intact.
+The envelope includes the guest's provenance notes, existing core CI guest
+selection if necessary, and this contract. No generic bus, CPU, scheduler,
+MakeCode base, compiler, dependency or unrelated peripheral change is claimed.
+
+Require affected feature-off and scheduler clean guest qualification before
+new model-digest acknowledgement bindings for the same two nRF52840 entries;
+keep acknowledgement dates, expiry, physical captures and watch lists intact.
+Then qualify and publish a distinct deterministic engine release and requalify
+Lite's original complete serial assertions. The published first engine and all
+original failures stay retained; no weakening or relabelling of their results.
