@@ -446,7 +446,21 @@ CI checkout tree equalled the reviewed candidate. Earlier failures remain retain
 The operator approved rebinding only the two existing nRF52840/XIAO drift-ACK
 digests to this qualified model content. The October 13 ACK dates, November 12
 expiry, silicon captures and captured-board watch lists stay unchanged. This
-is an acknowledgement of model drift, not a physical re-capture. Every enabled
-final-head check must pass before source merge. A distinct rebuilt engine and
-Lite's actual complete CLI/browser serial qualification remain required before
-A10 consumer completion; the first published engine is not relabelled.
+is an acknowledgement of model drift, not a physical re-capture.
+
+Source [PR247](https://github.com/CrispStrobe/labwired-core/pull/247) is merged
+at `1ea67f9c742c22e8ea5d73ea642956b4f8907bd6`, retaining reviewed engine source
+`de14721e4ae1d34a428f91d232e4520d50f1ceba`. All 28 enabled final-head checks
+passed; seven conditional checks had declared skips. The landed tree and both
+parents matched the reviewed merge composition.
+
+Producer [PR629](https://github.com/CrispStrobe/bw-board/pull/629) is also
+merged. Distinct engine run
+[38855838615](https://github.com/CrispStrobe/bw-board/actions/runs/38855838615)
+passed two independent matching builds, determinism and all 125 release tests
+with zero failures or skips, including both exact UART streams. Published
+`labwired-wasm-de14721e` assets match the original qualified build bytes.
+Lite [PR988](https://github.com/CrispStrobe/brickwright-lite/pull/988) still
+requires complete actual CLI/browser serial qualification and its final checks
+before A10 consumer completion. The first published engine and earlier failures
+remain retained; no hardware or broader physical-accuracy claim is added.
