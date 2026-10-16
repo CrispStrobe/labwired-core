@@ -460,7 +460,9 @@ merged. Distinct engine run
 passed two independent matching builds, determinism and all 125 release tests
 with zero failures or skips, including both exact UART streams. Published
 `labwired-wasm-de14721e` assets match the original qualified build bytes.
-Lite [PR988](https://github.com/CrispStrobe/brickwright-lite/pull/988) still
-requires complete actual CLI/browser serial qualification and its final checks
-before A10 consumer completion. The first published engine and earlier failures
-remain retained; no hardware or broader physical-accuracy claim is added.
+Lite [PR988](https://github.com/CrispStrobe/brickwright-lite/pull/988) merged
+as `3753d3b4` after all 12 enabled final checks passed (two declared conditional
+skips). Actual compiled V2 JSON/text CLI greeting/counter, matrix/fault/time
+bounds and a fresh browser V2 ELF's complete Debug-console greeting passed.
+A10 is complete across source, rebuilt engine and consumer. The first published
+engine and earlier failures remain retained; no hardware or broader physical accuracy claim is added.
