@@ -463,7 +463,7 @@ boards:
     drift_ack_expires: 2026-11-12
     # A10 / PR244: source-built stack-reuse guest passed under the scheduler.
     # UARTE buffer capture changes; physical re-capture remains owed.
-    drift_ack_digest: 8b83281aa7ebece7b9a8ff7186b566c37cbcc5d7f34b964a10a84eb9642ec206
+    drift_ack_digest: fbce332325a4d550e38504cb3a3c74e1dd5ddea6d950f4995d9f0b5746a270ef
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -936,7 +936,7 @@ boards:
     drift_ack_expires: 2026-11-12
     # A10 / PR244: source-built stack-reuse guest passed under the scheduler.
     # UARTE buffer capture changes; physical re-capture remains owed.
-    drift_ack_digest: 8b83281aa7ebece7b9a8ff7186b566c37cbcc5d7f34b964a10a84eb9642ec206
+    drift_ack_digest: fbce332325a4d550e38504cb3a3c74e1dd5ddea6d950f4995d9f0b5746a270ef
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -7664,6 +7664,8 @@ boards:
       # claim for the corrected digest to invalidate — no ack is implied.
       - crates/core/src/peripherals/gpio.rs
       - crates/core/src/peripherals/nrf52/clock.rs
+      # PR247: explicitly cover the newly registered channel-enable model.
+      - crates/core/src/peripherals/nrf52/dppic.rs
       - crates/core/src/peripherals/nrf52/rtc.rs
       - crates/core/src/peripherals/nrf52/timer.rs
       - crates/core/src/peripherals/nrf52/uarte.rs

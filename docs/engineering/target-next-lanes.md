@@ -319,7 +319,7 @@ No physical re-capture, full-board or physical-timing result is claimed.
 
 ### A10 follow-up: interrupt-chained transmit completion — 2026-10-15
 
-CLAIMED — Codex, branch `lane/a10-uarte-completion-irq-20261015`.
+IMPLEMENTED candidate — Codex, branch `lane/a10-uarte-completion-irq-20261015`.
 The first source-built stack guest and deterministic release remain passing
 bounded evidence. Lite PR988's actual compiled MakeCode CLI guest nevertheless
 failed both complete-line checks: serial begins `hl bw` rather than `hello bw`.
@@ -359,6 +359,7 @@ unconfigured nRF52 transfers or weaken the Zephyr greeting assertion.
 Expand this lane before implementation to a bounded UART-local DPPI subset:
 `crates/core/src/peripherals/nrf52/dppic.rs` for CHEN/CHENSET/CHENCLR state;
 its declaration in `nrf52/mod.rs` and construction in `nrf52/factory.rs`;
+its required canonical type entry in `peripherals/generic_factory.rs`;
 `configs/chips/nrf5340.yaml` promotes that controller to the native subset;
 remove its obsolete zero-stub entry from `crates/core/src/bus/known_stubs.rs`.
 The UARTE resolves the sibling base from the existing ChipMap and triggers
@@ -372,6 +373,22 @@ remapped-controller, channel-enable alias, and positive configured-route
 controls. Both feature-off and scheduler guest paths, the original complete
 nRF5340 Zephyr greeting and all enabled final checks remain mandatory.
 New physical results or weakened assertions/ACK dates are not authorized.
+
+The first candidate removed the unsolicited completion-time TXSTOPPED assignment;
+explicit STOPTX stayed live. Its feature-off original stack-reuse and new IRQ
+guest passed, including exact 19-byte and 17-byte streams. The unchanged nRF5340
+Zephyr greeting then failed. The scoped DPPI follow-up above remains pending;
+no replacement engine, updated model ACK or consumer completion is claimed.
+
+The DPPI candidate now promotes the DPPIC channel-enable subset and resolves
+its base through ChipMap. UARTE's local event/task route checks both endpoint
+enable bits, a matching channel below 32, and live CHEN at ENDTX. Explicit and
+configured STOPTX share one task action. Controls cover byte/word controller
+aliases, disabled or mismatched routes, channels 31/32, missing DPPIC,
+remapped controller addresses, and channel changes between capture/completion
+in both scheduler and bus-tick modes. No generic scheduling algorithm changed.
+Fresh clean guest and nRF5340 Zephyr qualification is pending; earlier passing
+native streams and the original later survival failure stay retained.
 
 ### A10 classic PPI and differential regression boundary — 2026-10-15
 
@@ -396,3 +413,40 @@ Require disabled-channel, wrong-event/task, last configurable channel, remapped
 addresses and enabled primary/fork route controls, both bus-tick and event
 paths, then all affected clean guests and exact-head checks. This extension
 permits no threshold, baseline, firmware-byte or ACK/date relaxation.
+
+The classic-PPI candidate now resolves both bases and admits a local stop only
+through an enabled configurable channel's exact EEP and primary/fork endpoint.
+Controls cover disabled and mismatched routes, channel 19 versus fixed channel
+20, missing controller, remapped addresses and address overflow, in scheduler
+and bus-tick modes. UART buffer capture/publication deadlines stay intact.
+Failure-only Zephyr diagnostics rethrow the original payload; wrapper expansion
+preserves the original normal test source and all comparisons/budgets exactly.
+This is a candidate pending fresh clean qualification, not a resolved RTC or
+full PPI-fabric claim. All earlier passing and failing originals remain retained.
+
+The model-path gate additionally requires the new DPPIC source to appear
+explicitly in the uncaptured `nrf5340` board's `models:` list in
+`validation/manifest.yaml`. Add that coverage entry without changing the gate,
+any captured board's watch list, ACK field or silicon record. The original
+workspace failure remains retained; no allowlist exception is introduced.
+
+### A10 current guest qualification and digest binding — 2026-10-16
+
+The combined UART-local completion/PPI/DPPI candidate at `769847de` passed
+affected clean hosted guests. Native feature-off passed 4,372 library tests,
+the exact 19-byte stack-reuse stream, the exact 17-byte IRQ-chain stream with
+zero unsolicited stops and one final explicit stop, and the unchanged nRF5340
+Zephyr greeting. Scheduler guests passed stack reuse at intervals 1/64 and
+IRQ chaining at 1/64/1024. Both previously failing nRF52840 Zephyr JIT comparisons
+and the CLI stop-condition test passed with their original budgets, markers
+and event ceiling. All three workspace shards passed: 7,879 passed, zero
+failed, 105 existing ignored tests; model-path coverage passed. The actual
+CI checkout tree equalled the reviewed candidate. Earlier failures remain retained.
+
+The operator approved rebinding only the two existing nRF52840/XIAO drift-ACK
+digests to this qualified model content. The October 13 ACK dates, November 12
+expiry, silicon captures and captured-board watch lists stay unchanged. This
+is an acknowledgement of model drift, not a physical re-capture. Every enabled
+final-head check must pass before source merge. A distinct rebuilt engine and
+Lite's actual complete CLI/browser serial qualification remain required before
+A10 consumer completion; the first published engine is not relabelled.
