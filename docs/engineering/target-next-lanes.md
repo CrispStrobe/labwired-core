@@ -429,3 +429,24 @@ explicitly in the uncaptured `nrf5340` board's `models:` list in
 `validation/manifest.yaml`. Add that coverage entry without changing the gate,
 any captured board's watch list, ACK field or silicon record. The original
 workspace failure remains retained; no allowlist exception is introduced.
+
+### A10 current guest qualification and digest binding — 2026-10-16
+
+The combined UART-local completion/PPI/DPPI candidate at `769847de` passed
+affected clean hosted guests. Native feature-off passed 4,372 library tests,
+the exact 19-byte stack-reuse stream, the exact 17-byte IRQ-chain stream with
+zero unsolicited stops and one final explicit stop, and the unchanged nRF5340
+Zephyr greeting. Scheduler guests passed stack reuse at intervals 1/64 and
+IRQ chaining at 1/64/1024. Both previously failing nRF52840 Zephyr JIT comparisons
+and the CLI stop-condition test passed with their original budgets, markers
+and event ceiling. All three workspace shards passed: 7,879 passed, zero
+failed, 105 existing ignored tests; model-path coverage passed. The actual
+CI checkout tree equalled the reviewed candidate. Earlier failures remain retained.
+
+The operator approved rebinding only the two existing nRF52840/XIAO drift-ACK
+digests to this qualified model content. The October 13 ACK dates, November 12
+expiry, silicon captures and captured-board watch lists stay unchanged. This
+is an acknowledgement of model drift, not a physical re-capture. Every enabled
+final-head check must pass before source merge. A distinct rebuilt engine and
+Lite's actual complete CLI/browser serial qualification remain required before
+A10 consumer completion; the first published engine is not relabelled.
