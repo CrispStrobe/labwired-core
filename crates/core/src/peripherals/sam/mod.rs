@@ -17,3 +17,6 @@
 pub mod dmac_byte;
 pub mod sercom_spi;
 pub mod sercom_usart;
+
+pub mod cmcc;
+pub mod nvmctrl;
