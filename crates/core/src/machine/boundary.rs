@@ -559,6 +559,10 @@ impl<C: Cpu> Machine<C> {
         // batch/CLI run path (`Machine::run`), which executes cycle-accurately
         // when an H5 op-modeling FLASH is present so this fires per instruction.
         self.apply_pending_flash_op()?;
+        // Opt-in SAMD51 storage commits use the same instruction boundary on
+        // step/advance paths. Pending operations stop Cortex-M batches; JIT
+        // hosts already refuse buses whose models_flash_ops predicate is true.
+        self.bus.service_samd51_storage_boundary()?;
 
         // Logic-analyzer edge capture. No-op (one `is_active` check) unless a
         // watch set is installed. Observed after the instruction + peripheral

@@ -42,6 +42,7 @@ mod policy;
 mod profiles;
 mod resident_device;
 mod routing;
+mod samd51_storage;
 pub mod sim_inputs;
 mod tick;
 mod timed_can;
@@ -702,6 +703,8 @@ pub struct SystemBus {
     /// (bits only flip 1→0) when it is. `None` on every non-nRF52 bus, so
     /// that path is unchanged everywhere else.
     nrf52_nvmc_idx: Option<usize>,
+    /// Opt-in SAMD51 manual storage controller; absent on every default board.
+    samd51_nvmctrl_idx: Option<usize>,
     /// Universal bus-transaction trace (logic analyzer): a shared, ring-
     /// buffered log that `I2c`/`Spi` peripherals record into once wrapped via
     /// `set_bus_trace` + `attach` (see `crate::bus::bus_trace`). Always

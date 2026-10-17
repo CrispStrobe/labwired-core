@@ -410,12 +410,18 @@ impl SystemBus {
         // Cache whether any FLASH peripheral models hardware ops (H5 erase /
         // bank swap). The Cortex-M batch loop uses this cached bool to install
         // its post-instruction pending-op watch only on affected buses.
-        self.flash_models_ops = self.peripherals.iter().any(|p| {
+        self.samd51_nvmctrl_idx = self.peripherals.iter().position(|p| {
             p.dev
                 .as_any()
-                .and_then(|a| a.downcast_ref::<crate::peripherals::flash::Flash>())
-                .is_some_and(|f| f.models_ops())
+                .is_some_and(|a| a.is::<crate::peripherals::sam::nvmctrl::Samd51Nvmctrl>())
         });
+        self.flash_models_ops = self.samd51_nvmctrl_idx.is_some()
+            || self.peripherals.iter().any(|p| {
+                p.dev
+                    .as_any()
+                    .and_then(|a| a.downcast_ref::<crate::peripherals::flash::Flash>())
+                    .is_some_and(|f| f.models_ops())
+            });
         // Cache the FLASH program-gate indices. The H5 byte write-buffer gate
         // and the U5 word-granular quad-word gate live on different layouts
         // (mutually exclusive in practice), but both are resolved in a SINGLE
