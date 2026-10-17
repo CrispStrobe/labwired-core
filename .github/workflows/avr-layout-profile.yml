@@ -78,5 +78,8 @@ jobs:
         with:
           name: avr-layout-${{ matrix.variant }}
           path: evidence/
+          # The producer copies the selected public .cargo/config.toml into
+          # this fresh, closed evidence directory; its inventory must retain it.
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 14
