@@ -113,7 +113,7 @@ fn actual_zflash_driver_program_erase_and_refusals() {
         m.bus.flash.data[START + 8192] = 0xc3;
         let mut irq_calls = [0u32; 2];
         let mut irq_returns = [0u32; 2];
-        let mut active_irq: Option<(usize, u32)> = None;
+        let mut active_irq: Option<(usize, u32, bool)> = None;
         let mut phase = 0u32;
         let mut calls = [0u32; 4];
         let mut returns = [0u32; 4];
@@ -135,7 +135,7 @@ fn actual_zflash_driver_program_erase_and_refusals() {
             assert!(fuel < 500000, "unchanged finite new-guest bound");
             let pc = m.cpu.pc & !1;
             if !batched {
-                if let Some((kind, lr)) = active_irq {
+                if let Some((kind, lr, entry_masked)) = active_irq {
                     if pc == lr {
                         assert_eq!(m.cpu.primask, kind == 0, "actual CPS helper return mask");
                         assert_eq!(m.cpu.active_exception, 0);
@@ -143,7 +143,7 @@ fn actual_zflash_driver_program_erase_and_refusals() {
                         active_irq = None;
                         println!(
                             "ZFLASH_IRQ_RETURN {}",
-                            serde_json::json!({"kind":kind,"ordinal":irq_returns[kind],"masked":m.cpu.primask,"return_pc":lr,"elf_sha256":hash})
+                            serde_json::json!({"kind":kind,"ordinal":irq_returns[kind],"masked":m.cpu.primask,"entry_masked":entry_masked,"return_pc":lr,"elf_sha256":hash})
                         );
                     }
                 }
@@ -151,11 +151,9 @@ fn actual_zflash_driver_program_erase_and_refusals() {
                     assert!(active_irq.is_none());
                     assert_eq!(m.cpu.active_exception, 0);
                     assert!(active.last().is_some_and(|(method, _)| *method == 3));
-                    if kind == 1 {
-                        assert!(m.cpu.primask);
-                    }
+                    assert_eq!(m.cpu.primask, kind == 1, "nonnested CPS helper entry mask");
                     irq_calls[kind] += 1;
-                    active_irq = Some((kind, m.cpu.lr & !1));
+                    active_irq = Some((kind, m.cpu.lr & !1, m.cpu.primask));
                 }
                 if let Some(&(kind, lr)) = active.last() {
                     if pc == lr {

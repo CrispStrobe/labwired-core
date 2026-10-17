@@ -52,7 +52,9 @@ refusals and re-erase, preserving all neighbors. Single-step observation follows
 all four original method entries and LR returns with actual r0 results; a
 separate fresh batched run checks every checkpoint's backing state. The actual
 IRQ helpers must execute three matched CPS pairs in thread context; their
-original LR returns and actual PRIMASK transitions are observed directly.
+original LR returns and actual entry/return PRIMASK transitions are observed
+directly. Startup admits interrupts after data/BSS initialization, establishing
+the explicit unmasked, nonnested precondition for these boot-only helpers.
 
 Two isolated copied-model mutations omit erase commit or program commit. Each
 must expose its exact actual wrong byte after a real successful driver return;
