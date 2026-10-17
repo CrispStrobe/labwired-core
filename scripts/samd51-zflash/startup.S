@@ -29,5 +29,6 @@ reset_entry:
     bhs 4f
     str r3,[r1],#4
     b 3b
-4:  bl zflash_probe
+4:  cpsie i
+    bl zflash_probe
 5:  b 5b
