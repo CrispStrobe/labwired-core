@@ -60,7 +60,7 @@ jobs:
       - name: Actual guest single-step and batched execution
         env:
           PROFILE: ${{ matrix.profile }}
-          LABWIRED_ZFLASH_FIXTURE: zflash-evidence
+          LABWIRED_ZFLASH_FIXTURE: ${{ github.workspace }}/zflash-evidence
         run: |
           set -o pipefail
           flags=()
@@ -69,7 +69,7 @@ jobs:
       - name: Two actual model-source mutants with specific guest wrong-memory results
         env:
           PROFILE: ${{ matrix.profile }}
-          LABWIRED_ZFLASH_FIXTURE: zflash-evidence
+          LABWIRED_ZFLASH_FIXTURE: ${{ github.workspace }}/zflash-evidence
         run: python3 -B scripts/samd51-zflash/mutations.py "$PROFILE" zflash-mutation-evidence
       - name: Preserve source-bound originals and failures
         if: always()
