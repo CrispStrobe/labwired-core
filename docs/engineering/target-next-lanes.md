@@ -32,8 +32,10 @@ from source inspection. A later optimization needs a separately precise scope
 and unchanged full-baseline qualification on both prescribed source trees.
 
 Producer delivery is complete: [PR248](https://github.com/CrispStrobe/labwired-core/pull/248)
-merged as `5b470d61` after all 16 enabled source checks passed. Investigation
-remains open. Continue existing [run 39001605287](https://github.com/CrispStrobe/labwired-core/actions/runs/39001605287), not a new dispatch.
+merged as `5b470d61` after all 16 enabled source checks passed. The existing [run 39001605287](https://github.com/CrispStrobe/labwired-core/actions/runs/39001605287)
+and its once-only independent original/cohort audits passed. C9.1 is complete;
+reuse retained originals, with no redispatch or new download. C9.2 causal
+source/codegen explanation and C9.3 implementation decision remain open.
 The [current checkpoint and C9.1–C9.3 acceptance](avr-layout-cost.md#pending-tasks-and-acceptance)
 cover once-only original intake, complete four-source attribution, and a
 separately scoped implementation decision. Preserve other owners' shared-machine

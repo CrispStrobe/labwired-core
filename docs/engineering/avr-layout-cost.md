@@ -3,7 +3,7 @@
 Status: diagnostic source **merged** in [PR248](https://github.com/CrispStrobe/labwired-core/pull/248)
 as `5b470d61cef312aefcbb2bd3d311f4c03ffaff16`, after all 16 enabled exact-head
 checks passed (six declared skips). The landed parents and tree match the
-reviewed prediction. **The four-source comparison remains pending.**
+reviewed prediction. **Original intake and quantitative attribution are complete; the causal decision remains open.**
 
 The owner-selected C9 task reports a change in AVR step cost from 922.6 to
 987.7 Ir/step after the upstream sync, and 1002.7 for a subsequently reverted
@@ -11,15 +11,57 @@ cold-helper attempt. These are historical author-reported observations until
 their original receipts are independently admitted. They are not reproduced
 measurements from this diagnostic.
 
-## Continuation checkpoint — 2026-10-17 06:19 UTC
+## Completed campaign — 2026-10-17 06:30 UTC
 
-Continue the **existing [campaign 39001605287](https://github.com/CrispStrobe/labwired-core/actions/runs/39001605287)**, attempt 1,
-controller `2201716dbb8461629c73beaa2e2db0e0386b45fe` on
-`lane/c9-avr-layout-20261017`. Do not dispatch another campaign or rerun a
-successful original. At this checkpoint, producer controls, `before-sync` and
-`sync-merge` succeeded; `current` was running and `upstream-source` was queued. Refresh
-all children and the whole event before acting. These are job-status
-observations, not an admitted four-source performance result.
+The existing [campaign 39001605287](https://github.com/CrispStrobe/labwired-core/actions/runs/39001605287),
+attempt 1, completed successfully on controller
+`2201716dbb8461629c73beaa2e2db0e0386b45fe` / `lane/c9-avr-layout-20261017`.
+All four official archives and job logs were acquired once. The frozen independent
+reader admitted every source and the complete cohort: exact event/source joins,
+archive and inventory hashes, compiler/runner identity, common firmware/descriptor,
+original command journals, exact retirement witnesses, all 32 raw profiles and
+their instruction totals. No producer import, guest replay or repeated download
+was used. **C9.1 is complete: reuse retained originals; do not download or dispatch again.**
+The executable hash remains producer-declared because the executable itself is
+not packaged; do not present it as an independently hashed retained binary.
+
+### Native instruction costs
+
+Step uses one low/high pair; batch reports all three pair slopes and their median.
+All four builds used the same declared Rust 1.95.0 toolchain, runner image and
+unchanged authored input/bounds. These are finite native spin results.
+
+| Snapshot | Step Ir/step | Batch pair slopes | Batch median Ir/step |
+| --- | ---: | --- | ---: |
+| `before-sync` / `f1ca219d` | 913.558531 | 6.837941 / 6.837941 / 6.837991 | 6.837941 |
+| `sync-merge` / `6e03dd12` | 987.746057 | 7.188549 / 7.188549 / 7.188549 | 7.188549 |
+| `current` / `715e1272` | 1004.746098 | 7.223695 / 7.223745 / 7.223695 | 7.223695 |
+| `upstream-source` / `49f656f5` | 995.746146 | 7.223695 / 7.223614 / 7.223695 | 7.223695 |
+
+The new pre-sync result is not the historical author-reported 922.6 measurement;
+this campaign does not relabel an earlier build or reproduce its exact receipt.
+
+### Observed step-cost attribution
+
+The following are exclusive function-cost slope differences, in Ir/step, from
+the admitted original profiles. Group `Machine::advance` and `advance_inner`
+when comparing them: outlining moves costs between those function names.
+Original names and records remain available. The batch per-function medians
+are separate observations and are not assumed to sum to the median total.
+
+| Comparison | Total step difference | Main observed function differences |
+| --- | ---: | --- |
+| Pre-sync → sync | +74.187526 | `advance_inner` +412; `advance` −384 (combined +28); `advance_central_i2c_time` +42.187500; `run_firmware_avr` +5; `tick_peripherals_at_boundary` −1. Remaining functions sum to +0.000026. |
+| Sync → current | +17.000041 | `advance` +425; `advance_inner` −412 (combined +13); `Avr::tick_io_timers` +9; `run_firmware_avr` −5; `__strncmp_avx2` +0.000041. |
+| Retained upstream → sync | −8.000089 | `advance` −423; `advance_inner` +412 (combined −11); `run_firmware_avr` +5; `Avr as Cpu::step` −2. Remaining functions sum to −0.000089. |
+
+AVR decoder/scheduler sources and release profiles are identical across the
+four selected inputs. This locates observed cost in shared machine/time advance
+and compiler-dependent function boundaries; it does **not** establish which
+source or inlining decision causes the net change. In particular, do not treat
++412 and −384 as independent regressions or call the whole +74.187526 layout noise.
+No optimization, baseline change, waiver, browser-throughput or physical-timing
+conclusion follows from this table.
 
 The separate normal [Core Perf run 39001582632](https://github.com/CrispStrobe/labwired-core/actions/runs/39001582632)
 on merged source `5b470d61` reports 82 measured board/mode rows across 42 chips,
@@ -32,16 +74,20 @@ were not independently reconstructed. Its different build is not the selected
 
 ## Pending tasks and acceptance
 
-1. **C9.1 — admit the existing originals.** Wait for the entire event and all
-   children to finish. Check retained-original and acquisition state first;
-   reuse existing copies and the frozen standalone reader. Admit exact event,
-   attempt, controller, source, job, artifact, digest and size before acquiring
-   each original once. Artifacts have the workflow's 14-day retention. Keep
-   failed/partial originals and refusals; do not retry downloads or replay a
-   guest to repair missing evidence. If access to retained evidence is missing,
-   obtain it before proceeding. A successful sibling cannot qualify a failed
-   or incomplete cohort.
-2. **C9.2 — explain the complete four-source result.** Independently bind all
+1. **C9.1 — DONE: existing originals admitted.** The whole event and all
+   children succeeded; the once-only intake and independent source/cohort
+   audits passed. Retain the four archives, logs, admission records and frozen
+   reader. Reuse those copies for further analysis. If access is missing,
+   obtain access to retained evidence; never download again or replay a guest.
+2. **C9.2 — finish the causal source/codegen explanation.** The table above
+   completes quantitative attribution, not the causal explanation. Start with
+   retained disassembly and raw call/jump records for `advance_central_i2c_time`,
+   the combined `advance`/`advance_inner` region and `Avr::tick_io_timers`. The
+   source reading scope is `crates/core/src/lib.rs`,
+   `crates/core/src/machine/advance.rs` and `crates/core/src/cpu/avr.rs` at the
+   four frozen inputs; this grants no source-edit ownership. Compare
+   instruction sequences and call counts before attributing a difference to
+   added work, outlining or inlining. The original audits already bind all
    four snapshots, actual toolchain/runner versions, unchanged firmware and
    descriptor, build settings, exact low/high retirement witnesses and raw
    profile totals. Read originals without importing the producer or executing
@@ -50,9 +96,9 @@ were not independently reconstructed. Its different build is not the selected
    sync, sync to current, and retained upstream to sync. Join changed function
    self-costs to native disassembly and exact source witnesses. Static review
    found identical AVR decoder/scheduler sources and release profiles; shared
-   retirement/advance changes are candidates, not established causes. Publish
-   source-bound CI numbers, limits and preserved failures here. If admission
-   fails, document that refusal and scope a new diagnostic separately; never
+   retirement/advance changes are candidates, not established causes. Extend
+   the source-bound CI numbers above with the exact mechanism, limits and
+   preserved failures. If a subsequent admission fails, document that refusal and scope a new diagnostic separately; never
    silently replace or rerun this campaign.
 3. **C9.3 — decide whether an implementation is justified.** After C9.2, scope
    any optimization separately, naming exact files, source families and affected
