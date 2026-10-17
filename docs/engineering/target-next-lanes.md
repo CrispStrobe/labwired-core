@@ -4,6 +4,30 @@ These are proposed task contracts, not ownership claims or passing receipts.
 Refresh the default branch and open PRs before starting; shared behavior lands
 in the engine first, followed by an explicit qualified consumer pin.
 
+## C9 AVR layout-cost measurement — 2026-10-17
+
+Claimed by the Codex AVR layout investigation lane, following
+[the Lite task contract](https://github.com/CrispStrobe/brickwright-lite/blob/main/LANES.md#c9--avr-instruction-cost-layout-investigation--2026-10-17).
+Own a diagnostic profile producer and pure controls in
+`scripts/perf/avr_layout_profile.py` and `scripts/perf/test_avr_layout_profile.py`,
+a separate manual `.github/workflows/avr-layout-profile.yml`, and
+`docs/engineering/avr-layout-cost.md`. No existing gate or runtime change.
+
+Measure exact owned-fork snapshots `f1ca219d08080f4d93a73a3a4c5630e0824db799`
+(pre-sync), `6e03dd12e22ceb534ec1bc494c360b72209ca94f` (sync merge),
+`715e1272d639aff3d12c0c73ff5f00e9a94d3371` (current), and the already retained
+upstream source `49f656f5233d109a8d357e6c5e0cec9e788decd5`. Use hosted CI,
+the existing authored AVR spin input and measurement bounds; retain build and
+input identities, step/batch counts, raw Callgrind profiles and per-function
+annotations. Freeze the independent original reader before dispatch, acquire
+originals once, and keep all failures. The reader never executes a guest.
+
+Do not change baselines, tolerances, release profiles, decoder/engine behavior,
+fixtures, pins, captures or ACKs. No local heavy build, upstream workflow,
+automated issue write, layout-performance or physical timing claim follows
+from source inspection. A later optimization needs a separately precise scope
+and unchanged full-baseline qualification on both prescribed source trees.
+
 ## Current state
 
 - micro:bit v2 matrix/buttons, bounded SAADC/EasyDMA, authored ARM scan guest
