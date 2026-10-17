@@ -188,6 +188,7 @@ pub const MODEL_TYPES: &[&str] = &[
     "samd51_eic",
     "samd51_dac",
     "samd51_adc",
+    "samd51_cmcc_board",
     "samd51_pac",
     "samd51_sercom_i2cm",
     "samd51_sercom_usart",
@@ -464,33 +465,6 @@ fn dma_request_table(p_cfg: &PeripheralConfig) -> Vec<(String, serde_yaml::Value
     out
 }
 
-// Opt-in SAMD51 USB device banks: the fixed instance, IRQ and clock gates.
-#[cold]
-#[inline(never)]
-fn build_samd51_usb_device_banks(p_cfg: &PeripheralConfig) -> anyhow::Result<Box<dyn Peripheral>> {
-    if p_cfg.base_address != 0x41000000 || p_cfg.irq != Some(80) || !p_cfg.config.is_empty() {
-        anyhow::bail!("SAMD51 USB banks require base 0x41000000, IRQ80 and no config overrides");
-    }
-    if !p_cfg.clock.as_ref().is_some_and(|clocks| {
-        let gates = clocks.as_slice();
-        gates.len() == 2
-            && [("AHBMASK", 10), ("APBBMASK", 0)]
-                .into_iter()
-                .all(|(reg, bit)| {
-                    gates
-                        .iter()
-                        .any(|gate| gate.controller == "mclk" && gate.reg == reg && gate.bit == bit)
-                })
-    }) {
-        anyhow::bail!(
-            "SAMD51 USB banks require exactly the mclk AHBMASK bit10 and APBBMASK bit0 gates"
-        );
-    }
-    Ok(Box::new(
-        crate::peripherals::sam::usb_device::Samd51UsbDeviceBanks::new(),
-    ))
-}
-
 // Opt-in SAMD51 board models: fixed instance addresses, no config overrides.
 // Cold construction keeps them out of the shared dispatcher's hot path.
 #[cold]
@@ -510,6 +484,12 @@ fn build_samd51_board_model(
         anyhow::bail!("{kind} admits no config overrides");
     }
     Ok(match kind {
+        "samd51_cmcc_board" => {
+            if p_cfg.base_address != 0x41006000 || p_cfg.irq.is_some() {
+                anyhow::bail!("SAMD51 CMCC requires base 0x41006000 and no IRQ");
+            }
+            Box::new(crate::peripherals::sam::cmcc::Samd51Cmcc::with_configuration())
+        }
         "samd51_oscctrl" => {
             if p_cfg.base_address != 0x40001000 || p_cfg.irq.is_some() {
                 anyhow::bail!("SAMD51 OSCCTRL requires base 0x40001000 and no IRQ");
@@ -600,6 +580,44 @@ fn build_samd51_board_model(
         }
         _ => anyhow::bail!("unknown SAMD51 board model {kind}"),
     })
+}
+
+// Keep optional controller setup outside the shared registry dispatcher. The
+// frozen parent/candidate diagnostic attributed a recurring codegen difference
+// to unchanged tick orchestration; qualification must show whether this cold
+// construction boundary isolates that effect without changing model behavior.
+#[cold]
+#[inline(never)]
+fn build_samd51_usb_device_banks(p_cfg: &PeripheralConfig) -> anyhow::Result<Box<dyn Peripheral>> {
+    // The only option is the board's DFLL48M open-loop error.
+    if p_cfg.base_address != 0x41000000
+        || p_cfg.irq != Some(80)
+        || p_cfg.config.keys().any(|k| k != "dfll_open_loop_ppm")
+    {
+        anyhow::bail!("SAMD51 USB banks require base0x41000000, IRQ80 and no config overrides but dfll_open_loop_ppm");
+    }
+    let ppm = p_cfg
+        .config
+        .get("dfll_open_loop_ppm")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    if !p_cfg.clock.as_ref().is_some_and(|clocks| {
+        let gates = clocks.as_slice();
+        gates.len() == 2
+            && [("AHBMASK", 10), ("APBBMASK", 0)]
+                .into_iter()
+                .all(|(reg, bit)| {
+                    gates
+                        .iter()
+                        .any(|gate| gate.controller == "mclk" && gate.reg == reg && gate.bit == bit)
+                })
+    }) {
+        anyhow::bail!("SAMD51 USB banks require exact mclk AHBMASKbit10 and APBBMASKbit0 bindings");
+    }
+    Ok(Box::new(
+        crate::peripherals::sam::usb_device::Samd51UsbDeviceBanks::new()
+            .with_dfll_open_loop_ppm(ppm),
+    ))
 }
 
 /// Build a generic peripheral model for `canonical_type`, or `None` if it is not
@@ -884,9 +902,8 @@ pub fn try_build(
             Box::new(crate::peripherals::sam::sercom_usart::SamSercomUsart::new())
         }
         "samd51_oscctrl" | "samd51_gclk" | "samd51_tc" | "samd51_tcc" | "samd51_eic"
-        | "samd51_dac" | "samd51_adc" | "samd51_pac" | "samd51_sercom_i2cm" => {
-            build_samd51_board_model(canonical_type, p_cfg)?
-        }
+        | "samd51_dac" | "samd51_adc" | "samd51_pac" | "samd51_sercom_i2cm"
+        | "samd51_cmcc_board" => build_samd51_board_model(canonical_type, p_cfg)?,
         "samd51_sercom_usart" => {
             use crate::peripherals::sam::sercom_usart::{SamSercomUsart, UsartPads};
             let key = |k: &str| p_cfg.config.get(k).and_then(|v| v.as_u64());
@@ -963,10 +980,15 @@ pub fn try_build(
                     "SAMD51 DMAC board profile requires explicit mclk AHBMASK bit9 binding"
                 );
             }
+            let latency = p_cfg
+                .config
+                .get("request_latency_cycles")
+                .and_then(|v| v.as_u64());
             Box::new(
                 crate::peripherals::sam::dmac_byte::SamDmacByte::new_samd51_board(
                     p_cfg.base_address,
-                ),
+                )
+                .with_request_latency(latency.unwrap_or(0)),
             )
         }
         "samd51_usb_device_banks" => build_samd51_usb_device_banks(p_cfg)?,
@@ -1005,8 +1027,25 @@ pub fn try_build(
             if sck >= 32 || mosi >= 32 || mux >= 16 || dopo >= 4 {
                 anyhow::bail!("SAM SPI '{}' has invalid pad configuration", p_cfg.id);
             }
-            // Optional: the SERCOM's DMAC trigger sources (both or neither).
+            // Optional keys: per-pad PORT groups, a MISO pad with DIPO, and the
+            // SERCOM's DMAC trigger sources.
             let optional = |key: &str| p_cfg.config.get(key).and_then(|v| v.as_u64());
+            let port_base = optional("port_base");
+            let group = |key: &str| -> anyhow::Result<u64> {
+                optional(key).or(port_base).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "SAM SPI '{}' requires config.port_base or config.{key}",
+                        p_cfg.id
+                    )
+                })
+            };
+            let miso = match optional("miso_bit") {
+                Some(pin) if pin < 32 => {
+                    Some((group("miso_port_base")?, pin as u8, number("dipo")? as u8))
+                }
+                Some(_) => anyhow::bail!("SAM SPI '{}' has invalid MISO pad", p_cfg.id),
+                None => None,
+            };
             let dma = match (optional("dma_tx_trigger"), optional("dma_rx_trigger")) {
                 (Some(tx), Some(rx)) => Some((tx as u32, rx as u32)),
                 (None, None) => None,
@@ -1017,15 +1056,15 @@ pub fn try_build(
             };
             Box::new(crate::peripherals::sam::sercom_spi::SamSercomSpi::new(
                 crate::peripherals::sam::sercom_spi::SamSpiPads {
-                    port_base: number("port_base")?,
+                    sck_port: group("sck_port_base")?,
                     sck: sck as u8,
+                    mosi_port: group("mosi_port_base")?,
                     mosi: mosi as u8,
                     mux: mux as u8,
                     dopo: dopo as u8,
-                    // Optional: the SERCOM core clock channel times bytes on
-                    // the live clock tree.
-                    core_gclk: p_cfg.config.get("gclk_id").and_then(|v| v.as_u64()),
+                    miso,
                     dma,
+                    core_gclk: optional("gclk_id"),
                 },
             ))
         }

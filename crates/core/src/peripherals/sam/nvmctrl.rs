@@ -48,6 +48,9 @@ pub struct Samd51Nvmctrl {
     holding: [u8; 8],
     pending: Option<Operation>,
     boundaries: u8,
+    /// Erase and program operations committed to the flash array: evidence for
+    /// a host that interrupts storage between operations, kept across resets.
+    committed: u64,
 }
 impl Default for Samd51Nvmctrl {
     fn default() -> Self {
@@ -67,6 +70,7 @@ impl Samd51Nvmctrl {
             holding: [0xff; 8],
             pending: None,
             boundaries: 0,
+            committed: 0,
         }
     }
     fn refuse<T>() -> SimResult<T> {
@@ -76,6 +80,15 @@ impl Samd51Nvmctrl {
     }
     pub fn pending(&self) -> bool {
         self.pending.is_some()
+    }
+    /// The command waiting for its commit: what a host that cuts power
+    /// mid-operation would interrupt.
+    pub fn pending_operation(&self) -> Option<&Operation> {
+        self.pending.as_ref()
+    }
+    /// Erase and program operations committed so far (see `committed`).
+    pub fn committed(&self) -> u64 {
+        self.committed
     }
     fn clear_buffer(&mut self) {
         self.page.fill(0xff);
@@ -164,6 +177,12 @@ impl Samd51Nvmctrl {
     pub fn finish(&mut self) {
         if matches!(
             self.pending,
+            Some(Operation::Erase { .. } | Operation::Program { .. })
+        ) {
+            self.committed += 1;
+        }
+        if matches!(
+            self.pending,
             Some(Operation::Clear | Operation::Program { .. })
         ) {
             self.clear_buffer();
@@ -205,7 +224,9 @@ impl ManualFlashStorage for Samd51Nvmctrl {
 impl Peripheral for Samd51Nvmctrl {
     fn on_system_reset(&mut self) {
         // Registers and the page/holding buffers; the flash array is bus memory.
+        let committed = self.committed;
         *self = Self::new();
+        self.committed = committed;
     }
     fn manual_flash_storage(&self) -> Option<&dyn ManualFlashStorage> {
         Some(self)
@@ -263,6 +284,11 @@ impl Peripheral for Samd51Nvmctrl {
     }
     fn peek(&self, offset: u64) -> Option<u8> {
         self.byte(offset).ok()
+    }
+    fn legacy_tick_active(&self) -> bool {
+        // No work lives in tick/tick_elapsed. Bus service and pending operations
+        // remain independently mandatory and prohibit quiescent chunks.
+        false
     }
     fn as_any(&self) -> Option<&dyn Any> {
         Some(self)

@@ -10,6 +10,7 @@ impl SystemBus {
     pub fn new() -> Self {
         // Default initialization for tests
         let mut bus = Self {
+            samd_native_quiescent_chunks: false,
             flash_thunks: std::collections::HashMap::new(),
             flash: LinearMemory::new_erased(1024 * 1024, 0x0),
             memory_policy: crate::bus::memory_policy::MemoryPolicyState::default(),
@@ -115,6 +116,7 @@ impl SystemBus {
             resident_tick_interval_override: None,
             gpio_devices: Vec::new(),
             device_pin_pads: Vec::new(),
+            device_open_drain_nets: Default::default(),
             observed: Vec::new(),
             motors: Vec::new(),
             ina219_senses: Vec::new(),
@@ -163,6 +165,7 @@ impl SystemBus {
     /// are zero-sized so they never satisfy a read.
     pub fn empty() -> Self {
         let mut bus = Self {
+            samd_native_quiescent_chunks: false,
             flash_thunks: std::collections::HashMap::new(),
             flash: LinearMemory::new_erased(0, 0),
             memory_policy: crate::bus::memory_policy::MemoryPolicyState::default(),
@@ -229,6 +232,7 @@ impl SystemBus {
             resident_tick_interval_override: None,
             gpio_devices: Vec::new(),
             device_pin_pads: Vec::new(),
+            device_open_drain_nets: Default::default(),
             observed: Vec::new(),
             motors: Vec::new(),
             ina219_senses: Vec::new(),
@@ -1221,23 +1225,23 @@ impl SystemBus {
     /// (enabled on Arm) so pre-existing third-party configs that rely on
     /// bit-band keep working; all in-tree Arm chip configs declare `core`.
     pub(crate) fn chip_has_bit_band(chip: &ChipDescriptor) -> bool {
-        // Bit-banding is optional on M3/M4, and the SAMD51 (Cortex-M4F) does
-        // not implement it: its APB-C/D bridges map real peripherals in the
-        // would-be alias window (TC4/TC5, SERCOM4..7, DAC, QSPI at
-        // 0x4200_0000..0x4400_0000, DS60001507F §9.2), so translating there
-        // would redirect those registers onto PAC/OSCCTRL at 0x4000_xxxx.
-        // Matched by part name so no other M3/M4 chip changes behaviour.
-        if chip.name.to_ascii_lowercase().starts_with("atsamd51") {
-            return false;
-        }
-        match chip.core.as_deref() {
+        let core_has = match chip.core.as_deref() {
             Some(core) => {
                 let c = core.trim().to_ascii_lowercase();
                 let c = c.strip_prefix("cortex-").unwrap_or(&c);
                 matches!(c, "m3" | "m4" | "m4f")
             }
             None => matches!(chip.arch, labwired_config::Arch::Arm),
-        }
+        };
+        // Bit-banding is optional on M3/M4. A part that maps real peripherals
+        // inside the peripheral alias window (SAMD51: TC4/TC5, SERCOM4/5, DAC
+        // at 0x4200_0000..0x4400_0000) does not implement it: translating there
+        // would redirect those registers to the bit-band target.
+        core_has
+            && !chip
+                .peripherals
+                .iter()
+                .any(|p| (0x4200_0000..0x4400_0000).contains(&p.base_address))
     }
 
     /// Decode an atomic register-alias access. Returns the aligned base

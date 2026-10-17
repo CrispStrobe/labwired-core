@@ -26,6 +26,8 @@ pub mod pac;
 pub mod sercom_i2cm;
 pub mod sercom_spi;
 pub mod sercom_usart;
+
+pub mod usb_device;
+
 pub mod tc;
 pub mod tcc;
-pub mod usb_device;

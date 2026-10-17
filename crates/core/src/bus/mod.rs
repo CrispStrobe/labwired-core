@@ -44,6 +44,7 @@ mod mmio_words;
 mod motors;
 pub(crate) use motors::classify_logic_rail;
 mod observed_device;
+pub mod open_drain;
 pub(crate) mod part_pack;
 mod pms;
 mod policy;
@@ -378,6 +379,9 @@ pub struct MemAlias {
 }
 
 pub struct SystemBus {
+    /// Audited software assembly may try checked RAM/register-only chunks
+    /// while every legacy and bus-aware resident is inactive. Not a timing waiver.
+    pub(crate) samd_native_quiescent_chunks: bool,
     pub(crate) supply_domains: crate::peripherals::components::supply_domain::SupplyDomains,
     pub flash: LinearMemory,
     /// Violation record + counts + mirrored PC/cycle for the policy gate.
@@ -755,6 +759,8 @@ pub struct SystemBus {
     ///
     /// [`service_device_pin_drives`]: Self::service_device_pin_drives
     pub(crate) device_pin_pads: Vec<DevicePinPad>,
+    /// Explicitly opted-in pulled-up device-output nets.
+    pub(crate) device_open_drain_nets: open_drain::OpenDrainNets,
     /// Off-chip models the bus holds ONLY so something can read them back — the
     /// WS2812 strip, the hobby servo, the STEP/DIR and unipolar steppers, the
     /// H-bridge channel, the parallel ILI9341 panel. Each is driven by a GPIO
