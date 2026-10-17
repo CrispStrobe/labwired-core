@@ -1,12 +1,73 @@
 # AVR instruction-cost layout investigation (C9)
 
-Status: diagnostic source candidate; **no new hosted result yet**.
+Status: diagnostic source **merged** in [PR248](https://github.com/CrispStrobe/labwired-core/pull/248)
+as `5b470d61cef312aefcbb2bd3d311f4c03ffaff16`, after all 16 enabled exact-head
+checks passed (six declared skips). The landed parents and tree match the
+reviewed prediction. **The four-source comparison remains pending.**
 
 The owner-selected C9 task reports a change in AVR step cost from 922.6 to
 987.7 Ir/step after the upstream sync, and 1002.7 for a subsequently reverted
 cold-helper attempt. These are historical author-reported observations until
 their original receipts are independently admitted. They are not reproduced
 measurements from this diagnostic.
+
+## Continuation checkpoint — 2026-10-17 06:19 UTC
+
+Continue the **existing [campaign 39001605287](https://github.com/CrispStrobe/labwired-core/actions/runs/39001605287)**, attempt 1,
+controller `2201716dbb8461629c73beaa2e2db0e0386b45fe` on
+`lane/c9-avr-layout-20261017`. Do not dispatch another campaign or rerun a
+successful original. At this checkpoint, producer controls, `before-sync` and
+`sync-merge` succeeded; `current` was running and `upstream-source` was queued. Refresh
+all children and the whole event before acting. These are job-status
+observations, not an admitted four-source performance result.
+
+The separate normal [Core Perf run 39001582632](https://github.com/CrispStrobe/labwired-core/actions/runs/39001582632)
+on merged source `5b470d61` reports 82 measured board/mode rows across 42 chips,
+no regression or stale rows, and the existing unrelated RV1103 waiver. It reports
+ATmega328P step **1004.7 Ir/step** against baseline **987.7** (+1.7%), and batch
+**7.2** against **7.2** (+0.3% before display rounding). This is authentic
+reported context: that gate discards raw profiles, so its instruction counters
+were not independently reconstructed. Its different build is not the selected
+`715e1272` campaign binary. It supplies no causal or browser-performance proof.
+
+## Pending tasks and acceptance
+
+1. **C9.1 — admit the existing originals.** Wait for the entire event and all
+   children to finish. Check retained-original and acquisition state first;
+   reuse existing copies and the frozen standalone reader. Admit exact event,
+   attempt, controller, source, job, artifact, digest and size before acquiring
+   each original once. Artifacts have the workflow's 14-day retention. Keep
+   failed/partial originals and refusals; do not retry downloads or replay a
+   guest to repair missing evidence. If access to retained evidence is missing,
+   obtain it before proceeding. A successful sibling cannot qualify a failed
+   or incomplete cohort.
+2. **C9.2 — explain the complete four-source result.** Independently bind all
+   four snapshots, actual toolchain/runner versions, unchanged firmware and
+   descriptor, build settings, exact low/high retirement witnesses and raw
+   profile totals. Read originals without importing the producer or executing
+   a guest. Report step slopes and all three batch pairs with their median;
+   per-function medians need not sum to the median total. Compare pre-sync to
+   sync, sync to current, and retained upstream to sync. Join changed function
+   self-costs to native disassembly and exact source witnesses. Static review
+   found identical AVR decoder/scheduler sources and release profiles; shared
+   retirement/advance changes are candidates, not established causes. Publish
+   source-bound CI numbers, limits and preserved failures here. If admission
+   fails, document that refusal and scope a new diagnostic separately; never
+   silently replace or rerun this campaign.
+3. **C9.3 — decide whether an implementation is justified.** After C9.2, scope
+   any optimization separately, naming exact files, source families and affected
+   guest tests; coordinate shared-machine ownership before implementation.
+   Work only in the owned fork. Require qualified hosted results on both
+   prescribed source families and every unchanged baseline row, with all
+   enabled exact-head checks passing. Preserve original failures, baselines,
+   tolerances, fixtures and profiles. If no robust improvement is justified,
+   explain the measured tradeoff and why the existing tolerance is acceptable;
+   do not introduce an AVR waiver or label an unmeasured cause as layout noise.
+   Engine release and consumer adoption would be separately scoped follow-ups,
+   with explicit pins and affected guest qualification.
+
+C9 is complete only when its CI-backed explanation and the resulting decision
+are recorded. Producer delivery alone does not close the investigation.
 
 ## Fixed first campaign
 

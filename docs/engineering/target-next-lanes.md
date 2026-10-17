@@ -6,7 +6,8 @@ in the engine first, followed by an explicit qualified consumer pin.
 
 ## C9 AVR layout-cost measurement — 2026-10-17
 
-Claimed by the Codex AVR layout investigation lane, following
+Measurement source delivered by the Codex AVR layout investigation lane;
+remaining C9.1–C9.3 is ready for scoped continuation, following
 [the Lite task contract](https://github.com/CrispStrobe/brickwright-lite/blob/main/LANES.md#c9--avr-instruction-cost-layout-investigation--2026-10-17).
 Own a diagnostic profile producer and pure controls in
 `scripts/perf/avr_layout_profile.py` and `scripts/perf/test_avr_layout_profile.py`,
@@ -29,6 +30,14 @@ fixtures, pins, captures or ACKs. No local heavy build, upstream workflow,
 automated issue write, layout-performance or physical timing claim follows
 from source inspection. A later optimization needs a separately precise scope
 and unchanged full-baseline qualification on both prescribed source trees.
+
+Producer delivery is complete: [PR248](https://github.com/CrispStrobe/labwired-core/pull/248)
+merged as `5b470d61` after all 16 enabled source checks passed. Investigation
+remains open. Continue existing [run 39001605287](https://github.com/CrispStrobe/labwired-core/actions/runs/39001605287), not a new dispatch.
+The [current checkpoint and C9.1–C9.3 acceptance](avr-layout-cost.md#pending-tasks-and-acceptance)
+cover once-only original intake, complete four-source attribution, and a
+separately scoped implementation decision. Preserve other owners' shared-machine
+lanes; this measurement claim grants no runtime or consumer-pin change.
 
 ## Current state
 
