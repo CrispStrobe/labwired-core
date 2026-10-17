@@ -102,6 +102,13 @@ notices, original failures, GC/DMA regressions and all stated bounds.
    mutants. Admit exact source/descriptor/image/artifact identities before
    changing a consumer pin. Do not enable the models in unrelated/default
    descriptors or infer browser adoption from native results.
+   Enumerate checkout/admission pins in codal-samd's runtime workflows
+   (`.github/workflows/pxt-gc-*.yml`, `pxt-public-*.yml`,
+   `pxt-native-real-oom.yml` and `pxt-allocated-dma*.yml`) and their matching
+   `pxt-gc-runtime/guest*.rs` and `check_*mutants.py` assertions. Review the
+   complete selected binding set together; keep historical reports and
+   `profiles/pxt-storage-link-census.json` immutable. Create new audit frames
+   for the new engine rather than relabeling older successful originals.
 2. **Actual RAFFS/settings execution.** Start only after qualified consumer
    adoption and real GC/root/allocation-service composition. Link the admitted
    actual filesystem/settings sources and real source-bound hash/configuration/
