@@ -12,6 +12,8 @@ Own a diagnostic profile producer and pure controls in
 `scripts/perf/avr_layout_profile.py` and `scripts/perf/test_avr_layout_profile.py`,
 a separate manual `.github/workflows/avr-layout-profile.yml`, and
 `docs/engineering/avr-layout-cost.md`. No existing gate or runtime change.
+Pure producer controls may run on matching pull requests; the actual profiling
+job remains manual-only and requires those controls first.
 
 Measure exact owned-fork snapshots `f1ca219d08080f4d93a73a3a4c5630e0824db799`
 (pre-sync), `6e03dd12e22ceb534ec1bc494c360b72209ca94f` (sync merge),
