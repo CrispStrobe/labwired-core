@@ -82,6 +82,10 @@ fn actual_zflash_driver_program_erase_and_refusals() {
         assert_eq!(found.len(), 1, "unique real ZFlash method {needle}");
         (found[0].st_value & !1) as u32
     };
+    let irq_helpers = [
+        (symbol("target_disable_irq") & !1) as u32,
+        (symbol("target_enable_irq") & !1) as u32,
+    ];
     let methods = [
         method("totalSize"),
         method("pageSize"),
@@ -107,6 +111,9 @@ fn actual_zflash_driver_program_erase_and_refusals() {
         m.bus.flash.data[START..START + 8192].fill(0xa5);
         m.bus.flash.data[START - 1] = 0x5a;
         m.bus.flash.data[START + 8192] = 0xc3;
+        let mut irq_calls = [0u32; 2];
+        let mut irq_returns = [0u32; 2];
+        let mut active_irq: Option<(usize, u32)> = None;
         let mut phase = 0u32;
         let mut calls = [0u32; 4];
         let mut returns = [0u32; 4];
@@ -128,6 +135,28 @@ fn actual_zflash_driver_program_erase_and_refusals() {
             assert!(fuel < 500000, "unchanged finite new-guest bound");
             let pc = m.cpu.pc & !1;
             if !batched {
+                if let Some((kind, lr)) = active_irq {
+                    if pc == lr {
+                        assert_eq!(m.cpu.primask, kind == 0, "actual CPS helper return mask");
+                        assert_eq!(m.cpu.active_exception, 0);
+                        irq_returns[kind] += 1;
+                        active_irq = None;
+                        println!(
+                            "ZFLASH_IRQ_RETURN {}",
+                            serde_json::json!({"kind":kind,"ordinal":irq_returns[kind],"masked":m.cpu.primask,"return_pc":lr,"elf_sha256":hash})
+                        );
+                    }
+                }
+                if let Some(kind) = irq_helpers.iter().position(|p| *p == pc) {
+                    assert!(active_irq.is_none());
+                    assert_eq!(m.cpu.active_exception, 0);
+                    assert!(active.last().is_some_and(|(method, _)| *method == 3));
+                    if kind == 1 {
+                        assert!(m.cpu.primask);
+                    }
+                    irq_calls[kind] += 1;
+                    active_irq = Some((kind, m.cpu.lr & !1));
+                }
                 if let Some(&(kind, lr)) = active.last() {
                     if pc == lr {
                         active.pop();
@@ -177,6 +206,16 @@ fn actual_zflash_driver_program_erase_and_refusals() {
                     };
                     assert_eq!(calls, expected);
                     assert_eq!(returns, calls);
+                    let expected_irq = if phase <= 2 {
+                        0
+                    } else if phase == 3 {
+                        2
+                    } else {
+                        3
+                    };
+                    assert!(active_irq.is_none());
+                    assert_eq!(irq_calls, [expected_irq; 2]);
+                    assert_eq!(irq_returns, irq_calls);
                 }
                 let word = |i: u64| m.bus.read_u32(witness + i * 4).unwrap();
                 assert_eq!(word(1), 0x80000);
@@ -250,6 +289,8 @@ fn actual_zflash_driver_program_erase_and_refusals() {
         if !batched {
             assert_eq!(calls, [2, 1, 2, 5]);
             assert_eq!(returns, calls);
+            assert_eq!(irq_calls, [3, 3]);
+            assert_eq!(irq_returns, irq_calls);
         }
         assert_eq!(m.bus.read_u32(witness + 12 * 4).unwrap(), 3);
         assert_eq!(m.bus.read_u32(witness + 13 * 4).unwrap(), 3);
