@@ -2,7 +2,7 @@
 //! Opt-in SAMD51 main-array buffering and boundary commit. Other buses keep
 //! their existing memory routing. No generic flash controller is substituted.
 use super::*;
-use crate::peripherals::sam::nvmctrl::{Operation, Samd51Nvmctrl, FLASH_SIZE};
+use crate::peripherals::sam::nvmctrl::{Operation, FLASH_SIZE};
 use crate::SimulationError;
 
 impl SystemBus {
@@ -14,9 +14,7 @@ impl SystemBus {
         value: u32,
     ) -> Option<SimResult<()>> {
         let index = self.samd51_nvmctrl_idx?;
-        if self.flash.read_u8(address).is_none() {
-            return None;
-        }
+        self.flash.read_u8(address)?;
         if self.flash.base_addr != 0 || self.flash.data.len() != FLASH_SIZE as usize {
             return Some(Err(SimulationError::NotImplemented(
                 "SAMD51 storage requires exact 512KiB zero-based backing".into(),
@@ -25,9 +23,7 @@ impl SystemBus {
         Some(
             self.peripherals[index]
                 .dev
-                .as_any_mut()
-                .unwrap()
-                .downcast_mut::<Samd51Nvmctrl>()
+                .manual_flash_storage_mut()
                 .unwrap()
                 .store(address, width, value),
         )
@@ -41,9 +37,7 @@ impl SystemBus {
         };
         let operation = self.peripherals[index]
             .dev
-            .as_any_mut()
-            .unwrap()
-            .downcast_mut::<Samd51Nvmctrl>()
+            .manual_flash_storage_mut()
             .unwrap()
             .boundary();
         let Some(operation) = operation else {
@@ -69,9 +63,7 @@ impl SystemBus {
         }
         self.peripherals[index]
             .dev
-            .as_any_mut()
-            .unwrap()
-            .downcast_mut::<Samd51Nvmctrl>()
+            .manual_flash_storage_mut()
             .unwrap()
             .finish();
         Ok(())
@@ -82,6 +74,7 @@ impl SystemBus {
 mod tests {
     use super::*;
     use crate::memory::LinearMemory;
+    use crate::peripherals::sam::nvmctrl::Samd51Nvmctrl;
     use crate::Bus;
     const NVM: u64 = 0x41004000;
     fn bus(optimized: bool) -> SystemBus {

@@ -23,6 +23,14 @@ pub enum Operation {
     Program { address: usize, bytes: [u8; 16] },
     Clear,
 }
+
+/// Main-array buffer and deferred-commit capability for the manual storage
+/// slice. The bus owns the backing bytes; the peripheral owns command state.
+pub trait ManualFlashStorage {
+    fn store(&mut self, address: u64, width: u8, value: u32) -> SimResult<()>;
+    fn boundary(&mut self) -> Option<Operation>;
+    fn finish(&mut self);
+}
 #[derive(Debug)]
 pub struct Samd51Nvmctrl {
     control: u16,
@@ -173,7 +181,25 @@ impl Samd51Nvmctrl {
         Ok(bytes[(offset - start) as usize])
     }
 }
+impl ManualFlashStorage for Samd51Nvmctrl {
+    fn store(&mut self, address: u64, width: u8, value: u32) -> SimResult<()> {
+        Samd51Nvmctrl::store(self, address, width, value)
+    }
+    fn boundary(&mut self) -> Option<Operation> {
+        Samd51Nvmctrl::boundary(self)
+    }
+    fn finish(&mut self) {
+        Samd51Nvmctrl::finish(self)
+    }
+}
+
 impl Peripheral for Samd51Nvmctrl {
+    fn manual_flash_storage(&self) -> Option<&dyn ManualFlashStorage> {
+        Some(self)
+    }
+    fn manual_flash_storage_mut(&mut self) -> Option<&mut dyn ManualFlashStorage> {
+        Some(self)
+    }
     fn read(&self, offset: u64) -> SimResult<u8> {
         self.byte(offset)
     }

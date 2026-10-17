@@ -410,11 +410,10 @@ impl SystemBus {
         // Cache whether any FLASH peripheral models hardware ops (H5 erase /
         // bank swap). The Cortex-M batch loop uses this cached bool to install
         // its post-instruction pending-op watch only on affected buses.
-        self.samd51_nvmctrl_idx = self.peripherals.iter().position(|p| {
-            p.dev
-                .as_any()
-                .is_some_and(|a| a.is::<crate::peripherals::sam::nvmctrl::Samd51Nvmctrl>())
-        });
+        self.samd51_nvmctrl_idx = self
+            .peripherals
+            .iter()
+            .position(|p| p.dev.manual_flash_storage().is_some());
         self.flash_models_ops = self.samd51_nvmctrl_idx.is_some()
             || self.peripherals.iter().any(|p| {
                 p.dev
