@@ -504,14 +504,23 @@ bounds and a fresh browser V2 ELF's complete Debug-console greeting passed.
 A10 is complete across source, rebuilt engine and consumer. The first published
 engine and earlier failures remain retained; no hardware or broader physical accuracy claim is added.
 
-## SAMD51 selected ZFlash manual-storage lane — 2026-10-17
+## SAMD51 selected ZFlash manual storage — 2026-10-18
 
-The owned NVMCTRL/CMCC lane implements the opt-in
-[manual storage source candidate](samd51-zflash-manual-storage.md), after
-[codal-samd PR71](https://github.com/CrispStrobe/codal-samd/pull/71).
-Scope: new SAM peripheral modules and factory names; a cached absent-by-default
-bus store hook and instruction-boundary commit; exact actual ZFlash source
-link/caller/observer and hosted paired profiles with specific source mutants.
-Default descriptors, unrelated flash controllers, pins, thresholds and existing
-failures are held. Actual qualification and every enabled exact-head check are
-required; this source candidate does not close full board/runtime/storage.
+Source [PR249](https://github.com/CrispStrobe/labwired-core/pull/249) merged as
+`7da375fc8ae4f61c191502a542a2d92e6ab9f948` after all 29 enabled exact-head
+checks passed, with seven source-declared conditional skips. Fresh paired guest
+[run39113938039](https://github.com/CrispStrobe/labwired-core/actions/runs/39113938039)
+and independent source/image/stream/four-patch audits passed; the landed tree
+and ordered parents match the qualified composition. Read the [qualified boundary and follow-up contracts](samd51-zflash-manual-storage.md)
+for the actual paired ZFlash guest, original-method/CPS observations, exact
+model mutants and independent audits. The selected opt-in NVMCTRL/CMCC slice
+preserves default descriptors, consumer pins, existing limits and failures.
+It does not close full board/runtime/storage. The source merge advances no
+consumer engine pin; that adoption is the next separately qualified task.
+
+Next, in order: a separately owned and qualified codal-samd engine/fixture
+adoption with all existing GC/DMA regressions; actual RAFFS/settings composition
+and an explicitly scoped persistence boundary; then required shared-header,
+full IRQ/service and USB/WebUSB board-configuration closure. Controller
+extensions, native Arcade, WASM/installed Lite and performance remain separate
+qualification lanes. Refresh live ownership and heads before claiming work.
