@@ -515,7 +515,8 @@ and ordered parents match the qualified composition. Read the [qualified boundar
 for the actual paired ZFlash guest, original-method/CPS observations, exact
 model mutants and independent audits. The selected opt-in NVMCTRL/CMCC slice
 preserves default descriptors, consumer pins, existing limits and failures.
-It does not close full board/runtime/storage.
+It does not close full board/runtime/storage. The source merge advances no
+consumer engine pin; that adoption is the next separately qualified task.
 
 Next, in order: a separately owned and qualified codal-samd engine/fixture
 adoption with all existing GC/DMA regressions; actual RAFFS/settings composition
