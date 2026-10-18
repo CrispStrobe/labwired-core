@@ -227,19 +227,17 @@ fn actual_zflash_driver_program_erase_and_refusals() {
                     assert_eq!(m.bus.read_u32(0x41006008).unwrap(), 1);
                 }
                 let data = &m.bus.flash.data[START..START + 8192];
-                if phase == 2 || phase == 6 {
-                    if data.iter().any(|v| *v != 0xff) {
-                        assert_eq!(mutant, "omit-erase-commit");
-                        assert_eq!(phase, 2);
-                        assert_eq!(data[0], 0xa5);
-                        assert_eq!(word(3), 0);
-                        println!(
-                            "ZFLASH_MUTANT_WRONG_ERASE {}",
-                            serde_json::json!({"phase":phase,"actual_first":data[0],"calls":calls,"returns":returns,"mutant":mutant,"elf_sha256":hash})
-                        );
-                        detected = true;
-                        break;
-                    }
+                if (phase == 2 || phase == 6) && data.iter().any(|v| *v != 0xff) {
+                    assert_eq!(mutant, "omit-erase-commit");
+                    assert_eq!(phase, 2);
+                    assert_eq!(data[0], 0xa5);
+                    assert_eq!(word(3), 0);
+                    println!(
+                        "ZFLASH_MUTANT_WRONG_ERASE {}",
+                        serde_json::json!({"phase":phase,"actual_first":data[0],"calls":calls,"returns":returns,"mutant":mutant,"elf_sha256":hash})
+                    );
+                    detected = true;
+                    break;
                 }
                 if (3..=5).contains(&phase) {
                     let expected: Vec<u8> = (0..32).map(|i| (i * 7 + 3) as u8).collect();
