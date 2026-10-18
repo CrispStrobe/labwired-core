@@ -504,11 +504,14 @@ bounds and a fresh browser V2 ELF's complete Debug-console greeting passed.
 A10 is complete across source, rebuilt engine and consumer. The first published
 engine and earlier failures remain retained; no hardware or broader physical accuracy claim is added.
 
-## SAMD51 selected ZFlash manual storage — 2026-10-17
+## SAMD51 selected ZFlash manual storage — 2026-10-18
 
-Source [PR249](https://github.com/CrispStrobe/labwired-core/pull/249) implements
-the selected storage slice; final source integration remains gated on all
-enabled exact-head checks. Read the [qualified boundary and follow-up contracts](samd51-zflash-manual-storage.md)
+Source [PR249](https://github.com/CrispStrobe/labwired-core/pull/249) merged as
+`7da375fc8ae4f61c191502a542a2d92e6ab9f948` after all 29 enabled exact-head
+checks passed, with seven source-declared conditional skips. Fresh paired guest
+[run39113938039](https://github.com/CrispStrobe/labwired-core/actions/runs/39113938039)
+and independent source/image/stream/four-patch audits passed; the landed tree
+and ordered parents match the qualified composition. Read the [qualified boundary and follow-up contracts](samd51-zflash-manual-storage.md)
 for the actual paired ZFlash guest, original-method/CPS observations, exact
 model mutants and independent audits. The selected opt-in NVMCTRL/CMCC slice
 preserves default descriptors, consumer pins, existing limits and failures.

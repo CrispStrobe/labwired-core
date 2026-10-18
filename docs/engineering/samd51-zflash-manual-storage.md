@@ -2,9 +2,11 @@
 
 This lane follows the [qualified public source census](https://github.com/CrispStrobe/codal-samd/pull/71).
 It adds an explicitly selected manual NVMCTRL slice, CMCC controls and a hosted
-caller of the real public ZFlash implementation. The selected actual guest qualification is recorded below. Engine integration
-is tracked in [PR249](https://github.com/CrispStrobe/labwired-core/pull/249) and
-remains gated on every enabled exact-head check.
+caller of the real public ZFlash implementation. The selected guest qualification
+is recorded below. [PR249](https://github.com/CrispStrobe/labwired-core/pull/249)
+merged as `7da375fc8ae4f61c191502a542a2d92e6ab9f948` after all 29 enabled
+exact-head checks passed, with seven source-declared conditional skips. The
+landed tree and ordered parents match the qualified composition.
 Default chip descriptors and consumer pins are unchanged.
 
 The new factory names are `samd51_nvmctrl_manual_storage` at `0x41004000` and
@@ -63,12 +65,22 @@ the explicit unmasked, nonnested precondition for these boot-only helpers.
 Two isolated copied-model mutations omit erase commit or program commit. Each
 must expose its exact actual wrong byte after a real successful driver return;
 compiler/setup failures, unrelated errors and exhausted bounds cannot pass.
-Both scheduler profiles passed in
-[run39007999563](https://github.com/CrispStrobe/labwired-core/actions/runs/39007999563)
-at reviewed source `69368aff0cfa07bc4ba6dbbee2967cfceff0010b`, tested merge
+Both scheduler profiles passed in fresh
+[run39113938039](https://github.com/CrispStrobe/labwired-core/actions/runs/39113938039)
+at reviewed source `2213923fb9bd1eb5f84aa16a71e7a12fa5a018e4`, tested merge
+`83005607fdecc1a5fe018ac9ac483ad43436cb9a` and tree
+`b20e8c34d4bec98f8e027bb449b922811042697e`. That tree equals the landed
+`7da375fc8ae4f61c191502a542a2d92e6ab9f948` tree; ordered merge parents are
+`454058f7cf3a30c8cce684356311ece8c60da49f` and the reviewed source. The test
+composition's separately landed C9 diagnostic files establish no C9 result here.
+The fresh qualification covers the equivalent Clippy guard correction in the
+guest observer while preserving every assertion, driver input and model bound.
+
+Earlier [run39007999563](https://github.com/CrispStrobe/labwired-core/actions/runs/39007999563)
+retains its own source `69368aff0cfa07bc4ba6dbbee2967cfceff0010b`, tested merge
 `7cec74a855d8b4625e21f0907f04426a0d9f6e9c` and tree
-`07462ad5bc05da64610d541866b7c6909cc37098`. Before integrating source, verify the landed tree and ordered parents against
-the tested and predicted composition.
+`07462ad5bc05da64610d541866b7c6909cc37098`. Its originals remain historical;
+the newer result uses separately admitted once-acquired originals.
 
 Each profile produced twelve checkpoint observations across two fresh execution
 modes, ten original ZFlash method returns and six actual CPS helper returns.
@@ -93,8 +105,8 @@ These are pending contracts, not ownership claims. Refresh repository heads,
 open PRs and lane ownership before starting. Keep the admitted public sources,
 notices, original failures, GC/DMA regressions and all stated bounds.
 
-1. **Consumer engine adoption.** After the engine source merge, claim a separate
-   codal-samd consumer-integration lane. Update only its explicitly reviewed
+1. **Consumer engine adoption.** The engine source is merged. Claim a separate
+   codal-samd consumer-integration lane for the reviewed merged engine. Update only its explicitly reviewed
    engine binding and the selected storage fixture's opt-in NVMCTRL/CMCC
    entries. The historical census pin remains historical evidence. Requalify
    the existing GC/OOM, synchronous/asynchronous and allocated-DMA cases against
