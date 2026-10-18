@@ -2238,6 +2238,22 @@ pub trait Peripheral: std::fmt::Debug + Send {
         false
     }
 
+    /// Opt-in manual flash page buffer and instruction-boundary commit
+    /// capability. Discovery and access use the same interface, without a
+    /// concrete peripheral downcast. Other models do not participate.
+    fn manual_flash_storage(
+        &self,
+    ) -> Option<&dyn crate::peripherals::sam::nvmctrl::ManualFlashStorage> {
+        None
+    }
+
+    /// Mutable counterpart of [`Self::manual_flash_storage`].
+    fn manual_flash_storage_mut(
+        &mut self,
+    ) -> Option<&mut dyn crate::peripherals::sam::nvmctrl::ManualFlashStorage> {
+        None
+    }
+
     /// Static interrupt-matrix source id this instance asserts, when the model
     /// has exactly one fixed source (e.g. the C3/C6 I2C_EXT0 engine). Lets the
     /// descriptor -> trait wiring be asserted without downcasting to a concrete

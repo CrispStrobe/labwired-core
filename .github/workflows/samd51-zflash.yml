@@ -1,0 +1,85 @@
+name: Opt-in SAMD51 actual ZFlash guest
+on:
+  pull_request:
+    paths:
+      - 'crates/core/src/bus/**'
+      - 'crates/core/src/machine/**'
+      - 'crates/core/src/peripherals/**'
+      - 'crates/core/src/lib.rs'
+      - 'crates/core/tests/samd51_zflash_guest.rs'
+      - 'scripts/samd51-zflash/**'
+      - '.github/workflows/samd51-zflash.yml'
+permissions:
+  contents: read
+jobs:
+  zflash:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [default, event-scheduler]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: CrispStrobe/codal-samd
+          ref: 62a3a408ac544a4e34bf0beb3932683a2c114e26
+          path: owned-zflash-samd
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: lancaster-university/codal-core
+          ref: 2ed19d64ec3359143409a4b0a9758b4aeef3ee7d
+          path: owned-zflash-samd/owned-zflash-core
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: microsoft/pxt-common-packages
+          ref: 31abf23d118f35010fb75122e60a1eb2b6dffe9f
+          path: owned-zflash-samd/owned-zflash-framework
+          sparse-checkout: libs
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Install hosted ARM compiler
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi
+      - name: Link actual separately source-bound ZFlash and authored boot caller
+        run: python3 -B scripts/samd51-zflash/build.py owned-zflash-samd owned-zflash-samd/owned-zflash-core owned-zflash-samd/owned-zflash-framework zflash-evidence
+      - name: Actual model and shared backing controls
+        env:
+          PROFILE: ${{ matrix.profile }}
+        run: |
+          flags=()
+          if [ "$PROFILE" != default ]; then flags+=(--features "$PROFILE"); fi
+          cargo test --locked -p labwired-core --lib "sam" "${flags[@]}"
+      - name: Actual guest single-step and batched execution
+        env:
+          PROFILE: ${{ matrix.profile }}
+          LABWIRED_ZFLASH_FIXTURE: ${{ github.workspace }}/zflash-evidence
+        run: |
+          set -o pipefail
+          flags=()
+          if [ "$PROFILE" != default ]; then flags+=(--features "$PROFILE"); fi
+          cargo test --locked -p labwired-core --test samd51_zflash_guest "${flags[@]}" -- --include-ignored --nocapture 2>&1 | tee zflash-evidence/actual-guest.log
+      - name: Two actual model-source mutants with specific guest wrong-memory results
+        env:
+          PROFILE: ${{ matrix.profile }}
+          LABWIRED_ZFLASH_FIXTURE: ${{ github.workspace }}/zflash-evidence
+        run: python3 -B scripts/samd51-zflash/mutations.py "$PROFILE" zflash-mutation-evidence
+      - name: Preserve source-bound originals and failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: samd51-zflash-${{ matrix.profile }}
+          path: |
+            zflash-evidence/**
+            zflash-mutation-evidence/**
+            owned-zflash-samd/zflash-compile/**
+            !**/*.o
+          if-no-files-found: warn
+          retention-days: 14

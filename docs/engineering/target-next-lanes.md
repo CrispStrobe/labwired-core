@@ -503,3 +503,15 @@ skips). Actual compiled V2 JSON/text CLI greeting/counter, matrix/fault/time
 bounds and a fresh browser V2 ELF's complete Debug-console greeting passed.
 A10 is complete across source, rebuilt engine and consumer. The first published
 engine and earlier failures remain retained; no hardware or broader physical accuracy claim is added.
+
+## SAMD51 selected ZFlash manual-storage lane — 2026-10-17
+
+The owned NVMCTRL/CMCC lane implements the opt-in
+[manual storage source candidate](samd51-zflash-manual-storage.md), after
+[codal-samd PR71](https://github.com/CrispStrobe/codal-samd/pull/71).
+Scope: new SAM peripheral modules and factory names; a cached absent-by-default
+bus store hook and instruction-boundary commit; exact actual ZFlash source
+link/caller/observer and hosted paired profiles with specific source mutants.
+Default descriptors, unrelated flash controllers, pins, thresholds and existing
+failures are held. Actual qualification and every enabled exact-head check are
+required; this source candidate does not close full board/runtime/storage.
