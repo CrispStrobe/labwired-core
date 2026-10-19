@@ -4,6 +4,20 @@ These are proposed task contracts, not ownership claims or passing receipts.
 Refresh the default branch and open PRs before starting; shared behavior lands
 in the engine first, followed by an explicit qualified consumer pin.
 
+## Active PR performance guard — 2026-10-19
+
+The PR hot-path guard lane owns `.github/workflows/core-perf.yml`,
+`scripts/perf/pr_hotpath_gate.py`, its pure controls and this status section.
+Automatically select the existing full 82-mode gate for owned-fork PRs changing
+runtime, chip descriptors, build settings, performance inputs or the gate.
+Classify the actual tested merge against its first parent so docs-only changes
+and a branch behind main do not trigger a full build. Preserve upstream-sync,
+main/manual and scheduled admission, the frozen issue251 campaign, every
+baseline/tolerance/fixture/profile and all issue-write boundaries. Selection
+must fail closed on incomplete source identity or Git errors. Require meaningful
+path/history controls, workflow lint and one successful automatically selected
+PR gate before merge. No runtime/model/guest/pin change belongs to this lane.
+
 ## C9 AVR layout-cost measurement — 2026-10-17
 
 Measurement source delivered by the Codex AVR layout investigation lane;
