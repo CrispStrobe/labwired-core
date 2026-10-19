@@ -4,10 +4,10 @@ name: Core Perf (simulator throughput)
 #
 # The gate measures host instructions retired per simulated CPU step, per
 # board, under callgrind — see scripts/perf/board_perf.py for why that metric
-# and not wall clock. It is NOT a merge-blocking gate on PRs by default: it
-# runs on push to main and nightly, and tracks a regression in a single issue,
-# so a slowdown is noticed the day it lands rather than months later when
-# someone reports "the blinky looks frozen".
+# and not wall clock. Owned-fork PRs affecting the engine's hot paths, build
+# settings or perf inputs run the full unchanged gate before merge. Docs-only
+# PRs get a cheap selection check. Main/manual/schedule policy is preserved.
+# Main regressions are tracked in one issue rather than lost in old run logs.
 #
 # The issue is a live status page, not a log: each run rewrites its body with
 # the current state and only comments when the set of failing boards actually
@@ -15,15 +15,11 @@ name: Core Perf (simulator throughput)
 # body — not one comment per push to main. When the gate goes green the issue
 # is closed automatically, which is also the only thing that ever closed it.
 #
-# Run it on a PR by hand with workflow_dispatch when touching the CPU step
-# path, the machine-advance loop, or the peripheral tick walk.
+# Selection uses the actual tested merge's first-parent diff, including runtime
+# deletions and renames. Incomplete source admission fails the selection check.
 
-# Scheduled runs are gated to this repository: every job below carries
-# `if: github.event_name != 'schedule' || github.repository == 'w1ne/labwired-core'`.
-# GitHub attributes a cron run to whoever last edited the schedule, so a fork
-# with Actions enabled mails this workflow's failures to a maintainer here,
-# about a run they can neither see nor stop. Pushes and manual dispatch are
-# untouched — a fork still gets this workflow on its own changes.
+# Scheduled admission remains upstream-only. A fork's copied cron must not
+# notify an upstream maintainer about a run they cannot see or stop.
 on:
   push:
     branches:
@@ -40,17 +36,17 @@ on:
       # required esp-backtrace feature, the lane died compiling it on every main
       # commit for a day, and the one-line fix could not trigger its own gate.
       - "crates/firmware-perf-spin/**"
+      - "crates/firmware-perf-spin-avr/**"
       - "crates/firmware-perf-spin-riscv/**"
       - "crates/firmware-perf-spin-xtensa/**"
       - "scripts/perf/**"
       - ".github/workflows/core-perf.yml"
-  # Fork only: an upstream-sync PR runs this lane before it merges. A sync
-  # (merge/upstream-*) brings in upstream's CPU, bus and chip changes wholesale,
-  # and this lane is the only one that measures their cost; without it the
-  # 2026-10-12 sync turned main red here with every PR check green, and the
-  # Ir/step regressions it carried stayed hidden for a day (fork #215). Other
-  # PRs keep running it by hand with workflow_dispatch, as the header says;
-  # the job-level `if` below is what limits it to sync branches.
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain*"
+      - ".cargo/**"
+  # The cheap scope job selects runtime/build/perf changes and preserves the
+  # existing owned upstream-sync branch admission. Other PRs skip the build.
   pull_request:
     branches:
       - main
@@ -68,15 +64,44 @@ permissions:
   issues: write
 
 jobs:
+  perf-scope:
+    name: perf-scope
+    if: ${{ github.event_name != 'schedule' || github.repository == 'w1ne/labwired-core' }}
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      required: ${{ steps.select.outputs.required }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Test path and source-history admission
+        run: python3 scripts/perf/test_pr_hotpath_gate.py
+      - name: Select unchanged full gate
+        id: select
+        env:
+          EVENT: ${{ github.event_name }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_REF: ${{ github.head_ref }}
+          TESTED: ${{ github.sha }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 scripts/perf/pr_hotpath_gate.py \
+            --event "$EVENT" --repository "$REPOSITORY" --head-ref "$HEAD_REF" \
+            --tested "$TESTED" --base "$BASE" --head "$HEAD" --output "$GITHUB_OUTPUT"
+
   board-throughput:
     name: board-throughput
+    needs: perf-scope
     if: >-
-      ${{ (github.event_name != 'schedule' || github.repository == 'w1ne/labwired-core')
-      && !(github.event_name == 'workflow_dispatch'
-           && github.ref == 'refs/heads/fix/issue251-storage-boundary-20261019')
-      && (github.event_name != 'pull_request'
-          || (github.repository == 'CrispStrobe/labwired-core'
-              && startsWith(github.head_ref, 'merge/upstream-'))) }}
+      ${{ needs.perf-scope.outputs.required == 'true'
+          && !(github.event_name == 'workflow_dispatch'
+               && github.ref == 'refs/heads/fix/issue251-storage-boundary-20261019') }}
     # Keep absolute RTx and relative Ir/step receipts on one stable image.
     # `ubuntu-latest` moves to Ubuntu 26 on 2026-10-19, which would silently
     # change both the compiler output and host throughput under our baselines.
