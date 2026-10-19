@@ -41,6 +41,32 @@ cover once-only original intake, complete four-source attribution, and a
 separately scoped implementation decision. Preserve other owners' shared-machine
 lanes; this measurement claim grants no runtime or consumer-pin change.
 
+## Issue 251 — restore absent-storage boundary cost — 2026-10-19
+
+Claimed by the issue-251 performance lane. Own the absent-controller fast path
+and its unchanged-cadence controls in `crates/core/src/bus/samd51_storage.rs`,
+the narrowly scoped paired diagnostic in `.github/workflows/core-perf.yml`,
+and the corresponding engineering report/task status. Coordinate before touching
+other shared-machine or storage source. The initial candidate leaves store
+routing, model behavior, controller capabilities and all caller boundaries intact.
+
+Split a tiny inline presence guard from the controller-present service body;
+do not remove service, mark the entire active path cold or alter its four-boundary
+commit/READY contract. Source inspection is a hypothesis, not a measured fix.
+Require a source-bound hosted control/candidate comparison and the full unchanged
+82-mode performance gate, including its native real-time floor. Fresh actual
+ZFlash qualification must pass both profiles and preserve the original driver,
+CPS/PRIMASK checks, refusal cases, neighbor observations and erase/program mutants.
+Keep every enabled final-head check, original failure, baseline, tolerance,
+fixture, release profile, ACK and pin unchanged. No local heavy build or guest,
+upstream action, per-chip waiver or automatic release/consumer adoption.
+
+The paired manual diagnostic uses only the owned fork, exact pre-fix source
+`1c580dcb4e906b197778caa9dabe2ddb2db614c4` and the dispatched candidate SHA.
+Freeze source/toolchain/original admission before dispatch; acquire each official
+original once and audit without producer imports or guest replay. Do not rerun
+the completed C9 campaign or replace issue251's failed original.
+
 ## Current state
 
 - micro:bit v2 matrix/buttons, bounded SAADC/EasyDMA, authored ARM scan guest
