@@ -72,6 +72,8 @@ jobs:
     name: board-throughput
     if: >-
       ${{ (github.event_name != 'schedule' || github.repository == 'w1ne/labwired-core')
+      && !(github.event_name == 'workflow_dispatch'
+           && github.ref == 'refs/heads/fix/issue251-storage-boundary-20261019')
       && (github.event_name != 'pull_request'
           || (github.repository == 'CrispStrobe/labwired-core'
               && startsWith(github.head_ref, 'merge/upstream-'))) }}
@@ -313,3 +315,172 @@ jobs:
                 state: 'closed', state_reason: 'completed',
               });
             }
+
+  issue251-pair:
+    name: issue251 (${{ matrix.role }})
+    if: >-
+      ${{ github.repository == 'CrispStrobe/labwired-core'
+          && github.event_name == 'workflow_dispatch'
+          && github.ref == 'refs/heads/fix/issue251-storage-boundary-20261019' }}
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - role: control
+            source: 1c580dcb4e906b197778caa9dabe2ddb2db614c4
+          - role: candidate
+            source: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ matrix.source }}
+          persist-credentials: false
+
+      - name: Bind measured source and toolchain
+        env:
+          ROLE: ${{ matrix.role }}
+          SOURCE: ${{ matrix.source }}
+          CONTROLLER: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+          ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          python3 - <<'PYTHON'
+          import hashlib, json, os, subprocess
+          from pathlib import Path
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+          names = git('ls-files', 'scripts/perf', 'configs/chips', 'crates/firmware-perf-spin', 'crates/firmware-perf-spin-riscv', 'crates/firmware-perf-spin-xtensa', 'crates/firmware-perf-spin-avr', 'Cargo.lock', 'Cargo.toml').splitlines()
+          packet = dict(role=os.environ['ROLE'], source=git('rev-parse', 'HEAD'), tree=git('rev-parse', 'HEAD^{tree}'), parents=git('show', '-s', '--format=%P', 'HEAD').split(), controller=os.environ['CONTROLLER'], run=os.environ['RUN_ID'], attempt=os.environ['ATTEMPT'], runner_image=os.environ.get('ImageVersion'), inputs={n: hashlib.sha256(Path(n).read_bytes()).hexdigest() for n in names})
+          Path('source-identity.json').write_text(json.dumps(packet, indent=2) + '\n')
+          PYTHON
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          targets: thumbv6m-none-eabi,riscv32imc-unknown-none-elf
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: issue251-${{ matrix.role }}
+          workspaces: |
+            . -> target
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install valgrind + PyYAML
+        run: |
+          sudo apt-get update && sudo apt-get install -y valgrind gcc-avr binutils-avr avr-libc
+          python -m pip install --quiet pyyaml
+
+      # Xtensa has no rustup target — esp32, esp32s3 and esp32s3-zero need the
+      # esp-rs LLVM fork. This step is `continue-on-error` so a flaky espup
+      # download cannot take the other chips down with it. --require-all still
+      # refuses to call the run green if those fixtures cannot be rebuilt.
+      # Same install core-nightly's esp32s3-fixtures-e2e job already uses.
+      - name: Install Xtensa toolchain (espup)
+        continue-on-error: true
+        # espup asks the GitHub API for the latest Xtensa release. Unauthenticated,
+        # that call shares the runner IP's 60/h budget and 403s at random. The
+        # token spends the job's own authenticated budget instead.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cargo install espup --locked
+          espup install
+          # NOTHING gets added to PATH here, deliberately. Putting
+          # ~/.rustup/toolchains/esp/bin on PATH makes every later `cargo`
+          # resolve to the esp fork's binary directly instead of the rustup
+          # shim, and that fork carries no std for thumbv6m or riscv32imc — so
+          # the FIRST fixture build dies with "can't find crate for `core`"
+          # before a single board is measured (issue #843, run 31183553289).
+          # board_perf.py already asks for this toolchain the correct way, with
+          # `cargo +esp build`, which the shim resolves without help.
+          rustup toolchain list
+
+      # Fails in seconds if a chip descriptor exists that no fixture covers and
+      # no waiver names, rather than after a 40-minute build and measure.
+      - name: Check every chip is covered or waived
+        run: python3 scripts/perf/board_perf.py --check-coverage
+
+      # The browser ships labwired-core with `event-scheduler` (see
+      # crates/wasm/Cargo.toml). Measuring without it would gate a build
+      # configuration no user ever runs.
+      - name: Build simulator CLI (browser feature set)
+        run: cargo build --release -p labwired-cli --features event-scheduler
+
+      - name: Record installed tools and measured CLI
+        run: |
+          {
+            rustc -Vv
+            cargo -V
+            valgrind --version
+            avr-gcc --version
+          } > toolchain.txt
+          sha256sum target/release/labwired > cli.sha256
+          nm -C target/release/labwired > cli-symbols.txt
+          objdump -d -C target/release/labwired > cli-disassembly.txt
+
+      - name: Require real time on every chip
+        run: |
+          set -o pipefail
+          python3 scripts/perf/board_rtx.py --min-rtx 1.0 \
+            --status-json rtx-status.json 2>&1 \
+            | tee rtx-report.txt | tee perf-report.txt
+
+      # The fixture firmware is linked by board_perf.py itself, once per memory
+      # map in the matrix (STM32 / nRF / Kinetis / RP2xxx), so a chip on a new
+      # memory map is covered by adding it to FIXTURES rather than by editing a
+      # build step here. Run this after RTx: deterministic receipt drift must
+      # never hide whether the product actually meets real time.
+      - name: Measure per-board throughput
+        id: perf
+        continue-on-error: ${{ matrix.role == 'control' }}
+        run: |
+          set -o pipefail
+          python3 scripts/perf/board_perf.py --require-all \
+            --status-json perf-status.json 2>&1 | tee -a perf-report.txt
+
+      - name: Validate full gate and expected negative control
+        env:
+          ROLE: ${{ matrix.role }}
+          OUTCOME: ${{ steps.perf.outcome }}
+        run: |
+          python3 - <<'PYTHON'
+          import json, os
+          from pathlib import Path
+          perf = json.loads(Path('perf-status.json').read_text())
+          rtx = json.loads(Path('rtx-status.json').read_text())
+          assert rtx['ok'] is True, 'native real-time gate failed'
+          assert not perf['contract_failures'] and not perf['unmeasurable'] and not perf['skipped'], 'incomplete full matrix'
+          assert sum(map(len, perf['measured'].values())) == 82 and len(perf['matched']) == 42, 'unexpected coverage'
+          if os.environ['ROLE'] == 'control':
+              assert os.environ['OUTCOME'] == 'failure' and perf['ok'] is False
+              assert len(perf['regressions']) == 30 and all(r['mode'] == 'step' for r in perf['regressions']), 'original regression not reproduced'
+          else:
+              assert os.environ['OUTCOME'] == 'success' and perf['ok'] is True and not perf['regressions'], 'candidate must pass unchanged gate'
+          PYTHON
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: issue251-${{ matrix.role }}
+          path: |
+            source-identity.json
+            toolchain.txt
+            cli.sha256
+            cli-symbols.txt
+            cli-disassembly.txt
+            perf-report.txt
+            perf-status.json
+            rtx-report.txt
+            rtx-status.json

@@ -67,6 +67,17 @@ Freeze source/toolchain/original admission before dispatch; acquire each officia
 original once and audit without producer imports or guest replay. Do not rerun
 the completed C9 campaign or replace issue251's failed original.
 
+The candidate now isolates the active commit machinery behind an outlined
+helper and inlines only the cached capability-presence check. Existing active
+cadence/refusal tests remain in place; an added absent-controller control checks
+both bus routing paths. The paired manual job requires the frozen control to
+reproduce the 30 step-mode regressions and the candidate to pass the unchanged
+82-mode gate, with native real time passing in both roles. Artifacts bind source,
+input hashes, compiler, runner image and CLI identity. Candidate measurements
+and fresh paired ZFlash guest results are pending; do not treat this section as
+qualification or merge approval. The diagnostic branch cannot update the main
+regression issue. Main push and ordinary PR/schedule policies are unchanged.
+
 ## Current state
 
 - micro:bit v2 matrix/buttons, bounded SAADC/EasyDMA, authored ARM scan guest

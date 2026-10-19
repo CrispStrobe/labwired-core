@@ -31,10 +31,19 @@ impl SystemBus {
 
     /// One service at a retired CPU-window boundary. While pending, the bus
     /// pending-op predicate makes each such window end after one instruction.
+    #[inline(always)]
     pub(crate) fn service_samd51_storage_boundary(&mut self) -> SimResult<()> {
         let Some(index) = self.samd51_nvmctrl_idx else {
             return Ok(());
         };
+        self.service_samd51_storage_controller(index)
+    }
+
+    // Keep the opt-in controller's commit machinery out of the generic CPU
+    // boundary. Buses without this capability need only the inline presence
+    // check; enabled controllers retain the same service and error ordering.
+    #[inline(never)]
+    fn service_samd51_storage_controller(&mut self, index: usize) -> SimResult<()> {
         let operation = self.peripherals[index]
             .dev
             .manual_flash_storage_mut()
@@ -126,6 +135,25 @@ mod tests {
             assert!(b.write_u16(0x78000, 0).is_err());
         }
     }
+    #[test]
+    fn absent_controller_boundary_preserves_memory_on_both_bus_paths() {
+        for optimized in [false, true] {
+            let mut b = SystemBus::new();
+            b.config.optimized_bus_access = optimized;
+            b.write_u8(0x4000, 0x12).unwrap();
+            b.write_u16(0x4002, 0x3456).unwrap();
+            b.write_u32(0x4004, 0x789abcde).unwrap();
+            for _ in 0..8 {
+                b.service_samd51_storage_boundary().unwrap();
+            }
+            assert_eq!(b.read_u8(0x4000).unwrap(), 0x12);
+            assert_eq!(b.read_u16(0x4002).unwrap(), 0x3456);
+            assert_eq!(b.read_u32(0x4004).unwrap(), 0x789abcde);
+            assert!(!b.models_flash_ops());
+            assert!(!b.has_pending_flash_op());
+        }
+    }
+
     #[test]
     fn absent_model_preserves_normal_flash_stores_and_wrong_geometry_refuses() {
         let mut b = SystemBus::new();
