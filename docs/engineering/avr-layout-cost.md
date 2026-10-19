@@ -3,7 +3,7 @@
 Status: diagnostic source **merged** in [PR248](https://github.com/CrispStrobe/labwired-core/pull/248)
 as `5b470d61cef312aefcbb2bd3d311f4c03ffaff16`, after all 16 enabled exact-head
 checks passed (six declared skips). The landed parents and tree match the
-reviewed prediction. **Original intake and quantitative attribution are complete; the causal decision remains open.**
+reviewed prediction. **Original intake, bounded native-code explanation and the no-implementation decision are complete.**
 
 The owner-selected C9 task reports a change in AVR step cost from 922.6 to
 987.7 Ir/step after the upstream sync, and 1002.7 for a subsequently reverted
@@ -72,48 +72,76 @@ reported context: that gate discards raw profiles, so its instruction counters
 were not independently reconstructed. Its different build is not the selected
 `715e1272` campaign binary. It supplies no causal or browser-performance proof.
 
-## Pending tasks and acceptance
+## Causal native-code review and implementation decision — 2026-10-19
 
-1. **C9.1 — DONE: existing originals admitted.** The whole event and all
-   children succeeded; the once-only intake and independent source/cohort
-   audits passed. Retain the four archives, logs, admission records and frozen
-   reader. Reuse those copies for further analysis. If access is missing,
-   obtain access to retained evidence; never download again or replay a guest.
-2. **C9.2 — finish the causal source/codegen explanation.** The table above
-   completes quantitative attribution, not the causal explanation. Start with
-   retained disassembly and raw call/jump records for `advance_central_i2c_time`,
-   the combined `advance`/`advance_inner` region and `Avr::tick_io_timers`. The
-   source reading scope is `crates/core/src/lib.rs`,
-   `crates/core/src/machine/advance.rs` and `crates/core/src/cpu/avr.rs` at the
-   four frozen inputs; this grants no source-edit ownership. Compare
-   instruction sequences and call counts before attributing a difference to
-   added work, outlining or inlining. The original audits already bind all
-   four snapshots, actual toolchain/runner versions, unchanged firmware and
-   descriptor, build settings, exact low/high retirement witnesses and raw
-   profile totals. Read originals without importing the producer or executing
-   a guest. Report step slopes and all three batch pairs with their median;
-   per-function medians need not sum to the median total. Compare pre-sync to
-   sync, sync to current, and retained upstream to sync. Join changed function
-   self-costs to native disassembly and exact source witnesses. Static review
-   found identical AVR decoder/scheduler sources and release profiles; shared
-   retirement/advance changes are candidates, not established causes. Extend
-   the source-bound CI numbers above with the exact mechanism, limits and
-   preserved failures. If a subsequent admission fails, document that refusal and scope a new diagnostic separately; never
-   silently replace or rerun this campaign.
-3. **C9.3 — decide whether an implementation is justified.** After C9.2, scope
-   any optimization separately, naming exact files, source families and affected
-   guest tests; coordinate shared-machine ownership before implementation.
-   Work only in the owned fork. Require qualified hosted results on both
-   prescribed source families and every unchanged baseline row, with all
-   enabled exact-head checks passing. Preserve original failures, baselines,
-   tolerances, fixtures and profiles. If no robust improvement is justified,
-   explain the measured tradeoff and why the existing tolerance is acceptable;
-   do not introduce an AVR waiver or label an unmeasured cause as layout noise.
-   Engine release and consumer adoption would be separately scoped follow-ups,
-   with explicit pins and affected guest qualification.
+Read-only analysis of the retained campaign's native disassembly and low/high
+Callgrind instruction/jump records explains the following executed mechanisms.
+The observations concern the actual profiled monomorphs, identified by their
+recorded addresses; a same-named generic instantiation is not interchangeable.
+No new build, guest execution, download or measurement was needed.
 
-C9 is complete only when its CI-backed explanation and the resulting decision
-are recorded. Producer delivery alone does not close the investigation.
+| Region | Source and native-code finding | Observed implication |
+| --- | --- | --- |
+| AVR timer dispatch | AVR, Timer1, decoder, scheduler and release-profile bytes are identical in all four inputs. The stopped-prescaler path runs 1,200,000 times in each high sample. Only `715e1272` has four extra entry pushes, four matching return pops and one register move on that path. | Its timer self-cost increases by exactly 9 Ir/step; the unchanged Timer2 tail remains 22 Ir/step. |
+| Central I2C time | The method is byte-identical in all four inputs. Before sync its executed body is inline; the other three builds outline it. Both forms retain 1,200,000 division calls, 1,087,500 equal-time skips and 112,499 changed-time fan-outs in the high sample. | The outlined 42.1875 self-cost row is not 42 new semantic instructions per step. Relative to the inline 27, frame entry/return adds 15, two pointer spills add 0.1875, and the caller adds 2: combined overhead 17.1875 Ir/step. |
+| Advance entry/setup | The executed prefixes contain 46, 77, 84 and 82 instructions in pre-sync, sync, task-current and retained-upstream order. Sync eagerly materializes more machine-field addresses with address calculations and stack stores. | The pre-sync-to-sync prefix contributes 31 Ir/step. The sync-to-current prefix contributes 7, including five facade guards moved from the CLI caller. |
+| Remaining advance body | Instruction/debug-region accounting retains offsetting additions, removals and moved attribution. One unchanged boundary-dispatch region grows from a conditional branch to an AND, two stores and the branch. | This identifies another 3 executed instructions within the sync-to-current residual 6; it does not uniquely assign every net difference to a source expression. |
+
+For the timer witness, `715e1272` executes the extra pushes at
+`0x2227310–0x222731a`, the extra pops at `0x22276d6–0x22276dc`, and a register
+move at `0x22273ae`. Its active Timer1 path is inlined, enlarging the frame even
+though that active path is not taken by this spin guest; the sync build calls
+`apply_ticks` out of line. The exact unrelated source perturbation that caused
+LLVM to choose that layout is **not established**. Identical timer source does
+not imply identical executed native code.
+
+The pre-sync-to-sync combined advance/central-clock ledger is
+`31 - 27 + 2 + 22 + 42.1875 = 70.1875` Ir/step. The CLI adds five and the
+boundary region removes one, giving 74.1875 apart from the small fixed-startup
+term. The 22 residual advance instructions are accounted for in the retained
+PC totals but are not individually assigned to source expressions. For sync
+to task-current, advance adds 13 (seven in entry/setup and six elsewhere),
+the CLI loses five moved guards, and the timer adds nine. The remaining net
+three instructions within that six-instruction body residual likewise have no
+unique source-expression attribution. Raw counters and disassembly establish
+executed mechanisms; they do not supply missing compiler optimization records.
+
+The central-clock calls must remain: they service the selected opt-in parked
+I2C/SPI controllers and the 16 MHz time conversion. Removing them as unused
+would change semantics. The exact call counts also refute attributing the
+outlined self-cost increase to new clock fan-out work.
+
+**C9.3 decision: do not add another runtime optimization.** Earlier broad inlining/cold-helper attempts have not supplied a qualified
+improvement across both prescribed source families. The old task-current timer frame is also no longer the current-main
+shape: static inspection of the already retained issue-251 fixed candidate
+shows the compact frame and out-of-line Timer1 call. That supplementary static
+observation has no new raw Callgrind counts and is not a fifth source in this
+campaign. The separately qualified [issue-251 correction](https://github.com/CrispStrobe/labwired-core/pull/252)
+reports AVR step 995.7 in its unchanged full-baseline campaign; matching rounded
+totals alone would not establish causal identity with an older build.
+
+The current accepted gate has no throughput regressions across its unchanged
+82 board/mode rows. Retain its existing tolerances: there is no evidence for an
+AVR waiver, wider baseline or skipped clocks. An optimization against obsolete
+`715e1272` would not demonstrate an improvement on current main. Any future
+proposal needs a precise current-source mechanism, separately claimed files,
+affected actual guests, both prescribed source families, every unchanged
+baseline row and all enabled exact-head checks. Compiler-trigger attribution
+would need separately scoped optimization records or controlled compilation;
+it is an explicit remaining diagnostic limit, not a claimed result.
+
+<a id="pending-tasks-and-acceptance"></a>
+
+## Completion and remaining boundaries
+
+C9.1's original/cohort admission, C9.2's bounded executed-code explanation and
+C9.3's no-implementation decision are recorded above. This closes the current
+investigation with the residual source-expression/compiler-trigger limits
+preserved. It does not claim a complete compiler-decision proof, browser
+throughput, physical timing or a new runtime improvement. Retain and reuse the
+four original packets and failed candidates; do not redispatch, download again
+or replay a guest to reread them. Engine release and installed-consumer adoption
+remain separately scoped work with explicit pins and affected qualification.
 
 ## Fixed first campaign
 

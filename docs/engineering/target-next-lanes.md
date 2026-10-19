@@ -28,7 +28,7 @@ and its tracking issue is now closed.
 ## C9 AVR layout-cost measurement — 2026-10-17
 
 Measurement source delivered by the Codex AVR layout investigation lane;
-remaining C9.1–C9.3 is ready for scoped continuation, following
+C9.1–C9.3 now have a bounded explanation and no-implementation decision, following
 [the Lite task contract](https://github.com/CrispStrobe/brickwright-lite/blob/main/LANES.md#c9--avr-instruction-cost-layout-investigation--2026-10-17).
 Own a diagnostic profile producer and pure controls in
 `scripts/perf/avr_layout_profile.py` and `scripts/perf/test_avr_layout_profile.py`,
@@ -55,12 +55,18 @@ and unchanged full-baseline qualification on both prescribed source trees.
 Producer delivery is complete: [PR248](https://github.com/CrispStrobe/labwired-core/pull/248)
 merged as `5b470d61` after all 16 enabled source checks passed. The existing [run 39001605287](https://github.com/CrispStrobe/labwired-core/actions/runs/39001605287)
 and its once-only independent original/cohort audits passed. C9.1 is complete;
-reuse retained originals, with no redispatch or new download. C9.2 causal
-source/codegen explanation and C9.3 implementation decision remain open.
-The [current checkpoint and C9.1–C9.3 acceptance](avr-layout-cost.md#pending-tasks-and-acceptance)
-cover once-only original intake, complete four-source attribution, and a
-separately scoped implementation decision. Preserve other owners' shared-machine
-lanes; this measurement claim grants no runtime or consumer-pin change.
+reuse retained originals, with no redispatch or new download. The
+[causal native-code review and decision](avr-layout-cost.md#causal-native-code-review-and-implementation-decision--2026-10-19)
+records the exact extra timer frame instructions, central-clock outlining cost
+and eager advance setup, together with residual source-expression and LLVM
+trigger limits. C9.3 declines another runtime optimization: the obsolete timer
+shape is absent from the retained issue-251 fixed candidate and prior broad
+inlining attempts supplied no qualified improvement across both prescribed
+source families. No baseline, tolerance, clock or waiver
+changes are justified. The current investigation is complete within those
+explicit boundaries. A future compiler-trigger diagnostic or optimization needs
+its own precise scope and unchanged qualification. Preserve other owners' shared
+machine lanes; this measurement claim grants no runtime or consumer-pin change.
 
 ## Issue 251 — native throughput regression repaired — 2026-10-19
 
