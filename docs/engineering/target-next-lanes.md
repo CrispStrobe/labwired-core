@@ -41,42 +41,65 @@ cover once-only original intake, complete four-source attribution, and a
 separately scoped implementation decision. Preserve other owners' shared-machine
 lanes; this measurement claim grants no runtime or consumer-pin change.
 
-## Issue 251 — restore absent-storage boundary cost — 2026-10-19
+## Issue 251 — native throughput regression repaired — 2026-10-19
 
-Claimed by the issue-251 performance lane. Own the absent-controller fast path
-and its unchanged-cadence controls in `crates/core/src/bus/samd51_storage.rs`,
-the narrowly scoped paired diagnostic in `.github/workflows/core-perf.yml`,
-and the corresponding engineering report/task status. Coordinate before touching
-other shared-machine or storage source. The initial candidate leaves store
-routing, model behavior, controller capabilities and all caller boundaries intact.
+[PR252](https://github.com/CrispStrobe/labwired-core/pull/252) merged as
+`79071f69cd6035a820cbdad93da7343d7d501e4d` after all 28 enabled exact-head
+checks succeeded across 11 events; nine source-declared conditional checks were
+skipped. The landed tree and ordered parents exactly match the reviewed and
+qualified composition. This lane is complete; its source ownership is released.
 
-Split a tiny inline presence guard from the controller-present service body;
-do not remove service, mark the entire active path cold or alter its four-boundary
-commit/READY contract. Source inspection is a hypothesis, not a measured fix.
-Require a source-bound hosted control/candidate comparison and the full unchanged
-82-mode performance gate, including its native real-time floor. Fresh actual
-ZFlash qualification must pass both profiles and preserve the original driver,
-CPS/PRIMASK checks, refusal cases, neighbor observations and erase/program mutants.
-Keep every enabled final-head check, original failure, baseline, tolerance,
-fixture, release profile, ACK and pin unchanged. No local heavy build or guest,
-upstream action, per-chip waiver or automatic release/consumer adoption.
+The fix in `crates/core/src/bus/samd51_storage.rs` inlines the cached
+capability-presence check and outlines the unchanged controller-present body.
+It preserves service order, four-boundary commit/READY behavior, store routing,
+geometry/refusals and active model semantics. No pin, ACK, baseline, tolerance,
+fixture or release profile changed.
 
-The paired manual diagnostic uses only the owned fork, exact pre-fix source
-`1c580dcb4e906b197778caa9dabe2ddb2db614c4` and the dispatched candidate SHA.
-Freeze source/toolchain/original admission before dispatch; acquire each official
-original once and audit without producer imports or guest replay. Do not rerun
-the completed C9 campaign or replace issue251's failed original.
+The sole [paired native campaign](https://github.com/CrispStrobe/labwired-core/actions/runs/39238796436)
+compared frozen pre-fix `1c580dcb4e906b197778caa9dabe2ddb2db614c4` with reviewed
+candidate `945e80351b34780d78ddba061fd5b7c22cf9a679`. The control reproduced all
+30 step-mode regression flags; the candidate passed all 82 modes across 42 chips
+with zero flags. Both passed the existing native real-time floor. Reported host
+instructions per simulated step included:
 
-The candidate now isolates the active commit machinery behind an outlined
-helper and inlines only the cached capability-presence check. Existing active
-cadence/refusal tests remain in place; an added absent-controller control checks
-both bus routing paths. The paired manual job requires the frozen control to
-reproduce the 30 step-mode regressions and the candidate to pass the unchanged
-82-mode gate, with native real time passing in both roles. Artifacts bind source,
-input hashes, compiler, runner image and CLI identity. Candidate measurements
-and fresh paired ZFlash guest results are pending; do not treat this section as
-qualification or merge approval. The diagnostic branch cannot update the main
-regression issue. Main push and ordinary PR/schedule policies are unchanged.
+| Board | Pre-fix | Fixed |
+|---|---:|---:|
+| ATmega328P | 1019.7 | 995.7 |
+| SAMD51 PyBadge | 916.3 | 893.3 |
+| nRF52833 | 1371.8 | 1348.8 |
+
+Originals were acquired once. Independent bounded metric-report and full Git
+commit-object audits verified exact source/tree/ordered parents, unchanged
+inputs, matching native tools/runner image, coverage, table/JSON joins and the
+unchanged gate predicates. Preserve the original intake limits: the full
+auxiliary view was refused because optional native disassembly exceeded its
+materialization envelope. The producer's shallow parent list was not accepted
+as complete ancestry; immutable full commit objects supplied that proof
+independently. Only the bounded metric reports are qualified. No raw-profile,
+per-call causal, comparative wall-time, browser or physical-timing claim follows.
+
+Fresh [actual ZFlash qualification](https://github.com/CrispStrobe/labwired-core/actions/runs/39238771258)
+passed default and event-scheduler profiles. Independent once-retained
+source/image/stream, matching guest ELF and four exact model-patch audits passed:
+12 phases, ten original method returns, six IRQ-helper returns and both specific
+erase/program mutants per profile. The new absent-controller control and
+existing active cadence/neighbor controls passed on both bus paths. Broader
+reset/earlier-caller and all other enabled correctness checks also passed.
+
+Remaining observation: monitor the existing [shipped-main performance run](https://github.com/CrispStrobe/labwired-core/actions/runs/39244959337),
+created by the source merge. Its successful normal gate should automatically
+close [issue251](https://github.com/CrispStrobe/labwired-core/issues/251). Do not
+dispatch a replacement or manually close the issue from the branch result. If
+it fails, preserve that failure and compare its exact source, tools/runner and
+reported measurements before scoping a follow-up; keep all gate predicates.
+
+The paired workflow is a frozen one-campaign diagnostic. Do not repeat it or
+reacquire successful originals. Any future reuse first needs a fresh scoped
+admission, full ancestry capture and a bounded metric artifact separate from
+optional native listings. C9 mechanism/optimization work remains separately
+scoped; this fix neither repeats its completed campaign nor advances a consumer
+engine pin. Subsequent engine/fixture adoption, RAFFS/settings and full board
+closure remain the separately qualified tasks below.
 
 ## Current state
 
