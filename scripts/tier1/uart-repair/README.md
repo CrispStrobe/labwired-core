@@ -1,4 +1,4 @@
-# Tier1 UART fixture initialization repair — full ratchet pending
+# Tier1 UART fixture initialization repair — qualified and landed
 
 [Diagnostic run37941472606](https://github.com/CrispStrobe/labwired-core/actions/runs/37941472606)
 retains twenty silent cases: two source pins, two chips, five execution modes.
@@ -41,12 +41,26 @@ generated ELF hashes exactly matched the original qualified guest inputs:
 | nRF52832 | `d754f4e9a76a39b4b12df2cf9c6fa54e59047a196d2c06899000588d943b26c4` |
 | STM32F103 | `4e8f7755b014e02c12d099d6d063be0d761cc604ed7778981388b79b321dd82c` |
 
-The branch now adopts these two exact blobs and updates only their manifest
-digest/source-provenance entries; unrelated fixtures and manifest entries are
-unchanged. The export contains only these public authored guest inputs, not an
-engine or private firmware. This bounded qualification is not yet a full-matrix
-pass: retain the original failures and require the unchanged matrix,
-immutable-baseline ratchet and every enabled final-head CI gate before merge.
-Then requalify PR190 against the landed repair before considering its merge;
-PR191 remains a separately qualified, bounded software-pended IRQ fixture.
+[PR193](https://github.com/CrispStrobe/labwired-core/pull/193) adopted these two
+exact blobs and their manifest digest/source-provenance entries, then merged as
+`80823eb479e20327d8ecb3f35b4d0aa4912a1a2a`. Unrelated fixtures and manifest
+entries were unchanged. Its final
+[guest run37946576833](https://github.com/CrispStrobe/labwired-core/actions/runs/37946576833)
+passed all four cases again, with the same adopted ELF hashes. The unchanged
+[full Tier1 matrix and immutable-baseline ratchet37946567305](https://github.com/CrispStrobe/labwired-core/actions/runs/37946567305)
+and every enabled final-head check passed before merge.
+
+[PR190](https://github.com/CrispStrobe/labwired-core/pull/190) subsequently landed
+after requalification on the repair; the separate software-pended IRQ fixture
+[PR191](https://github.com/CrispStrobe/labwired-core/pull/191) also landed after
+fresh qualification. Their bounded results and remaining runtime work are in
+[the SAMD runtime lanes](../../../docs/engineering/samd-permissive-runtime-lanes.md).
+
+The superseded diagnostic [PR192](https://github.com/CrispStrobe/labwired-core/pull/192)
+is closed without merging its experiment workflow. Its two original diagnostic
+runs remain historical evidence: the old fixtures were silent on both source
+pins and in forced single-step, which did not establish a PR190 or JIT
+regression. No further implementation is pending for that original silence.
+Any new console failure needs a fresh source-bound reproduction and its own
+scope; do not rerun the successful historical experiments merely to read them.
 No calibrated baud, hardware, application adoption or performance claim follows.
