@@ -4,26 +4,29 @@ These are proposed task contracts, not ownership claims or passing receipts.
 Refresh the default branch and open PRs before starting; shared behavior lands
 in the engine first, followed by an explicit qualified consumer pin.
 
-## Active PR performance guard — 2026-10-19
+## PR performance guard — qualified and merged — 2026-10-19
 
-The PR hot-path guard lane owns `.github/workflows/core-perf.yml`,
-`scripts/perf/pr_hotpath_gate.py`, its pure controls and this status section.
-Automatically select the existing full 82-mode gate for owned-fork PRs changing
-runtime, chip descriptors, build settings, performance inputs or the gate.
-Classify the actual tested merge against its first parent so docs-only changes
-and a branch behind main do not trigger a full build. Preserve upstream-sync,
-main/manual and scheduled admission, the frozen issue251 campaign, every
-baseline/tolerance/fixture/profile and all issue-write boundaries. Selection
-must fail closed on incomplete source identity or Git errors. Require meaningful
-path/history controls, workflow lint and one successful automatically selected
-PR gate before merge. No runtime/model/guest/pin change belongs to this lane.
+[PR253](https://github.com/CrispStrobe/labwired-core/pull/253) merged as
+`080d0c35908c9ca5887ec7aafe5ea23b07b6d8a7` after all 17 enabled exact-head
+checks succeeded; five source-declared conditional jobs were skipped. The
+landed tree and ordered parents match the tested composition. This lane is
+complete and its source ownership is released.
 
-Candidate controls pass for runtime/build/fixture selection, docs/test-only skip,
-existing event policy, a docs branch behind main, runtime rename/deletion and
-source/Git refusal. Four actual selector mutations are detected. The frozen
-issue251 job is byte-identical. Hosted automatic PR selection and the full
-unchanged performance result are pending. Issue251's shipped-main gate passed
-and its tracking issue is now closed.
+Owned-fork PRs affecting runtime, chip descriptors, build settings, performance
+inputs or the gate now automatically run the unchanged full performance budget.
+Selection compares the actual tested merge with its admitted first parent;
+docs/test-only branches, including branches behind main, skip the build.
+Runtime renames/deletions remain selected and Git/source errors fail closed.
+Six policy/history controls and four detected selector mutations passed.
+The frozen issue251 campaign, main/manual/scheduled policy, every baseline,
+tolerance, fixture/profile and issue-write boundary remain unchanged.
+
+The automatically selected [PR campaign 39254133590](https://github.com/CrispStrobe/labwired-core/actions/runs/39254133590)
+and its once-retained independent reported-context audit passed all 82 modes
+across 42 chips, with no regressions or stale rows and the existing RV1103
+waiver unchanged. Its four reports do not contain raw profiles; the audit does
+not claim independently reconstructed instruction counters, causal attribution
+or new browser/physical-timing evidence. No runtime/model/guest or pin changed.
 
 ## C9 AVR layout-cost measurement — 2026-10-17
 
