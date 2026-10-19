@@ -18,6 +18,13 @@ must fail closed on incomplete source identity or Git errors. Require meaningful
 path/history controls, workflow lint and one successful automatically selected
 PR gate before merge. No runtime/model/guest/pin change belongs to this lane.
 
+Candidate controls pass for runtime/build/fixture selection, docs/test-only skip,
+existing event policy, a docs branch behind main, runtime rename/deletion and
+source/Git refusal. Four actual selector mutations are detected. The frozen
+issue251 job is byte-identical. Hosted automatic PR selection and the full
+unchanged performance result are pending. Issue251's shipped-main gate passed
+and its tracking issue is now closed.
+
 ## C9 AVR layout-cost measurement — 2026-10-17
 
 Measurement source delivered by the Codex AVR layout investigation lane;
