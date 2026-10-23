@@ -101,43 +101,34 @@ expected premature-release witness; none establishes enforced ownership or
 unlimited lifetime. Keep the [qualified DMA boundaries](https://github.com/CrispStrobe/codal-samd/blob/master/docs/PXT-GC-FAILURE-LIFETIME-LANES.md)
 when requalifying a new engine.
 
-These are pending contracts, not ownership claims. Refresh repository heads,
-open PRs and lane ownership before starting. Keep the admitted public sources,
-notices, original failures, GC/DMA regressions and all stated bounds.
+These are task contracts, not ownership claims. Refresh heads, open PRs and
+ownership before starting. Keep admitted sources, notices, original failures,
+GC/DMA regressions and all bounds. Completed source-qualified slices are not
+permission to replay successful originals.
 
-1. **Consumer engine adoption.** The engine source is merged. Claim a separate
-   codal-samd consumer-integration lane for the reviewed merged engine. Update only its explicitly reviewed
-   engine binding and the selected storage fixture's opt-in NVMCTRL/CMCC
-   entries. The historical census pin remains historical evidence. Requalify
-   the existing GC/OOM, synchronous/asynchronous and allocated-DMA cases against
-   that engine, plus both actual ZFlash profiles and their specific model
-   mutants. Admit exact source/descriptor/image/artifact identities before
-   changing a consumer pin. Do not enable the models in unrelated/default
-   descriptors or infer browser adoption from native results.
-   Enumerate checkout/admission pins in codal-samd's runtime workflows
-   (`.github/workflows/pxt-gc-*.yml`, `pxt-public-*.yml`,
-   `pxt-native-real-oom.yml` and `pxt-allocated-dma*.yml`) and their matching
-   `pxt-gc-runtime/guest*.rs` and `check_*mutants.py` assertions. Review the
-   complete selected binding set together; keep historical reports and
-   `profiles/pxt-storage-link-census.json` immutable. Create new audit frames
-   for the new engine rather than relabeling older successful originals.
-2. **Actual RAFFS/settings execution.** Start only after qualified consumer
-   adoption and real GC/root/allocation-service composition. Link the admitted
-   actual filesystem/settings sources and real source-bound hash/configuration/
-   scheduler services; do not replace filesystem methods with fixtures. Select
-   one explicit storage size within the admitted final 32 KiB. Require real
-   format/mount/write/read/remove/list, refusal cases, live GC payload retention
-   and neighboring/code/data canaries in both profiles. Define one persistence
-   boundary in the contract before implementation; this model currently proves
-   neither reset nor power-loss persistence. Add specific nonvacuous mutants,
-   freeze independent readers and qualify clean hosted guests before merging.
+1. **Consumer engine adoption — complete.**
+   [Codal PR72](https://github.com/CrispStrobe/codal-samd/pull/72) adopted the
+   explicitly reviewed engine79071f69 with all 22 enabled checks and 21 case
+   audits. Historical census/profile identities remain unchanged; unrelated
+   default descriptors were not enabled. No browser adoption follows.
+2. **Actual RAFFS/settings composition — finite checkpoint complete.**
+   [Codal PR74](https://github.com/CrispStrobe/codal-samd/pull/74) qualifies
+   actual filesystem/settings with real GC/services, both profiles, 1,871 checks,
+   object remount and eight specific mutation/profile cases. Subsequent separate
+   contracts cover [compaction](https://github.com/CrispStrobe/codal-samd/pull/76),
+   [the current source census](https://github.com/CrispStrobe/codal-samd/pull/77)
+   and [modeled retained-backing reset](https://github.com/CrispStrobe/codal-samd/pull/78).
+   Inspect each final qualification record. CPU/core-system reset over the same
+   Bus leaves peripheral models live; engine restart/backing reopen,
+   interrupted operations and power loss require new explicit contracts.
 3. **Full board and IRQ/service configuration.** Separately census the remaining
-   shared-header dependencies and the historical USB/WebUSB-enabled board
-   configuration. Trace required functions to admitted public implementations;
+   shared-header dependencies and an actual generated full-board
+   configuration. Do not infer USB1 from the service profile or core defaults. Trace required functions to admitted public implementations;
    model and qualify each missing behavior in an owned lane. The boot-only CPS
    helpers here do not qualify full CODAL paired fiber/IRQ semantics. The held
    USB/QSPI stubs and feature-disabled service fixture do not establish the
-   original board configuration. Preserve that gap until actual enabled
+   original board configuration. Establish actual QSPI source use before
+   declaring it required; qualify enabled USB only after its configuration is fixed. Preserve that gap until actual enabled
    configuration and affected guests pass; disabling required features cannot
    close it.
 4. **Additional controller semantics or downstream adoption.** Fuses/protection,

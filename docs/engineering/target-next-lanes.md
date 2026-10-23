@@ -32,7 +32,7 @@ or new browser/physical-timing evidence. No runtime/model/guest or pin changed.
 
 Measurement source delivered by the Codex AVR layout investigation lane;
 C9.1–C9.3 now have a bounded explanation and no-implementation decision, following
-[the Lite task contract](https://github.com/CrispStrobe/brickwright-lite/blob/main/LANES.md#c9--avr-instruction-cost-layout-investigation--2026-10-17).
+[the Lite task contract](https://github.com/CrispStrobe/brickwright-lite/blob/main/lanes/2026-10-17-c9-avr-instruction-cost-layout-investigation.md).
 Own a diagnostic profile producer and pure controls in
 `scripts/perf/avr_layout_profile.py` and `scripts/perf/test_avr_layout_profile.py`,
 a separate manual `.github/workflows/avr-layout-profile.yml`, and
@@ -116,20 +116,20 @@ erase/program mutants per profile. The new absent-controller control and
 existing active cadence/neighbor controls passed on both bus paths. Broader
 reset/earlier-caller and all other enabled correctness checks also passed.
 
-Remaining observation: monitor the existing [shipped-main performance run](https://github.com/CrispStrobe/labwired-core/actions/runs/39244959337),
-created by the source merge. Its successful normal gate should automatically
-close [issue251](https://github.com/CrispStrobe/labwired-core/issues/251). Do not
-dispatch a replacement or manually close the issue from the branch result. If
-it fails, preserve that failure and compare its exact source, tools/runner and
-reported measurements before scoping a follow-up; keep all gate predicates.
+The existing [shipped-main performance run](https://github.com/CrispStrobe/labwired-core/actions/runs/39244959337)
+completed successfully and [issue251](https://github.com/CrispStrobe/labwired-core/issues/251)
+closed on October19. The later full guard campaign above also passed. This
+observation is complete; do not dispatch a replacement or reacquire its originals.
+A future failure needs its own exact source/tool/runner and measurement review,
+with every gate predicate preserved.
 
 The paired workflow is a frozen one-campaign diagnostic. Do not repeat it or
 reacquire successful originals. Any future reuse first needs a fresh scoped
 admission, full ancestry capture and a bounded metric artifact separate from
 optional native listings. C9 mechanism/optimization work remains separately
 scoped; this fix neither repeats its completed campaign nor advances a consumer
-engine pin. Subsequent engine/fixture adoption, RAFFS/settings and full board
-closure remain the separately qualified tasks below.
+engine pin. Subsequent Codal engine/fixture adoption and finite RAFFS/settings
+composition landed in PR72/PR74 below; full-board closure remains separate.
 
 ## Current state
 
@@ -315,7 +315,7 @@ this lane alone does not qualify the native DMA driver.
 
 **Bounded prerequisite reached:** [PR210](https://github.com/CrispStrobe/labwired-core/pull/210)
 landed the opt-in software-triggered BYTE/RAM foundation. Both final-source
-profiles passed90 guest cases/36 interrupt entries and returns each, after all22
+profiles passed90 guest cases/36 interrupt entries and returns each, after all 22
 enabled checks passed. Read its [receipt](../receipts/2026-10-12-samd-dmac-byte/README.md)
 and [next live-TX lane](samd-dmac-byte-foundation.md#next-bounded-lane--live-sercom4-tx-byte-requests).
 This does not complete P4 or admit the production descriptor/native runtime.
@@ -605,12 +605,27 @@ and ordered parents match the qualified composition. Read the [qualified boundar
 for the actual paired ZFlash guest, original-method/CPS observations, exact
 model mutants and independent audits. The selected opt-in NVMCTRL/CMCC slice
 preserves default descriptors, consumer pins, existing limits and failures.
-It does not close full board/runtime/storage. The source merge advances no
-consumer engine pin; that adoption is the next separately qualified task.
+It does not close full board/runtime/storage. That source merge itself advanced
+no consumer pin. Subsequent [Codal PR72](https://github.com/CrispStrobe/codal-samd/pull/72)
+explicitly adopted engine79071f69 with all 22 enabled checks and 21 independent
+case audits. [PR74](https://github.com/CrispStrobe/codal-samd/pull/74) separately
+qualified actual RAFFS/settings plus GC/services: both scheduler profiles,
+1,871 storage checks, object remount and eight specific mutation/profile cases.
+Those two tasks are complete; preserve their original evidence and limits.
 
-Next, in order: a separately owned and qualified codal-samd engine/fixture
-adoption with all existing GC/DMA regressions; actual RAFFS/settings composition
-and an explicitly scoped persistence boundary; then required shared-header,
-full IRQ/service and USB/WebUSB board-configuration closure. Controller
-extensions, native Arcade, WASM/installed Lite and performance remain separate
-qualification lanes. Refresh live ownership and heads before claiming work.
+The next finite slices have separate contracts and exact qualification state:
+[write compaction and original spacing refusal](https://github.com/CrispStrobe/codal-samd/pull/76),
+[current full-board source/configuration census](https://github.com/CrispStrobe/codal-samd/pull/77),
+and [modeled CPU/core-system reset with retained backing](https://github.com/CrispStrobe/codal-samd/pull/78).
+Read their final source/check/original-audit records before repeating work.
+The census is source-only; the reset route leaves peripheral models live and
+cannot qualify engine restart, backing reopen, interrupted writes or power loss.
+
+Remaining full-board work must first freeze an actual generated configuration
+and permitted header/source closure. Service USB0/WebUSB0 does not establish a
+full-board setting; USB1 is conditional until that generated input is admitted.
+Qualify required IRQ/services, application vector/startup layout and enabled USB
+behavior separately. A QSPI descriptor stub alone is not an established source
+requirement. Native Arcade, WASM/installed Lite and representative performance
+retain their own source/package/consumer gates. No default descriptor, hardware
+capture, ACK or dependency pin changes as part of this roadmap update.
