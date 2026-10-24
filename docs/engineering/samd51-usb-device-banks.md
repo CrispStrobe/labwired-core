@@ -64,3 +64,12 @@ RXSTP still owns its buffer. A separate regression covers a preceding unread
 status OUT, stall recovery, and protection of an unread setup packet; its
 bank-readiness mutation is detected. This behavior is required for successive
 real control requests and is separate from ordinary OUT bank readiness.
+
+The first full-source candidate retained a deterministic nRF52832 step-mode
+result of 1320.4 host instructions per step against the unchanged 1279.2
+baseline, exceeding the existing 3% limit. It is not merge qualification. A
+bounded hosted parent/candidate diagnostic retains both binaries and the
+original low/high callgrind attribution using one shared frozen fixture. This
+diagnostic changes no baseline, threshold or production performance gate.
+The generated ESP32-C6 validation digest follows the shared factory change;
+silicon ACKs, captures and watch lists remain unchanged.
