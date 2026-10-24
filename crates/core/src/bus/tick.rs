@@ -708,19 +708,19 @@ impl SystemBus {
             // it per tick is eight linear scans of the peripheral list with a
             // string compare each, on every boundary of every chip, to arrive at
             // the same four indices every time.
-            let gpio_idx = match self.gpio_port_idx {
-                Some(cached) => cached,
-                None => {
-                    let mut resolved: [Option<usize>; 4] = [None; 4];
-                    for (name, port) in GPIO_PORT_IDS {
-                        if resolved[port].is_none() {
-                            resolved[port] = self.find_peripheral_index_by_name(name);
-                        }
+            if self.gpio_port_idx.is_none() {
+                let mut resolved: [Option<usize>; 4] = [None; 4];
+                for (name, port) in GPIO_PORT_IDS {
+                    if resolved[port].is_none() {
+                        resolved[port] = self.find_peripheral_index_by_name(name);
                     }
-                    self.gpio_port_idx = Some(resolved);
-                    resolved
                 }
-            };
+                self.gpio_port_idx = Some(resolved);
+            }
+            // This loop only reads the cache and peripheral inputs. Borrow the
+            // four Option<usize> entries instead of copying the aggregate into
+            // the tick frame; callbacks and cache mutation happen after it ends.
+            let gpio_idx = self.gpio_port_idx.as_ref().expect("resolved GPIO ports");
             let mut changes: Vec<(u8, u8, u8)> = Vec::new();
             // First pass ADOPTS the live levels as the baseline (see
             // `last_gpio_in`): nothing has transitioned yet, so `baseline` is
