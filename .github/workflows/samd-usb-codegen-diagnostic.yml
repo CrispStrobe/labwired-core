@@ -8,6 +8,8 @@ permissions:
   contents: read
 jobs:
   attribution:
+    # Frozen one-run diagnostic; later source heads must use its retained originals.
+    if: ${{ github.event.pull_request.head.sha == '8b363b573619516dc731c537036f2cf9cf529e55' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
