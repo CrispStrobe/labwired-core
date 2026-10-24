@@ -230,15 +230,20 @@ impl Samd51UsbDeviceBanks {
             if matches!(token, HostToken::Setup { .. }) && (ep != 0 || kind != 1) {
                 return Self::refuse("SETUP requires enabled control endpoint zero");
             }
+            let setup = matches!(token, HostToken::Setup { .. });
             let stall = if input { 1 << 5 } else { 1 << 4 };
-            if endpoint.status & stall != 0 {
+            if !setup && endpoint.status & stall != 0 {
                 self.endpoints[ep].flags |= if input { 1 << 6 } else { 1 << 5 };
                 self.replies.push_back(HostReply::Stall {
                     endpoint: ep as u8,
                     input,
                 });
             } else {
-                let ready = if input {
+                let ready = if setup {
+                    // DS60001507F38.6.2.6: SETUP ignores BK0RDY; an unread
+                    // RXSTP still owns the previous setup buffer.
+                    endpoint.flags & RXSTP == 0
+                } else if input {
                     endpoint.status & BK1RDY != 0
                 } else {
                     endpoint.status & BK0RDY == 0
@@ -266,6 +271,7 @@ impl Samd51UsbDeviceBanks {
                         self.endpoints[ep].status &= !BK1RDY;
                         self.endpoints[ep].flags |= 2;
                     }
+                    self.endpoints[ep].status ^= 2; // successful host ACK toggles DTGLIN
                     self.replies.push_back(HostReply::In {
                         endpoint: ep as u8,
                         data,
@@ -288,11 +294,13 @@ impl Samd51UsbDeviceBanks {
                     bus.write_u32(bank + 4, (packet & !0x3fff) | data.len() as u32)?;
                     self.endpoints[ep].status |= BK0RDY;
                     if setup {
-                        self.endpoints[ep].status &= !BK1RDY;
+                        self.endpoints[ep].status =
+                            (self.endpoints[ep].status & !(BK1RDY | 0x30)) | 7;
                         self.endpoints[ep].flags |= RXSTP;
                         self.replies.push_back(HostReply::SetupAccepted);
                     } else {
                         self.endpoints[ep].flags |= 1;
+                        self.endpoints[ep].status ^= 1; // successful OUT toggles DTGLOUT
                         self.replies.push_back(HostReply::OutAccepted {
                             endpoint: ep as u8,
                             bytes: data.len(),
@@ -599,6 +607,55 @@ mod tests {
         assert_eq!(c.lines(), [true, false, false, false]);
         c.write(0x107, RXSTP).unwrap();
         assert_eq!(c.lines(), [false; 4]);
+    }
+    #[test]
+    fn setup_overwrites_full_status_bank_and_clears_stall_but_preserves_unread_setup() {
+        let mut c = controller();
+        let mut m = Memory::new();
+        bank(&mut m, 0, false, 0);
+        c.write(0x100, 0x11).unwrap();
+        c.queue_host(HostToken::Out {
+            address: 0,
+            endpoint: 0,
+            data: vec![],
+        })
+        .unwrap();
+        c.tick_with_bus(&mut m);
+        assert_eq!(
+            c.take_host_reply(),
+            Some(HostReply::OutAccepted {
+                endpoint: 0,
+                bytes: 0
+            })
+        );
+        c.write(0x105, 0x30).unwrap();
+        c.queue_host(HostToken::Setup {
+            address: 0,
+            packet: [19; 8],
+        })
+        .unwrap();
+        c.tick_with_bus(&mut m);
+        assert_eq!(c.take_host_reply(), Some(HostReply::SetupAccepted));
+        assert_eq!(c.read(0x106).unwrap(), BK0RDY | 7);
+        assert_eq!(
+            c.read(0x107).unwrap(),
+            RXSTP | 1,
+            "SETUP does not invent a TRCPT0 clear"
+        );
+        let count = c.transactions();
+        c.queue_host(HostToken::Setup {
+            address: 0,
+            packet: [37; 8],
+        })
+        .unwrap();
+        c.tick_with_bus(&mut m);
+        assert_eq!(c.take_host_reply(), None);
+        assert_eq!(c.transactions(), count);
+        assert_eq!(m.read_u8(u64::from(BUFFER)).unwrap(), 19);
+        c.write(0x107, RXSTP).unwrap();
+        c.tick_with_bus(&mut m);
+        assert_eq!(c.take_host_reply(), Some(HostReply::SetupAccepted));
+        assert_eq!(m.read_u8(u64::from(BUFFER)).unwrap(), 37);
     }
     #[test]
     fn in_requires_host_and_bank_readiness_then_preserves_multipacket_progress() {
