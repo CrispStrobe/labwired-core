@@ -39,9 +39,9 @@ adds its own actual configuration, no-ASF source/header graph, real program,
 CF2, WebUSB/HF2 and relocated startup requirements.
 
 Current candidate: the register/bank implementation and strict opt-in factory
-are present, with nine pure model controls. Preliminary local controls execute
+are present, with ten pure model controls. Preliminary local controls execute
 the real module through a small mock Bus/API harness; the full engine API and
-JSON snapshot remain unqualified there. Nine source mutation cuts detect table
+JSON snapshot remain unqualified there. Ten source mutation cuts detect table
 alignment/RAM admission, buffer RAM admission, missing completion/IRQ, incorrect
 packet progress, bypassed readiness and bypassed clock/pin admission. A mapped
 MMIO test bank deliberately accepts ordinary reads/stores so a downstream bus
@@ -85,3 +85,11 @@ cold helper. It changes no transaction behavior or shared tick/GPIO source.
 Its performance and affected guest qualification remain required. The frozen
 diagnostic is admitted only at its original head, avoiding automatic replay of
 those successful original measurements on later source revisions.
+
+An enabled controller remains in the bus-aware polling set after its host queue
+drains. This admits later external host submissions through the normal cached
+bus pass. Empty polls emit no reply, flag or transaction. A specific control
+checks an empty poll followed by a real queued reset and renewed emptiness,
+then controller disable. The actual driver guest releases enumeration only
+after the real reset handler returns, exercising delayed submission naturally.
+This fixes the cached-eligibility lifetime; it does not add physical wire timing.

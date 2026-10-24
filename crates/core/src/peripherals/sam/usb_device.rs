@@ -460,7 +460,10 @@ impl Peripheral for Samd51UsbDeviceBanks {
         self.read(offset).ok()
     }
     fn needs_bus_tick(&self) -> bool {
-        self.live() && self.refusal.is_none() && !self.host.is_empty()
+        // External host tokens can arrive after the current queue drains. Keep
+        // an enabled controller in the cached bus pass; service() is inert
+        // without a queued token, and never invents a response or completion.
+        self.live() && self.refusal.is_none()
     }
     fn tick_with_bus(&mut self, bus: &mut dyn Bus) {
         if let Err(error) = self.service(bus) {
@@ -713,6 +716,34 @@ mod tests {
         assert_eq!(c.read(0x126).unwrap() & BK1RDY, 0);
         c.write(0x127, 2).unwrap();
         assert_eq!(c.lines(), [false; 4]);
+    }
+    #[test]
+    fn enabled_poll_survives_empty_queue_and_services_later_host_arrival() {
+        let mut c = controller();
+        let mut m = Memory::new();
+        // The bus caches this eligibility after every pass. No token means
+        // no event, but must not remove the live external-input controller.
+        let mut cached = c.needs_bus_tick();
+        assert!(cached && c.idle_poll_bus_tick());
+        if cached {
+            c.tick_with_bus(&mut m);
+            cached = c.needs_bus_tick();
+        }
+        assert_eq!(c.transactions(), 0);
+        assert_eq!(c.take_host_reply(), None);
+        c.queue_host(HostToken::Reset).unwrap();
+        if cached {
+            c.tick_with_bus(&mut m);
+            cached = c.needs_bus_tick();
+        }
+        assert_eq!(c.take_host_reply(), Some(HostReply::Reset));
+        assert_eq!(c.transactions(), 1);
+        assert!(cached && c.idle_poll_bus_tick());
+        c.tick_with_bus(&mut m);
+        assert_eq!(c.take_host_reply(), None);
+        assert_eq!(c.transactions(), 1);
+        c.write(0, 0).unwrap();
+        assert!(!c.needs_bus_tick() && !c.idle_poll_bus_tick());
     }
     #[test]
     fn ordinary_full_packet_ack_completes_without_automatic_zlp() {
