@@ -1,0 +1,48 @@
+name: SAMD USB current instruction-position diagnostic
+on:
+  pull_request:
+    paths:
+      - 'diagnostics/samd_usb_instruction_profile.py'
+      - '.github/workflows/samd-usb-instruction-profile.yml'
+permissions:
+  contents: read
+jobs:
+  instruction-profile:
+    if: ${{ github.head_ref == 'diag/samd-usb-instruction-profile-20261024' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          ref: 3270808e9f22be54be7b99adc2dc6c8d1982ce23
+          path: diagnostic-parent
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          ref: 01e50371b9a7d341142399b84932b402fcac306b
+          path: diagnostic-candidate
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          targets: thumbv6m-none-eabi
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: diagnostic-candidate
+          key: usb-current-instruction-profile
+      - name: Install unchanged measurement tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends valgrind binutils python3-yaml
+      - name: Two current-source instruction-position originals
+        run: /usr/bin/python3 -B diagnostics/samd_usb_instruction_profile.py diagnostic-parent diagnostic-candidate instruction-originals
+      - name: Preserve these originals and partial failures
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: samd-usb-current-instruction-profile
+          path: instruction-originals/**
+          if-no-files-found: error
+          retention-days: 14
