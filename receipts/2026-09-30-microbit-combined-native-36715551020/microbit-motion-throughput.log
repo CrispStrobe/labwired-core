@@ -1,0 +1,13 @@
+
+running 1 test
+MICROBIT_MOTION_GUEST_SHA256=cd32643137d71db0c74c3c5a9da8cb70731e4d18216a57648f7dbf39a2c8a9e9
+MICROBIT_MOTION_SAMPLE {"accelDma":393217,"accelInput":[1.0,-0.5,0.25],"accelRaw":[16384,-8192,4096],"accelSamples":112,"cycles":64000000,"error":0,"guestButtonMask":0,"magDma":393217,"magInput":[30.0,-15.0,7.5],"magRaw":[200,-100,50],"magSamples":112,"pass":1,"pixels":[155,0,0,0,0,0,157,0,0,0,0,0,158,0,0,0,0,0,155,0,0,0,0,0,255],"rtxAt64MHz":1.2944493922039735,"scans":2145,"wallSeconds":0.772529236}
+MICROBIT_MOTION_SAMPLE {"accelDma":393217,"accelInput":[-0.25,0.125,-0.75],"accelRaw":[-4096,2048,-12288],"accelSamples":212,"cycles":64000000,"error":0,"guestButtonMask":1,"magDma":393217,"magInput":[-30.0,0.0,60.0],"magRaw":[-200,0,400],"magSamples":212,"pass":2,"pixels":[155,0,0,0,0,0,155,0,0,0,0,0,155,0,0,0,0,0,156,0,0,0,0,0,255],"rtxAt64MHz":1.2977047558273511,"scans":4053,"wallSeconds":0.770591304}
+MICROBIT_MOTION_SAMPLE {"accelDma":393217,"accelInput":[1.0,-0.5,0.25],"accelRaw":[16384,-8192,4096],"accelSamples":312,"cycles":64000000,"error":0,"guestButtonMask":0,"magDma":393217,"magInput":[30.0,-15.0,7.5],"magRaw":[200,-100,50],"magSamples":312,"pass":3,"pixels":[155,0,0,0,0,0,155,0,0,0,0,0,155,0,0,0,0,0,155,0,0,0,0,0,255],"rtxAt64MHz":1.2796781419057,"scans":5960,"wallSeconds":0.781446496}
+MICROBIT_MOTION_SAMPLE {"accelDma":393217,"accelInput":[-0.25,0.125,-0.75],"accelRaw":[-4096,2048,-12288],"accelSamples":412,"cycles":64000000,"error":0,"guestButtonMask":1,"magDma":393217,"magInput":[-30.0,0.0,60.0],"magRaw":[-200,0,400],"magSamples":412,"pass":4,"pixels":[157,0,0,0,0,0,158,0,0,0,0,0,155,0,0,0,0,0,155,0,0,0,0,0,255],"rtxAt64MHz":1.2585855894824614,"scans":7867,"wallSeconds":0.794542706}
+MICROBIT_MOTION_SAMPLE {"accelDma":393217,"accelInput":[1.0,-0.5,0.25],"accelRaw":[16384,-8192,4096],"accelSamples":512,"cycles":64000000,"error":0,"guestButtonMask":0,"magDma":393217,"magInput":[30.0,-15.0,7.5],"magRaw":[200,-100,50],"magSamples":512,"pass":5,"pixels":[155,0,0,0,0,0,155,0,0,0,0,0,156,0,0,0,0,0,159,0,0,0,0,0,255],"rtxAt64MHz":1.311661447294691,"scans":9774,"wallSeconds":0.762391852}
+MICROBIT_MOTION_MEDIAN_RTX=1.294449
+test active_motion_display_button_workload_throughput ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 4.03s
+

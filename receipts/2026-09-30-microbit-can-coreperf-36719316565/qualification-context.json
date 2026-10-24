@@ -1,0 +1,13 @@
+{
+  "schema": "labwired.coreperf.failed-causal-probe-context.v1",
+  "hostedRun": "https://github.com/CrispStrobe/labwired-core/actions/runs/36719316565",
+  "sourceCommit": "066e94a600a2d48a87dad8f55207b5e5fbcc7a3a",
+  "artifactId": 11102270572,
+  "githubArtifactDigest": "sha256:5548c66e2574be7635344479add03f734acb16f56edab39e185dbda28a85d92a",
+  "absoluteRealtimeChipsPassed": 40,
+  "deterministicGatePassed": false,
+  "nordicStepRegressions": 6,
+  "runtimeDeltaFromCombined4ed": "Inline empty CAN bridge guard only; downcast ratchet tightening is test metadata, not runtime.",
+  "finding": "Nordic step costs are effectively unchanged versus combined run36715546010. This does not support attributing the approximately uniform residual instruction cost to the empty CAN bridge call, nor demonstrate any deterministic instruction-cost reduction from the guard.",
+  "notQualified": "No gate waiver, rebaseline, no-pull optimization result, merge/current-main, browser-WASM or wider CP13 completion qualification."
+}

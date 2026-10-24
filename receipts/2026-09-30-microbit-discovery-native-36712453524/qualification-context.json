@@ -1,0 +1,13 @@
+{
+  "schema": "labwired.microbit.native-discovery-context.v1",
+  "hostedRun": "https://github.com/CrispStrobe/labwired-core/actions/runs/36712453524",
+  "testedMergeRef": "b7bdb4f89ac083238458812bd4e76db0ff9cfc2a",
+  "candidateHeadCommit": "088f89a51563863b815dfbf9758f0ea9f231be0e",
+  "nativeQualificationPassed": true,
+  "runnerCpuModel": "INTEL(R) XEON(R) PLATINUM 8573C",
+  "pairedAbRun": "https://github.com/CrispStrobe/labwired-core/actions/runs/36712453588",
+  "pairedAbRunnerCpuModel": "AMD EPYC 7763 64-Core Processor",
+  "pairedAbStrictCandidateGatePassed": false,
+  "promotion": "Not promoted: same candidate failed first strict AMD same-runner A/B invocation. Later combined GPIO candidate and current main are not qualified by this historical native run.",
+  "limitations": "Different recorded CPU models establish hardware variation, not a controlled cross-machine speedup or proof hardware alone explains the timing difference."
+}

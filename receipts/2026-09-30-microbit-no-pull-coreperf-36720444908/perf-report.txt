@@ -1,0 +1,162 @@
+building fixture 'atmega328p' (perf-spin-avr avr-atmega328p flash=0x00000000 ram=0x00000100)
+building fixture 'esp32' (perf-spin-xtensa xtensa-esp32-none-elf flash=0x400d0000 ram=0x3ffb0000)
+building fixture 'esp32c3' (firmware-perf-spin-riscv riscv32imc-unknown-none-elf flash=0x42000000 ram=0x3fc80000)
+building fixture 'esp32c6' (firmware-perf-spin-riscv riscv32imc-unknown-none-elf flash=0x42000000 ram=0x40800000)
+building fixture 'esp32s3' (perf-spin-xtensa xtensa-esp32s3-none-elf flash=0x42000000 ram=0x3fc88000)
+building fixture 'imxrt' (firmware-perf-spin thumbv6m-none-eabi flash=0x20000000 ram=0x20010000)
+building fixture 'kinetis' (firmware-perf-spin thumbv6m-none-eabi flash=0x00000000 ram=0x1fff8000)
+building fixture 'nrf' (firmware-perf-spin thumbv6m-none-eabi flash=0x00000000 ram=0x20000000)
+building fixture 'nrf51-app' (firmware-perf-spin thumbv6m-none-eabi flash=0x00018000 ram=0x20000000)
+building fixture 'rp2xxx' (firmware-perf-spin thumbv6m-none-eabi flash=0x10000000 ram=0x20000000)
+building fixture 'stm32' (firmware-perf-spin thumbv6m-none-eabi flash=0x08000000 ram=0x20000000)
+board            clock MHz   median RTx   range RTx      batch
+----------------------------------------------------------------
+atmega328p             16.0        98.95x 95.79-100.13x      227.6
+atsamd21               48.0       116.64x 116.50-116.72x     1023.8
+atsamd21g18a           48.0        99.02x 96.02-100.45x     1023.8
+atsamd51              120.0        58.19x 57.99-59.38x     1023.8
+atsamd51-pybadge      120.0        59.21x 58.63-61.68x     1023.8
+efr32mg26              78.0        45.25x 43.77-46.22x     1023.8
+esp32                 240.0        32.04x 31.92-32.18x     1023.8
+esp32c3               160.0        12.10x 11.79-12.24x     1023.8
+esp32c6               160.0        12.68x 12.66-12.85x     1023.8
+esp32s3               240.0        19.65x 19.65-19.73x     1023.8
+esp32s3-zero          240.0        20.11x 20.03-20.18x     1023.8
+imxrt1064             600.0        14.32x 13.89-14.49x     1023.8
+mkw41z4                48.0        61.86x 61.21-62.43x     1023.8
+nrf51822               16.0       159.89x 156.04-161.57x     1023.8
+nrf52832               64.0        44.48x 43.48-44.81x     1023.8
+nrf52833               64.0        25.54x 25.37-25.68x     1023.8
+nrf52840               64.0        22.11x 22.06-22.34x     1023.8
+nrf5340               128.0        17.98x 17.64-18.27x     1023.8
+nrf54l15              128.0        20.30x 20.27-20.39x     1023.8
+nrf54lm20a            128.0        37.61x 34.97-37.69x     1023.8
+ra4m1                  48.0       113.70x 110.49-114.49x     1023.8
+rp2040                125.0        25.29x 25.12-25.42x     1023.8
+rp2350                150.0        30.46x 30.10-31.08x     1023.8
+stm32f103              72.0        37.26x 37.19-37.54x     1023.8
+stm32f401              84.0        43.21x 42.34-43.72x     1023.8
+stm32f401cdu6          84.0        30.70x 30.36-30.83x     1023.8
+stm32f405             168.0        30.88x 30.79-30.96x     1023.8
+stm32f407             168.0        20.88x 20.69-20.96x     1023.8
+stm32f411ceu6         100.0        28.65x 28.49-28.73x     1023.8
+stm32f746             216.0        35.72x 34.82-36.26x     1023.8
+stm32f767             216.0        23.88x 23.78-23.90x     1023.8
+stm32g071              64.0        80.29x 78.14-81.24x     1023.8
+stm32g474re           170.0        28.45x 28.22-28.56x     1023.8
+stm32h563             250.0        13.62x 13.51-13.66x      992.8
+stm32h735             550.0         9.71x  9.56- 9.72x     1023.8
+stm32l073              32.0        43.24x 43.06-43.98x     1023.8
+stm32l476              80.0        21.60x 21.48-21.91x     1023.8
+stm32u575             160.0        14.14x 14.08-14.19x      992.8
+stm32wb55              64.0        43.12x 43.02-43.41x     1023.8
+stm32wba52            100.0        30.15x 29.85-30.51x     1023.8
+
+all 40 chips meet or exceed 1.00x real time
+building fixture 'atmega328p' (perf-spin-avr avr-atmega328p flash=0x00000000 ram=0x00000100)
+building fixture 'esp32' (perf-spin-xtensa xtensa-esp32-none-elf flash=0x400d0000 ram=0x3ffb0000)
+building fixture 'esp32c3' (firmware-perf-spin-riscv riscv32imc-unknown-none-elf flash=0x42000000 ram=0x3fc80000)
+building fixture 'esp32c6' (firmware-perf-spin-riscv riscv32imc-unknown-none-elf flash=0x42000000 ram=0x40800000)
+building fixture 'esp32s3' (perf-spin-xtensa xtensa-esp32s3-none-elf flash=0x42000000 ram=0x3fc88000)
+building fixture 'imxrt' (firmware-perf-spin thumbv6m-none-eabi flash=0x20000000 ram=0x20010000)
+building fixture 'kinetis' (firmware-perf-spin thumbv6m-none-eabi flash=0x00000000 ram=0x1fff8000)
+building fixture 'nrf' (firmware-perf-spin thumbv6m-none-eabi flash=0x00000000 ram=0x20000000)
+building fixture 'nrf51-app' (firmware-perf-spin thumbv6m-none-eabi flash=0x00018000 ram=0x20000000)
+building fixture 'rp2xxx' (firmware-perf-spin thumbv6m-none-eabi flash=0x10000000 ram=0x20000000)
+building fixture 'stm32' (firmware-perf-spin thumbv6m-none-eabi flash=0x08000000 ram=0x20000000)
+
+simulator throughput regressed:
+  nrf5340 [step]: 1266.2 -> 1308.0 Ir/step (+3.3%)
+  nrf54l15 [step]: 1330.3 -> 1375.0 Ir/step (+3.4%)
+  nrf54lm20a [step]: 1417.7 -> 1464.5 Ir/step (+3.3%)
+
+Every extra host instruction per simulated step slows the browser twin by the same proportion.
+If the cost is intentional, re-baseline with: python3 scripts/perf/board_perf.py --update
+
+baselines may be stale (measured far below them):
+  nrf51822 [step]: baseline 1577.4 vs measured 1317.2 Ir/step (-16.5%)
+
+Advisory only: confirm the improvement on repeated runs, then lock it in with: python3 scripts/perf/board_perf.py --update
+board            fixture   mode      Ir/step   baseline     delta   batch
+--------------------------------------------------------------------------
+atmega328p       atmega328p step        858.2      861.2    -0.3%        
+atmega328p       atmega328p batch         6.4        6.4    +0.3%   227.6
+atsamd21         nrf       step        846.0      848.3    -0.3%        
+atsamd21         nrf       batch         1.3        1.3    +3.7%  1023.9
+atsamd21g18a     nrf       step        846.0      848.3    -0.3%        
+atsamd21g18a     nrf       batch         1.3        1.3    +3.6%  1023.9
+atsamd51         nrf       step        847.5      849.8    -0.3%        
+atsamd51         nrf       batch         1.3        1.3    +3.7%  1023.9
+atsamd51-pybadge nrf       step        847.5      845.5    +0.2%        
+atsamd51-pybadge nrf       batch         1.3        1.3    +3.7%  1023.9
+efr32mg26        stm32     step       1910.2     1875.5    +1.9%        
+efr32mg26        stm32     batch         2.6        2.5    +2.2%  1023.9
+esp32            esp32     step        868.7      911.0    -4.6%          (faster)
+esp32            esp32     batch         1.2        1.3    -4.7%  1023.9  (faster)
+esp32c3          esp32c3   batch         2.4        2.3    +2.5%  1023.9
+esp32c6          esp32c6   batch         3.3        3.2    +2.0%  1023.9
+esp32s3          esp32s3   step        909.2      952.4    -4.5%          (faster)
+esp32s3          esp32s3   batch         2.1        2.2    -3.7%  1023.9  (faster)
+esp32s3-zero     esp32s3   step        909.2      952.4    -4.5%          (faster)
+esp32s3-zero     esp32s3   batch         2.1        2.2    -3.7%  1023.9  (faster)
+imxrt1064        imxrt     step        846.0      848.2    -0.3%        
+imxrt1064        imxrt     batch         1.3        1.3    +3.6%  1023.9
+mkw41z4          kinetis   step        877.4      880.6    -0.4%        
+mkw41z4          kinetis   batch         1.4        1.4    +2.9%  1023.9
+nrf51822         nrf51-app step       1317.2     1577.4   -16.5%          STALE BASELINE
+nrf51822         nrf51-app batch         1.9        2.1   -11.0%  1023.9  (faster)
+nrf52832         nrf       step       1315.9     1279.2    +2.9%        
+nrf52832         nrf       batch         1.9        1.9    +2.1%  1023.9
+nrf52833         nrf       step       1373.3     1333.5    +3.0%        
+nrf52833         nrf       batch         2.0        1.9    +3.7%  1023.9
+nrf52840         nrf       step       1372.9     1333.2    +3.0%        
+nrf52840         nrf       batch         1.9        1.9    +2.5%  1023.9
+nrf5340          nrf       step       1308.0     1266.2    +3.3%          REGRESSION
+nrf5340          nrf       batch         1.8        1.8    -0.2%  1023.9
+nrf54l15         nrf       step       1375.0     1330.3    +3.4%          REGRESSION
+nrf54l15         nrf       batch         1.9        1.8    +3.5%  1023.9
+nrf54lm20a       nrf       step       1464.5     1417.7    +3.3%          REGRESSION
+nrf54lm20a       nrf       batch         2.0        1.9    +5.7%  1023.9
+ra4m1            nrf       step        847.5      849.8    -0.3%        
+ra4m1            nrf       batch         1.3        1.3    +3.7%  1023.9
+rp2040           rp2xxx    step        876.6      879.7    -0.4%        
+rp2040           rp2xxx    batch         1.4        1.7   -15.6%  1023.9  (faster)
+rp2350           rp2xxx    step        876.7      879.9    -0.4%        
+rp2350           rp2xxx    batch         1.5        1.4    +5.7%  1023.9
+stm32f103        stm32     step        913.1      916.4    -0.4%        
+stm32f103        stm32     batch         1.5        1.5    +1.6%  1023.9
+stm32f401        stm32     step        912.3      915.5    -0.4%        
+stm32f401        stm32     batch         1.5        1.5    -1.8%  1023.9
+stm32f401cdu6    stm32     step        913.8      917.0    -0.4%        
+stm32f401cdu6    stm32     batch         1.6        1.6    -0.2%  1023.9
+stm32f405        stm32     step        911.9      915.1    -0.3%        
+stm32f405        stm32     batch         1.5        1.5    -1.8%  1023.9
+stm32f407        stm32     step        912.5      915.7    -0.4%        
+stm32f407        stm32     batch         1.4        1.6   -15.5%  1023.9  (faster)
+stm32f411ceu6    stm32     step        913.6      916.9    -0.4%        
+stm32f411ceu6    stm32     batch         1.6        1.4   +15.7%  1023.9
+stm32f746        stm32     step        846.0      848.2    -0.3%        
+stm32f746        stm32     batch         1.3        1.3    +3.6%  1023.9
+stm32f767        stm32     step        910.9      914.2    -0.4%        
+stm32f767        stm32     batch         1.6        1.6    +0.2%  1023.9
+stm32g071        stm32     step        911.8      915.1    -0.4%        
+stm32g071        stm32     batch         1.5        1.5    +1.6%  1023.9
+stm32g474re      stm32     step        912.0      915.1    -0.3%        
+stm32g474re      stm32     batch         1.5        1.5    -1.8%  1023.9
+stm32h563        stm32     step        960.7      963.7    -0.3%        
+stm32h563        stm32     batch         1.9        1.7    +9.1%   993.4
+stm32h735        stm32     step        910.5      913.6    -0.3%        
+stm32h735        stm32     batch         1.5        1.7   -10.1%  1023.9  (faster)
+stm32l073        stm32     step        914.6      917.8    -0.4%        
+stm32l073        stm32     batch         1.6        1.5    +3.5%  1023.9
+stm32l476        stm32     step        913.7      916.8    -0.3%        
+stm32l476        stm32     batch         1.6        1.6    -1.6%  1023.9
+stm32u575        stm32     step        972.7      974.9    -0.2%        
+stm32u575        stm32     batch         1.8        1.7    +3.6%   993.4
+stm32wb55        stm32     step        912.5      915.8    -0.4%        
+stm32wb55        stm32     batch         1.5        1.4    +5.6%  1023.9
+stm32wba52       stm32     step        910.6      913.8    -0.4%        
+stm32wba52       stm32     batch         1.5        1.4    +4.7%  1023.9
+
+measured this run: 78 board-modes across 40 chips / 11 memory maps
+fixtures matched 78 board-modes across 40 chips / 11 memory maps — matching is not measuring
