@@ -20,3 +20,5 @@ pub mod sercom_usart;
 
 pub mod cmcc;
 pub mod nvmctrl;
+
+pub mod usb_device;

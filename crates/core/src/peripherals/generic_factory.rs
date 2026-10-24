@@ -157,6 +157,7 @@ pub const MODEL_TYPES: &[&str] = &[
     "sam_sercom_spi",
     "samd51_nvmctrl_manual_storage",
     "samd51_cmcc_control",
+    "samd51_usb_device_banks",
     "sam_dmac_byte",
     "sam_dmac_sercom4_tx_byte",
     // Reserve the full name: never fuzzy-coerce an unqualified SAM DMAC to STM32.
@@ -536,6 +537,30 @@ pub fn try_build(
         "avr_adc" => Box::new(crate::peripherals::avr_adc::AvrAdcInputs::new()),
         "sam_sercom_usart" => {
             Box::new(crate::peripherals::sam::sercom_usart::SamSercomUsart::new())
+        }
+        "samd51_usb_device_banks" => {
+            if p_cfg.base_address != 0x41000000 || p_cfg.irq != Some(80) || !p_cfg.config.is_empty()
+            {
+                anyhow::bail!(
+                    "SAMD51 USB banks require base0x41000000, IRQ80 and no config overrides"
+                );
+            }
+            if !p_cfg.clock.as_ref().is_some_and(|clocks| {
+                let gates = clocks.as_slice();
+                gates.len() == 2
+                    && [("AHBMASK", 10), ("APBBMASK", 0)]
+                        .into_iter()
+                        .all(|(reg, bit)| {
+                            gates.iter().any(|gate| {
+                                gate.controller == "mclk" && gate.reg == reg && gate.bit == bit
+                            })
+                        })
+            }) {
+                anyhow::bail!(
+                    "SAMD51 USB banks require exact mclk AHBMASKbit10 and APBBMASKbit0 bindings"
+                );
+            }
+            Box::new(crate::peripherals::sam::usb_device::Samd51UsbDeviceBanks::new())
         }
         "samd51_nvmctrl_manual_storage" | "samd51_cmcc_control" => {
             let expected = if canonical_type == "samd51_nvmctrl_manual_storage" {

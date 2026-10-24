@@ -37,3 +37,22 @@ timing, isochronous/host modes, arbitrary class support, native Arcade startup,
 complete peripheral reset or full-board behavior. The generated-board consumer
 adds its own actual configuration, no-ASF source/header graph, real program,
 CF2, WebUSB/HF2 and relocated startup requirements.
+
+Current candidate: the register/bank implementation and strict opt-in factory
+are present, with eight pure model controls. Preliminary local controls execute
+the real module through a small mock Bus/API harness; the full engine API and
+JSON snapshot remain unqualified there. Eight source mutation cuts detect table
+alignment/RAM admission, buffer RAM admission, missing completion/IRQ, incorrect
+packet progress, bypassed readiness and bypassed clock/pin admission. A mapped
+MMIO test bank deliberately accepts ordinary reads/stores so a downstream bus
+error cannot hide a missing DMA admission check.
+
+The modeled host IN operation includes successful host acknowledgement. Ordinary
+full-size IN completion without AUTO_ZLP follows section38.6.2.9; applying its
+final-ACK rule to an exact multiple in a multi-packet transfer is an inference
+combined with section38.6.2.10, consistent with the actual driver's manual-ZLP
+sequence. AUTO_ZLP remains explicitly unsupported in this slice. Do not claim
+wire-level or arbitrary multi-packet conformance from the preliminary controls.
+The actual source-built driver guest, full engine integration and both scheduler
+qualifications are still required. This candidate must remain unmerged until
+those pass and independently audited originals bind the tested source and image.
