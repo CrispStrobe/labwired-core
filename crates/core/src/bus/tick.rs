@@ -939,29 +939,29 @@ impl SystemBus {
             // it per tick is eight linear scans of the peripheral list with a
             // string compare each, on every boundary of every chip, to arrive at
             // the same four indices every time.
-            let gpio_idx = match self.gpio_port_idx {
-                Some(cached) => cached,
-                None => {
-                    let mut resolved: [Option<usize>; 4] = [None; 4];
-                    for (name, port) in GPIO_PORT_IDS {
-                        if resolved[port].is_none() {
-                            resolved[port] = self.find_peripheral_index_by_name(name);
-                        }
+            if self.gpio_port_idx.is_none() {
+                let mut resolved: [Option<usize>; 4] = [None; 4];
+                for (name, port) in GPIO_PORT_IDS {
+                    if resolved[port].is_none() {
+                        resolved[port] = self.find_peripheral_index_by_name(name);
                     }
-                    // A few chips, including NXP K32W041, expose a single
-                    // generic `gpio` port. Only poll that alias when an edge
-                    // service needs it. ESP32-C3 also names its GPIO block
-                    // `gpio`, but drives it through its own register path;
-                    // polling its computed input word on every tick is costly.
-                    let has_edge_observer =
-                        self.peripherals.iter().any(|p| p.dev.observes_gpio_edges());
-                    if resolved[0].is_none() && has_edge_observer {
-                        resolved[0] = self.find_peripheral_index_by_name("gpio");
-                    }
-                    self.gpio_port_idx = Some(resolved);
-                    resolved
                 }
-            };
+                // A few chips, including NXP K32W041, expose a single
+                // generic `gpio` port. Only poll that alias when an edge
+                // service needs it. ESP32-C3 also names its GPIO block
+                // `gpio`, but drives it through its own register path;
+                // polling its computed input word on every tick is costly.
+                let has_edge_observer =
+                    self.peripherals.iter().any(|p| p.dev.observes_gpio_edges());
+                if resolved[0].is_none() && has_edge_observer {
+                    resolved[0] = self.find_peripheral_index_by_name("gpio");
+                }
+                self.gpio_port_idx = Some(resolved);
+            }
+            // This loop only reads the cache and peripheral inputs. Borrow the
+            // four Option<usize> entries instead of copying the aggregate into
+            // the tick frame; callbacks and cache mutation happen after it ends.
+            let gpio_idx = self.gpio_port_idx.as_ref().expect("resolved GPIO ports");
             let mut changes: Vec<(u8, u8, u8)> = Vec::new();
             // First pass ADOPTS the live levels as the baseline (see
             // `last_gpio_in`): nothing has transitioned yet, so `baseline` is
