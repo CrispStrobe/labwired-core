@@ -21,7 +21,7 @@ def main(parent,candidate,out):
   pin=subprocess.check_output(['git','-C',str(folder),'rev-parse','HEAD']).decode().strip();need(pin.startswith(PARENT) if name=='parent' else pin==CANDIDATE,'frozen source identity')
   need(not subprocess.check_output(['git','-C',str(folder),'status','--porcelain','--untracked-files=no']),'clean source');pins[name]=pin
   command(['cargo','+1.95.0','build','--release','--locked','-p','labwired-cli','--features','event-scheduler'],folder,out/(name+'-build'))
-  exe=folder/'target/release/labwired';shutil.copyfile(exe,out/(name+'-labwired'))
+  exe=folder/'target/release/labwired';shutil.copy2(exe,out/(name+'-labwired'))
   command(['nm','-C','-S',exe],folder,out/(name+'-symbols'))
   p=command(['objdump','-d','-C',exe],folder,out/(name+'-disassembly'))
   import gzip
