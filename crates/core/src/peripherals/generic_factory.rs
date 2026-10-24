@@ -327,6 +327,34 @@ pub fn is_canonical_model_type(t: &str) -> bool {
     MODEL_TYPES.contains(&t)
 }
 
+// Keep optional controller setup outside the shared registry dispatcher. The
+// frozen parent/candidate diagnostic attributed a recurring codegen difference
+// to unchanged tick orchestration; qualification must show whether this cold
+// construction boundary isolates that effect without changing model behavior.
+#[cold]
+#[inline(never)]
+fn build_samd51_usb_device_banks(p_cfg: &PeripheralConfig) -> anyhow::Result<Box<dyn Peripheral>> {
+    if p_cfg.base_address != 0x41000000 || p_cfg.irq != Some(80) || !p_cfg.config.is_empty() {
+        anyhow::bail!("SAMD51 USB banks require base0x41000000, IRQ80 and no config overrides");
+    }
+    if !p_cfg.clock.as_ref().is_some_and(|clocks| {
+        let gates = clocks.as_slice();
+        gates.len() == 2
+            && [("AHBMASK", 10), ("APBBMASK", 0)]
+                .into_iter()
+                .all(|(reg, bit)| {
+                    gates
+                        .iter()
+                        .any(|gate| gate.controller == "mclk" && gate.reg == reg && gate.bit == bit)
+                })
+    }) {
+        anyhow::bail!("SAMD51 USB banks require exact mclk AHBMASKbit10 and APBBMASKbit0 bindings");
+    }
+    Ok(Box::new(
+        crate::peripherals::sam::usb_device::Samd51UsbDeviceBanks::new(),
+    ))
+}
+
 /// Build a generic peripheral model for `canonical_type`, or `None` if it is not
 /// a generic type (so `from_config` falls through to the descriptor loaders).
 pub fn try_build(
@@ -538,30 +566,7 @@ pub fn try_build(
         "sam_sercom_usart" => {
             Box::new(crate::peripherals::sam::sercom_usart::SamSercomUsart::new())
         }
-        "samd51_usb_device_banks" => {
-            if p_cfg.base_address != 0x41000000 || p_cfg.irq != Some(80) || !p_cfg.config.is_empty()
-            {
-                anyhow::bail!(
-                    "SAMD51 USB banks require base0x41000000, IRQ80 and no config overrides"
-                );
-            }
-            if !p_cfg.clock.as_ref().is_some_and(|clocks| {
-                let gates = clocks.as_slice();
-                gates.len() == 2
-                    && [("AHBMASK", 10), ("APBBMASK", 0)]
-                        .into_iter()
-                        .all(|(reg, bit)| {
-                            gates.iter().any(|gate| {
-                                gate.controller == "mclk" && gate.reg == reg && gate.bit == bit
-                            })
-                        })
-            }) {
-                anyhow::bail!(
-                    "SAMD51 USB banks require exact mclk AHBMASKbit10 and APBBMASKbit0 bindings"
-                );
-            }
-            Box::new(crate::peripherals::sam::usb_device::Samd51UsbDeviceBanks::new())
-        }
+        "samd51_usb_device_banks" => build_samd51_usb_device_banks(p_cfg)?,
         "samd51_nvmctrl_manual_storage" | "samd51_cmcc_control" => {
             let expected = if canonical_type == "samd51_nvmctrl_manual_storage" {
                 0x41004000

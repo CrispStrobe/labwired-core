@@ -73,3 +73,15 @@ original low/high callgrind attribution using one shared frozen fixture. This
 diagnostic changes no baseline, threshold or production performance gate.
 The generated ESP32-C6 validation digest follows the shared factory change;
 silicon ACKs, captures and watch lists remain unchanged.
+
+The retained same-toolchain comparison measured current main at 1311.406307
+and the USB candidate at 1320.406252 host instructions per nRF52832 step.
+Independent original readers account for the approximately nine added
+instructions entirely in unchanged peripheral tick orchestration. No USB method
+is selected by this board; changed generated code is observed, while the exact
+optimizer decision remains unestablished. The construction-only isolation
+candidate outlines validation, allocation and trait-object conversion into one
+cold helper. It changes no transaction behavior or shared tick/GPIO source.
+Its performance and affected guest qualification remain required. The frozen
+diagnostic is admitted only at its original head, avoiding automatic replay of
+those successful original measurements on later source revisions.
