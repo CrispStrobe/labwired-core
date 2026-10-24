@@ -212,9 +212,13 @@ Performance tasks and original results: [bw-board lanes](https://github.com/Cris
 
 ## Order and invariant acceptance
 
-P0's bounded idle-controller repair and P1 have landed. P3 blocking
-display work comes next, then P2 IRQ routing and P4 DMA as separate changes.
-P5 needs P3/P4. Dynamic clock-rate derivation remains a separately qualified
+P0's bounded idle-controller repair and P1 have landed. The original P3/P2/P4
+ordering below is historical: finite actual service/SPI/DMA callers subsequently
+qualified through Core220–249 and Codal21–81. Preserve those results instead of
+repeating their completed prerequisites. Production-display/native-board
+integration remains separate; follow the [current SAMD checkpoint](#samd51-selected-zflash-manual-storage--2026-10-18)
+and its linked no-ASF implementation lanes. P5 still requires its real P3/P4
+production integration, rather than only the finite control fixtures. Dynamic clock-rate derivation remains a separately qualified
 part of P2, not a prerequisite for truthful nominal-clock blocking tests.
 M1 is a separate micro:bit lane. Resolve shared file ownership before parallel
 work. Every change needs source-bound positive and negative guest tests, exact
@@ -317,8 +321,11 @@ this lane alone does not qualify the native DMA driver.
 landed the opt-in software-triggered BYTE/RAM foundation. Both final-source
 profiles passed90 guest cases/36 interrupt entries and returns each, after all 22
 enabled checks passed. Read its [receipt](../receipts/2026-10-12-samd-dmac-byte/README.md)
-and [next live-TX lane](samd-dmac-byte-foundation.md#next-bounded-lane--live-sercom4-tx-byte-requests).
-This does not complete P4 or admit the production descriptor/native runtime.
+and historical [live-TX contract](samd-dmac-byte-foundation.md#next-bounded-lane--live-sercom4-tx-byte-requests).
+Later actual service/SPI/DMA qualification is recorded in the [current SAMD
+checkpoint](#samd51-selected-zflash-manual-storage--2026-10-18); do not repeat its
+completed finite prerequisites. Production display/native-runtime integration
+still has its own selection and affected-guest requirements.
 
 **Files:** new SAM DMAC peripheral/factory/descriptor, bus request/IRQ seams,
 PyBadge chip descriptor and authored descriptor guests.
@@ -613,19 +620,28 @@ qualified actual RAFFS/settings plus GC/services: both scheduler profiles,
 1,871 storage checks, object remount and eight specific mutation/profile cases.
 Those two tasks are complete; preserve their original evidence and limits.
 
-The next finite slices have separate contracts and exact qualification state:
-[write compaction and original spacing refusal](https://github.com/CrispStrobe/codal-samd/pull/76),
-[current full-board source/configuration census](https://github.com/CrispStrobe/codal-samd/pull/77),
-and [modeled CPU/core-system reset with retained backing](https://github.com/CrispStrobe/codal-samd/pull/78).
-Read their final source/check/original-audit records before repeating work.
-The census is source-only; the reset route leaves peripheral models live and
-cannot qualify engine restart, backing reopen, interrupted writes or power loss.
+Subsequent [write compaction](https://github.com/CrispStrobe/codal-samd/pull/76),
+[source census](https://github.com/CrispStrobe/codal-samd/pull/77), and
+[modeled retained-backing reset](https://github.com/CrispStrobe/codal-samd/pull/78)
+also completed their finite qualifications. The reset leaves peripheral models
+live and retains its original one-Bus scope. [PR81](https://github.com/CrispStrobe/codal-samd/pull/81)
+separately qualifies completed-operation backing reopen across a fresh engine
+process and startup, with a specific lost-backing control in both profiles.
+Interrupted writes, power loss and complete peripheral reset remain unqualified.
 
-Remaining full-board work must first freeze an actual generated configuration
-and permitted header/source closure. Service USB0/WebUSB0 does not establish a
-full-board setting; USB1 is conditional until that generated input is admitted.
-Qualify required IRQ/services, application vector/startup layout and enabled USB
-behavior separately. A QSPI descriptor stub alone is not an established source
-requirement. Native Arcade, WASM/installed Lite and representative performance
-retain their own source/package/consumer gates. No default descriptor, hardware
-capture, ACK or dependency pin changes as part of this roadmap update.
+[PR80](https://github.com/CrispStrobe/codal-samd/pull/80) admits the reproducible
+actual generated USB1/WebUSB1 configuration. [PR83](https://github.com/CrispStrobe/codal-samd/pull/83)
+admits authored CF2 source/data metadata, not actual runtime CF2 reads or a
+bootloader. [Core256's explicit USB banks](samd51-usb-device-banks.md) and
+[Codal82's real driver/core leaf](https://github.com/CrispStrobe/codal-samd/pull/82)
+have their own finite source-built USB qualification; the default stub and
+existing production consumer selections retain their prior scope.
+
+The [remaining no-ASF implementation lanes](https://github.com/CrispStrobe/codal-samd/blob/master/docs/PXT-NO-ASF-NEXT-LANES.md)
+name the complete selected compiler/header/source graph, genuine pin/EIC/PWM,
+SERCOM/DMA/timer/audio replacements, real generated PXT template/program, actual
+CF2/HF2/startup, and endpoint/deallocation lifetime findings. Required features
+remain enabled; guessed layouts and success stubs cannot close a lane. Native
+Arcade, display/input/debugger, representative active native/WASM performance
+and installed adoption each retain their source/package/consumer gates. Keep
+the original inventories, notices, failures, captures, ACKs and pins unchanged.
