@@ -131,6 +131,10 @@ pub struct SamSercomUsart {
     /// Level of `intenset & flags` at the last tick, so the IRQ is raised on
     /// the 0→1 edge instead of every cycle the flag stays set.
     irq_level: bool,
+    /// SAMD51 layout: DRE, TXC, RXC and the remaining flags on four
+    /// consecutive NVIC lines from the entry's IRQ (DS60001507F 10.2.2), not
+    /// the SAMD21 single line. `Some(first line)` once the bus attached it.
+    samd51_lines: Option<Option<u32>>,
     /// Cycle clock handed over by the bus at registration on an
     /// `event-scheduler` build. Its presence — not the feature alone — is what
     /// [`Self::scheduler_mode`] reads, so a hand-built bus that never attaches
@@ -182,12 +186,34 @@ impl SamSercomUsart {
             // Default to console echo; a capture sink is attached on demand.
             echo_stdout: true,
             irq_level: false,
+            samd51_lines: None,
             clock: None,
             scheduled: false,
             legacy_walk_forced: false,
             trace: crate::bus::bus_trace::BusTrace::default(),
             trace_name: String::new(),
         }
+    }
+
+    /// The SAMD51 four-line interrupt layout (`samd51_sercom_usart`).
+    pub fn new_samd51() -> Self {
+        Self {
+            samd51_lines: Some(None),
+            ..Self::new()
+        }
+    }
+
+    /// SAMD51 lines asserted now: DRE, TXC, RXC, then RXS/CTSIC/RXBRK/ERROR.
+    fn samd51_pending(&self) -> Vec<u32> {
+        let Some(Some(base)) = self.samd51_lines else {
+            return Vec::new();
+        };
+        let active = self.intenset & self.effective_intflag();
+        [INT_DRE, 1 << 1, INT_RXC, !(INT_DRE | (1 << 1) | INT_RXC)]
+            .into_iter()
+            .enumerate()
+            .filter_map(|(line, mask)| (active & mask != 0).then_some(base + line as u32))
+            .collect()
     }
 
     /// Attach a capture sink and/or toggle stdout echo. Mirrors
@@ -441,9 +467,37 @@ impl Peripheral for SamSercomUsart {
         if self.sched_driven() {
             return PeripheralTickResult::default();
         }
+        if self.samd51_lines.is_some() {
+            self.irq_edge(); // keep the latched level for the work predicate
+            let lines = self.samd51_pending();
+            return PeripheralTickResult {
+                explicit_irqs: (!lines.is_empty()).then_some(lines),
+                ..Default::default()
+            };
+        }
         PeripheralTickResult {
             irq: self.irq_edge(),
             ..Default::default()
+        }
+    }
+
+    fn attach_irq_line(&mut self, irq: Option<u32>) {
+        if self.samd51_lines.is_some() {
+            self.samd51_lines = Some(irq.filter(|irq| *irq <= 252));
+        }
+    }
+
+    fn reads_can_deassert_irq(&self) -> bool {
+        // SAMD51 lines are level sources, and reading DATA consumes RX (RXC).
+        self.samd51_lines.is_some()
+    }
+
+    fn irq_line_levels(&self, report: &mut dyn FnMut(u32, bool)) {
+        if let Some(Some(base)) = self.samd51_lines {
+            let pending = self.samd51_pending();
+            for line in 0..4 {
+                report(base + line, pending.contains(&(base + line)));
+            }
         }
     }
 
@@ -455,6 +509,14 @@ impl Peripheral for SamSercomUsart {
     /// pair, unlike its nRF54L cousins: it has no deferred transfer to
     /// re-expose. A SERCOM transmits inside the DATA write.
     fn tick_elapsed_forced(&mut self, _cycles: u64) -> PeripheralTickResult {
+        if self.samd51_lines.is_some() {
+            self.irq_edge();
+            let lines = self.samd51_pending();
+            return PeripheralTickResult {
+                explicit_irqs: (!lines.is_empty()).then_some(lines),
+                ..Default::default()
+            };
+        }
         PeripheralTickResult {
             irq: self.irq_edge(),
             ..Default::default()
@@ -544,6 +606,13 @@ impl Peripheral for SamSercomUsart {
         // legacy one-tick cadence from the same expression.
         let delay = u64::from(bus.peripheral_tick_interval().max(1));
 
+        if self.samd51_lines.is_some() {
+            return crate::sched::EventResult {
+                explicit_irqs: self.samd51_pending(),
+                reschedule_delay: keep_going.then_some(delay),
+                ..Default::default()
+            };
+        }
         crate::sched::EventResult {
             // `raise_own_irq`, not `raise_irq`: this model does not know its
             // own NVIC line — the bus maps it from `PeripheralEntry::irq`,

@@ -868,6 +868,19 @@ pub trait Peripheral: std::fmt::Debug + Send {
         None
     }
 
+    /// Peripheral side of [`Bus::take_dma_trigger`]: consume one pending
+    /// request of DMAC trigger source `source` if this peripheral raises it.
+    /// Default `None`: it raises none.
+    fn take_dma_trigger(&mut self, _source: u32) -> Option<bool> {
+        None
+    }
+
+    /// Family of the waveform outputs behind [`Self::timer_output_lines`], for
+    /// bus wiring passes that bind them to a chip family's pad table.
+    fn timer_output_family(&self) -> Option<&'static str> {
+        None
+    }
+
     /// Refresh bus-sourced transport control inputs before an admitted TX beat.
     /// This is not a tick: implementations must not advance time, drain bytes
     /// or commit DMA progress. The bus calls this only after clock/readiness
@@ -2353,6 +2366,13 @@ pub trait Bus {
     /// Byte TX readiness after bus routing/clock admission. Unsupported
     /// endpoints return None; supported but blocked endpoints return false.
     fn dma_tx_request(&self, _addr: u64) -> Option<bool> {
+        None
+    }
+
+    /// Consume one pending request of DMAC trigger source `source` (a SAMD51
+    /// `TCn_DMAC_ID_OVF`). `None` refuses: no peripheral raises that source;
+    /// `Some(false)` means none is pending.
+    fn take_dma_trigger(&mut self, _source: u32) -> Option<bool> {
         None
     }
 

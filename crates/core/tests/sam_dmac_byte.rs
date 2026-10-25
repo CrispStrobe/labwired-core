@@ -251,7 +251,7 @@ fn guest(index: usize, mode: &str) -> ProgramImage {
             descriptor,
             64 << 16
                 | match mode {
-                    "noact" => 0x0c01,
+                    "noact" => 0x0c07, // CODAL's descriptor: EVOSEL=3, NOACT
                     "fixed-source" => 0x0809,
                     "fixed-destination" => 0x0409,
                     _ => 0x0c09,
@@ -394,6 +394,7 @@ fn authored_descriptor_guests_transfer_or_refuse_completion_and_return_from_corr
             let delivered = matches!(
                 mode,
                 "complete"
+                    | "noact"
                     | "fixed-source"
                     | "fixed-destination"
                     | "read-error"
