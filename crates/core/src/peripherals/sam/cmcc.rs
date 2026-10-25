@@ -36,6 +36,13 @@ impl Samd51Cmcc {
     }
 }
 impl Peripheral for Samd51Cmcc {
+    fn on_system_reset(&mut self) {
+        let cfg = self.cfg.map(|_| 0);
+        *self = Self {
+            cfg,
+            ..Self::default()
+        };
+    }
     fn read(&self, offset: u64) -> SimResult<u8> {
         if let (Some(cfg), 4..=7) = (self.cfg, offset) {
             return Ok((cfg >> (8 * (offset - 4))) as u8);

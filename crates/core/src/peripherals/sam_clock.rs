@@ -319,6 +319,12 @@ impl SamGclk {
 }
 
 impl Peripheral for SamGclk {
+    fn on_system_reset(&mut self) {
+        // SAMD51 instances only; the SAMD21 GCLK keeps its behaviour.
+        if self.d51_genctrl.is_some() {
+            *self = Self::samd51();
+        }
+    }
     fn needs_legacy_walk(&self) -> bool {
         false
     }
@@ -409,6 +415,9 @@ impl SamMclk {
 }
 
 impl Peripheral for SamMclk {
+    fn on_system_reset(&mut self) {
+        *self = Self::new();
+    }
     fn needs_legacy_walk(&self) -> bool {
         false
     }

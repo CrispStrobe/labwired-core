@@ -495,6 +495,9 @@ impl<C: Cpu> Machine<C> {
             }
             self.reset_core_system_state();
             self.reset()?;
+            for peripheral in &mut self.bus.peripherals {
+                peripheral.dev.on_system_reset();
+            }
             // An emulated SoftDevice restarts with the chip (crate::sd_hle).
             if let Some(slot) = self.sd_hle.as_mut() {
                 slot.sd.reset();

@@ -101,6 +101,17 @@ const INT_RXC: u8 = 1 << 2;
 /// DATA write — only "the IRQ level may have moved".
 const SERCOM_WAKE_TOKEN: u32 = 0;
 
+/// TX and RX pads of a SAMD51 SERCOM USART: (PORT group, pin) each, their PMUX
+/// function and the CTRLA.TXPO / RXPO values that select them.
+#[derive(Clone, Copy, Debug)]
+pub struct UsartPads {
+    pub tx: (u64, u8),
+    pub rx: (u64, u8),
+    pub mux: u8,
+    pub txpo: u8,
+    pub rxpo: u8,
+}
+
 /// SERCOM in USART mode.
 pub struct SamSercomUsart {
     ctrla: u32,
@@ -135,6 +146,11 @@ pub struct SamSercomUsart {
     /// consecutive NVIC lines from the entry's IRQ (DS60001507F 10.2.2), not
     /// the SAMD21 single line. `Some(first line)` once the bus attached it.
     samd51_lines: Option<Option<u32>>,
+    /// Board-declared TX/RX pads (SAMD51 instances). When declared, a byte
+    /// reaches the wire only while its pad is muxed to this SERCOM and
+    /// CTRLA.TXPO/RXPO select it; the routing is latched on the bus tick.
+    pads: Option<UsartPads>,
+    routed: (bool, bool),
     /// Cycle clock handed over by the bus at registration on an
     /// `event-scheduler` build. Its presence — not the feature alone — is what
     /// [`Self::scheduler_mode`] reads, so a hand-built bus that never attaches
@@ -187,12 +203,27 @@ impl SamSercomUsart {
             echo_stdout: true,
             irq_level: false,
             samd51_lines: None,
+            pads: None,
+            routed: (false, false),
             clock: None,
             scheduled: false,
             legacy_walk_forced: false,
             trace: crate::bus::bus_trace::BusTrace::default(),
             trace_name: String::new(),
         }
+    }
+
+    /// Declare the TX/RX pads (see [`UsartPads`]).
+    pub fn with_pads(mut self, pads: UsartPads) -> Self {
+        self.pads = Some(pads);
+        self
+    }
+
+    fn pad_routed(&self, bus: &dyn crate::Bus, port: u64, pin: u8, mux: u8) -> bool {
+        let cfg = bus.read_u8(port + 0x40 + u64::from(pin)).unwrap_or(0);
+        let pmux = bus.read_u8(port + 0x30 + u64::from(pin / 2)).unwrap_or(0);
+        let selected = if pin & 1 != 0 { pmux >> 4 } else { pmux & 0xf };
+        cfg & 1 != 0 && selected == mux
     }
 
     /// The SAMD51 four-line interrupt layout (`samd51_sercom_usart`).
@@ -243,6 +274,9 @@ impl SamSercomUsart {
     }
 
     fn rx_queued(&self) -> bool {
+        if self.pads.is_some() && !self.routed.1 {
+            return false; // bytes on an unrouted RX pad never reach the receiver
+        }
         self.rx_source
             .lock()
             .map(|q| !q.is_empty())
@@ -362,7 +396,10 @@ impl SamSercomUsart {
         if !self.enabled() || self.ctrlb & CTRLB_TXEN == 0 {
             return;
         }
-        self.emit_byte((value & 0xFF) as u8);
+        // The SERCOM transmits either way; an unrouted TX pad carries nothing.
+        if self.pads.is_none() || self.routed.0 {
+            self.emit_byte((value & 0xFF) as u8);
+        }
         // Transmission is complete by the time the store returns.
         self.intflag |= INT_TXC;
     }
@@ -404,6 +441,25 @@ impl SamSercomUsart {
 }
 
 impl Peripheral for SamSercomUsart {
+    fn needs_bus_tick(&self) -> bool {
+        self.pads.is_some() && self.enabled()
+    }
+    fn tick_with_bus(&mut self, bus: &mut dyn crate::Bus) {
+        if let Some(p) = self.pads {
+            let txpo = (self.ctrla >> 16) & 3 == u32::from(p.txpo);
+            let rxpo = (self.ctrla >> 20) & 3 == u32::from(p.rxpo);
+            self.routed = (
+                txpo && self.pad_routed(bus, p.tx.0, p.tx.1, p.mux),
+                rxpo && self.pad_routed(bus, p.rx.0, p.rx.1, p.mux),
+            );
+        }
+    }
+    fn on_system_reset(&mut self) {
+        // SAMD51 instances only; the SAMD21 single-line model keeps its behaviour.
+        if self.samd51_lines.is_some() {
+            self.software_reset();
+        }
+    }
     fn attach_bus_trace(&mut self, name: &str, trace: &crate::bus::bus_trace::BusTrace) {
         self.trace = trace.clone();
         self.trace_name = name.to_string();

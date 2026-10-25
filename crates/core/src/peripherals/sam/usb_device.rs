@@ -315,6 +315,15 @@ impl Samd51UsbDeviceBanks {
     }
 }
 impl Peripheral for Samd51UsbDeviceBanks {
+    fn on_system_reset(&mut self) {
+        // A reset device leaves the bus: the host's queued transactions and
+        // unread replies die with the connection. The count is evidence.
+        let transactions = self.transactions;
+        *self = Self {
+            transactions,
+            ..Self::default()
+        };
+    }
     fn read(&self, offset: u64) -> SimResult<u8> {
         self.check()?;
         if let Some((ep, reg)) = Self::endpoint(offset) {
