@@ -133,6 +133,8 @@ struct UsartPace {
     /// CPU cycles per bit, resolved from BAUD, SAMPR and the clock tree; `None`
     /// (no clock, external clock mode, reserved SAMPR) moves no byte.
     bit: Option<f64>,
+    /// CPU cycles per SERCOM core clock, when the clocks resolved.
+    cpu_per_core: Option<f64>,
     /// BAUD, CTRLA or CTRLB changed since `bit` was resolved.
     dirty: bool,
     /// DATA holding register: the byte and the cycle it was written.
@@ -294,10 +296,24 @@ impl SamSercomUsart {
         (gclk > 0.0).then_some(core * cpu / gclk)
     }
 
+    /// CPU cycles per frame. In the arithmetic modes a frame takes a whole
+    /// number of core clocks, floor(f_ref * bits / f_BAUD) + 1 (DS60001507
+    /// 33.6.2.3.1, table 33-3): the BAUD average holds over 65536 clocks,
+    /// not within one frame.
+    fn frame_cycles(&self, bit: f64, cpu_per_core: Option<f64>) -> f64 {
+        let bits = self.frame_bits();
+        match cpu_per_core {
+            Some(ratio) if matches!((self.ctrla >> 13) & 7, 0 | 2 | 4) => {
+                ((bit / ratio * bits).floor() + 1.0) * ratio
+            }
+            _ => bit * bits,
+        }
+    }
+
     /// Advance the paced transmitter and receiver to cycle `now`.
     fn settle(&mut self, now: u64) {
-        let frame = match self.pace.as_ref().and_then(|p| p.bit) {
-            Some(bit) if self.enabled() => bit * self.frame_bits(),
+        let frame = match self.pace.as_ref().map(|p| (p.bit, p.cpu_per_core)) {
+            Some((Some(bit), ratio)) if self.enabled() => self.frame_cycles(bit, ratio),
             _ => return,
         };
         let (routed_tx, routed_rx) = self.routed;
@@ -397,8 +413,13 @@ impl SamSercomUsart {
             .map(|p| p.core_gclk)
         {
             let bit = self.resolve_bit(bus, core_gclk);
+            let ratio = super::clock_tree::peripheral_hz(bus, core_gclk)
+                .zip(super::clock_tree::cpu_hz(bus))
+                .filter(|&(gclk, _)| gclk > 0)
+                .map(|(gclk, cpu)| cpu as f64 / gclk as f64);
             let pace = self.pace.as_mut().unwrap();
             pace.bit = bit;
+            pace.cpu_per_core = ratio;
             pace.dirty = false;
         }
         let now = self.now();
@@ -1256,6 +1277,22 @@ mod pacing_tests {
         assert_eq!(sink.lock().unwrap().as_slice(), b"A");
         assert_eq!(u.pace_deadline(), None);
         assert!(!u.has_active_work(), "idle once the frame ended");
+    }
+
+    #[test]
+    fn an_arithmetic_frame_takes_whole_core_clocks() {
+        // 115200 at 16x from 100 MHz (BAUD 64329): 868.75 clocks a bit, 8687.5
+        // a frame, so 8688 (table 33-3's floor + 1); 10425.6 CPU cycles at 120 MHz.
+        let (mut u, _, _) = paced(1.0);
+        u.baud = 64329;
+        let bit = bit_clocks(u.ctrla, u.baud).unwrap() * 1.2;
+        assert!((u.frame_cycles(bit, Some(1.2)) - 8688.0 * 1.2).abs() < 1e-6);
+        assert!(
+            (u.frame_cycles(bit, None) - bit * 10.0).abs() < 1e-9,
+            "no clocks: the average"
+        );
+        u.ctrla |= 1 << 13; // SAMPR 1: fractional, no frame granularity
+        assert!((u.frame_cycles(bit, Some(1.2)) - bit * 10.0).abs() < 1e-9);
     }
 
     #[test]
