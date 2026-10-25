@@ -24,5 +24,9 @@ pub mod nvmctrl;
 pub mod usb_device;
 
 pub mod clock_tree;
+pub mod dac;
+pub mod eic;
 pub mod oscctrl;
+pub mod pac;
+pub mod sercom_i2cm;
 pub mod tc;

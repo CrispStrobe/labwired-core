@@ -1553,7 +1553,7 @@ boards:
     # reset mask/IT/xPSR/LR semantics changed. ACK, NOT a physical capture.
     # Preserve the existing acknowledgement age; physical re-capture is owed.
     drift_ack_expires: 2026-11-12
-    drift_ack_digest: 5bad870dadf85ebd9a14537c4f6107bb1bcae3cebf46549d6fe680fbb53c7f3f
+    drift_ack_digest: 16b08b70e0a812c2be07af282d62f8e9d79969216041f20242e66c7d0a48c7bd
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -2075,6 +2075,14 @@ boards:
     # profile stm32f0; this board's RCC family code and register behaviour are
     # unchanged. Digest re-stamped. ACK, NOT A CAPTURE (owner confirmation pending).
     drift_ack: 2026-10-15
+    # 2026-10-25 (SAMD51 board peripheral models): no behaviour change for this
+    # board. The only watched path that moved is crates/core/src/peripherals/gpio.rs:
+    # new SAM PORT match arms in `selected_function` and `bind_timer_output_pad`
+    # (the STM32F1 arm is unchanged) and `PinPort::port_name_prefix`, which
+    # returns "gpio" for every non-SAM family, so PortIds are unchanged. Ran:
+    # labwired-core --lib (none / event-scheduler), clippy -D warnings. This is
+    # an ACK, NOT A CAPTURE; a live re-capture is still owed.
+    drift_ack: 2026-10-25
   - id: esp32c3
     # 2026-09-15 (#932): SPI edge sampling is opt-in (`SpiSampling::Byte` default). Byte-level golden pins the pre-feature path. Controllers without a bit engine reject opt-in at config time.
     doc: docs/boards/esp32c3.md
@@ -3434,7 +3442,7 @@ boards:
     # reset mask/IT/xPSR/LR semantics changed. ACK, NOT a physical capture.
     # Preserve the existing acknowledgement age; physical re-capture is owed.
     drift_ack_expires: 2026-11-12
-    drift_ack_digest: 98f550434eaa0a0ee60ae8a8694a2dcb2134bb624ea9c2e01ac4457b99839538
+    drift_ack_digest: 039ac19ad01efa8b51a6e9aeb5905af3d28791ccab77bf81ec9653c91de55e0f
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3927,6 +3935,14 @@ boards:
     # profile stm32f0; this board's RCC family code and register behaviour are
     # unchanged. Digest re-stamped. ACK, NOT A CAPTURE (owner confirmation pending).
     drift_ack: 2026-10-15
+    # 2026-10-25 (SAMD51 board peripheral models): no behaviour change for this
+    # board. The only watched path that moved is crates/core/src/peripherals/gpio.rs:
+    # new SAM PORT match arms in `selected_function` and `bind_timer_output_pad`
+    # (the STM32F1 arm is unchanged) and `PinPort::port_name_prefix`, which
+    # returns "gpio" for every non-SAM family, so PortIds are unchanged. Ran:
+    # labwired-core --lib (none / event-scheduler), clippy -D warnings. This is
+    # an ACK, NOT A CAPTURE; a live re-capture is still owed.
+    drift_ack: 2026-10-25
   - id: nucleo-l073rz
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
     # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
@@ -4327,7 +4343,7 @@ boards:
     # reset mask/IT/xPSR/LR semantics changed. ACK, NOT a physical capture.
     # Preserve the existing acknowledgement age; physical re-capture is owed.
     drift_ack_expires: 2026-11-12
-    drift_ack_digest: 9a52c571a1009a795ddb0086c1643a5d5cf9e3caa2695e4b0f87acaaf692433f
+    drift_ack_digest: 8ffafc02534c389d7c026917abb054628b30bef38c40d6aeaafe8d47436419b4
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4762,6 +4778,14 @@ boards:
     # profile stm32f0; this board's RCC family code and register behaviour are
     # unchanged. Digest re-stamped. ACK, NOT A CAPTURE (owner confirmation pending).
     drift_ack: 2026-10-15
+    # 2026-10-25 (SAMD51 board peripheral models): no behaviour change for this
+    # board. The only watched path that moved is crates/core/src/peripherals/gpio.rs:
+    # new SAM PORT match arms in `selected_function` and `bind_timer_output_pad`
+    # (the STM32F1 arm is unchanged) and `PinPort::port_name_prefix`, which
+    # returns "gpio" for every non-SAM family, so PortIds are unchanged. Ran:
+    # labwired-core --lib (none / event-scheduler), clippy -D warnings. This is
+    # an ACK, NOT A CAPTURE; a live re-capture is still owed.
+    drift_ack: 2026-10-25
   - id: stm32f103
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
     # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
@@ -5216,7 +5240,7 @@ boards:
     # reset mask/IT/xPSR/LR semantics changed. ACK, NOT a physical capture.
     # Preserve the existing acknowledgement age; physical re-capture is owed.
     drift_ack_expires: 2026-11-12
-    drift_ack_digest: 424a3d6a8b4f887e02d5216dd98b5f68e655bc533dfdd15dc7f21c345295be6e
+    drift_ack_digest: 55c81226e731cc706c7cc8f65649b8108950130e10c3a86dbdb978a42feaa15e
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5726,6 +5750,14 @@ boards:
     # profile stm32f0; this board's RCC family code and register behaviour are
     # unchanged. Digest re-stamped. ACK, NOT A CAPTURE (owner confirmation pending).
     drift_ack: 2026-10-15
+    # 2026-10-25 (SAMD51 board peripheral models): no behaviour change for this
+    # board. The only watched path that moved is crates/core/src/peripherals/gpio.rs:
+    # new SAM PORT match arms in `selected_function` and `bind_timer_output_pad`
+    # (the STM32F1 arm is unchanged) and `PinPort::port_name_prefix`, which
+    # returns "gpio" for every non-SAM family, so PortIds are unchanged. Ran:
+    # labwired-core --lib (none / event-scheduler), clippy -D warnings. This is
+    # an ACK, NOT A CAPTURE; a live re-capture is still owed.
+    drift_ack: 2026-10-25
   - id: stm32f407
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
     # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
@@ -6144,7 +6176,7 @@ boards:
     # reset mask/IT/xPSR/LR semantics changed. ACK, NOT a physical capture.
     # Preserve the existing acknowledgement age; physical re-capture is owed.
     drift_ack_expires: 2026-11-12
-    drift_ack_digest: 58555e3bb9a706835a859b9f0464399544da759c72bd27a20ccab8a03c023b50
+    drift_ack_digest: 7b4e24bbeb864824ea1b7cdbba779bf951b2d30345c6551e298d34c0d8d6a9d8
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -6589,6 +6621,14 @@ boards:
     # profile stm32f0; this board's RCC family code and register behaviour are
     # unchanged. Digest re-stamped. ACK, NOT A CAPTURE (owner confirmation pending).
     drift_ack: 2026-10-15
+    # 2026-10-25 (SAMD51 board peripheral models): no behaviour change for this
+    # board. The only watched path that moved is crates/core/src/peripherals/gpio.rs:
+    # new SAM PORT match arms in `selected_function` and `bind_timer_output_pad`
+    # (the STM32F1 arm is unchanged) and `PinPort::port_name_prefix`, which
+    # returns "gpio" for every non-SAM family, so PortIds are unchanged. Ran:
+    # labwired-core --lib (none / event-scheduler), clippy -D warnings. This is
+    # an ACK, NOT A CAPTURE; a live re-capture is still owed.
+    drift_ack: 2026-10-25
   - id: esp32s3
     # 2026-09-16 (#jit-xtensa-browser): generic Xtensa BB emit core + browser adapter. `xtensa_lx7.rs` gains only `invalidate_for_data_write` — a public forwarder to the existing `maybe_invalidate_for_write` so JIT-committed stores run the same SMC invalidation the S8i/S32i interpreter arms run (no interpreter behavior change; the existing sub-word rules are reused). Hot-block dispatch and every interpreter arm are untouched; the new shapes are browser-only and refused when unsafe. Native interpreter-identity tests in `xtensa_jit/variable.rs`. No silicon capture pins the browser JIT.
     # 2026-09-15 (#1119): PeripheralConfig gained irq_controller (None). No silicon-visible behaviour change.

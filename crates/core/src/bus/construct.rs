@@ -1109,14 +1109,23 @@ impl SystemBus {
     /// (enabled on Arm) so pre-existing third-party configs that rely on
     /// bit-band keep working; all in-tree Arm chip configs declare `core`.
     pub(crate) fn chip_has_bit_band(chip: &ChipDescriptor) -> bool {
-        match chip.core.as_deref() {
+        let core_has = match chip.core.as_deref() {
             Some(core) => {
                 let c = core.trim().to_ascii_lowercase();
                 let c = c.strip_prefix("cortex-").unwrap_or(&c);
                 matches!(c, "m3" | "m4" | "m4f")
             }
             None => matches!(chip.arch, labwired_config::Arch::Arm),
-        }
+        };
+        // Bit-banding is optional on M3/M4. A part that maps real peripherals
+        // inside the peripheral alias window (SAMD51: TC4/TC5, SERCOM4/5, DAC
+        // at 0x4200_0000..0x4400_0000) does not implement it: translating there
+        // would redirect those registers to the bit-band target.
+        core_has
+            && !chip
+                .peripherals
+                .iter()
+                .any(|p| (0x4200_0000..0x4400_0000).contains(&p.base_address))
     }
 
     /// Decode an atomic register-alias access. Returns the aligned base

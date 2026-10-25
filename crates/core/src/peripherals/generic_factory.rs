@@ -154,6 +154,7 @@ pub const MODEL_TYPES: &[&str] = &[
     // offsets mean nothing to a SERCOM. That is the silent shape — a console
     // that enables cleanly and never emits a byte.
     "sam_sercom_usart",
+    "samd51_sercom_usart",
     "sam_sercom_spi",
     "samd51_nvmctrl_manual_storage",
     "samd51_cmcc_control",
@@ -162,8 +163,13 @@ pub const MODEL_TYPES: &[&str] = &[
     "samd51_tc",
     "samd51_gclk",
     "samd51_cmcc_board",
+    "samd51_eic",
+    "samd51_sercom_i2cm",
+    "samd51_dac",
+    "samd51_pac",
     "sam_dmac_byte",
     "sam_dmac_sercom4_tx_byte",
+    "samd51_dmac_board",
     // Reserve the full name: never fuzzy-coerce an unqualified SAM DMAC to STM32.
     "sam_dmac",
     // ⚠️ Load-bearing. Without this entry the fuzzy `contains("spi")` heuristic
@@ -348,6 +354,42 @@ fn build_samd51_board_model(
                 anyhow::bail!("SAMD51 OSCCTRL requires base 0x40001000 and no IRQ");
             }
             Box::new(crate::peripherals::sam::oscctrl::Samd51Oscctrl::new())
+        }
+        "samd51_dac" | "samd51_pac" => {
+            let base = if kind == "samd51_dac" {
+                0x43002400
+            } else {
+                0x40000000
+            };
+            if p_cfg.base_address != base || p_cfg.irq.is_some() {
+                anyhow::bail!("{kind} requires base {base:#x} and no IRQ");
+            }
+            if kind == "samd51_dac" {
+                Box::new(crate::peripherals::sam::dac::Samd51Dac::new())
+            } else {
+                Box::new(crate::peripherals::sam::pac::Samd51Pac::new())
+            }
+        }
+        "samd51_sercom_i2cm" => {
+            use crate::peripherals::sam::sercom_i2cm::{Samd51SercomI2cm, SERCOM_INSTANCES};
+            let Some(instance) = SERCOM_INSTANCES
+                .iter()
+                .find(|i| i.base == p_cfg.base_address)
+            else {
+                anyhow::bail!("SAMD51 SERCOM base must be one of SERCOM0..SERCOM5");
+            };
+            // Four lines (first_irq..first_irq+3) are reported by the model itself.
+            if p_cfg.irq.is_some() {
+                anyhow::bail!("SAMD51 SERCOM I2C master takes no single IRQ");
+            }
+            Box::new(Samd51SercomI2cm::new(*instance))
+        }
+        "samd51_eic" => {
+            // Sixteen channel lines (IRQ 12..27) are reported by the model itself.
+            if p_cfg.base_address != 0x40002800 || p_cfg.irq.is_some() {
+                anyhow::bail!("SAMD51 EIC requires base 0x40002800 and no single IRQ");
+            }
+            Box::new(crate::peripherals::sam::eic::Samd51Eic::new())
         }
         "samd51_cmcc_board" => {
             if p_cfg.base_address != 0x41006000 || p_cfg.irq.is_some() {
@@ -618,8 +660,13 @@ pub fn try_build(
         "sam_sercom_usart" => {
             Box::new(crate::peripherals::sam::sercom_usart::SamSercomUsart::new())
         }
+        // SAMD51: the same USART with DRE/TXC/RXC/other on four NVIC lines.
+        "samd51_sercom_usart" => {
+            Box::new(crate::peripherals::sam::sercom_usart::SamSercomUsart::new_samd51())
+        }
         "samd51_usb_device_banks" => build_samd51_usb_device_banks(p_cfg)?,
-        "samd51_oscctrl" | "samd51_tc" | "samd51_gclk" | "samd51_cmcc_board" => {
+        "samd51_oscctrl" | "samd51_tc" | "samd51_gclk" | "samd51_cmcc_board" | "samd51_eic"
+        | "samd51_sercom_i2cm" | "samd51_dac" | "samd51_pac" => {
             build_samd51_board_model(canonical_type, p_cfg)?
         }
         "samd51_nvmctrl_manual_storage" | "samd51_cmcc_control" => {
@@ -649,6 +696,26 @@ pub fn try_build(
             Box::new(crate::peripherals::sam::dmac_byte::SamDmacByte::new(
                 p_cfg.base_address,
             ))
+        }
+        "samd51_dmac_board" => {
+            if p_cfg.irq != Some(31) || p_cfg.base_address != 0x4100a000 {
+                anyhow::bail!("SAMD51 DMAC board profile requires base 0x4100a000 and IRQ31");
+            }
+            if !p_cfg.clock.as_ref().is_some_and(|clocks| {
+                clocks
+                    .as_slice()
+                    .iter()
+                    .any(|gate| gate.controller == "mclk" && gate.reg == "AHBMASK" && gate.bit == 9)
+            }) {
+                anyhow::bail!(
+                    "SAMD51 DMAC board profile requires explicit mclk AHBMASK bit9 binding"
+                );
+            }
+            Box::new(
+                crate::peripherals::sam::dmac_byte::SamDmacByte::new_samd51_board(
+                    p_cfg.base_address,
+                ),
+            )
         }
         "sam_dmac_sercom4_tx_byte" => {
             if p_cfg.irq != Some(31) || p_cfg.base_address != 0x4100a000 {

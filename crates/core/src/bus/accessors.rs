@@ -1479,6 +1479,13 @@ impl crate::Bus for SystemBus {
         self.find_peripheral_index(addr).is_some()
     }
 
+    fn take_dma_trigger(&mut self, source: u32) -> Option<bool> {
+        // Trigger sources are unique per chip: the first peripheral raising it answers.
+        self.peripherals
+            .iter_mut()
+            .find_map(|p| p.dev.take_dma_trigger(source))
+    }
+
     fn dma_tx_request(&self, addr: u64) -> Option<bool> {
         let idx = self.dma_tx_endpoint_index(addr)?;
         let p = &self.peripherals[idx];
