@@ -22,3 +22,7 @@ pub mod cmcc;
 pub mod nvmctrl;
 
 pub mod usb_device;
+
+pub mod clock_tree;
+pub mod oscctrl;
+pub mod tc;

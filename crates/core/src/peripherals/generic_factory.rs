@@ -158,6 +158,10 @@ pub const MODEL_TYPES: &[&str] = &[
     "samd51_nvmctrl_manual_storage",
     "samd51_cmcc_control",
     "samd51_usb_device_banks",
+    "samd51_oscctrl",
+    "samd51_tc",
+    "samd51_gclk",
+    "samd51_cmcc_board",
     "sam_dmac_byte",
     "sam_dmac_sercom4_tx_byte",
     // Reserve the full name: never fuzzy-coerce an unqualified SAM DMAC to STM32.
@@ -325,6 +329,54 @@ pub const MODEL_TYPES: &[&str] = &[
 /// True if `t` is already a canonical model-type name (see [`MODEL_TYPES`]).
 pub fn is_canonical_model_type(t: &str) -> bool {
     MODEL_TYPES.contains(&t)
+}
+
+// Opt-in SAMD51 board models: fixed instance addresses, no config overrides.
+// Cold construction keeps them out of the shared dispatcher's hot path.
+#[cold]
+#[inline(never)]
+fn build_samd51_board_model(
+    kind: &str,
+    p_cfg: &PeripheralConfig,
+) -> anyhow::Result<Box<dyn Peripheral>> {
+    if !p_cfg.config.is_empty() {
+        anyhow::bail!("{kind} admits no config overrides");
+    }
+    Ok(match kind {
+        "samd51_oscctrl" => {
+            if p_cfg.base_address != 0x40001000 || p_cfg.irq.is_some() {
+                anyhow::bail!("SAMD51 OSCCTRL requires base 0x40001000 and no IRQ");
+            }
+            Box::new(crate::peripherals::sam::oscctrl::Samd51Oscctrl::new())
+        }
+        "samd51_cmcc_board" => {
+            if p_cfg.base_address != 0x41006000 || p_cfg.irq.is_some() {
+                anyhow::bail!("SAMD51 CMCC requires base 0x41006000 and no IRQ");
+            }
+            Box::new(crate::peripherals::sam::cmcc::Samd51Cmcc::with_configuration())
+        }
+        "samd51_gclk" => {
+            if p_cfg.base_address != 0x40001c00 || p_cfg.irq.is_some() {
+                anyhow::bail!("SAMD51 GCLK requires base 0x40001C00 and no IRQ");
+            }
+            Box::new(crate::peripherals::sam_clock::SamGclk::samd51())
+        }
+        "samd51_tc" => {
+            use crate::peripherals::sam::tc::{Samd51Tc, TC_INSTANCES};
+            let Some(instance) = TC_INSTANCES.iter().find(|i| i.base == p_cfg.base_address) else {
+                anyhow::bail!("SAMD51 TC base must be one of TC0..TC5");
+            };
+            if p_cfg.irq != Some(instance.irq) {
+                anyhow::bail!(
+                    "SAMD51 TC at {:#x} requires IRQ {}",
+                    instance.base,
+                    instance.irq
+                );
+            }
+            Box::new(Samd51Tc::new(*instance))
+        }
+        _ => anyhow::bail!("unknown SAMD51 board model {kind}"),
+    })
 }
 
 // Keep optional controller setup outside the shared registry dispatcher. The
@@ -567,6 +619,9 @@ pub fn try_build(
             Box::new(crate::peripherals::sam::sercom_usart::SamSercomUsart::new())
         }
         "samd51_usb_device_banks" => build_samd51_usb_device_banks(p_cfg)?,
+        "samd51_oscctrl" | "samd51_tc" | "samd51_gclk" | "samd51_cmcc_board" => {
+            build_samd51_board_model(canonical_type, p_cfg)?
+        }
         "samd51_nvmctrl_manual_storage" | "samd51_cmcc_control" => {
             let expected = if canonical_type == "samd51_nvmctrl_manual_storage" {
                 0x41004000
