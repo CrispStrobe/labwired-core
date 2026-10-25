@@ -42,13 +42,13 @@ The models column is a content digest over everything that board's `models` list
 | `stm32g474re` | 🔵 sim-validated (deep model, no HW diff) | — | `67155e6b7b920600` | no silicon capture |
 | `stm32wb55` | 🔵 sim-validated (deep model, no HW diff) | — | `7bb2e9e64f02d44d` | no silicon capture |
 | `ci-fixture-riscv` | ⚪ structural | — | `e519faf4d2cb48f0` | no silicon capture |
-| `nano-33-iot` | 🟡 smoke-manual | — | `4b7d7c5571e3d9a0` | no silicon capture |
-| `metro-m4` | 🟡 smoke-manual | — | `4753f5227bca303f` | no silicon capture |
+| `nano-33-iot` | 🟡 smoke-manual | — | `6308ae9c3ab4444d` | no silicon capture |
+| `metro-m4` | 🟡 smoke-manual | — | `76a5a2abee2d0526` | no silicon capture |
 | `arduino-uno-r4-minima` | 🟡 smoke-manual | — | `ea5fed1a89db2007` | no silicon capture |
 | `teensy-41` | 🟡 smoke-manual | — | `bdddc95f7cafccc6` | no silicon capture |
 | `stm32f7-discovery` | 🟡 smoke-manual | — | `764ba73e612dd7a5` | no silicon capture |
 | `nucleo-g071rb` | 🟡 smoke-manual | — | `4177f12498ded682` | no silicon capture |
-| `esp32c6-devkitc` | 🟡 smoke-manual | — | `44a373ebc535903e` | no silicon capture |
+| `esp32c6-devkitc` | 🟡 smoke-manual | — | `48dd5fe2a81cb69a` | no silicon capture |
 
 ## `nrf52840` — 🟢 silicon-verified
 
