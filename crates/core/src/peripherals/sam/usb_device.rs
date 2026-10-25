@@ -393,7 +393,9 @@ impl Peripheral for Samd51UsbDeviceBanks {
         }
         match offset {
             0 => {
-                if value & !0x43 != 0 {
+                // SWRST (0), ENABLE (1), RUNSTDBY (2) per the ATDF; host MODE (7) and
+                // reserved bits are refused.
+                if value & !0x07 != 0 {
                     return Self::refuse("host/test/unsupported CTRLA mode");
                 }
                 if value & 1 != 0 {
@@ -909,5 +911,17 @@ mod tests {
         }
         assert!(c.queue_host(HostToken::Reset).is_err());
         assert_eq!(c.host.len(), QUEUE_CAP);
+    }
+    #[test]
+    fn ctrla_admits_run_in_standby_at_bit_two_only() {
+        let mut c = Samd51UsbDeviceBanks::new();
+        c.write(0, 0x04).unwrap();
+        assert_eq!(c.read(0).unwrap(), 0x04);
+        c.write(0, 0x06).unwrap();
+        assert!(c.live() || c.device_control & 1 != 0);
+        let mut d = Samd51UsbDeviceBanks::new();
+        assert!(d.write(0, 0x40).is_err(), "bit 6 is reserved in USB CTRLA");
+        let mut h = Samd51UsbDeviceBanks::new();
+        assert!(h.write(0, 0x80).is_err(), "host mode is not admitted");
     }
 }
