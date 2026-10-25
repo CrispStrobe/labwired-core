@@ -417,6 +417,10 @@ impl Samd51Tc {
 }
 
 impl Peripheral for Samd51Tc {
+    fn on_system_reset(&mut self) {
+        self.reset();
+        self.refresh_outputs();
+    }
     fn read(&self, offset: u64) -> SimResult<u8> {
         let aligned = match offset {
             0x14..=0x17 => 0x14,

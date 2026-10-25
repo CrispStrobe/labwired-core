@@ -167,6 +167,8 @@ pub const MODEL_TYPES: &[&str] = &[
     "samd51_sercom_i2cm",
     "samd51_dac",
     "samd51_pac",
+    "samd51_tcc",
+    "samd51_adc",
     "sam_dmac_byte",
     "sam_dmac_sercom4_tx_byte",
     "samd51_dmac_board",
@@ -354,6 +356,27 @@ fn build_samd51_board_model(
                 anyhow::bail!("SAMD51 OSCCTRL requires base 0x40001000 and no IRQ");
             }
             Box::new(crate::peripherals::sam::oscctrl::Samd51Oscctrl::new())
+        }
+        "samd51_adc" => {
+            use crate::peripherals::sam::adc::{Samd51Adc, ADC_INSTANCES};
+            let Some(instance) = ADC_INSTANCES.iter().find(|i| i.base == p_cfg.base_address) else {
+                anyhow::bail!("SAMD51 ADC base must be ADC0 or ADC1");
+            };
+            if p_cfg.irq.is_some() {
+                anyhow::bail!("SAMD51 ADC interrupts are not modelled");
+            }
+            Box::new(Samd51Adc::new(*instance))
+        }
+        "samd51_tcc" => {
+            use crate::peripherals::sam::tcc::{Samd51Tcc, TCC_INSTANCES};
+            let Some(instance) = TCC_INSTANCES.iter().find(|i| i.base == p_cfg.base_address) else {
+                anyhow::bail!("SAMD51 TCC base must be one of TCC0..TCC4");
+            };
+            // Line 0 plus one line per channel are reported by the model itself.
+            if p_cfg.irq.is_some_and(|irq| irq != instance.irq) {
+                anyhow::bail!("SAMD51 TCC IRQ must be its first line {}", instance.irq);
+            }
+            Box::new(Samd51Tcc::new(*instance))
         }
         "samd51_dac" | "samd51_pac" => {
             let base = if kind == "samd51_dac" {
@@ -662,11 +685,37 @@ pub fn try_build(
         }
         // SAMD51: the same USART with DRE/TXC/RXC/other on four NVIC lines.
         "samd51_sercom_usart" => {
-            Box::new(crate::peripherals::sam::sercom_usart::SamSercomUsart::new_samd51())
+            use crate::peripherals::sam::sercom_usart::{SamSercomUsart, UsartPads};
+            let key = |k: &str| p_cfg.config.get(k).and_then(|v| v.as_u64());
+            let usart = SamSercomUsart::new_samd51();
+            // Optional pads: all of tx/rx port and bit, pad_mux, txpo, rxpo.
+            match (
+                key("tx_port_base"),
+                key("tx_bit"),
+                key("rx_port_base"),
+                key("rx_bit"),
+                key("pad_mux"),
+                key("txpo"),
+                key("rxpo"),
+            ) {
+                (Some(tp), Some(tb), Some(rp), Some(rb), Some(mux), Some(txpo), Some(rxpo))
+                    if tb < 32 && rb < 32 && mux < 16 && txpo < 4 && rxpo < 4 =>
+                {
+                    Box::new(usart.with_pads(UsartPads {
+                        tx: (tp, tb as u8),
+                        rx: (rp, rb as u8),
+                        mux: mux as u8,
+                        txpo: txpo as u8,
+                        rxpo: rxpo as u8,
+                    }))
+                }
+                (None, None, None, None, None, None, None) => Box::new(usart),
+                _ => anyhow::bail!("SAMD51 USART '{}' needs all pad keys or none", p_cfg.id),
+            }
         }
         "samd51_usb_device_banks" => build_samd51_usb_device_banks(p_cfg)?,
         "samd51_oscctrl" | "samd51_tc" | "samd51_gclk" | "samd51_cmcc_board" | "samd51_eic"
-        | "samd51_sercom_i2cm" | "samd51_dac" | "samd51_pac" => {
+        | "samd51_sercom_i2cm" | "samd51_dac" | "samd51_pac" | "samd51_tcc" | "samd51_adc" => {
             build_samd51_board_model(canonical_type, p_cfg)?
         }
         "samd51_nvmctrl_manual_storage" | "samd51_cmcc_control" => {
@@ -752,13 +801,43 @@ pub fn try_build(
             if sck >= 32 || mosi >= 32 || mux >= 16 || dopo >= 4 {
                 anyhow::bail!("SAM SPI '{}' has invalid pad configuration", p_cfg.id);
             }
+            // Optional keys: per-pad PORT groups, a MISO pad with DIPO, and the
+            // SERCOM's DMAC trigger sources.
+            let optional = |key: &str| p_cfg.config.get(key).and_then(|v| v.as_u64());
+            let port_base = optional("port_base");
+            let group = |key: &str| -> anyhow::Result<u64> {
+                optional(key).or(port_base).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "SAM SPI '{}' requires config.port_base or config.{key}",
+                        p_cfg.id
+                    )
+                })
+            };
+            let miso = match optional("miso_bit") {
+                Some(pin) if pin < 32 => {
+                    Some((group("miso_port_base")?, pin as u8, number("dipo")? as u8))
+                }
+                Some(_) => anyhow::bail!("SAM SPI '{}' has invalid MISO pad", p_cfg.id),
+                None => None,
+            };
+            let dma = match (optional("dma_tx_trigger"), optional("dma_rx_trigger")) {
+                (Some(tx), Some(rx)) => Some((tx as u32, rx as u32)),
+                (None, None) => None,
+                _ => anyhow::bail!(
+                    "SAM SPI '{}' declares one DMA trigger without the other",
+                    p_cfg.id
+                ),
+            };
             Box::new(crate::peripherals::sam::sercom_spi::SamSercomSpi::new(
                 crate::peripherals::sam::sercom_spi::SamSpiPads {
-                    port_base: number("port_base")?,
+                    sck_port: group("sck_port_base")?,
                     sck: sck as u8,
+                    mosi_port: group("mosi_port_base")?,
                     mosi: mosi as u8,
                     mux: mux as u8,
                     dopo: dopo as u8,
+                    miso,
+                    dma,
                 },
             ))
         }

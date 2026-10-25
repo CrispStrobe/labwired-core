@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 //! Opt-in SAMD51 software-byte, SERCOM4 TX-byte and board profiles, not full DMAC.
-//! The board profile serves, per channel, SERCOM4 TX byte beats or TC3 overflow
-//! half-word beats into DAC DATA0 (codal's SAMDDAC); every other trigger,
-//! beat size or destination is refused.
+//! The board profile serves, per channel, SERCOM TX or RX byte beats (the
+//! SERCOM's own DATA register, resolved through the trigger sources its chip
+//! description declares) or TC3 overflow half-word beats into DAC DATA0
+//! (codal's SAMDDAC); every other trigger, beat size or endpoint is refused.
 //! Primary register facts: DS60001507F sections 22.6, 22.7, 22.8 and 22.10.
 //! No ASF implementation/header is copied or imported. Unsupported descriptors latch an explicit
 //! simulator refusal; they never masquerade as hardware completion/error flags.
@@ -65,7 +66,11 @@ impl Descriptor {
         // event output, which stays inert because CHEVCTRL (and with it EVOE)
         // is refused.
         let beats = if half_words { 0x0100 } else { 0 };
-        if self.control & !(0x0c0f | beats) != 0 || self.next != 0 || self.remaining == 0 {
+        // STEPSEL (bit 12) only chooses which address a STEPSIZE multiplies;
+        // with STEPSIZE = X1 (bits 15:13 zero) both addresses step by one beat.
+        let stepsel = 0x1000;
+        if self.control & !(0x0c0f | beats | stepsel) != 0 || self.next != 0 || self.remaining == 0
+        {
             return Some("requires byte beats, unit steps, nonzero count, NOACT/INT and no link");
         }
         None
@@ -271,12 +276,15 @@ impl SamDmacByte {
                                 let source = (new >> 8) & 0xff;
                                 let action = (new >> 20) & 3;
                                 let trigger = new & !ENABLE;
+                                // Board: SERCOM0..5 RX/TX (4..=15) and TC3 OVF, BURST.
+                                let board_source =
+                                    board && ((4..=15).contains(&source) || source == 0x35);
                                 if new & !(ENABLE | 0xff00 | (3 << 20)) != 0
-                                    || !(matches!(source, 0 | 0x0d) || (board && source == 0x35))
+                                    || !(matches!(source, 0 | 0x0d) || board_source)
                                     || !matches!(action, 0 | 2)
                                     || (new & ENABLE != 0
                                         && trigger != TX_TRIGGER
-                                        && !(board && trigger == TC3_TRIGGER))
+                                        && !(board_source && action == 2))
                                 {
                                     return Err(SimulationError::NotImplemented(
                                         "SERCOM4 TX requires TX13/BURST/SINGLE without other channel modes".into(),
@@ -375,7 +383,11 @@ impl SamDmacByte {
         let mut d = self.channels[index].descriptor.unwrap();
         let source = d.address(true);
         let destination = d.address(false);
-        if !bus.admits_ram_only_dma_extent(source, u64::from(d.beat()))
+        // A SERCOM receive reads the peripheral and writes RAM (checked there).
+        let rx = self.profile == Profile::Board
+            && (4..=15).contains(&((self.channels[index].control >> 8) & 0xff))
+            && ((self.channels[index].control >> 8) & 0xff) % 2 == 0;
+        if (!rx && !bus.admits_ram_only_dma_extent(source, u64::from(d.beat())))
             || (self.profile == Profile::SoftwareBlock
                 && !bus.admits_ram_only_dma_extent(destination, 1))
         {
@@ -412,8 +424,43 @@ impl SamDmacByte {
                 self.error(bus, index);
                 return;
             }
+        } else if rx {
+            // SERCOM RX: one byte from the SERCOM's DATA into incrementing RAM.
+            let source_id = (self.channels[index].control >> 8) & 0xff;
+            if bus.dma_triggers_at(source).map(|t| t.1) != Some(source_id)
+                || d.control & 0x0c00 != 0x0800
+                || !bus.admits_ram_only_dma_extent(destination, 1)
+            {
+                self.refuse(
+                    index,
+                    "SERCOM RX requires the trigger's own DATA source and RAM DSTINC",
+                );
+                return;
+            }
+            match bus.dma_rx_request(source) {
+                Some(true) => {}
+                Some(false) => return, // No byte received yet.
+                None => {
+                    self.refuse(index, "SERCOM RX endpoint is not admitted by the bus");
+                    return;
+                }
+            }
+            let transferred = bus
+                .read_u8(source)
+                .and_then(|value| bus.write_u8(destination, value));
+            if transferred.is_err() {
+                self.error(bus, index);
+                return;
+            }
         } else if self.profile != Profile::SoftwareBlock {
-            if destination != SERCOM4_DATA || d.control & 0x0c00 != 0x0400 {
+            // SERCOM TX: the trigger's own DATA register, or (an endpoint that
+            // declares no triggers) the historical SERCOM4 DATA.
+            let source_id = (self.channels[index].control >> 8) & 0xff;
+            let endpoint = match (self.profile, bus.dma_triggers_at(destination)) {
+                (Profile::Board, Some((tx, _))) => tx == source_id,
+                _ => destination == SERCOM4_DATA && source_id == 0x0d,
+            };
+            if !endpoint || d.control & 0x0c00 != 0x0400 {
                 self.refuse(
                     index,
                     "SERCOM4 TX requires unit SRCINC and fixed canonical DATA destination",
@@ -494,6 +541,9 @@ impl SamDmacByte {
 }
 
 impl Peripheral for SamDmacByte {
+    fn on_system_reset(&mut self) {
+        *self = Self::with_profile(self.mmio_base, self.profile);
+    }
     fn read(&self, offset: u64) -> SimResult<u8> {
         if let Some(reason) = self.refusal {
             return Err(SimulationError::NotImplemented(format!(

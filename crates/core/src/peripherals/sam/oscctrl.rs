@@ -98,6 +98,9 @@ impl Samd51Oscctrl {
 }
 
 impl Peripheral for Samd51Oscctrl {
+    fn on_system_reset(&mut self) {
+        *self = Self::new();
+    }
     fn read(&self, offset: u64) -> SimResult<u8> {
         let word = self.read_reg(offset & !3)?;
         Ok((word >> (8 * (offset & 3))) as u8)

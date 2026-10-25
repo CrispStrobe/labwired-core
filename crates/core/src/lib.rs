@@ -868,6 +868,19 @@ pub trait Peripheral: std::fmt::Debug + Send {
         None
     }
 
+    /// Byte RX DMA request: `Some(true)` while a received byte waits in the
+    /// register at `offset` (a DMA read of it consumes the byte). `None`
+    /// refuses this endpoint.
+    fn dma_rx_request(&self, _offset: u64) -> Option<bool> {
+        None
+    }
+
+    /// The DMAC trigger sources (TX, RX) this peripheral raises, as its chip
+    /// description declares them. `None`: it declares none.
+    fn dma_triggers(&self) -> Option<(u32, u32)> {
+        None
+    }
+
     /// Peripheral side of [`Bus::take_dma_trigger`]: consume one pending
     /// request of DMAC trigger source `source` if this peripheral raises it.
     /// Default `None`: it raises none.
@@ -1747,6 +1760,15 @@ pub trait Peripheral: std::fmt::Debug + Send {
     /// register has nothing to record.
     fn on_supply_reset(&mut self, _cause: crate::power::SupplyResetCause) {}
 
+    /// A system reset (Cortex-M `AIRCR.SYSRESETREQ`) just restarted the core:
+    /// return the registers to their power-on values, as silicon does. Keep
+    /// what is not chip state: attached devices, wires, the cycle clock and
+    /// non-volatile contents.
+    ///
+    /// Default: nothing, which keeps the historical behaviour for every model
+    /// that has not opted in.
+    fn on_system_reset(&mut self) {}
+
     /// The node this peripheral belongs to was reset through its reset pin
     /// or `SYSRESETREQ` (a world's scripted node reset). A peripheral that
     /// must return to its reset state for the restarted firmware to behave
@@ -2366,6 +2388,17 @@ pub trait Bus {
     /// Byte TX readiness after bus routing/clock admission. Unsupported
     /// endpoints return None; supported but blocked endpoints return false.
     fn dma_tx_request(&self, _addr: u64) -> Option<bool> {
+        None
+    }
+
+    /// Byte RX DMA readiness after bus routing/clock admission. Unsupported
+    /// endpoints return None; supported but empty endpoints return false.
+    fn dma_rx_request(&self, _addr: u64) -> Option<bool> {
+        None
+    }
+
+    /// The DMAC trigger sources (TX, RX) declared by the peripheral at `addr`.
+    fn dma_triggers_at(&self, _addr: u64) -> Option<(u32, u32)> {
         None
     }
 
