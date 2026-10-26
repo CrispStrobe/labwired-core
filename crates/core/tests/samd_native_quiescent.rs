@@ -177,7 +177,7 @@ fn prefix_closes_before_gated_and_active_model_system_and_storage_accesses() {
     for (index, (address, value, store, load)) in [
         (0x41000000, 2, 0x7008, 0x780a),      // USB CTRLA, clock-gated
         (0x41000000, 2, 0x7008, 0x780a),      // same model with banks opened below
-        (0x40003800, 2, 0x8008, 0x880a),      // TC0 CTRLA
+        (0x40003800, 2, 0x6008, 0x680a),      // TC0 CTRLA is a word register
         (0x41016000, 2, 0x6008, 0x680a),      // TCC0 CTRLA
         (0x43001c00, 2, 0x8008, 0x880a),      // ADC0 CTRLA
         (0x4100a000, 2, 0x8008, 0x880a),      // DMAC CTRL
@@ -211,13 +211,26 @@ fn prefix_closes_before_gated_and_active_model_system_and_storage_accesses() {
     }
 }
 #[test]
-fn unsupported_access_error_has_the_same_committed_prefix() {
+fn unmapped_access_has_the_same_committed_prefix_and_bus_policy() {
     let mut actual = io_program(0xdead0000, 1, 0x6008, 0x680a);
     let mut strict = io_program(0xdead0000, 1, 0x6008, 0x680a);
+    // The existing bus permits unmapped stores and returns its default value
+    // for unmapped reads. Chunk refusal must preserve that original policy.
+    run(&mut actual, 200, false);
+    run(&mut strict, 200, true);
+    equal_state(&actual, &strict);
+}
+#[test]
+fn refused_register_error_has_the_same_committed_prefix() {
+    // TC CTRLBCLR is byte-wide. Unlike an unmapped address, this actual model
+    // rejects a word store. Preserve both the error and all committed state.
+    let mut actual = io_program(0x40003804, 1, 0x6008, 0x680a);
+    let mut strict = io_program(0x40003804, 1, 0x6008, 0x680a);
     let a = actual.advance(AdvanceRequest::run(Some(200))).unwrap_err();
     let b = strict
         .advance(AdvanceRequest::run(Some(200)).with_batch_cap(NonZeroU32::new(1).unwrap()))
         .unwrap_err();
     assert_eq!(a.to_string(), b.to_string());
+    assert!(a.to_string().contains("store outside the 8/16-bit slice"));
     equal_state(&actual, &strict);
 }
