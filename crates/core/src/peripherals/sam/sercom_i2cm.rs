@@ -639,7 +639,11 @@ mod tests {
         // A smart-mode DATA read issues the next byte from a bus read, which
         // cannot re-register the master: it must still be ticked then.
         let mut m = master();
-        m.write_u32(0x24, (0x77 << 1) | 1).unwrap();
+        m.write_u32(0x24, 0x77 << 1).unwrap();
+        run(&mut m);
+        m.write(0x28, 0xd0).unwrap(); // register pointer
+        run(&mut m);
+        m.write_u32(0x24, (0x77 << 1) | 1).unwrap(); // repeated start, read
         run(&mut m);
         assert!(m.needs_bus_tick(), "read open, first byte waiting");
         assert_eq!(m.read(0x28).unwrap(), 0x58);
