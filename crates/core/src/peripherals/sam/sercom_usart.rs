@@ -364,6 +364,47 @@ impl SamSercomUsart {
         }
     }
 
+    /// The next cycle a paced byte finishes (the shift register's stop bit, a
+    /// byte arriving from the host) or, with a byte waiting in the holding
+    /// register of an idle transmitter, now.
+    fn pace_deadline(&self) -> Option<f64> {
+        let pace = self.pace.as_ref()?;
+        let waiting = pace.hold.is_some() && pace.shift.is_none();
+        let receiving = self.ctrlb & CTRLB_RXEN != 0;
+        let ends = [
+            pace.shift.map(|s| s.1),
+            pace.rx_end.filter(|_| receiving),
+            waiting.then_some(self.now() as f64),
+        ];
+        ends.into_iter().flatten().reduce(f64::min)
+    }
+
+    /// Latch the pad routing, resolve the bit time when the clocks or
+    /// registers changed, and move the paced transmitter and receiver to now.
+    fn advance(&mut self, bus: &dyn crate::Bus) {
+        if let Some(p) = self.pads {
+            let txpo = (self.ctrla >> 16) & 3 == u32::from(p.txpo);
+            let rxpo = (self.ctrla >> 20) & 3 == u32::from(p.rxpo);
+            self.routed = (
+                txpo && self.pad_routed(bus, p.tx.0, p.tx.1, p.mux),
+                rxpo && self.pad_routed(bus, p.rx.0, p.rx.1, p.mux),
+            );
+        }
+        if let Some(core_gclk) = self
+            .pace
+            .as_ref()
+            .filter(|p| p.dirty || p.bit.is_none())
+            .map(|p| p.core_gclk)
+        {
+            let bit = self.resolve_bit(bus, core_gclk);
+            let pace = self.pace.as_mut().unwrap();
+            pace.bit = bit;
+            pace.dirty = false;
+        }
+        let now = self.now();
+        self.settle(now);
+    }
+
     fn pad_routed(&self, bus: &dyn crate::Bus, port: u64, pin: u8, mux: u8) -> bool {
         let cfg = bus.read_u8(port + 0x40 + u64::from(pin)).unwrap_or(0);
         let pmux = bus.read_u8(port + 0x30 + u64::from(pin / 2)).unwrap_or(0);
@@ -492,7 +533,10 @@ impl SamSercomUsart {
         let level_moved = (self.intenset & self.effective_intflag() != 0) != self.irq_level;
         let receiver_armed =
             self.enabled() && self.ctrlb & CTRLB_RXEN != 0 && self.intenset & INT_RXC != 0;
-        level_moved || receiver_armed
+        // A paced byte in flight changes DRE, TXC and RXC when its frame ends,
+        // and nothing on the bus fires then.
+        let pacing = self.enabled() && self.pace_deadline().is_some();
+        level_moved || receiver_armed || pacing
     }
 
     /// Reset to power-on state, keeping the wiring (sink, RX queue, trace) that
@@ -618,27 +662,7 @@ impl Peripheral for SamSercomUsart {
         self.pads.is_some() && self.enabled()
     }
     fn tick_with_bus(&mut self, bus: &mut dyn crate::Bus) {
-        if let Some(p) = self.pads {
-            let txpo = (self.ctrla >> 16) & 3 == u32::from(p.txpo);
-            let rxpo = (self.ctrla >> 20) & 3 == u32::from(p.rxpo);
-            self.routed = (
-                txpo && self.pad_routed(bus, p.tx.0, p.tx.1, p.mux),
-                rxpo && self.pad_routed(bus, p.rx.0, p.rx.1, p.mux),
-            );
-        }
-        if let Some(core_gclk) = self
-            .pace
-            .as_ref()
-            .filter(|p| p.dirty || p.bit.is_none())
-            .map(|p| p.core_gclk)
-        {
-            let bit = self.resolve_bit(bus, core_gclk);
-            let pace = self.pace.as_mut().unwrap();
-            pace.bit = bit;
-            pace.dirty = false;
-        }
-        let now = self.now();
-        self.settle(now);
+        self.advance(bus);
     }
     fn on_system_reset(&mut self) {
         self.software_reset();
@@ -827,6 +851,7 @@ impl Peripheral for SamSercomUsart {
         _sched: &mut crate::sched::EventScheduler,
         bus: &mut dyn crate::Bus,
     ) -> crate::sched::EventResult {
+        self.advance(bus);
         let irq = self.irq_edge();
         let keep_going = self.has_active_work();
         self.scheduled = keep_going;
@@ -843,7 +868,12 @@ impl Peripheral for SamSercomUsart {
         // No `#[cfg]` pair: `Bus::peripheral_tick_interval` is available in
         // both worlds and defaults to 1, so the featureless build gets the
         // legacy one-tick cadence from the same expression.
-        let delay = u64::from(bus.peripheral_tick_interval().max(1));
+        let mut delay = u64::from(bus.peripheral_tick_interval().max(1));
+        // A paced frame wakes the SERCOM exactly when it ends. A deadline
+        // already behind (no core clock yet, so nothing moves) polls instead.
+        if let Some(end) = self.pace_deadline().filter(|&end| end > self.now() as f64) {
+            delay = delay.min((end - self.now() as f64).ceil() as u64);
+        }
 
         if self.samd51_lines.is_some() {
             return crate::sched::EventResult {
@@ -1207,6 +1237,25 @@ mod pacing_tests {
         // Fractional 16x: BAUD 54, FP 2 is 16 * 54.25 clocks.
         assert_eq!(bit_clocks(1 << 13, 54 | 2 << 13), Some(16.0 * 54.25));
         assert_eq!(bit_clocks(5 << 13, 0), None, "reserved SAMPR");
+    }
+
+    #[test]
+    fn a_byte_in_flight_keeps_the_scheduler_waking_until_its_frame_ends() {
+        // Frame of 100 cycles. Nothing on the bus fires when a frame ends, so
+        // the wake predicate itself must cover the paced byte.
+        let (mut u, clock, sink) = paced(10.0);
+        assert!(!u.has_active_work() || u.intenset & INT_RXC != 0);
+        u.write_u32(INTENCLR, 0xff).unwrap();
+        u.write_u32(DATA, u32::from(b'A')).unwrap();
+        assert!(u.has_active_work(), "held byte");
+        assert!(!u.take_scheduled_events().is_empty());
+        at(&mut u, &clock, 0);
+        assert_eq!(u.pace_deadline(), Some(100.0), "shift register stop bit");
+        assert!(u.has_active_work());
+        at(&mut u, &clock, 100);
+        assert_eq!(sink.lock().unwrap().as_slice(), b"A");
+        assert_eq!(u.pace_deadline(), None);
+        assert!(!u.has_active_work(), "idle once the frame ended");
     }
 
     #[test]

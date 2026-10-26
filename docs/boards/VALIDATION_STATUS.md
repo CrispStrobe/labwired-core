@@ -37,13 +37,13 @@ The models column is a content digest over everything that board's `models` list
 | `stm32f405` | 🔵 sim-validated (deep model, no HW diff) | — | `795fb27435485050` | no silicon capture |
 | `stm32f767` | 🔵 sim-validated (deep model, no HW diff) | — | `7ade895d971dd661` | no silicon capture |
 | `stm32f401cdu6` | 🔵 sim-validated (deep model, no HW diff) | — | `a8e318c3e7eb5a73` | no silicon capture |
-| `atsamd21g18a` | 🔵 sim-validated (deep model, no HW diff) | — | `126a5b4b19d89122` | no silicon capture |
+| `atsamd21g18a` | 🔵 sim-validated (deep model, no HW diff) | — | `263088ad3c3828b7` | no silicon capture |
 | `nrf54l15` | 🔵 sim-validated (deep model, no HW diff) | — | `9d9bcd5f23a5bed0` | no silicon capture |
 | `stm32g474re` | 🔵 sim-validated (deep model, no HW diff) | — | `881100ddeab2a186` | no silicon capture |
 | `stm32wb55` | 🔵 sim-validated (deep model, no HW diff) | — | `03e8566861e70cf2` | no silicon capture |
 | `ci-fixture-riscv` | ⚪ structural | — | `e519faf4d2cb48f0` | no silicon capture |
-| `nano-33-iot` | 🟡 smoke-manual | — | `2f26af401b48cf33` | no silicon capture |
-| `metro-m4` | 🟡 smoke-manual | — | `49c8b91515175e5f` | no silicon capture |
+| `nano-33-iot` | 🟡 smoke-manual | — | `317dbce36d9c7df0` | no silicon capture |
+| `metro-m4` | 🟡 smoke-manual | — | `706bd8e913d3faaa` | no silicon capture |
 | `arduino-uno-r4-minima` | 🟡 smoke-manual | — | `ea65ae29fe80785b` | no silicon capture |
 | `teensy-41` | 🟡 smoke-manual | — | `27b73f2cd9871d79` | no silicon capture |
 | `stm32f7-discovery` | 🟡 smoke-manual | — | `558397815f64d3f4` | no silicon capture |
