@@ -97,7 +97,10 @@ impl<C: Cpu> Machine<C> {
         use crate::machine::quantum_trace::clause;
 
         self.service_resident_edges_at_boundary();
-        let quiescent_chunk = !request.is_single()
+        // All other boards leave after this cached false bit; do not make
+        // their existing hot path pay the profile's admission predicate.
+        let quiescent_chunk = self.bus.samd_native_quiescent_chunks
+            && !request.is_single()
             && self.config.peripheral_tick_interval == 1
             && self.config.batch_mode_enabled
             && self.config.decode_cache_enabled
