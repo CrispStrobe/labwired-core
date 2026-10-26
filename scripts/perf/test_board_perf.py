@@ -842,3 +842,49 @@ def test_the_ratio_gate_catches_a_duplicated_measurement():
         for name, step, batch in _boards_with_both_modes(honest)
         if batch > 0 and step / batch < MIN_STEP_BATCH_RATIO
     ] == []
+
+
+def test_retention_keeps_the_same_callgrind_execution_and_binds_originals(tmp_path, monkeypatch):
+    import hashlib
+    cli, chip, firmware = [tmp_path / name for name in ("cli", "board.yaml", "fw.elf")]
+    for index, item in enumerate((cli, chip, firmware)):
+        item.write_bytes(bytes([index + 1]) * 13)
+    root = tmp_path / "evidence"
+    monkeypatch.setenv("LABWIRED_PERF_EVIDENCE_DIR", str(root))
+    calls = []
+    raw_callgrind = b"events: Ir\nsummary: 1000\n"
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs["env"]))
+        output = next(value.split("=", 1)[1] for value in argv if value.startswith("--callgrind-out-file="))
+        Path(output).write_bytes(raw_callgrind)
+        return subprocess.CompletedProcess(argv, 0, "original stdout", _IREFS)
+
+    monkeypatch.setattr(bp.subprocess, "run", run)
+    measured = bp.measure_once(cli, chip, firmware, 200_000, bp.MODE_STEP)
+    assert measured.irefs == 1000 and len(calls) == 1
+    roster = [json.loads(line) for line in (root / "samples.jsonl").read_text().splitlines()]
+    assert len(roster) == 1
+    packet = root / roster[0]["packet"]
+    raw = (packet / "sample.json").read_bytes()
+    assert hashlib.sha256(raw).hexdigest() == roster[0]["sha256"]
+    record = json.loads(raw)
+    assert record["argv"] == calls[0][0]
+    assert record["steps"] == 200_000 and record["mode"] == bp.MODE_STEP
+    assert record["environment"] == {"LABWIRED_ARM_SINGLE_STEP": "1"}
+    assert (packet / "callgrind.out").read_bytes() == raw_callgrind
+    for name, identity in record["files"].items():
+        raw = (packet / name).read_bytes()
+        assert len(raw) == identity["bytes"]
+        assert hashlib.sha256(raw).hexdigest() == identity["sha256"]
+    for label, original in [("cli", cli), ("chip", chip), ("firmware", firmware)]:
+        identity = record["assets"][label]
+        assert (root / "assets" / identity["sha256"]).read_bytes() == original.read_bytes()
+
+
+def test_failed_callgrind_cannot_publish_a_measurement(monkeypatch):
+    def failed(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 7, "", _IREFS + _BATCHED_PROOF)
+    monkeypatch.setattr(bp.subprocess, "run", failed)
+    with pytest.raises(RuntimeError, match="exited 7"):
+        bp.measure_once(Path("cli"), Path("board.yaml"), Path("fw.elf"), 200_000, bp.MODE_BATCH)

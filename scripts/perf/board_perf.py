@@ -152,6 +152,7 @@ USAGE
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -792,6 +793,42 @@ def same_loop_baselines(baselines: dict, ratio: float = SAME_LOOP_RATIO) -> list
     return found
 
 
+def retain_measurement(root: Path, command: list[str], env: dict[str, str],
+                       proc: subprocess.CompletedProcess, callgrind: Path,
+                       cli: Path, chip: Path, firmware: Path, steps: int, mode: str) -> None:
+    """Keep the original invocation for an independent reader; never execute it again."""
+    root.mkdir(parents=True, exist_ok=True)
+    assets = root / "assets"
+    assets.mkdir(exist_ok=True)
+    identities = {}
+    for label, source in [("cli", cli), ("chip", chip), ("firmware", firmware)]:
+        raw = source.read_bytes()
+        digest = hashlib.sha256(raw).hexdigest()
+        destination = assets / digest
+        if destination.exists():
+            if destination.read_bytes() != raw:
+                raise RuntimeError("measurement asset collision")
+        else:
+            with destination.open("xb") as output:
+                output.write(raw)
+        identities[label] = {"sha256": digest, "bytes": len(raw)}
+    packet = Path(tempfile.mkdtemp(prefix="sample-", dir=root))
+    files = {"stdout.txt": proc.stdout.encode(), "stderr.txt": proc.stderr.encode()}
+    if callgrind.exists():
+        files["callgrind.out"] = callgrind.read_bytes()
+    record = {"board": chip.stem, "mode": mode, "steps": steps,
+              "argv": command, "returncode": proc.returncode,
+              "environment": {"LABWIRED_ARM_SINGLE_STEP": env.get("LABWIRED_ARM_SINGLE_STEP")},
+              "assets": identities, "files": {}}
+    for name, raw in files.items():
+        (packet / name).write_bytes(raw)
+        record["files"][name] = {"sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}
+    raw = (json.dumps(record, indent=2, sort_keys=True) + "\n").encode()
+    (packet / "sample.json").write_bytes(raw)
+    with (root / "samples.jsonl").open("a") as roster:
+        roster.write(json.dumps({"packet": packet.name, "sha256": hashlib.sha256(raw).hexdigest()}) + "\n")
+
+
 def measure_once(cli: Path, chip: Path, firmware: Path, steps: int, mode: str) -> Run:
     """Retired host instructions for a full run of `steps` simulated steps."""
     # `--batched` does not select the ARM loop. `run_firmware_arm` takes
@@ -805,27 +842,34 @@ def measure_once(cli: Path, chip: Path, firmware: Path, steps: int, mode: str) -
     if mode == MODE_STEP:
         env["LABWIRED_ARM_SINGLE_STEP"] = "1"
     with tempfile.TemporaryDirectory() as tmp:
+        command = [
+            "valgrind",
+            "--tool=callgrind",
+            f"--callgrind-out-file={tmp}/cg.out",
+            "--cache-sim=no",
+            "--branch-sim=no",
+            str(cli),
+            "run",
+            "--chip",
+            str(chip),
+            "--firmware",
+            str(firmware),
+            "--max-steps",
+            str(steps),
+            *extra,
+        ]
         proc = subprocess.run(
-            [
-                "valgrind",
-                "--tool=callgrind",
-                f"--callgrind-out-file={tmp}/cg.out",
-                "--cache-sim=no",
-                "--branch-sim=no",
-                str(cli),
-                "run",
-                "--chip",
-                str(chip),
-                "--firmware",
-                str(firmware),
-                "--max-steps",
-                str(steps),
-                *extra,
-            ],
+            command,
             capture_output=True,
             text=True,
             env=env,
         )
+        evidence = env.get("LABWIRED_PERF_EVIDENCE_DIR")
+        if evidence:
+            retain_measurement(Path(evidence), command, env, proc,
+                               Path(tmp) / "cg.out", cli, chip, firmware, steps, mode)
+    if proc.returncode != 0:
+        raise RuntimeError(f"measurement exited {proc.returncode}: {proc.stderr[-2000:]}")
     match = IREFS_RE.search(proc.stderr)
     if not match:
         raise RuntimeError(

@@ -553,7 +553,7 @@ jobs:
           git rev-parse HEAD > samd-profile-evidence/source.txt
           rustc --version --verbose > samd-profile-evidence/rustc.txt
           cargo --version > samd-profile-evidence/cargo.txt
-          git ls-files -z crates/core/src crates/core/tests/samd_native_quiescent.rs crates/core/tests/samd_native_simulation_bundle.rs configs/chips/samd51-no-asf-simulation.yaml scripts/perf .github/workflows/core-perf.yml | xargs -0 sha256sum > samd-profile-evidence/source-sha256.txt
+          git ls-files -z Cargo.toml Cargo.lock crates/core/Cargo.toml crates/cli/Cargo.toml crates/cli/src crates/firmware-perf-spin crates/config crates/core/src crates/core/tests/samd_native_quiescent.rs crates/core/tests/samd_native_simulation_bundle.rs configs/chips/samd51-no-asf-simulation.yaml scripts/perf .github/workflows/core-perf.yml | xargs -0 sha256sum > samd-profile-evidence/source-sha256.txt
       - name: Check inactive chunks and all strict architectural boundaries
         run: |
           set -o pipefail
@@ -567,7 +567,10 @@ jobs:
           set -o pipefail
           python3 scripts/perf/board_rtx.py --boards samd51-no-asf-simulation --min-rtx 1.0 --status-json samd-profile-evidence/rtx-status.json 2>&1 | tee samd-profile-evidence/rtx-report.txt
       - name: Measure both actual deterministic modes without changing a baseline
+        env:
+          LABWIRED_PERF_EVIDENCE_DIR: samd-profile-evidence/raw-measurements
         run: |
+          valgrind --version > samd-profile-evidence/valgrind.txt
           set -o pipefail
           python3 scripts/perf/board_perf.py --boards samd51-no-asf-simulation --status-json samd-profile-evidence/perf-status.json 2>&1 | tee samd-profile-evidence/perf-report.txt
       - uses: actions/upload-artifact@v5

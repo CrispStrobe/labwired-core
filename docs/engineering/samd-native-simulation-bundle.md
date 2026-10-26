@@ -79,6 +79,12 @@ and the existing default spin behavior. The real generic UART stream control
 opens both the MCLK mask and SERCOM3's GCLK channel before checking TX/RX bytes.
 Hosted source tests, the unchanged 1× gate and measured initial
 Ir baselines must still pass before this candidate can qualify.
+The selected measurement workflow retains each original low/high Callgrind
+output, stdout/stderr, exact argument vector, step-mode selection and hashed
+CLI/fixture/chip bytes. The packet roster lets an independent reader reconstruct
+the step slope and three-sample batch median without rerunning a guest or
+importing the measurement implementation. A failed measurement process cannot
+publish a throughput number. Existing threshold and baseline gates are unchanged.
 
 ## Source-built CLI coverage
 
