@@ -131,6 +131,8 @@ def main():
                       (work / "device/generator.json", "device-generator.json"), (work / "request.json", "request.json")]:
         shutil.copyfile(src, out / dest)
     shutil.copytree(work / "device", out / "generated-device")
+    shutil.copytree(work / "program", out / "compiled-program")
+    shutil.copyfile(work / "image.json", out / "boot-image.json")
     report = json.loads((work / "base/build-report.json").read_text())
     roots = {"request": [work / "base/request"], "cmsis": [work / "base/cmsis"],
              "device": [work / "device"], "core": [paths["core"]], "board": [paths["board"]],
@@ -169,9 +171,14 @@ def main():
         path = Path(capture(["arm-none-eabi-gcc", "-mcpu=cortex-m4", "-mthumb", "-mfloat-abi=softfp", "-mfpu=fpv4-sp-d16", "-print-file-name=" + archive]))
         need(path.is_file(), "actual selected runtime archive")
         raw = subprocess.check_output(["arm-none-eabi-ar", "p", str(path), member])
-        entry = libraries.setdefault(archive, dict(sha256=sha(path.read_bytes()), bytes=path.stat().st_size, members={}))
+        need(raw, "nonempty selected runtime member")
+        target = out / "selected-library-members" / archive / member
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(raw)
+        entry = libraries.setdefault(archive, dict(path=str(path.resolve()), sha256=sha(path.read_bytes()), bytes=path.stat().st_size, members={}))
         entry["members"][member] = dict(sha256=sha(raw), bytes=len(raw))
     (out / "selected-libraries.json").write_text(json.dumps(libraries, indent=2, sort_keys=True) + "\n")
+    (out / "toolchain-packages.txt").write_text(capture(["dpkg-query", "-W", "gcc-arm-none-eabi", "gcc-13-base", "libnewlib-arm-none-eabi", "libnewlib-dev", "binutils-arm-none-eabi"]) + "\n")
     versions = {tool: capture([tool, "--version"]).splitlines()[0] for tool in ["arm-none-eabi-gcc", "arm-none-eabi-ld", "node", "python3"]}
     files = {p.relative_to(out).as_posix(): {"sha256": sha(p.read_bytes()), "bytes": p.stat().st_size} for p in sorted(out.rglob("*")) if p.is_file()}
     manifest = dict(schema=2, kind="source-built-samd-game", physical_capture=False,

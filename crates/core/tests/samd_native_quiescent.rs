@@ -56,7 +56,7 @@ fn spin(attached: bool) -> M {
         attached,
     )
 }
-fn run(m: &mut M, fuel: u64, strict: bool) {
+fn run<C: Cpu>(m: &mut Machine<C>, fuel: u64, strict: bool) {
     let mut request = AdvanceRequest::run(Some(fuel));
     if strict {
         request = request.with_batch_cap(NonZeroU32::new(1).unwrap());
@@ -73,11 +73,11 @@ fn run(m: &mut M, fuel: u64, strict: bool) {
         "bus grid is never widened"
     );
 }
-fn equal_state(actual: &M, strict: &M) {
+fn equal_state<C: Cpu, D: Cpu>(actual: &Machine<C>, strict: &Machine<D>) {
     assert_eq!(
         serde_json::to_value(actual.cpu.snapshot()).unwrap(),
         serde_json::to_value(strict.cpu.snapshot()).unwrap(),
-        "all CPU registers/flags/IRQ state"
+        "published CPU register/flag/IRQ snapshot"
     );
     assert_eq!(actual.bus.ram.data, strict.bus.ram.data, "all SRAM bytes");
     assert_eq!(
@@ -93,17 +93,120 @@ fn equal_state(actual: &M, strict: &M) {
         actual.bus.current_cycle, strict.bus.current_cycle,
         "published bus cycle"
     );
-    let snapshots = |m: &M| {
-        m.bus
-            .peripherals
+    let snapshots = |bus: &SystemBus| {
+        bus.peripherals
             .iter()
             .map(|p| (p.name.clone(), p.dev.snapshot()))
             .collect::<Vec<_>>()
     };
     assert_eq!(
-        snapshots(actual),
-        snapshots(strict),
+        snapshots(&actual.bus),
+        snapshots(&strict.bus),
         "every actual model snapshot"
+    );
+}
+#[test]
+fn host_armed_systick_is_enqueued_before_a_warm_chunk() {
+    let mut actual = spin(false);
+    let mut strict = spin(false);
+    run(&mut actual, 257, false);
+    run(&mut strict, 257, true);
+    assert!(
+        actual.step_profile().cpu_batches * 4 < actual.step_profile().cpu_instructions,
+        "the loop must be warm and genuinely coalescing before host arming"
+    );
+    for m in [&mut actual, &mut strict] {
+        m.bus.write_u32(0xe000e014, 3).unwrap();
+        m.bus.write_u32(0xe000e018, 0).unwrap();
+        m.bus.write_u32(0xe000e010, 7).unwrap();
+        assert!(!m.bus.pending_schedule.is_empty(), "actual pre-heap event");
+    }
+    // A short first request would itself flush the pending event and make an
+    // omitted guard invisible. Start with a real wide eligible window.
+    for fuel in [1031, 1, 2, 17] {
+        run(&mut actual, fuel, false);
+        run(&mut strict, fuel, true);
+        equal_state(&actual, &strict);
+    }
+    assert_eq!(
+        actual.cpu.active_exception, 15,
+        "actual SysTick handler taken"
+    );
+    assert_eq!(strict.cpu.active_exception, 15);
+}
+#[test]
+fn enabled_pending_nvic_interrupt_is_taken_before_a_warm_chunk() {
+    let mut actual = spin(false);
+    let mut strict = spin(false);
+    run(&mut actual, 257, false);
+    run(&mut strict, 257, true);
+    for m in [&mut actual, &mut strict] {
+        m.bus.write_u32(0xe000e100, 1).unwrap();
+        m.bus.write_u32(0xe000e200, 1).unwrap();
+    }
+    run(&mut actual, 1031, false);
+    run(&mut strict, 1031, true);
+    equal_state(&actual, &strict);
+    assert_eq!(actual.cpu.active_exception, 16, "enabled IRQ0 really taken");
+    assert_eq!(strict.cpu.active_exception, 16);
+}
+#[test]
+fn wfi_sleeps_and_enabled_irq_really_wakes_the_cpu() {
+    let mut actual = machine(&[0xbf30, 0x205a, 0xe7fe], &[], false);
+    let mut strict = machine(&[0xbf30, 0x205a, 0xe7fe], &[], false);
+    for fuel in [1, 37] {
+        run(&mut actual, fuel, false);
+        run(&mut strict, fuel, true);
+        equal_state(&actual, &strict);
+    }
+    assert_eq!(actual.cpu.r0, 0, "MOVS after WFI has not executed");
+    assert_eq!(actual.cpu.pc, 0x102);
+    for m in [&mut actual, &mut strict] {
+        m.bus.write_u32(0xe000e100, 1).unwrap();
+        m.bus.write_u32(0xe000e200, 1).unwrap();
+    }
+    run(&mut actual, 17, false);
+    run(&mut strict, 17, true);
+    equal_state(&actual, &strict);
+    assert_eq!(
+        actual.cpu.active_exception, 16,
+        "actual enabled IRQ wakes WFI"
+    );
+    assert_eq!(strict.cpu.active_exception, 16);
+}
+#[test]
+fn aircr_reset_is_consumed_before_a_warm_chunk() {
+    let mut actual = spin(false);
+    let mut strict = spin(false);
+    run(&mut actual, 257, false);
+    run(&mut strict, 257, true);
+    for m in [&mut actual, &mut strict] {
+        m.bus.write_u32(0xe000e100, 2).unwrap();
+        m.bus.write_u32(0xe000ed0c, 0x05fa0004).unwrap();
+    }
+    run(&mut actual, 1031, false);
+    run(&mut strict, 1031, true);
+    equal_state(&actual, &strict);
+    assert_eq!(
+        actual.bus.read_u32(0xe000e100).unwrap(),
+        0,
+        "reset cleared ISER"
+    );
+    assert_eq!(strict.bus.read_u32(0xe000e100).unwrap(), 0);
+}
+#[test]
+fn boxed_cpu_forwards_the_real_capability_and_keeps_strict_state() {
+    let m = spin(false);
+    let mut actual = Machine::new(Box::new(m.cpu) as Box<dyn Cpu>, m.bus);
+    let mut strict = spin(false);
+    for fuel in [37, 1031, 2049] {
+        run(&mut actual, fuel, false);
+        run(&mut strict, fuel, true);
+        equal_state(&actual, &strict);
+    }
+    assert!(
+        actual.step_profile().cpu_batches * 4 < actual.step_profile().cpu_instructions,
+        "boxed production CPU must actually forward checked chunks"
     );
 }
 #[test]
