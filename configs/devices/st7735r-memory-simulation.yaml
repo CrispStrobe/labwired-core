@@ -55,3 +55,36 @@ behavior:
       - { opcode: 0x2D, name: RGBSET, args: 128, do: [{ load_rgb_lut: true }] }
       - { opcode: 0x36, name: MADCTL, args: 1, do: [{ set_var: { name: madctl, value: { args: [0] } } }] }
       - { opcode: 0x3A, name: COLMOD, args: 1, do: [{ set_var: { name: colmod, value: { args: [0] } } }] }
+
+metadata:
+  label: ST7735R controller memory (simulation)
+  summary: Explicit RGBSET-dependent controller-memory simulation.
+  detail: Authored software view of 132x162 GM00 controller memory with RGB444/RGB565/RGB666
+    stream decoding. Colours remain unknown until a complete guest RGBSET upload. Reset/backlight
+    GPIO and SPI command/data framing are modelled. No physical module, glass aperture,
+    gamma, analogue colour or hardware timing claim.
+  config_keys:
+  - name: cs_pin
+    ty: str
+    doc: SPI chip-select GPIO.
+  - name: dc_pin
+    ty: str
+    doc: Actual command/data GPIO; no inferred framing.
+  - name: reset_pin
+    ty: str
+    doc: Active-low reset GPIO.
+  - name: backlight_pin
+    ty: str
+    doc: Active-high backlight GPIO.
+  - name: col_offset
+    ty: int
+    doc: Authored controller-memory view column origin; not measured glass.
+  - name: row_offset
+    ty: int
+    doc: Authored controller-memory view row origin; not measured glass.
+  - name: cols
+    ty: int
+    doc: Authored controller-memory view width.
+  - name: rows
+    ty: int
+    doc: Authored controller-memory view height.
