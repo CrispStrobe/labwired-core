@@ -74,3 +74,23 @@ accounting, every model snapshot and exact clocks against one-instruction
 execution, including odd budgets and transitions to gated, active, system and
 storage accesses. Hosted source tests, the unchanged 1× gate and measured initial
 Ir baselines must still pass before this candidate can qualify.
+
+## Source-built CLI coverage
+
+The scoped `samd-native-game-cli.yml` workflow builds the actual public game
+from qualified Codal source using `scripts/ci/build_samd_native_game.py`. The
+recipe runs only in owned hosted workflows, admits full source commits and
+archive/payload hashes, retains selected source, dependency and archive-member
+identities and component notices, and gives its newly compiled image a fresh
+manifest. The earlier qualified game campaign is a reference, not a relabeling
+of the new compiler output. No guest binary is committed here.
+
+The real CLI executes `validation/samd-native-profile/native-game.yaml` in
+both scheduler profiles with explicit authored calibration files. The two
+assertions require the actual120×160 game area to be completely painted and
+the8-pixel spare strip to stay black. These bounds match all51 retained
+native snapshots from the qualified reference; they reject both an untouched
+black display and a full-panel fill. They establish paint/layout coverage,
+while the stronger source-bound game campaign retains exact colours, movement
+and press/release requirements. The new CLI workflow remains unqualified until
+its official source-built runs and independent original audits pass.

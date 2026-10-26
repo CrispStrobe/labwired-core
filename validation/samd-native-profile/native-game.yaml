@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: MIT
+# Fresh source build by scripts/ci/build_samd_native_game.py; no vendor image.
+# These layout assertions complement the stronger motion/colour/input campaign.
+schema_version: "1.0"
+inputs:
+  firmware: ../../out/samd-native-game/game.elf
+  system: ../../configs/systems/samd51-no-asf-simulation.yaml
+limits:
+  max_steps: 70000000
+  wall_time_ms: 600000
+assertions:
+  - expected_stop_reason: max_steps
+  - display_region:
+      id: controller_memory
+      x: 0
+      y: 0
+      w: 120
+      h: 160
+      min_ink: 1.0
+      max_ink: 1.0
+  - display_region:
+      id: controller_memory
+      x: 120
+      y: 0
+      w: 8
+      h: 160
+      min_ink: 0.0
+      max_ink: 0.0

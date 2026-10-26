@@ -1,0 +1,56 @@
+name: Source-built SAMD native game CLI
+on:
+  pull_request:
+    paths:
+      - 'crates/core/src/**'
+      - 'crates/cli/src/**'
+      - 'crates/config/src/**'
+      - 'configs/chips/samd51-no-asf-simulation.yaml'
+      - 'configs/systems/samd51-no-asf-simulation.yaml'
+      - 'configs/devices/st7735r-memory-simulation.yaml'
+      - 'scripts/ci/build_samd_native_game.py'
+      - 'validation/samd-native-profile/**'
+      - '.github/workflows/samd-native-game-cli.yml'
+permissions:
+  contents: read
+jobs:
+  native-game-cli:
+    if: ${{ github.repository == 'CrispStrobe/labwired-core' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: samd-native-game-cli
+          cache-on-failure: true
+      - name: Install hosted public-source compiler
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi libnewlib-arm-none-eabi
+      - name: Build the exact public source and authored inputs
+        run: |
+          python3 -B scripts/ci/build_samd_native_game.py --work out/samd-native-game-source --out out/samd-native-game
+      - name: Execute the actual CLI in both scheduler profiles
+        env:
+          LABWIRED_SAMD51_SIM_SW0: out/samd-native-game/sw0.bin
+          LABWIRED_SAMD51_SIM_SERIAL: out/samd-native-game/serial.bin
+        run: |
+          set -euo pipefail
+          test "$(wc -c < out/samd-native-game/sw0.bin)" = 1024
+          test "$(wc -c < out/samd-native-game/serial.bin)" = 1024
+          cargo build --release --locked -p labwired-cli
+          target/release/labwired test --script validation/samd-native-profile/native-game.yaml --output-dir out/samd-native-game/cli-default 2>&1 | tee out/samd-native-game/cli-default.log
+          cargo build --release --locked -p labwired-cli --features event-scheduler
+          target/release/labwired test --script validation/samd-native-profile/native-game.yaml --output-dir out/samd-native-game/cli-scheduler 2>&1 | tee out/samd-native-game/cli-scheduler.log
+      - name: Retain source, compiler and actual CLI observations
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: source-built-samd-native-game-cli
+          path: out/samd-native-game/
+          if-no-files-found: error
+          retention-days: 14
