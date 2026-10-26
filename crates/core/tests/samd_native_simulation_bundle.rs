@@ -50,6 +50,19 @@ fn narrow_base_controls_do_not_admit_reserved_word_reads() {
     ))
     .unwrap();
     let bus = SystemBus::from_config(&chip, &manifest).unwrap();
+    assert_eq!(
+        bus.read_u32(0x41006004).unwrap(),
+        0,
+        "admitted CMCC CFG reset"
+    );
+    assert!(
+        bus.read_u8(0x41006000).is_err(),
+        "unmodeled TYPE remains refused"
+    );
+    assert!(
+        bus.read_u32(0x41006000).is_err(),
+        "no invented CMCC TYPE word"
+    );
     assert!(bus.read_u16(0x41004000).is_ok(), "actual NVM CTRLA width");
     assert!(
         bus.read_u32(0x41004000).is_err(),
