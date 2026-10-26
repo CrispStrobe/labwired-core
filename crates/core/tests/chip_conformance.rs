@@ -1255,7 +1255,7 @@ fn measure(c: &ChipConf) -> Record {
     // Existing fleet types retain their original word probe.
     let estate_ok = chip.peripherals.iter().all(|p| match p.r#type.as_str() {
         "samd51_nvmctrl_manual_storage" => bus.read_u16(p.base_address).is_ok(),
-        "samd51_dac" => bus.read_u8(p.base_address).is_ok(),
+        "samd51_dac" | "samd51_usb_device_banks" => bus.read_u8(p.base_address).is_ok(),
         _ => bus.read_u32(p.base_address).is_ok(),
     });
 

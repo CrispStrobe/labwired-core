@@ -55,6 +55,11 @@ fn narrow_base_controls_do_not_admit_reserved_word_reads() {
         bus.read_u32(0x41004000).is_err(),
         "reserved bytes stay refused"
     );
+    assert!(bus.read_u8(0x41000000).is_ok(), "actual USB CTRLA width");
+    assert!(
+        bus.read_u32(0x41000000).is_err(),
+        "reserved USB bytes stay refused"
+    );
     assert!(bus.read_u8(0x43002400).is_ok(), "actual DAC CTRLA width");
     assert!(
         bus.read_u32(0x43002400).is_err(),
