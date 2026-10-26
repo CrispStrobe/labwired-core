@@ -146,7 +146,9 @@ jobs:
         with:
           shared-key: native-arm-system
       - name: Install native and compiled-DTB build tools
-        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build clang device-tree-compiler busybox gcc-arm-none-eabi=15:13.2.rel1-2
+        # The reviewed helper is freestanding C (-nostdlib); keep its compiler
+        # pin while avoiding optional ARM C++ runtime downloads during setup.
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake ninja-build clang device-tree-compiler busybox gcc-arm-none-eabi=15:13.2.rel1-2
       - name: Check strict joint preparation, historical modules and CI input contracts
         run: |
           python3 -m unittest discover -s scripts/tests -p test_prepare_rv1103_basket.py
