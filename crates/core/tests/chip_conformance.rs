@@ -411,6 +411,14 @@ const CHIPS: &[ChipConf] = &[
         behavior_gate: Some("firmware_survival::test_atsamd51_metro_m4_smoke_survival"),
     },
     ChipConf {
+        name: "samd51-no-asf-simulation",
+        yaml: "configs/chips/samd51-no-asf-simulation.yaml",
+        reset_oracle: None,
+        // Explicit source-built assembly only. Actual native/WASM campaign is
+        // separate; no in-tree running-firmware or silicon gate is claimed.
+        behavior_gate: None,
+    },
+    ChipConf {
         name: "atsamd51-pybadge",
         yaml: "configs/chips/atsamd51-pybadge.yaml",
         reset_oracle: None,
