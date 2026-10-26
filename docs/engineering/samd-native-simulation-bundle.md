@@ -10,7 +10,8 @@ forwarder at address zero, without executing a UF2 bootloader.
 The corresponding system selects the existing GPIO-clocked button model and a
 registered ST7735R **controller-memory simulation** descriptor. That descriptor
 keeps the foundation's 132×162 GM00 memory geometry, colour codec, reset and
-unknown-pixel policy. It does not identify a physical module or glass crop.
+unknown-pixel policy. Its explicitly authored 128×160 memory view starts at physical row 2 under
+MADCTL=0x80. This software view does not identify a physical module or glass crop.
 RGB444 remains unknown until the guest uploads a complete RGBSET table. The
 owned runtime's explicitly selected RGB444 profile provides that upload; this
 engine never seeds a presumed identity table.

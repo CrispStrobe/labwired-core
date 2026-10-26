@@ -8,6 +8,8 @@ type: st7735r-memory-simulation
 behavior:
   primitive: display
   display:
+    # Explicit authored memory view, not measured module glass.
+    glass_crop: true
     width: 132
     height: 162
     pixel_format: rgb888

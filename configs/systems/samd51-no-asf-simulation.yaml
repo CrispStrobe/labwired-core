@@ -11,6 +11,12 @@ external_devices:
       dc_pin: PB5
       reset_pin: PA0
       backlight_pin: PA1
+      # Addressed 128x160 window under MADCTL=0x80 in GM00 RAM.
+      # A software view only; never a physical module aperture claim.
+      col_offset: 0
+      row_offset: 2
+      cols: 128
+      rows: 160
   - id: buttons
     type: pybadge_buttons
     connection: gpio
