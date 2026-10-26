@@ -188,6 +188,63 @@ fn wfi_sleeps_and_enabled_irq_really_wakes_the_cpu() {
     assert_eq!(strict.cpu.active_exception, 16);
 }
 #[test]
+fn shared_nvic_sleep_wakes_preserve_wfi_wfe_mask_contracts() {
+    for (opcode, primask, basepri, faultmask, wakes) in [
+        (0xbf30, false, 0, false, true),
+        (0xbf20, false, 0, false, true),
+        (0xbf30, true, 0, false, true),
+        (0xbf20, true, 0, false, false),
+        (0xbf30, false, 0x40, false, false),
+        (0xbf20, false, 0x40, false, false),
+        (0xbf30, false, 0, true, false),
+        (0xbf20, false, 0, true, false),
+    ] {
+        let mut actual = machine(&[opcode, 0x205a, 0xe7fe], &[], false);
+        let mut strict = machine(&[opcode, 0x205a, 0xe7fe], &[], false);
+        for m in [&mut actual, &mut strict] {
+            m.config.idle_fast_forward_enabled = true;
+            m.cpu.primask = primask;
+            m.cpu.basepri = basepri;
+            m.cpu.faultmask = faultmask;
+        }
+        run(&mut actual, 1, false);
+        run(&mut strict, 1, true);
+        equal_state(&actual, &strict);
+        for m in [&mut actual, &mut strict] {
+            // IRQ0 priority0x80 is blocked by BASEPRI0x40, not by BASEPRI0.
+            m.bus.write_u32(0xe000e400, 0x80).unwrap();
+            m.bus.write_u32(0xe000e100, 1).unwrap();
+            m.bus.write_u32(0xe000e200, 1).unwrap();
+        }
+        if wakes {
+            run(&mut actual, 17, false);
+            run(&mut strict, 17, true);
+            assert_eq!(actual.cpu.active_exception, if primask { 0 } else { 16 });
+        } else {
+            for (m, strict_mode) in [(&mut actual, false), (&mut strict, true)] {
+                let mut request = AdvanceRequest::run(Some(37));
+                if strict_mode {
+                    request = request.with_batch_cap(NonZeroU32::new(1).unwrap());
+                }
+                let report = m.advance(request).unwrap();
+                assert_eq!(report.fuel_consumed, 37);
+                assert_eq!(report.primary_steps, 0, "masked wake stays asleep");
+                assert_eq!(report.idle_cycles, 37);
+                assert_eq!(m.cpu.pc, 0x102);
+                assert_eq!(m.cpu.r0, 0);
+                // Clearing the mask must make the same real pending IRQ live.
+                m.cpu.primask = false;
+                m.cpu.basepri = 0;
+                m.cpu.faultmask = false;
+            }
+            run(&mut actual, 17, false);
+            run(&mut strict, 17, true);
+            assert_eq!(actual.cpu.active_exception, 16);
+        }
+        equal_state(&actual, &strict);
+    }
+}
+#[test]
 fn default_idle_mode_preserves_wfi_as_spin() {
     let mut actual = machine(&[0xbf30, 0x205a, 0xe7fe], &[], false);
     let mut strict = machine(&[0xbf30, 0x205a, 0xe7fe], &[], false);
