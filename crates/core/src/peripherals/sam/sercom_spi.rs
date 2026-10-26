@@ -7,8 +7,11 @@
 //! DMA or complete native Arcade qualification is claimed here. SPI master
 //! DRE/TXC/RXC/ERROR use four consecutive, exclusively owned NVIC lines when
 //! configured. DS60001507F section 10.2.2 assigns SERCOM4 IRQs 62..65.
-//! The delay is
-//! in nominal SERCOM core-clock cycles; CPU/kernel clock scaling remains owed.
+//! A byte takes 16 * (BAUD + 1) SERCOM core-clock cycles (f_SCK = f_GCLK /
+//! (2 * (BAUD + 1)), DS60001507F 35.6.2.3). With a declared core clock channel
+//! that resolves on the live clock tree, the delay is in CPU cycles at the
+//! clock ratio, the fraction carried across back-to-back bytes; otherwise it
+//! is in nominal core-clock cycles. Pad and edge timing are not modelled.
 
 use crate::peripherals::spi::SpiDevice;
 use crate::{Bus, Peripheral, PeripheralTickResult, SimResult};
@@ -36,6 +39,8 @@ pub struct SamSpiPads {
     pub miso: Option<(u64, u8, u8)>,
     /// DMAC trigger sources (TX, RX) of this SERCOM, from the chip description.
     pub dma: Option<(u32, u32)>,
+    /// GCLK peripheral channel of the SERCOM core clock (PCHCTRL index).
+    pub core_gclk: Option<u64>,
 }
 
 pub struct SamSercomSpi {
@@ -48,7 +53,12 @@ pub struct SamSercomSpi {
     rx: RefCell<VecDeque<u8>>,
     last_rx: Cell<u8>,
     holding: Option<u8>,
-    active: Option<(u8, u64)>,
+    /// The byte on the wire: (value, time left, time per CPU cycle). Time is
+    /// in CPU cycles scaled by the core clock (see [`Self::byte_time`]).
+    active: Option<(u8, u64, u64)>,
+    /// Time the last byte overran its deadline, carried into a byte that
+    /// follows it without a gap.
+    overrun: u64,
     pads: SamSpiPads,
     devices: Vec<Box<dyn SpiDevice>>,
     selected: Vec<bool>,
@@ -80,6 +90,7 @@ impl SamSercomSpi {
             last_rx: Cell::new(0),
             holding: None,
             active: None,
+            overrun: 0,
             pads,
             devices: Vec::new(),
             selected: Vec::new(),
@@ -137,8 +148,14 @@ impl SamSercomSpi {
 
     fn advance_frame(&mut self, cycles: u64) {
         if self.enabled() {
-            if let Some((_, left)) = &mut self.active {
-                *left = left.saturating_sub(cycles);
+            if let Some((_, left, per)) = &mut self.active {
+                let elapsed = cycles * *per;
+                if *left == 0 {
+                    self.overrun += elapsed; // finished, not yet retired
+                } else {
+                    self.overrun = elapsed.saturating_sub(*left);
+                    *left = left.saturating_sub(elapsed);
+                }
             }
         }
     }
@@ -267,6 +284,23 @@ impl SamSercomSpi {
     /// A declared MISO pad carries the devices' bits only while it is muxed to
     /// this SERCOM and CTRLA.DIPO selects it; otherwise nothing drives the
     /// input and it reads as the idle line, like an absent device.
+    /// One byte's duration and its decrement per CPU cycle: 16 * (BAUD + 1)
+    /// core-clock cycles, scaled to CPU cycles by f_CPU / f_GCLK when both
+    /// resolve, so `left / per` is the duration in CPU cycles.
+    fn byte_time(&self, bus: &dyn Bus) -> (u64, u64) {
+        let core = 16 * (u64::from(self.baud) + 1);
+        let rates = self.pads.core_gclk.and_then(|channel| {
+            Some((
+                super::clock_tree::peripheral_hz(bus, channel)?,
+                super::clock_tree::cpu_hz(bus)?,
+            ))
+        });
+        match rates {
+            Some((gclk, cpu)) if gclk > 0 && cpu > 0 => (core * cpu, gclk),
+            _ => (core, 1),
+        }
+    }
+
     fn miso_routed(&self, bus: &dyn Bus) -> bool {
         self.pads.miso.is_none_or(|(port, pin, dipo)| {
             let cfg = bus.read_u8(port + 0x40 + u64::from(pin)).ok();
@@ -457,7 +491,7 @@ impl Peripheral for SamSercomSpi {
             return;
         }
         let mut completed = false;
-        if let Some((tx, 0)) = self.active {
+        if let Some((tx, 0, _)) = self.active {
             let tx = if self.ctrla & (1 << 30) != 0 {
                 tx.reverse_bits()
             } else {
@@ -489,10 +523,14 @@ impl Peripheral for SamSercomSpi {
         }
         if self.active.is_none() {
             if let Some(tx) = self.holding.take() {
-                self.active = Some((tx, 16 * (u64::from(self.baud) + 1)));
+                let (left, per) = self.byte_time(bus);
+                // Back to back, the next byte starts where the last one ended.
+                let carried = if completed { self.overrun.min(left - 1) } else { 0 };
+                self.active = Some((tx, left - carried, per));
             } else if completed {
                 self.flags |= TXC;
             }
+            self.overrun = 0;
         }
     }
     fn drives_central_device_time(&self) -> bool {
