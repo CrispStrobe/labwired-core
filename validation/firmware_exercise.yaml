@@ -459,6 +459,15 @@ chips:
       - {p: "USB", ev: "configs/chips/atsamd51.yaml:69 (type: stub; crates/core/src/peripherals/stub.rs:12)", note: "CLOSABLE: author-declared zero window — reads return 0 and writes are dropped, so the SAMD51 native-USB device is not modelled; the PR-gated smoke drives SERCOM3 (Serial1) only and no gated firmware opens the window (docs/boards/metro-m4.md:27-28 lists QSPI/USB/NeoPixel as deliberate stub windows)."}
       - {p: "QSPI", ev: "configs/chips/atsamd51.yaml:73 (type: stub; crates/core/src/peripherals/stub.rs:12)", note: "CLOSABLE: author-declared zero window — the SAMD51 QSPI controller (the board's onboard QSPI flash) is not modelled; firmware executes from internal flash and nothing opens the window (docs/boards/metro-m4.md:27-28)."}
 
+  - id: samd51-no-asf-simulation
+    arch: cortex-m4
+    headline: "Explicit authored no-ASF simulation assembly, not a tier-1 or silicon target. The selected existing USB/DMA/NVMCTRL/TC/TCC/SPI/UART/ADC/clock models have separate component/native fixture controls, but this new config-driven chip/system assembly has only the source assembly control crates/core/tests/samd_native_simulation_bundle.rs. Fresh active native/WASM game qualification is pending; do not promote those existing model tests into proof of this assembly. The existing RGBSET controller-memory codec requires a real guest table upload and does not qualify physical glass. Beyond-rubric USB is selected as an existing model; QSPI remains a declared zero stub. No new rubric or physical-value coverage is claimed."
+    functional: []
+    advanced_unit_only: [USB]
+    advanced_dead: []
+    shim:
+      - {p: "QSPI", ev: "configs/chips/samd51-no-asf-simulation.yaml (qspi type stub)", note: "Zero-reading QSPI register window inherited from the historical PyBadge subset. The native runtime uses internal flash, not an external QSPI device; no QSPI transaction or physical flash result is qualified."}
+
   - id: atsamd51-pybadge
     arch: cortex-m4
     headline: "No tier-1 target and no firmware runs on this descriptor. It is the atsamd51 descriptor with the PyBadge application layout (reset_vector_offset 0x4000, UF2 bootloader resident below). Its only gate, crates/core/tests/pybadge_config.rs, builds the PyBadge bus from configs/systems/pybadge.yaml and checks the reset SP/PC fetched from a stub vector table at 0x4000; it steps no firmware. The Metro M4 smoke that exercises atsamd51 loads atsamd51.yaml, not this file. Beyond the rubric it declares the same two zero windows as atsamd51, USB and QSPI."
