@@ -72,7 +72,12 @@ execution remain on the strict path; this is not a claim of real-time games.
 Differential controls compare CPU flags/registers/IRQs, complete SRAM, access
 accounting, every model snapshot and exact clocks against one-instruction
 execution, including odd budgets and transitions to gated, active, system and
-storage accesses. Hosted source tests, the unchanged 1× gate and measured initial
+storage accesses. Admission also reads enabled pending bits directly from the
+shared NVIC: a host-pended interrupt must reach the ordinary CPU import/dispatch
+before any cached chunk. The WFI controls exercise both configured idle sleep
+and the existing default spin behavior. The real generic UART stream control
+opens both the MCLK mask and SERCOM3's GCLK channel before checking TX/RX bytes.
+Hosted source tests, the unchanged 1× gate and measured initial
 Ir baselines must still pass before this candidate can qualify.
 
 ## Source-built CLI coverage

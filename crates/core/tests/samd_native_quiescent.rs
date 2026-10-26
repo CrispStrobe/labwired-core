@@ -154,11 +154,24 @@ fn enabled_pending_nvic_interrupt_is_taken_before_a_warm_chunk() {
 fn wfi_sleeps_and_enabled_irq_really_wakes_the_cpu() {
     let mut actual = machine(&[0xbf30, 0x205a, 0xe7fe], &[], false);
     let mut strict = machine(&[0xbf30, 0x205a, 0xe7fe], &[], false);
-    for fuel in [1, 37] {
-        run(&mut actual, fuel, false);
-        run(&mut strict, fuel, true);
-        equal_state(&actual, &strict);
+    for m in [&mut actual, &mut strict] {
+        m.config.idle_fast_forward_enabled = true;
     }
+    run(&mut actual, 1, false);
+    run(&mut strict, 1, true);
+    equal_state(&actual, &strict);
+    assert_eq!(actual.cpu.pc, 0x102);
+    for (m, strict_mode) in [(&mut actual, false), (&mut strict, true)] {
+        let mut request = AdvanceRequest::run(Some(37));
+        if strict_mode {
+            request = request.with_batch_cap(NonZeroU32::new(1).unwrap());
+        }
+        let report = m.advance(request).unwrap();
+        assert_eq!(report.fuel_consumed, 37);
+        assert_eq!(report.primary_steps, 0, "sleep retires no instructions");
+        assert_eq!(report.idle_cycles, 37, "actual idle accounting");
+    }
+    equal_state(&actual, &strict);
     assert_eq!(actual.cpu.r0, 0, "MOVS after WFI has not executed");
     assert_eq!(actual.cpu.pc, 0x102);
     for m in [&mut actual, &mut strict] {
@@ -173,6 +186,16 @@ fn wfi_sleeps_and_enabled_irq_really_wakes_the_cpu() {
         "actual enabled IRQ wakes WFI"
     );
     assert_eq!(strict.cpu.active_exception, 16);
+}
+#[test]
+fn default_idle_mode_preserves_wfi_as_spin() {
+    let mut actual = machine(&[0xbf30, 0x205a, 0xe7fe], &[], false);
+    let mut strict = machine(&[0xbf30, 0x205a, 0xe7fe], &[], false);
+    assert!(!actual.config.idle_fast_forward_enabled);
+    run(&mut actual, 38, false);
+    run(&mut strict, 38, true);
+    equal_state(&actual, &strict);
+    assert_eq!(actual.cpu.r0, 0x5a);
 }
 #[test]
 fn aircr_reset_is_consumed_before_a_warm_chunk() {
@@ -354,6 +377,8 @@ fn real_scheduled_uart_after_coalescence_keeps_bytes_and_complete_trace() {
     assert!(actual.step_profile().cpu_batches * 4 < actual.step_profile().cpu_instructions);
     for m in [&mut actual, &mut strict] {
         m.bus.write_u32(0x40000818, 1 << 10).unwrap();
+        // SERCOM3 also requires GCLK PCHCTRL24.CHEN (generator zero).
+        m.bus.write_u32(0x40001ce0, 1 << 6).unwrap();
         m.bus
             .attach_uart_stream_by_id("sercom3", Box::new(OneByte(Some(0x5a))))
             .unwrap();
