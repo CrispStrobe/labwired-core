@@ -1249,11 +1249,12 @@ fn measure(c: &ChipConf) -> Record {
     let bus = SystemBus::from_config(&chip, &dummy_manifest(&abs_str))
         .unwrap_or_else(|e| panic!("{}: build bus: {e}", c.name));
 
-    // Estate probes the model's base control register at its admitted width.
+    // Estate probes a model's admitted control/config register at its width.
     // These opt-in SAMD slices deliberately refuse a word crossing reserved
     // bytes; accepting the actual CTRLA read must not make those gaps readable.
     // Existing fleet types retain their original word probe.
     let estate_ok = chip.peripherals.iter().all(|p| match p.r#type.as_str() {
+        "samd51_cmcc_board" => bus.read_u32(p.base_address + 4).is_ok(), // CFG; TYPE is outside this slice
         "samd51_nvmctrl_manual_storage" => bus.read_u16(p.base_address).is_ok(),
         "samd51_dac" | "samd51_usb_device_banks" => bus.read_u8(p.base_address).is_ok(),
         _ => bus.read_u32(p.base_address).is_ok(),

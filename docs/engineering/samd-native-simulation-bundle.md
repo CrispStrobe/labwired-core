@@ -33,3 +33,10 @@ calibration, chip/system, engine and package bytes, exercise moving game frames
 and press/release, retain the original faults, and pass every enabled exact-head
 check before merge. Hardware timing, gamma, analogue colour and physical accuracy
 remain outside the software assembly.
+
+The conformance estate probe uses the admitted control/config register for these
+partial models: NVM CTRLA as 16 bits, DAC/USB CTRLA as 8 bits, and CMCC CFG at
+`base+4` as 32 bits. Separate controls require reserved-crossing reads and the
+unmodeled CMCC TYPE register to remain refused. Existing fleet probes, model
+access rules, silicon comparisons and earlier conformance values are unchanged.
+An L0 estate row grants no running-firmware or physical-accuracy coverage.
