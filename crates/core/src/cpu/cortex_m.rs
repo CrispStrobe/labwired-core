@@ -608,6 +608,7 @@ impl CortexM {
             || self.waiting_for_event
             || self.active_exception != 0
             || self.any_exception_pending()
+            || self.shared_enabled_irq_pending()
             || self.it_state != 0
             || self.debug_batch_break()
             || self.sysreset_latched()
@@ -1979,6 +1980,17 @@ impl CortexM {
     fn any_exception_pending(&self) -> bool {
         let [w0, w1, w2, w3] = self.pending_exceptions;
         (w0 | w1 | w2 | w3) != 0
+    }
+
+    /// Host/controller writes can precede the next ordinary step's import into
+    /// pending_exceptions. Refuse a chunk until that step observes the shared
+    /// NVIC, even when a CPU mask would ultimately prevent taking the IRQ.
+    fn shared_enabled_irq_pending(&self) -> bool {
+        self.nvic_state.as_ref().is_some_and(|nvic| {
+            nvic.ispr.iter().zip(&nvic.iser).any(|(pending, enabled)| {
+                pending.load(Ordering::Relaxed) & enabled.load(Ordering::Relaxed) != 0
+            })
+        })
     }
 
     /// Among the pending exceptions, return the one with the highest
