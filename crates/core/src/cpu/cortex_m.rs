@@ -1993,6 +1993,35 @@ impl CortexM {
         })
     }
 
+    /// A controller pend may not have reached the CPU bitmap yet. Sleep must
+    /// observe that same wake eligibility before skipping the import boundary.
+    /// WFI ignores PRIMASK for waking; WFE follows the existing masked-wake
+    /// contract. Both retain BASEPRI/FAULTMASK and active-priority admission.
+    fn shared_irq_wake_pending(&self, honor_primask: bool) -> bool {
+        let Some(nvic) = &self.nvic_state else {
+            return false;
+        };
+        for (word, (pending, enabled)) in nvic.ispr.iter().zip(&nvic.iser).enumerate() {
+            let mut bits = pending.load(Ordering::Relaxed) & enabled.load(Ordering::Relaxed);
+            while bits != 0 {
+                let exc = 16 + word as u32 * 32 + bits.trailing_zeros();
+                bits &= bits - 1;
+                if exc >= (self.pending_exceptions.len() * 64) as u32 {
+                    continue;
+                }
+                let priority = self.exception_priority(exc);
+                if (!honor_primask || !self.masked_by_primask(exc))
+                    && priority < self.exception_priority(self.active_exception)
+                    && !self.masked_by_basepri(priority)
+                    && !self.faultmask_blocks(exc)
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Among the pending exceptions, return the one with the highest
     /// priority (lowest numeric value). Ties break by exception number
     /// (lower number wins, per ARMv7-M B1.5.4).
@@ -2198,6 +2227,9 @@ impl CortexM {
     /// preempt, so it is not a wake event. Mirrors the takeable-exception break
     /// in `step_batch`, minus the `!self.primask` guard.
     fn wfi_wake_pending(&self) -> bool {
+        if self.shared_irq_wake_pending(false) {
+            return true;
+        }
         if !self.any_exception_pending() {
             return false;
         }
@@ -2233,7 +2265,7 @@ impl CortexM {
     }
 
     fn wfe_wake_pending(&self) -> bool {
-        if self.event_pending() {
+        if self.event_pending() || self.shared_irq_wake_pending(true) {
             return true;
         }
         for (word_idx, &word) in self.pending_exceptions.iter().enumerate() {
