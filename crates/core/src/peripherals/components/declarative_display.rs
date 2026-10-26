@@ -2624,6 +2624,11 @@ display_kit!(
     "oled-ssd1306-128x32"
 );
 display_kit!(
+    /// Explicit ST7735R controller-memory simulation, not physical module glass.
+    ST7735R_MEMORY_SIMULATION_KIT,
+    "st7735r-memory-simulation"
+);
+display_kit!(
     /// Sitronix ST7789V on the 1.9″ 170×320 IPS module (`st7789.yaml`).
     ST7789_KIT,
     "st7789-170x320"

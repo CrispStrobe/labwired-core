@@ -645,3 +645,12 @@ remain enabled; guessed layouts and success stubs cannot close a lane. Native
 Arcade, display/input/debugger, representative active native/WASM performance
 and installed adoption each retain their source/package/consumer gates. Keep
 the original inventories, notices, failures, captures, ACKs and pins unchanged.
+
+## Explicit native simulation assembly candidate — 2026-10-26
+
+The [no-ASF SAMD51 assembly](samd-native-simulation-bundle.md) gives the existing
+qualified model subset a separate descriptor and registers the controller-memory
+colour model for config-driven consumers. Source assembly is pending native/WASM
+active-game qualification and qualified Lite adoption. The historical PyBadge
+module/glass contract remains unresolved; do not infer physical accuracy from
+this explicitly authored software assembly.

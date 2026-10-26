@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: MIT
+# Authored simulation assembly. No physical module/glass or bootloader claim.
+name: samd51-no-asf-simulation
+chip: ../chips/samd51-no-asf-simulation.yaml
+external_devices:
+  - id: controller_memory
+    type: st7735r-memory-simulation
+    connection: sercom4
+    config:
+      cs_pin: PB7
+      dc_pin: PB5
+      reset_pin: PA0
+      backlight_pin: PA1
+  - id: buttons
+    type: pybadge_buttons
+    connection: gpio
+    config:
+      latch_pin: PB0
+      clock_pin: PB31
+      data_pin: PB30
