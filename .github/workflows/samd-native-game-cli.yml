@@ -42,7 +42,7 @@ jobs:
           set -euo pipefail
           test "$(wc -c < out/samd-native-game/sw0.bin)" = 1024
           test "$(wc -c < out/samd-native-game/serial.bin)" = 1024
-          cargo build --release --locked -p labwired-cli
+          cargo build --release --locked -p labwired-cli --no-default-features
           target/release/labwired test --script validation/samd-native-profile/native-game.yaml --output-dir out/samd-native-game/cli-default 2>&1 | tee out/samd-native-game/cli-default.log
           cargo build --release --locked -p labwired-cli --features event-scheduler
           target/release/labwired test --script validation/samd-native-profile/native-game.yaml --output-dir out/samd-native-game/cli-scheduler 2>&1 | tee out/samd-native-game/cli-scheduler.log
