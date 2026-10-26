@@ -115,6 +115,38 @@ def test_recommended_tick_interval_is_a_performance_ratchet():
     assert int(match.group(1)) >= bp.MIN_RECOMMENDED_TICK_INTERVAL
 
 
+def test_strict_service_needs_actual_full_width_retirement_without_lowering_floor():
+    assert bp.MIN_RECOMMENDED_TICK_INTERVAL == 1024
+    assert bp.scheduler_contract_met(bp.Measurement(6.0, 1023.8, 1024))
+    for interval in [None, 1, 2, 512, 1023]:
+        assert not bp.scheduler_contract_met(bp.Measurement(6.0, 1.0, interval))
+    assert not bp.scheduler_contract_met(bp.Measurement(6.0, 1000.0, 1, 1023))
+    assert not bp.scheduler_contract_met(bp.Measurement(6.0, 1000.0, 2, 1024))
+    assert bp.scheduler_contract_met(bp.Measurement(6.0, 1023.8, 1, 1024))
+
+
+def test_chunk_witness_is_unique_bounded_and_keeps_strict_grid_truthful():
+    line = "[quiescent-chunks] service_grid=1 max_retired=1024\n"
+    assert bp.parse_quiescent_witness(line, 200000, 1) == 1024
+    assert bp.parse_quiescent_witness("", 200000, 1) is None
+    for text, steps, interval in [(line+line, 200000, 1), (line, 200000, 1024),
+                                  (line, 1000, 1), (line.replace("=1 ", "=2 "), 200000, 1)]:
+        with pytest.raises(bp.ModeNotTakenError):
+            bp.parse_quiescent_witness(text, steps, interval)
+
+
+def test_every_low_high_repeat_needs_the_chunk_witness(monkeypatch, tmp_path):
+    monkeypatch.setattr(bp, "STEPS_LOW", 2000)
+    monkeypatch.setattr(bp, "STEPS_HIGH", 4000)
+    for omitted in [None, 0, 3]:
+        runs = [bp.Run(10000 if i%2 == 0 else 22000, 2000 if i%2 == 0 else 4000,
+                       1023.8, 1, None if i == omitted else 1024) for i in range(6)]
+        iterator = iter(runs)
+        monkeypatch.setattr(bp, "measure_once", lambda *args: next(iterator))
+        measured = bp.measure_board(Path("labwired"), "atsamd21", tmp_path/"spin.elf", bp.MODE_BATCH)
+        assert bp.scheduler_contract_met(measured) == (omitted is None)
+
+
 def test_each_memory_map_has_its_own_fixture():
     chips = {
         "nrf52840": _chip(0x00000000, 0x20000000),

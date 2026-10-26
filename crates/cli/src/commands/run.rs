@@ -2246,6 +2246,18 @@ fn run_arm_batched_loop(
                 machine.idle_fast_forward_cycles_skipped
             ),
         );
+        // A strict peripheral grid can now coexist with a wide checked CPU
+        // chunk. Publish its actual retirement witness separately; never
+        // relabel that grid as a 1024-cycle peripheral recommendation.
+        if machine.max_retired_quiescent_chunk() > 0
+            && machine.config.peripheral_tick_interval == 1
+            && machine.bus.config.peripheral_tick_interval == 1
+        {
+            eprintln!(
+                "[quiescent-chunks] service_grid=1 max_retired={}",
+                machine.max_retired_quiescent_chunk()
+            );
+        }
     }
     faulted
 }

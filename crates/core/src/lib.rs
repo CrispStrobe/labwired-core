@@ -2929,6 +2929,7 @@ pub struct Machine<C: Cpu> {
     /// Injectable host clock used by [`HostTimeMode::Realtime`] pacing.
     host_clock: Box<dyn host_time::HostClock + Send>,
     step_profile: StepProfile,
+    max_retired_quiescent_chunk: u32,
 
     /// Phase 2B.1 (issue #192): event-driven peripheral scheduler. Active
     /// behaviour is gated behind the `event-scheduler` feature; the field
@@ -3704,6 +3705,7 @@ impl<C: Cpu> Machine<C> {
             config: SimulationConfig::default(),
             host_clock: Box::new(host_time::StdHostClock::new()),
             step_profile: StepProfile::default(),
+            max_retired_quiescent_chunk: 0,
             sched: sched::EventScheduler::new(),
             clocks: sched::ClockGraph::new(),
             rtc_cntl_index,
@@ -3861,10 +3863,17 @@ impl<C: Cpu> Machine<C> {
 
     pub fn reset_step_profile(&mut self) {
         self.step_profile = StepProfile::default();
+        self.max_retired_quiescent_chunk = 0;
     }
 
     pub fn step_profile(&self) -> StepProfile {
         self.step_profile
+    }
+
+    /// Largest checked memory-only chunk actually retired, not a configured
+    /// horizon or an idle fast-forward. Zero on every unsupported execution.
+    pub fn max_retired_quiescent_chunk(&self) -> u32 {
+        self.max_retired_quiescent_chunk
     }
 
     /// Wall-clock attribution for the open [`profile`] window, with peripheral

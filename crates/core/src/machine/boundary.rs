@@ -68,6 +68,7 @@ impl<C: Cpu> Machine<C> {
                 self.cpu
                     .try_quiescent_memory_chunk(&mut self.bus, &self.config, window.steps);
             if retired > 0 {
+                self.max_retired_quiescent_chunk = self.max_retired_quiescent_chunk.max(retired);
                 self.bus.current_cycle += u64::from(retired);
                 // The strict loop stamps transactions with the start of the
                 // last retired instruction before draining its boundary.

@@ -210,6 +210,25 @@ fn boxed_cpu_forwards_the_real_capability_and_keeps_strict_state() {
     );
 }
 #[test]
+fn retirement_witness_records_actual_full_chunks_and_resets_with_profile() {
+    let mut actual = machine(&[0xe7fe], &[], false);
+    let mut strict = machine(&[0xe7fe], &[], false);
+    run(&mut actual, 7, false);
+    run(&mut strict, 7, true);
+    assert_eq!(
+        actual.max_retired_quiescent_chunk(),
+        0,
+        "a planned window below admission size retires no checked chunk"
+    );
+    run(&mut actual, 2049, false);
+    run(&mut strict, 2049, true);
+    equal_state(&actual, &strict);
+    assert_eq!(actual.max_retired_quiescent_chunk(), 1024);
+    assert_eq!(strict.max_retired_quiescent_chunk(), 0);
+    actual.reset_step_profile();
+    assert_eq!(actual.max_retired_quiescent_chunk(), 0);
+}
+#[test]
 fn inactive_checked_chunks_match_rotated_strict_prefixes_and_really_coalesce() {
     let mut actual = spin(false);
     let mut strict = spin(false);

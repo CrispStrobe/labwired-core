@@ -767,6 +767,7 @@ class Run(NamedTuple):
     instructions: int | None = None
     steps_per_batch: float | None = None
     tick_interval: int | None = None
+    quiescent_max_retired: int | None = None
 
 
 def same_loop_baselines(baselines: dict, ratio: float = SAME_LOOP_RATIO) -> list[str]:
@@ -867,7 +868,23 @@ def measure_once(cli: Path, chip: Path, firmware: Path, steps: int, mode: str) -
             f"{chip.stem}: batched run was asked for {steps} steps but retired "
             f"{instructions}; the slope denominator would be wrong"
         )
-    return Run(irefs, instructions, float(proof.group(3)), int(proof.group(4)))
+    interval = int(proof.group(4))
+    quiescent = parse_quiescent_witness(proc.stderr, instructions, interval)
+    return Run(irefs, instructions, float(proof.group(3)), interval, quiescent)
+
+
+def parse_quiescent_witness(stderr: str, instructions: int, interval: int) -> int | None:
+    """Actual retirement evidence, never a configured batching hint."""
+    lines = [line for line in stderr.splitlines() if line.startswith("[quiescent-chunks]")]
+    if not lines:
+        return None
+    match = re.fullmatch(r"\[quiescent-chunks\] service_grid=1 max_retired=([1-9][0-9]{0,9})", lines[0])
+    if len(lines) != 1 or not match or interval != 1:
+        raise ModeNotTakenError("invalid or ambiguous strict-service CPU chunk witness")
+    retired = int(match.group(1))
+    if retired > instructions:
+        raise ModeNotTakenError("CPU chunk witness exceeds actual retired instructions")
+    return retired
 
 
 class Measurement(NamedTuple):
@@ -876,6 +893,18 @@ class Measurement(NamedTuple):
     ir_per_step: float
     steps_per_batch: float | None = None
     tick_interval: int | None = None
+    quiescent_max_retired: int | None = None
+
+
+def scheduler_contract_met(measured: Measurement) -> bool:
+    if measured.tick_interval is not None and measured.tick_interval >= MIN_RECOMMENDED_TICK_INTERVAL:
+        return True
+    # Keep the same 1024-instruction dispatcher floor while allowing the
+    # qualified memory-only capability to preserve a STRICT peripheral grid.
+    # Missing proof, idle fuel and a merely configured horizon do not qualify.
+    return (measured.tick_interval == 1 and
+            measured.quiescent_max_retired is not None and
+            measured.quiescent_max_retired >= MIN_RECOMMENDED_TICK_INTERVAL)
 
 
 def measure_board(cli: Path, board: str, firmware: Path, mode: str) -> Measurement:
@@ -892,6 +921,9 @@ def measure_board(cli: Path, board: str, firmware: Path, mode: str) -> Measureme
                 (high.irefs - low.irefs) / (STEPS_HIGH - STEPS_LOW),
                 high.steps_per_batch,
                 high.tick_interval,
+                min(low.quiescent_max_retired, high.quiescent_max_retired)
+                if low.quiescent_max_retired is not None and high.quiescent_max_retired is not None
+                else None,
             )
         )
     return Measurement(
@@ -904,6 +936,9 @@ def measure_board(cli: Path, board: str, firmware: Path, mode: str) -> Measureme
         if mode == MODE_BATCH
         else None,
         samples[-1].tick_interval,
+        min(sample.quiescent_max_retired for sample in samples)
+        if all(sample.quiescent_max_retired is not None for sample in samples)
+        else None,
     )
 
 
@@ -1080,16 +1115,14 @@ def main() -> int:
                 unmeasurable.append(str(exc))
                 continue
             measured.setdefault(board, {})[mode] = round(m.ir_per_step, 1)
-            if mode == MODE_BATCH and (
-                m.tick_interval is None
-                or m.tick_interval < MIN_RECOMMENDED_TICK_INTERVAL
-            ):
+            if mode == MODE_BATCH and not scheduler_contract_met(m):
                 contract_failures.append(
                     {
                         "board": board,
                         "mode": mode,
                         "tick_interval": m.tick_interval,
                         "minimum": MIN_RECOMMENDED_TICK_INTERVAL,
+                        "quiescent_max_retired": m.quiescent_max_retired,
                     }
                 )
             # `steps_per_batch` is not gated — it is a property of the bus, not
@@ -1099,6 +1132,8 @@ def main() -> int:
             width = (
                 f"{m.steps_per_batch:>6.1f}" if m.steps_per_batch is not None else " " * 6
             )
+            if m.quiescent_max_retired is not None:
+                print(f"{board}: strict peripheral grid=1, minimum witnessed CPU chunk across every low/high repeat={m.quiescent_max_retired}")
             base = baselines.get(board, {}).get(mode)
             if base is None:
                 print(
@@ -1288,9 +1323,9 @@ def main() -> int:
                 file=sys.stderr,
             )
         print(
-            "\nThe 1024-cycle recommendation is the measured all-chip performance "
-            "floor. Re-prove fidelity and deliberately update the ratchet before "
-            "lowering it.",
+            "\nThe 1024-instruction dispatcher floor is unchanged: require the "
+            "original recommendation, or a strict service grid of one with an "
+            "actual retired CPU-chunk witness of at least 1024 in every low/high repeat.",
             file=sys.stderr,
         )
 
