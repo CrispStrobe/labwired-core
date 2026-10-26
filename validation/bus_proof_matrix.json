@@ -1422,6 +1422,24 @@
         "lane": "none"
       }
     },
+    "samd51-no-asf-simulation": {
+      "in_boards": false,
+      "uart": {
+        "state": "none",
+        "gap": "New explicitly authored software assembly: source/model selection controls exist, but real firmware through this exact config-driven descriptor has not yet qualified this bus. Active native/WASM game qualification is pending; do not borrow the separate historical consumer fixture.",
+        "lane": "none"
+      },
+      "spi": {
+        "state": "none",
+        "gap": "New explicitly authored software assembly: source/model selection controls exist, but real firmware through this exact config-driven descriptor has not yet qualified this bus. Active native/WASM game qualification is pending; do not borrow the separate historical consumer fixture.",
+        "lane": "none"
+      },
+      "i2c": {
+        "state": "none",
+        "gap": "New explicitly authored software assembly: source/model selection controls exist, but real firmware through this exact config-driven descriptor has not yet qualified this bus. Active native/WASM game qualification is pending; do not borrow the separate historical consumer fixture.",
+        "lane": "none"
+      }
+    },
     "litex-vexriscv": {
       "in_boards": false,
       "uart": {

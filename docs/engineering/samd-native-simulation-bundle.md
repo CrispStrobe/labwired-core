@@ -16,8 +16,11 @@ RGB444 remains unknown until the guest uploads a complete RGBSET table. The
 owned runtime's explicitly selected RGB444 profile provides that upload; this
 engine never seeds a presumed identity table.
 
-Two additional named memory regions expose separately authored simulation
-inputs: sixteen SW0 bytes at `0x00800080` and 512 serial bytes at `0x00806000`.
+Two additional named 1 KiB software memory windows expose separately authored
+simulation inputs at `0x00800000` and `0x00806000`. Their explicit packets contain
+the sixteen SW0 bytes at offset `0x80` and the 512 serial bytes at offset zero;
+the remaining bytes are authored zero padding. These are software window sizes,
+not assertions about physical calibration-page geometry.
 Callers supply these under `LABWIRED_SAMD51_SIM_SW0` and
 `LABWIRED_SAMD51_SIM_SERIAL`. They are synthetic software configuration, never
 silicon captures. Omitted inputs retain the generic loader's zero-fill behavior;
