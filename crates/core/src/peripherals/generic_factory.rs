@@ -701,13 +701,18 @@ pub fn try_build(
                 (Some(tp), Some(tb), Some(rp), Some(rb), Some(mux), Some(txpo), Some(rxpo))
                     if tb < 32 && rb < 32 && mux < 16 && txpo < 4 && rxpo < 4 =>
                 {
-                    Box::new(usart.with_pads(UsartPads {
+                    let usart = usart.with_pads(UsartPads {
                         tx: (tp, tb as u8),
                         rx: (rp, rb as u8),
                         mux: mux as u8,
                         txpo: txpo as u8,
                         rxpo: rxpo as u8,
-                    }))
+                    });
+                    // Optional: the core clock channel paces bytes at the baud.
+                    match key("gclk_id") {
+                        Some(channel) => Box::new(usart.with_pacing(channel)),
+                        None => Box::new(usart),
+                    }
                 }
                 (None, None, None, None, None, None, None) => Box::new(usart),
                 _ => anyhow::bail!("SAMD51 USART '{}' needs all pad keys or none", p_cfg.id),
@@ -838,6 +843,7 @@ pub fn try_build(
                     dopo: dopo as u8,
                     miso,
                     dma,
+                    core_gclk: optional("gclk_id"),
                 },
             ))
         }
