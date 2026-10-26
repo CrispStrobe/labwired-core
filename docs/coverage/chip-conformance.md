@@ -108,6 +108,7 @@ This page covers the public models. For every chip we model — public and priva
 | atmega1281 | **L1** | ✓ | 11 | — | — | avr_atmega1281_firmware::atmega1281_compiled_firmware_prints_and_drives_pb5 |
 | atsamd21 | **L1** | ✓ | 7 | — | — | firmware_survival::test_atsamd21_nano33_smoke_survival |
 | atsamd51 | **L1** | ✓ | 27 | — | — | firmware_survival::test_atsamd51_metro_m4_smoke_survival |
+| samd51-no-asf-simulation | **L0** | ✓ | 32 | — | — | — |
 | atsamd51-pybadge | **L0** | ✓ | 28 | — | — | — |
 | ra4m1 | **L1** | ✓ | 7 | — | — | firmware_survival::test_ra4m1_uno_r4_smoke_survival |
 | imxrt1064 | **L1** | ✓ | 6 | — | — | firmware_survival::test_imxrt1064_teensy41_smoke_survival |

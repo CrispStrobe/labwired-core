@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Assembly controls only. Actual native/WASM game qualification is separate.
 use labwired_config::{ChipDescriptor, SystemManifest};
-use labwired_core::bus::SystemBus;
+use labwired_core::{bus::SystemBus, Bus};
 
 #[test]
 fn explicit_simulation_bundle_selects_models_and_named_inputs() {
@@ -36,5 +36,28 @@ fn explicit_simulation_bundle_selects_models_and_named_inputs() {
     assert!(
         !bus.gpio_devices.is_empty(),
         "actual button/reset/backlight kits attached"
+    );
+}
+
+#[test]
+fn narrow_base_controls_do_not_admit_reserved_word_reads() {
+    let chip: ChipDescriptor = serde_yaml::from_str(include_str!(
+        "../../../configs/chips/samd51-no-asf-simulation.yaml"
+    ))
+    .unwrap();
+    let manifest: SystemManifest = serde_yaml::from_str(include_str!(
+        "../../../configs/systems/samd51-no-asf-simulation.yaml"
+    ))
+    .unwrap();
+    let bus = SystemBus::from_config(&chip, &manifest).unwrap();
+    assert!(bus.read_u16(0x41004000).is_ok(), "actual NVM CTRLA width");
+    assert!(
+        bus.read_u32(0x41004000).is_err(),
+        "reserved bytes stay refused"
+    );
+    assert!(bus.read_u8(0x43002400).is_ok(), "actual DAC CTRLA width");
+    assert!(
+        bus.read_u32(0x43002400).is_err(),
+        "reserved bytes stay refused"
     );
 }
