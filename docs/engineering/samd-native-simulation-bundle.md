@@ -94,3 +94,22 @@ black display and a full-panel fill. They establish paint/layout coverage,
 while the stronger source-bound game campaign retains exact colours, movement
 and press/release requirements. The new CLI workflow remains unqualified until
 its official source-built runs and independent original audits pass.
+
+## Performance floor and strict service
+
+The existing 1024-instruction dispatcher floor and 1× real-time requirement
+remain. Existing boards retain their original recommendation check. This
+software profile keeps its peripheral recommendation and resident service grid
+at one; the interpreter may separately retire a checked memory-only CPU chunk.
+The CLI reports the largest chunk actually retired, independently of its
+configured horizon, with an explicit `service_grid=1` witness. It never reports
+a widened peripheral interval for this path.
+
+For this execution mode the performance reader requires an actual retired
+chunk of at least1024 in every low and high run of every repeat. Missing,
+duplicate, wrong-grid or impossible witnesses fail. The retirement counter stays
+zero for refused or merely planned chunks and resets with the step profile.
+The original real-time threshold, Ir regression budget, all earlier baseline
+values, and existing-board checks remain unchanged. This distinguishes CPU
+dispatch from peripheral service without adding a board waiver or claiming
+active-game real-time performance.
