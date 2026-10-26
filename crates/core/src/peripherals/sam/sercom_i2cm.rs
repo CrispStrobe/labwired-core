@@ -298,8 +298,15 @@ impl Samd51SercomI2cm {
         let cpu = super::clock_tree::cpu_hz(bus)?;
         let periods = match op {
             Op::Address(byte) => {
-                let claimed = self.devices.iter().any(|d| d.borrow().claims_address(byte >> 1));
-                if byte & 1 != 0 && claimed { 19 } else { 10 }
+                let claimed = self
+                    .devices
+                    .iter()
+                    .any(|d| d.borrow().claims_address(byte >> 1));
+                if byte & 1 != 0 && claimed {
+                    19
+                } else {
+                    10
+                }
             }
             Op::Write(_) | Op::ReadNext => 9,
             Op::Stop => 1,

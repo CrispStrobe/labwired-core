@@ -525,7 +525,11 @@ impl Peripheral for SamSercomSpi {
             if let Some(tx) = self.holding.take() {
                 let (left, per) = self.byte_time(bus);
                 // Back to back, the next byte starts where the last one ended.
-                let carried = if completed { self.overrun.min(left - 1) } else { 0 };
+                let carried = if completed {
+                    self.overrun.min(left - 1)
+                } else {
+                    0
+                };
                 self.active = Some((tx, left - carried, per));
             } else if completed {
                 self.flags |= TXC;

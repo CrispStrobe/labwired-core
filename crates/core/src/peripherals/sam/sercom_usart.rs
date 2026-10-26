@@ -331,7 +331,11 @@ impl SamSercomUsart {
             }
             if receiving {
                 loop {
-                    let queued = self.rx_source.lock().map(|q| !q.is_empty()).unwrap_or(false);
+                    let queued = self
+                        .rx_source
+                        .lock()
+                        .map(|q| !q.is_empty())
+                        .unwrap_or(false);
                     if !queued {
                         pace.rx_end = None;
                         break;
@@ -622,7 +626,12 @@ impl Peripheral for SamSercomUsart {
                 rxpo && self.pad_routed(bus, p.rx.0, p.rx.1, p.mux),
             );
         }
-        if let Some(core_gclk) = self.pace.as_ref().filter(|p| p.dirty || p.bit.is_none()).map(|p| p.core_gclk) {
+        if let Some(core_gclk) = self
+            .pace
+            .as_ref()
+            .filter(|p| p.dirty || p.bit.is_none())
+            .map(|p| p.core_gclk)
+        {
             let bit = self.resolve_bit(bus, core_gclk);
             let pace = self.pace.as_mut().unwrap();
             pace.bit = bit;
@@ -935,7 +944,8 @@ impl SamSercomUsart {
 /// `S * (BAUD[12:0] + FP / 8)` for S = 16, 8; reserved settings give `None`.
 fn bit_clocks(ctrla: u32, baud: u16) -> Option<f64> {
     let arithmetic = |samples: f64| samples * 65536.0 / (65536.0 - f64::from(baud));
-    let fractional = |samples: f64| samples * (f64::from(baud & 0x1fff) + f64::from(baud >> 13) / 8.0);
+    let fractional =
+        |samples: f64| samples * (f64::from(baud & 0x1fff) + f64::from(baud >> 13) / 8.0);
     let clocks = match (ctrla >> 13) & 7 {
         0 => arithmetic(16.0),
         1 => fractional(16.0),
@@ -1155,13 +1165,23 @@ mod pacing_tests {
     /// An enabled, routed SAMD51 USART (internal clock, TX and RX on) paced at
     /// `bit` CPU cycles per bit, on a host-controlled clock.
     fn paced(bit: f64) -> (SamSercomUsart, CycleClock, Arc<Mutex<Vec<u8>>>) {
-        let pads = UsartPads { tx: (0, 16), rx: (0, 17), mux: 2, txpo: 0, rxpo: 1 };
+        let pads = UsartPads {
+            tx: (0, 16),
+            rx: (0, 17),
+            mux: 2,
+            txpo: 0,
+            rxpo: 1,
+        };
         let mut u = SamSercomUsart::new_samd51().with_pads(pads).with_pacing(35);
         let clock = CycleClock::default();
         u.attach_cycle_clock(clock.clone());
         let sink = Arc::new(Mutex::new(Vec::new()));
         u.set_sink(Some(sink.clone()), false);
-        u.write_u32(CTRLA, CTRLA_ENABLE | (MODE_USART_INT_CLK << CTRLA_MODE_SHIFT)).unwrap();
+        u.write_u32(
+            CTRLA,
+            CTRLA_ENABLE | (MODE_USART_INT_CLK << CTRLA_MODE_SHIFT),
+        )
+        .unwrap();
         u.write_u32(CTRLB, CTRLB_TXEN | CTRLB_RXEN).unwrap();
         u.routed = (true, true);
         let pace = u.pace.as_mut().unwrap();
@@ -1180,7 +1200,10 @@ mod pacing_tests {
         // BAUD = 65536 - (16 * 115200 << 16) / 100 MHz = 64329.
         let clocks = bit_clocks(0, 64329).unwrap();
         assert!((clocks - 16.0 * 65536.0 / 1207.0).abs() < 1e-9);
-        assert!((100e6 / clocks - 115_108.0).abs() < 1.0, "the baud it yields");
+        assert!(
+            (100e6 / clocks - 115_108.0).abs() < 1.0,
+            "the baud it yields"
+        );
         // Fractional 16x: BAUD 54, FP 2 is 16 * 54.25 clocks.
         assert_eq!(bit_clocks(1 << 13, 54 | 2 << 13), Some(16.0 * 54.25));
         assert_eq!(bit_clocks(5 << 13, 0), None, "reserved SAMPR");
@@ -1199,7 +1222,11 @@ mod pacing_tests {
     fn transmit_holds_one_byte_behind_the_shift_register() {
         let (mut u, clock, sink) = paced(100.0); // 1000-cycle 8N1 frames
         u.write_u16(DATA, u16::from(b'A')).unwrap();
-        assert_ne!(u.read(INTFLAG).unwrap() & INT_DRE, 0, "A went straight to the shifter");
+        assert_ne!(
+            u.read(INTFLAG).unwrap() & INT_DRE,
+            0,
+            "A went straight to the shifter"
+        );
         u.write_u16(DATA, u16::from(b'B')).unwrap();
         assert_eq!(u.read(INTFLAG).unwrap() & INT_DRE, 0, "B waits in DATA");
         u.write_u16(DATA, u16::from(b'C')).unwrap(); // ignored: DRE was clear
@@ -1211,7 +1238,11 @@ mod pacing_tests {
         assert_eq!(u.read(INTFLAG).unwrap() & INT_TXC, 0, "B is still shifting");
         at(&mut u, &clock, 2000);
         assert_eq!(*sink.lock().unwrap(), b"AB");
-        assert_ne!(u.read(INTFLAG).unwrap() & INT_TXC, 0, "TXC after the last stop bit");
+        assert_ne!(
+            u.read(INTFLAG).unwrap() & INT_TXC,
+            0,
+            "TXC after the last stop bit"
+        );
     }
 
     #[test]
@@ -1219,11 +1250,19 @@ mod pacing_tests {
         let (mut u, clock, _) = paced(100.0);
         u.rx_buffer().lock().unwrap().extend(b"xyz");
         at(&mut u, &clock, 0);
-        assert_eq!(u.read(INTFLAG).unwrap() & INT_RXC, 0, "the first frame is on the wire");
+        assert_eq!(
+            u.read(INTFLAG).unwrap() & INT_RXC,
+            0,
+            "the first frame is on the wire"
+        );
         at(&mut u, &clock, 1000);
         assert_ne!(u.read(INTFLAG).unwrap() & INT_RXC, 0);
         at(&mut u, &clock, 3000);
-        assert_eq!(u.read_u16(STATUS).unwrap() & 4, 4, "z found both buffer bytes full");
+        assert_eq!(
+            u.read_u16(STATUS).unwrap() & 4,
+            4,
+            "z found both buffer bytes full"
+        );
         assert_eq!(u.read_u16(DATA).unwrap(), u16::from(b'x'));
         assert_eq!(u.read_u16(DATA).unwrap(), u16::from(b'y'));
         assert_eq!(u.read(INTFLAG).unwrap() & INT_RXC, 0);
