@@ -438,10 +438,10 @@ peripherals:
   size: 80B
 memory_regions:
 - name: authored_samd51_calibration
-  base: 8388736
-  size: 16
+  base: 8388608
+  size: 1KB
   image_env: LABWIRED_SAMD51_SIM_SW0
 - name: authored_samd51_serial
   base: 8413184
-  size: 512
+  size: 1KB
   image_env: LABWIRED_SAMD51_SIM_SERIAL

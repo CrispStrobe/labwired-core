@@ -28,7 +28,7 @@ fn explicit_simulation_bundle_selects_models_and_named_inputs() {
     selected("nvmctrl", "samd51_nvmctrl_manual_storage");
     selected("tcc0", "samd51_tcc");
     assert_eq!(chip.memory_regions.len(), 2);
-    assert_eq!(chip.memory_regions[0].base, 0x00800080);
+    assert_eq!(chip.memory_regions[0].base, 0x00800000);
     assert_eq!(chip.memory_regions[1].base, 0x00806000);
     assert_eq!(manifest.external_devices.len(), 2);
     let bus = SystemBus::from_config(&chip, &manifest).expect("registered explicit assembly");
