@@ -4,9 +4,14 @@
 //! handshake against attached `I2cDevice` slaves. Each bus operation completes
 //! on the next bus tick and only while the SERCOM's bus clock and core generic
 //! clock run and a PAD0 (SDA) and PAD1 (SCL) pad are muxed to the SERCOM; an
-//! address nobody claims is NACKed. Bus timing, clock
-//! stretching, arbitration, timeouts, 10-bit/high-speed modes, DMA and the
-//! slave mode are not modelled; their settings are refused.
+//! address nobody claims is NACKed. When the core clock resolves on the live
+//! clock tree, an operation completes after whole SCL periods of
+//! `10 + BAUD.BAUD + BAUD.BAUDLOW` core-clock cycles (BAUDLOW 0 uses BAUD for
+//! both halves; DS60001507F 36.6.2.4.1 with t_rise = 0, the rise time being a
+//! board electrical property): a START plus nine bits for an address, nine
+//! more for the first byte of a read, nine per written or read byte and one
+//! for a STOP. Clock stretching, arbitration, timeouts, 10-bit/high-speed
+//! modes, DMA and the slave mode are not modelled; their settings are refused.
 use crate::peripherals::device::{I2cDevice, I2cSlaveHost};
 use crate::{Bus, Peripheral, PeripheralTickResult, SimResult, SimulationError};
 use std::any::Any;
@@ -126,6 +131,17 @@ enum Op {
     Stop,
 }
 
+/// Core-clock cycles per SCL period: `10 + BAUD + BAUDLOW`, BAUDLOW 0 meaning
+/// BAUD for both halves (DS60001507F 36.6.2.4.1, t_rise = 0).
+fn scl_clocks(baud: u32) -> u64 {
+    let high = u64::from(baud & 0xff);
+    let low = match u64::from((baud >> 8) & 0xff) {
+        0 => high,
+        low => low,
+    };
+    10 + high + low
+}
+
 pub struct Samd51SercomI2cm {
     instance: SercomInstance,
     ctrla: u32,
@@ -143,6 +159,12 @@ pub struct Samd51SercomI2cm {
     transactions: u64,
     /// The first address bytes put on the bus (evidence, bounded).
     addresses: Vec<u8>,
+    clock: Option<crate::CycleClock>,
+    /// Cycle at which the pending operation completes on the bus.
+    deadline: Option<u64>,
+    /// An address written while a STOP was pending; issued after it.
+    queued: Option<Op>,
+    completed: u64,
 }
 
 impl Samd51SercomI2cm {
@@ -163,6 +185,10 @@ impl Samd51SercomI2cm {
             devices: Vec::new(),
             transactions: 0,
             addresses: Vec::new(),
+            clock: None,
+            deadline: None,
+            queued: None,
+            completed: 0,
         }
     }
     fn refuse<T>(what: &str) -> SimResult<T> {
@@ -176,12 +202,22 @@ impl Samd51SercomI2cm {
     pub fn transactions(&self) -> u64 {
         self.transactions
     }
+    /// An operation was issued and has not completed on the bus yet.
+    pub fn busy(&self) -> bool {
+        self.pending.get().is_some()
+    }
+    /// Operations completed on the bus so far (evidence for host timing).
+    pub fn completed(&self) -> u64 {
+        self.completed
+    }
     fn reset(&mut self) {
         // SWRST resets registers; attached devices and the run's transaction
         // count (evidence, not register state) survive it.
         let devices = std::mem::take(&mut self.devices);
         let (transactions, addresses) = (self.transactions, std::mem::take(&mut self.addresses));
+        let clock = self.clock.take();
         *self = Self::new(self.instance);
+        self.clock = clock;
         self.devices = devices;
         self.transactions = transactions;
         self.addresses = addresses;
@@ -254,6 +290,28 @@ impl Samd51SercomI2cm {
             3 => self.pending.set(Some(Op::Stop)),
             _ => {}
         }
+    }
+    /// CPU cycles `op` holds the bus, or `None` when the core clock or the CPU
+    /// clock does not resolve (the operation then completes on the next tick).
+    fn duration(&self, bus: &dyn Bus, op: Op) -> Option<u64> {
+        let gclk = super::clock_tree::peripheral_hz(bus, self.instance.core_gclk)?;
+        let cpu = super::clock_tree::cpu_hz(bus)?;
+        let periods = match op {
+            Op::Address(byte) => {
+                let claimed = self
+                    .devices
+                    .iter()
+                    .any(|d| d.borrow().claims_address(byte >> 1));
+                if byte & 1 != 0 && claimed {
+                    19
+                } else {
+                    10
+                }
+            }
+            Op::Write(_) | Op::ReadNext => 9,
+            Op::Stop => 1,
+        };
+        (gclk > 0).then(|| (periods * scl_clocks(self.baud) * cpu).div_ceil(gclk))
     }
     fn lines(&self) -> u8 {
         if self.enabled() {
@@ -344,7 +402,12 @@ impl Samd51SercomI2cm {
                 }
                 self.addr = value;
                 self.intflag.set(self.intflag.get() & !(MB | SB));
-                self.pending.set(Some(Op::Address(value as u8)));
+                // A START issued while a STOP is still on the bus follows it.
+                if self.pending.get() == Some(Op::Stop) {
+                    self.queued = Some(Op::Address(value as u8));
+                } else {
+                    self.pending.set(Some(Op::Address(value as u8)));
+                }
             }
             0x28 => {
                 self.intflag.set(self.intflag.get() & !MB);
@@ -418,7 +481,9 @@ impl Peripheral for Samd51SercomI2cm {
         Some(self)
     }
     fn needs_bus_tick(&self) -> bool {
-        self.pending.get().is_some()
+        // An open read stays ticked: a smart-mode DATA read issues the next
+        // byte, and a read cannot put the master back on the bus-tick list.
+        self.pending.get().is_some() || self.reading && self.selected.is_some()
     }
     fn tick_with_bus(&mut self, bus: &mut dyn Bus) {
         let (mask, bit) = self.instance.bus_clock;
@@ -436,11 +501,27 @@ impl Peripheral for Samd51SercomI2cm {
         if !clocked || !self.enabled() || !routed {
             // An unclocked, disabled or unrouted master drives no bus: the
             // operation stays pending and the guest sees no MB/SB.
+            self.deadline = None;
             return;
         }
-        if let Some(op) = self.pending.take() {
-            self.perform(op);
+        let Some(op) = self.pending.get() else {
+            return;
+        };
+        if let Some(now) = self.clock.as_ref().map(|c| c.now()) {
+            if let Some(duration) = self.duration(bus, op) {
+                let deadline = *self.deadline.get_or_insert(now + duration);
+                if now < deadline {
+                    return;
+                }
+            }
         }
+        self.deadline = None;
+        self.pending.set(self.queued.take());
+        self.completed += 1;
+        self.perform(op);
+    }
+    fn attach_cycle_clock(&mut self, clock: crate::CycleClock) {
+        self.clock = Some(clock);
     }
     fn legacy_tick_dynamic(&self) -> bool {
         true
@@ -483,6 +564,14 @@ impl Peripheral for Samd51SercomI2cm {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scl_period_is_ten_plus_both_halves() {
+        // codal's 100 kHz on 48 MHz: BAUD = BAUDLOW = 230, 470 clocks.
+        assert_eq!(scl_clocks(230 | 230 << 8), 470);
+        assert_eq!(scl_clocks(230), 470, "BAUDLOW 0 repeats BAUD");
+        assert_eq!(scl_clocks(10 | 30 << 8), 50);
+    }
 
     struct Regs {
         address: u8,
@@ -543,6 +632,37 @@ mod tests {
         run(&mut m);
         assert_eq!(m.read_u16(0x1a).unwrap() & BUSSTATE, IDLE);
         assert_eq!(m.transactions(), 2);
+    }
+
+    #[test]
+    fn an_open_read_stays_on_the_bus_tick_between_bytes() {
+        // A smart-mode DATA read issues the next byte from a bus read, which
+        // cannot re-register the master: it must still be ticked then.
+        let mut m = master();
+        m.write_u32(0x24, 0x77 << 1).unwrap();
+        run(&mut m);
+        m.write(0x28, 0xd0).unwrap(); // register pointer
+        run(&mut m);
+        m.write_u32(0x24, (0x77 << 1) | 1).unwrap(); // repeated start, read
+        run(&mut m);
+        assert!(m.needs_bus_tick(), "read open, first byte waiting");
+        assert_eq!(m.read(0x28).unwrap(), 0x58);
+        assert!(m.busy() && m.needs_bus_tick());
+        run(&mut m);
+        m.write_u32(4, (1 << 8) | (1 << 18) | (3 << 16)).unwrap(); // NACK + STOP
+        run(&mut m);
+        assert!(!m.needs_bus_tick(), "closed after STOP");
+    }
+
+    #[test]
+    fn a_start_written_during_a_stop_follows_it() {
+        let mut m = master();
+        m.write_u32(0x24, 0x77 << 1).unwrap();
+        run(&mut m);
+        m.write_u32(4, (1 << 8) | (3 << 16)).unwrap(); // STOP
+        m.write_u32(0x24, 0x10 << 1).unwrap(); // next START while it is pending
+        assert_eq!(m.pending.get(), Some(Op::Stop));
+        assert_eq!(m.queued, Some(Op::Address(0x10 << 1)));
     }
 
     #[test]
