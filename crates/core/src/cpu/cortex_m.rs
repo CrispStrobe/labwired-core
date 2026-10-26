@@ -584,6 +584,38 @@ impl CortexM {
         (entry.tag == pc && entry.pc_increment == 2).then_some(entry.opcode as u16)
     }
 
+    /// Execute only an already checked RAM/register chunk; never fall through
+    /// to an ordinary instruction after retiring a nonzero prefix. The machine
+    /// owns inactive-resident/deadline admission and commits the exact elapsed
+    /// cycles before the next instruction (including MMIO or a fault).
+    fn try_quiescent_cached_chunk(
+        &mut self,
+        bus: &mut SystemBus,
+        config: &SimulationConfig,
+        max_count: u32,
+    ) -> u32 {
+        if max_count < 8
+            || !bus.samd_quiescent_chunk_ready()
+            || !config.batch_mode_enabled
+            || !config.decode_cache_enabled
+            || config.cortex_m_jit_enabled
+            || !bus.observers.is_empty()
+            || bus.logic_tap.push_armed()
+            || trace_insn_enabled()
+            || self.sleeping
+            || self.waiting_for_event
+            || self.active_exception != 0
+            || self.any_exception_pending()
+            || self.it_state != 0
+            || self.debug_batch_break()
+            || self.sysreset_latched()
+            || self.firmware_exit_latched()
+        {
+            return 0;
+        }
+        self.run_t16_cached_fast_paths(bus, max_count)
+    }
+
     /// Select only fast paths whose existing entry opcode admits this PC.
     /// This is a read-only dispatch filter, not loop admission: each selected
     /// executor still validates its complete shape and current addresses.
@@ -2896,6 +2928,15 @@ impl Cpu for CortexM {
         config: &SimulationConfig,
     ) -> SimResult<()> {
         self.step_internal(bus, observers, config)
+    }
+
+    fn try_quiescent_memory_chunk(
+        &mut self,
+        bus: &mut SystemBus,
+        config: &SimulationConfig,
+        max_count: u32,
+    ) -> u32 {
+        self.try_quiescent_cached_chunk(bus, config, max_count)
     }
 
     fn step_batch(

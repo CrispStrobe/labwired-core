@@ -426,6 +426,19 @@ pub trait Cpu: Send {
     fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
         None
     }
+    /// Optional checked RAM/register-only execution primitive. It may retire a
+    /// bounded prefix, but must stop BEFORE any MMIO/unsupported instruction.
+    /// The machine admits inactive residents and deadlines, then commits the
+    /// exact elapsed prefix before another instruction. Zero means no progress
+    /// and requests the original one-instruction path. Unknown CPUs opt out.
+    fn try_quiescent_memory_chunk(
+        &mut self,
+        _bus: &mut bus::SystemBus,
+        _config: &SimulationConfig,
+        _max_count: u32,
+    ) -> u32 {
+        0
+    }
     fn step(
         &mut self,
         bus: &mut dyn Bus,
@@ -693,6 +706,14 @@ impl Cpu for Box<dyn Cpu> {
     /// bench validation.
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         (**self).as_any_mut()
+    }
+    fn try_quiescent_memory_chunk(
+        &mut self,
+        bus: &mut bus::SystemBus,
+        config: &SimulationConfig,
+        max_count: u32,
+    ) -> u32 {
+        (**self).try_quiescent_memory_chunk(bus, config, max_count)
     }
     fn step(
         &mut self,

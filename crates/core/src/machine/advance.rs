@@ -362,6 +362,7 @@ impl<C: Cpu> Machine<C> {
                         secondary_steps: 0,
                         timed_cycles: None,
                         internally_committed_cycles: false,
+                        quiescent_chunk: false,
                     }
                 }
                 _ => self.execute_cpu_window(mode, window)?,

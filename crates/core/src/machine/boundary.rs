@@ -20,6 +20,7 @@ pub(crate) struct CoreProgress {
     /// This window published and charged its cycles internally, one retired
     /// instruction at a time. The outer boundary must not charge them again.
     pub internally_committed_cycles: bool,
+    pub quiescent_chunk: bool,
 }
 
 impl<C: Cpu> Machine<C> {
@@ -59,6 +60,30 @@ impl<C: Cpu> Machine<C> {
         window: crate::machine::CpuWindow,
     ) -> SimResult<CoreProgress> {
         let span = crate::profile::span();
+        let mut window = window;
+        if mode == ExecutionMode::RunBatch && window.quiescent_chunk {
+            self.bus.set_current_cycle(self.total_cycles);
+            let retired =
+                self.cpu
+                    .try_quiescent_memory_chunk(&mut self.bus, &self.config, window.steps);
+            if retired > 0 {
+                self.bus.current_cycle += u64::from(retired);
+                crate::profile::record_cpu(span);
+                return Ok(CoreProgress {
+                    primary_steps: retired,
+                    secondary_steps: 0,
+                    timed_cycles: None,
+                    internally_committed_cycles: false,
+                    quiescent_chunk: true,
+                });
+            }
+            // No architectural instruction retired. Preserve the exact ordinary
+            // one-instruction MMIO, exception and error path; never append it
+            // after a nonzero deferred prefix.
+            window.steps = 1;
+            window.fill = None;
+            window.quiescent_chunk = false;
+        }
         let progress = self.execute_cpu_window_inner(mode, window);
         crate::profile::record_cpu(span);
         progress
@@ -176,6 +201,7 @@ impl<C: Cpu> Machine<C> {
                         secondary_steps,
                         timed_cycles: None,
                         internally_committed_cycles: true,
+                        quiescent_chunk: false,
                     });
                 }
                 let executed = if parked_secondary && self.rtc_cntl_index.is_some() {
@@ -272,6 +298,7 @@ impl<C: Cpu> Machine<C> {
                     timed_cycles: clock_before
                         .map(|before| self.cpu.clock_cycles().saturating_sub(before)),
                     internally_committed_cycles: false,
+                    quiescent_chunk: false,
                 });
             }
         }
@@ -299,6 +326,7 @@ impl<C: Cpu> Machine<C> {
                     secondary_steps: 0,
                     timed_cycles: clock_before.map(|_| 0),
                     internally_committed_cycles: false,
+                    quiescent_chunk: false,
                 });
             }
             let timed_cycles =
@@ -321,6 +349,7 @@ impl<C: Cpu> Machine<C> {
                 secondary_steps: 0,
                 timed_cycles,
                 internally_committed_cycles: false,
+                quiescent_chunk: false,
             });
         }
 
@@ -341,6 +370,7 @@ impl<C: Cpu> Machine<C> {
             secondary_steps: 1,
             timed_cycles: None,
             internally_committed_cycles: false,
+            quiescent_chunk: false,
         })
     }
 
@@ -411,7 +441,7 @@ impl<C: Cpu> Machine<C> {
             && progress.primary_steps > 1;
         let should_tick = if internally_committed_per_cycle_batch {
             false
-        } else if coalesced_dual_idle {
+        } else if coalesced_dual_idle || progress.quiescent_chunk {
             true
         } else if progress.timed_cycles.is_some() {
             // A timed core's window can end past a tick boundary (its last
@@ -426,14 +456,14 @@ impl<C: Cpu> Machine<C> {
             let saved_m = self.config.peripheral_tick_interval;
             let saved_b = self.bus.config.peripheral_tick_interval;
             let saved_grid = self.bus.resident_tick_interval_override;
-            if coalesced_dual_idle {
+            if coalesced_dual_idle || progress.quiescent_chunk {
                 self.bus.resident_tick_interval_override = Some(u64::from(saved_b.max(1)));
                 let n = progress.primary_steps.max(1);
                 self.config.peripheral_tick_interval = n;
                 self.bus.config.peripheral_tick_interval = n;
             }
             self.tick_peripherals_at_boundary();
-            if coalesced_dual_idle {
+            if coalesced_dual_idle || progress.quiescent_chunk {
                 self.config.peripheral_tick_interval = saved_m;
                 self.bus.config.peripheral_tick_interval = saved_b;
                 self.bus.resident_tick_interval_override = saved_grid;

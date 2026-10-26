@@ -63,6 +63,7 @@ macro_rules! clamp_tick {
 pub(crate) struct CpuWindow {
     pub(crate) steps: u32,
     pub(crate) fill: Option<WindowFill>,
+    pub(crate) quiescent_chunk: bool,
 }
 
 /// How far a timed-cycle core may keep going to finish its tick window.
@@ -96,7 +97,23 @@ impl<C: Cpu> Machine<C> {
         use crate::machine::quantum_trace::clause;
 
         self.service_resident_edges_at_boundary();
-        let tick_interval = u64::from(self.config.peripheral_tick_interval.max(1));
+        let quiescent_chunk = !request.is_single()
+            && self.config.peripheral_tick_interval == 1
+            && self.config.batch_mode_enabled
+            && self.config.decode_cache_enabled
+            && !self.config.cortex_m_jit_enabled
+            && self.cpu_secondary.is_none()
+            && self.observers.is_empty()
+            && !self.logic_capture.poll_active()
+            && !self.logic_capture.push_active()
+            && self.bus.samd_quiescent_chunk_ready();
+        // Horizon for an exclusively checked RAM/register chunk. The configured
+        // peripheral and resident service grid remains one cycle.
+        let tick_interval = if quiescent_chunk {
+            1024
+        } else {
+            u64::from(self.config.peripheral_tick_interval.max(1))
+        };
         // Every clamp below that is measured in cycles is turned into a step
         // count. One step is one cycle on most cores; on a core whose step
         // cycles are clock time (AVR, up to 4) the budget is divided by the
@@ -388,6 +405,7 @@ impl<C: Cpu> Machine<C> {
         CpuWindow {
             steps: count as u32,
             fill,
+            quiescent_chunk: quiescent_chunk && count >= 8,
         }
     }
 }

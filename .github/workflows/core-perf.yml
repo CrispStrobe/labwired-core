@@ -54,6 +54,11 @@ on:
     # Nightly, after core-ci's 02:30 slot.
     - cron: "45 3 * * *"
   workflow_dispatch:
+    inputs:
+      samd_profile_only:
+        description: 'Owned SAMD source controls and initial selected measurements; normal PR gates are unchanged'
+        type: boolean
+        default: false
 
 concurrency:
   group: core-perf-${{ github.ref }}
@@ -101,7 +106,9 @@ jobs:
     if: >-
       ${{ needs.perf-scope.outputs.required == 'true'
           && !(github.event_name == 'workflow_dispatch'
-               && github.ref == 'refs/heads/fix/issue251-storage-boundary-20261019') }}
+               && github.ref == 'refs/heads/fix/issue251-storage-boundary-20261019')
+          && !(github.event_name == 'workflow_dispatch' && inputs.samd_profile_only
+               && github.repository == 'CrispStrobe/labwired-core') }}
     # Keep absolute RTx and relative Ir/step receipts on one stable image.
     # `ubuntu-latest` moves to Ubuntu 26 on 2026-10-19, which would silently
     # change both the compiler output and host throughput under our baselines.
@@ -509,3 +516,64 @@ jobs:
             perf-status.json
             rtx-report.txt
             rtx-status.json
+
+  samd-native-profile:
+    name: samd-native-profile
+    needs: perf-scope
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.samd_profile_only && github.repository == 'CrispStrobe/labwired-core' }}
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          targets: thumbv6m-none-eabi
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: core-perf
+          workspaces: |
+            . -> target
+          cache-on-failure: true
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install selected measurement tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends valgrind
+          python -m pip install --quiet pyyaml
+      - name: Freeze source and compiler identities
+        run: |
+          mkdir samd-profile-evidence
+          git rev-parse HEAD > samd-profile-evidence/source.txt
+          rustc --version --verbose > samd-profile-evidence/rustc.txt
+          cargo --version > samd-profile-evidence/cargo.txt
+          git ls-files -z crates/core/src crates/core/tests/samd_native_quiescent.rs crates/core/tests/samd_native_simulation_bundle.rs configs/chips/samd51-no-asf-simulation.yaml scripts/perf .github/workflows/core-perf.yml | xargs -0 sha256sum > samd-profile-evidence/source-sha256.txt
+      - name: Check inactive chunks and all strict architectural boundaries
+        run: |
+          set -o pipefail
+          cargo test --release --locked -p labwired-core --features event-scheduler --test samd_native_quiescent --test samd_native_simulation_bundle -- --nocapture 2>&1 | tee samd-profile-evidence/controls.log
+      - name: Build the unchanged production CLI feature set
+        run: |
+          cargo build --release -p labwired-cli --features event-scheduler
+          sha256sum target/release/labwired > samd-profile-evidence/cli-sha256.txt
+      - name: Require the original real-time threshold on this actual profile
+        run: |
+          set -o pipefail
+          python3 scripts/perf/board_rtx.py --boards samd51-no-asf-simulation --min-rtx 1.0 --status-json samd-profile-evidence/rtx-status.json 2>&1 | tee samd-profile-evidence/rtx-report.txt
+      - name: Measure both actual deterministic modes without changing a baseline
+        run: |
+          set -o pipefail
+          python3 scripts/perf/board_perf.py --boards samd51-no-asf-simulation --status-json samd-profile-evidence/perf-status.json 2>&1 | tee samd-profile-evidence/perf-report.txt
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: samd-native-profile-source-and-measurements
+          path: samd-profile-evidence/
+          if-no-files-found: error
+          retention-days: 14

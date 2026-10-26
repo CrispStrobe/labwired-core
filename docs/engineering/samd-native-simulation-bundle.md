@@ -40,3 +40,37 @@ partial models: NVM CTRLA as 16 bits, DAC/USB CTRLA as 8 bits, and CMCC CFG at
 unmodeled CMCC TYPE register to remain refused. Existing fleet probes, model
 access rules, silicon comparisons and earlier conformance values are unchanged.
 An L0 estate row grants no running-firmware or physical-accuracy coverage.
+
+Current integration failures remain explicit: the authored profile's reset-spin
+benchmark measured about 0.02× real time at 120MHz with one instruction per batch.
+The 1× gate and all earlier baselines remain unchanged. The conservative legacy
+walk prevents wide execution; any optimization must preserve active-model
+service, MMIO arming boundaries and exact elapsed cycles, then pass differential
+and affected native-guest qualification before new measurements are admitted.
+The generic unselected SERCOM3 has the same unsupported wire-gate bring-up as
+the original SAMD descriptors; the selected SAMD USART explicitly publishes
+bytes without a PadLines wire. Byte acceptance does not grant UART edge coverage.
+Bank-width controls must open the USB/DAC MCLK gates first: a clock-gated zero
+read is not evidence that a reserved register was admitted by the model.
+
+Provenance: the direct base is [CrispStrobe's PyBadge descriptor](https://github.com/CrispStrobe/labwired-core/blob/21ab8403c6b9d32d3e28152b4da7ad6b2e2908ce/configs/chips/atsamd51-pybadge.yaml).
+CrispStrobe introduced that target in [8c894bd](https://github.com/CrispStrobe/labwired-core/commit/8c894bdbe591c74d135811d6cc33574f8b4755cf);
+upstream later [imported CrispStrobe's work](https://github.com/w1ne/labwired-core/commit/94c57039d346a54bfb93c862e9ca834811b384ab).
+The underlying [upstream SAMD51 foundation](https://github.com/w1ne/labwired-core/blob/fc463fcd17871d8ba9353999189aec112aee5f36/configs/chips/atsamd51.yaml)
+carries Andrii Shylenko's notice, which is retained separately from the
+CrispStrobe PyBadge adaptation and no-ASF assembly credit.
+
+The performance candidate adds an explicit CPU capability for already checked
+RAM/register-only chunks. It is admitted only for this reviewed memory/model
+assembly with no attached devices, observers, capture, JIT, pending operation,
+active legacy work or active bus service. Unknown CPUs return zero. A nonzero
+prefix commits its actual elapsed cycles immediately; zero executes one original
+strict instruction. MMIO and unsupported operations never follow an uncommitted
+prefix. The configured tick/resident grid and the conservative public interval
+recommendation remain unchanged. Active peripheral and full connected-game
+execution remain on the strict path; this is not a claim of real-time games.
+Differential controls compare CPU flags/registers/IRQs, complete SRAM, access
+accounting, every model snapshot and exact clocks against one-instruction
+execution, including odd budgets and transitions to gated, active, system and
+storage accesses. Hosted source tests, the unchanged 1× gate and measured initial
+Ir baselines must still pass before this candidate can qualify.

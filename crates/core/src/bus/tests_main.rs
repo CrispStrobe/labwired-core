@@ -3229,6 +3229,7 @@ motor_models:
                     secondary_steps: 0,
                     timed_cycles: None,
                     internally_committed_cycles: false,
+                    quiescent_chunk: false,
                 },
             )
             .unwrap();
@@ -3248,6 +3249,7 @@ motor_models:
                     secondary_steps: 0,
                     timed_cycles: None,
                     internally_committed_cycles: false,
+                    quiescent_chunk: false,
                 },
             )
             .unwrap();

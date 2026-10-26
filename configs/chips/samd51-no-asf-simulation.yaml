@@ -1,5 +1,12 @@
 # SPDX-License-Identifier: MIT
-# Derived from the LabWired PyBadge descriptor; Copyright (C) 2026 Andrii Shylenko.
+# Upstream SAMD51 foundation: Copyright (C) 2026 Andrii Shylenko.
+# PyBadge adaptation and no-ASF assembly: Copyright (C) 2026 CrispStrobe contributors.
+# Direct base is this fork's PyBadge descriptor, not an upstream-authored PyBadge target:
+# https://github.com/CrispStrobe/labwired-core/blob/21ab8403c6b9d32d3e28152b4da7ad6b2e2908ce/configs/chips/atsamd51-pybadge.yaml
+# CrispStrobe introduced PyBadge in 8c894bdbe591c74d135811d6cc33574f8b4755cf;
+# upstream later imported that work in 94c57039d346a54bfb93c862e9ca834811b384ab.
+# Original upstream SAMD51 foundation:
+# https://github.com/w1ne/labwired-core/blob/fc463fcd17871d8ba9353999189aec112aee5f36/configs/chips/atsamd51.yaml
 # Explicit authored no-ASF simulation configuration; not silicon-qualified.
 # Load the separately authored calibration blobs; they are not device captures.
 name: samd51-no-asf-simulation
