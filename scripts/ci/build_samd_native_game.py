@@ -102,7 +102,7 @@ def main():
     notices.mkdir()
     for name, root in paths.items():
         for source in root.iterdir():
-            if source.is_file() and source.name.lower().startswith(("license", "copying")):
+            if source.is_file() and source.name.lower().startswith(("license", "copying", "notice", "copyright")):
                 shutil.copyfile(source, notices / (name + "-" + source.name))
     shutil.copyfile(samd / "tools/samd51-device-header/notices/microchip-samd51-dfp-3.9.276-LICENSE.txt", notices / "device-pack-LICENSE.txt")
     shutil.copyfile(samd / "no-asf-board/cf2/notices/uf2-samdx1-LICENSE", notices / "uf2-samdx1-LICENSE")
@@ -111,7 +111,7 @@ def main():
         with tarfile.open(work / archive) as t:
             for info in t.getmembers():
                 name = Path(info.name)
-                if info.isfile() and name.name.lower().startswith(("license", "copying")):
+                if info.isfile() and name.name.lower().startswith(("license", "copying", "notice", "copyright")):
                     need(not name.is_absolute() and ".." not in name.parts, "canonical archive notice name")
                     dest = notices / archive / name
                     dest.parent.mkdir(parents=True, exist_ok=True)
