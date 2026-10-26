@@ -63,11 +63,17 @@ impl<C: Cpu> Machine<C> {
         let mut window = window;
         if mode == ExecutionMode::RunBatch && window.quiescent_chunk {
             self.bus.set_current_cycle(self.total_cycles);
+            self.bus.bus_trace.set_cycle(self.total_cycles);
             let retired =
                 self.cpu
                     .try_quiescent_memory_chunk(&mut self.bus, &self.config, window.steps);
             if retired > 0 {
                 self.bus.current_cycle += u64::from(retired);
+                // The strict loop stamps transactions with the start of the
+                // last retired instruction before draining its boundary.
+                self.bus
+                    .bus_trace
+                    .set_cycle(self.total_cycles + u64::from(retired) - 1);
                 crate::profile::record_cpu(span);
                 return Ok(CoreProgress {
                     primary_steps: retired,

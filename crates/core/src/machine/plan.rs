@@ -101,7 +101,7 @@ impl<C: Cpu> Machine<C> {
             && self.config.peripheral_tick_interval == 1
             && self.config.batch_mode_enabled
             && self.config.decode_cache_enabled
-            && !self.config.cortex_m_jit_enabled
+            && !(cfg!(feature = "jit") && self.config.cortex_m_jit_enabled)
             && self.cpu_secondary.is_none()
             && self.observers.is_empty()
             && !self.logic_capture.poll_active()

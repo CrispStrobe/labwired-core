@@ -246,6 +246,11 @@ fn attached_observed_and_unsupported_modes_keep_one_instruction_commits() {
         "jit",
         "breakpoint",
     ] {
+        // An uncompiled backend cannot run, even when the CLI's request flag
+        // is set. The separate control below must actually coalesce there.
+        if mode == "jit" && !cfg!(feature = "jit") {
+            continue;
+        }
         let mut m = spin(mode == "attached");
         match mode {
             "observer" => m.observers.push(Arc::new(Observe)),
@@ -264,6 +269,90 @@ fn attached_observed_and_unsupported_modes_keep_one_instruction_commits() {
             257,
             "{mode} must not enter this capability"
         );
+    }
+}
+#[cfg(not(feature = "jit"))]
+#[test]
+fn uncompiled_jit_request_matches_the_real_cli_default_and_still_coalesces() {
+    let mut actual = spin(false);
+    let mut strict = spin(false);
+    for m in [&mut actual, &mut strict] {
+        m.config.cortex_m_jit_enabled = true;
+        m.bus.config.cortex_m_jit_enabled = true;
+    }
+    for fuel in [37, 1031, 2049] {
+        run(&mut actual, fuel, false);
+        run(&mut strict, fuel, true);
+        equal_state(&actual, &strict);
+    }
+    assert!(
+        actual.step_profile().cpu_batches * 4 < actual.step_profile().cpu_instructions,
+        "an inert request must not disable the production interpreter capability"
+    );
+}
+#[test]
+fn trace_clock_probe_matches_the_last_strict_instruction_boundary() {
+    use labwired_core::bus::bus_trace::{BusDir, BusPayload};
+    let mut actual = spin(false);
+    let mut strict = spin(false);
+    for fuel in [37, 1031, 2049] {
+        run(&mut actual, fuel, false);
+        run(&mut strict, fuel, true);
+        for m in [&mut actual, &mut strict] {
+            // Authored trace-clock probe, not a claimed guest UART transfer.
+            m.bus.bus_trace.push(
+                "authored-clock-probe",
+                BusPayload::Uart {
+                    direction: BusDir::Tx,
+                    byte: 0x41,
+                },
+            );
+        }
+        assert_eq!(
+            actual.bus.bus_trace.snapshot(),
+            strict.bus.bus_trace.snapshot()
+        );
+        assert_eq!(
+            actual.bus.bus_trace.snapshot().last().unwrap().cycle,
+            actual.total_cycles - 1
+        );
+    }
+}
+#[test]
+fn real_scheduled_uart_after_coalescence_keeps_bytes_and_complete_trace() {
+    use labwired_core::bus::bus_trace::{BusDir, BusPayload};
+    use labwired_core::peripherals::uart::UartStreamDevice;
+    struct OneByte(Option<u8>);
+    impl UartStreamDevice for OneByte {
+        fn poll(&mut self, _elapsed_us: u32) -> Option<u8> {
+            self.0.take()
+        }
+    }
+    let mut actual = spin(false);
+    let mut strict = spin(false);
+    run(&mut actual, 257, false);
+    run(&mut strict, 257, true);
+    assert!(actual.step_profile().cpu_batches * 4 < actual.step_profile().cpu_instructions);
+    for m in [&mut actual, &mut strict] {
+        m.bus.write_u32(0x40000818, 1 << 10).unwrap();
+        m.bus
+            .attach_uart_stream_by_id("sercom3", Box::new(OneByte(Some(0x5a))))
+            .unwrap();
+        m.bus.write_u32(0x41014028, 0x33).unwrap();
+    }
+    // The real stream cadence is one cycle on this configuration. Do not
+    // invent a wider UART deadline to make a synthetic wide-event claim.
+    run(&mut actual, 17, false);
+    run(&mut strict, 17, true);
+    assert_eq!(actual.bus.read_u32(0x41014028).unwrap() & 0xff, 0x5a);
+    assert_eq!(strict.bus.read_u32(0x41014028).unwrap() & 0xff, 0x5a);
+    equal_state(&actual, &strict);
+    let events = actual.bus.bus_trace.snapshot();
+    assert_eq!(events, strict.bus.bus_trace.snapshot());
+    for (direction, byte) in [(BusDir::Tx, 0x33), (BusDir::Rx, 0x5a)] {
+        assert!(events.iter().any(|event| event.bus == "sercom3" &&
+            matches!(&event.payload, BusPayload::Uart { direction: d, byte: b } if *d == direction && *b == byte)),
+            "real generic UART byte and direction observed");
     }
 }
 fn io_program(address: u32, value: u32, store: u16, load: u16) -> M {

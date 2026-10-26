@@ -598,7 +598,9 @@ impl CortexM {
             || !bus.samd_quiescent_chunk_ready()
             || !config.batch_mode_enabled
             || !config.decode_cache_enabled
-            || config.cortex_m_jit_enabled
+            // The production CLI records a JIT request even in binaries
+            // without that optional backend. Such a flag is inert, not JIT.
+            || (cfg!(feature = "jit") && config.cortex_m_jit_enabled)
             || !bus.observers.is_empty()
             || bus.logic_tap.push_armed()
             || trace_insn_enabled()
