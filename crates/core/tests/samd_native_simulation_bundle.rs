@@ -49,7 +49,7 @@ fn narrow_base_controls_do_not_admit_reserved_word_reads() {
         "../../../configs/systems/samd51-no-asf-simulation.yaml"
     ))
     .unwrap();
-    let bus = SystemBus::from_config(&chip, &manifest).unwrap();
+    let mut bus = SystemBus::from_config(&chip, &manifest).unwrap();
     assert_eq!(
         bus.read_u32(0x41006004).unwrap(),
         0,
@@ -68,6 +68,13 @@ fn narrow_base_controls_do_not_admit_reserved_word_reads() {
         bus.read_u32(0x41004000).is_err(),
         "reserved bytes stay refused"
     );
+    // A closed MCLK gate intentionally returns zero without reaching the
+    // model. Open the actual banks before testing their admitted widths.
+    assert_eq!(bus.read_u32(0x41000000).unwrap(), 0, "gated USB reads zero");
+    assert_eq!(bus.read_u32(0x43002400).unwrap(), 0, "gated DAC reads zero");
+    bus.write_u32(0x40000810, 1 << 10).unwrap(); // AHBMASK.USB
+    bus.write_u32(0x40000818, 1 << 0).unwrap(); // APBBMASK.USB
+    bus.write_u32(0x40000820, 1 << 9).unwrap(); // APBDMASK.DAC
     assert!(bus.read_u8(0x41000000).is_ok(), "actual USB CTRLA width");
     assert!(
         bus.read_u32(0x41000000).is_err(),
