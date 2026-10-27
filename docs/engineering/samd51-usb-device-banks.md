@@ -152,3 +152,16 @@ documentation. Honor the unchanged source/performance path policy and every
 check it selects; do not rerun the successful original diagnostic or alter a
 baseline to simplify cleanup. The later instruction-position diagnostic stayed
 on its separate temporary PR rather than changing the engine source.
+
+## Bit-clock tolerance
+
+The board may declare its DFLL48M open-loop error, `dfll_open_loop_ppm`
+(default 0, no effect and no OSCCTRL read). With one declared, a host
+transaction completes only while the bit clock is within full speed's
++-0.25 % (USB 2.0, 7.1.11): either the DFLL recovers its clock from the start of
+frame (OSCCTRL `DFLLCTRLA.ENABLE`, `DFLLCTRLB.MODE` and `USBCRM`,
+`DFLLMUL.MUL` = 48000, DS60001507 28.6.4), or the declared error is itself
+within the tolerance. The model reads those registers by MMIO, as the firmware
+sees them. The datasheet's open-loop range (table 54-50: 45.8-49.3 MHz over
+-40..85 C, 47.2-48.81 MHz over 0..60 C) is well outside it. The setting survives
+USB SWRST and system reset.
