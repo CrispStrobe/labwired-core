@@ -126,6 +126,10 @@
     "name": "rv1103"
   },
   {
+    "buses": [],
+    "name": "samd51-no-asf-simulation"
+  },
+  {
     "buses": [
       "I2C",
       "SPI",
