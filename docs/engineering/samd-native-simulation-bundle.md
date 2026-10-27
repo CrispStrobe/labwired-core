@@ -204,6 +204,14 @@ window's markers, execution consumes admission and marks only a positive
 retired prefix, and commit consumes that marker once. Ordinary execution keeps
 its existing return structures and strict execution call site.
 
+That candidate (exact-head fleet run 40459382058) still reported about 4% extra
+step cost on existing ARM and Xtensa boards. The follow-up keeps every marker
+store on the admitted path only: each public advance and external-runner entry
+clears the markers, the admitted planner clears them before planning, and the
+ordinary executor, planner and commit each read one marker without a store. The
+executor wrapper is no longer forced inline and the checked helpers are cold.
+This is an unmeasured hypothesis until the unchanged fleet gate passes.
+
 All twenty controls, the external-runner mutation, fresh actual guest checks and
 full-fleet/selected measurements must pass on the final runtime before landing.
 Old baselines, noise limits and the real-time floor remain unchanged. This
