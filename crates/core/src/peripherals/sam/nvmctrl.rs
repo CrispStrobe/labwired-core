@@ -74,6 +74,11 @@ impl Samd51Nvmctrl {
     pub fn pending(&self) -> bool {
         self.pending.is_some()
     }
+    /// The command waiting for its commit: what a host that cuts power
+    /// mid-operation would interrupt.
+    pub fn pending_operation(&self) -> Option<&Operation> {
+        self.pending.as_ref()
+    }
     /// Erase and program operations committed so far (see `committed`).
     pub fn committed(&self) -> u64 {
         self.committed

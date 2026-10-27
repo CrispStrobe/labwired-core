@@ -20,7 +20,14 @@ use std::cell::{Cell, RefCell};
 const MB: u8 = 1;
 const SB: u8 = 1 << 1;
 const ERROR: u8 = 1 << 7;
+const BUSERR: u16 = 1;
 const RXNACK: u16 = 1 << 2;
+const LOWTOUT: u16 = 1 << 6;
+/// CTRLA.LOWTOUTEN: SCL held low beyond the time-out ends the transfer.
+const LOWTOUTEN: u32 = 1 << 30;
+/// SCL low time-out: 25-35 ms (DS60001507F 36.6.2.4.6); the model takes the
+/// earliest, 25 ms.
+const LOW_TIMEOUT_NS: u64 = 25_000_000;
 const BUSSTATE: u16 = 3 << 4;
 const IDLE: u16 = 1 << 4;
 const OWNER: u16 = 2 << 4;
@@ -142,6 +149,28 @@ fn scl_clocks(baud: u32) -> u64 {
     10 + high + low
 }
 
+/// CPU cycles of `periods` SCL periods at BAUD, the rise time and the core
+/// clock, plus `stretch_ns` of SCL held low by the device.
+fn op_cycles(
+    periods: u64,
+    baud: u32,
+    rise_ns: u64,
+    stretch_ns: u64,
+    gclk: u64,
+    cpu: u64,
+) -> Option<u64> {
+    if gclk == 0 {
+        return None;
+    }
+    // Core clocks x 1e9 per period, so the rise term stays exact.
+    let period =
+        u128::from(scl_clocks(baud)) * 1_000_000_000 + u128::from(gclk) * u128::from(rise_ns);
+    let bus =
+        (u128::from(periods) * period * u128::from(cpu)).div_ceil(u128::from(gclk) * 1_000_000_000);
+    let stretch = (u128::from(stretch_ns) * u128::from(cpu)).div_ceil(1_000_000_000);
+    Some((bus + stretch) as u64)
+}
+
 pub struct Samd51SercomI2cm {
     instance: SercomInstance,
     ctrla: u32,
@@ -165,6 +194,9 @@ pub struct Samd51SercomI2cm {
     /// An address written while a STOP was pending; issued after it.
     queued: Option<Op>,
     completed: u64,
+    /// SCL rise time the board declares (`scl_rise_ns`): each SCL period is
+    /// `10 + BAUD + BAUDLOW + f_core * t_rise` core clocks (DS60001507F 36.6.2.4.1).
+    rise_ns: u64,
 }
 
 impl Samd51SercomI2cm {
@@ -189,7 +221,13 @@ impl Samd51SercomI2cm {
             deadline: None,
             queued: None,
             completed: 0,
+            rise_ns: 0,
         }
+    }
+    /// The board's SCL rise time in nanoseconds.
+    pub fn with_scl_rise_ns(mut self, rise_ns: u64) -> Self {
+        self.rise_ns = rise_ns;
+        self
     }
     fn refuse<T>(what: &str) -> SimResult<T> {
         Err(SimulationError::NotImplemented(format!(
@@ -216,7 +254,7 @@ impl Samd51SercomI2cm {
         let devices = std::mem::take(&mut self.devices);
         let (transactions, addresses) = (self.transactions, std::mem::take(&mut self.addresses));
         let clock = self.clock.take();
-        *self = Self::new(self.instance);
+        *self = Self::new(self.instance).with_scl_rise_ns(self.rise_ns);
         self.clock = clock;
         self.devices = devices;
         self.transactions = transactions;
@@ -284,6 +322,20 @@ impl Samd51SercomI2cm {
             Op::Stop => self.stop_selected(),
         }
     }
+    /// The pending operation `op` reaches the end of its bus time.
+    fn complete(&mut self, op: Op) {
+        self.pending.set(self.queued.take());
+        self.completed += 1;
+        let timed_out = self.times_out(op);
+        self.perform(op);
+        if timed_out {
+            // The master releases SCL, completes the operation with MB or SB
+            // as normal, sends STOP, and reports LOWTOUT and BUSERR (ERROR).
+            self.status |= LOWTOUT | BUSERR;
+            self.intflag.set(self.intflag.get() | ERROR);
+            self.stop_selected();
+        }
+    }
     fn command(&mut self, cmd: u32) {
         match cmd {
             2 if self.reading => self.pending.set(Some(Op::ReadNext)),
@@ -296,22 +348,51 @@ impl Samd51SercomI2cm {
     fn duration(&self, bus: &dyn Bus, op: Op) -> Option<u64> {
         let gclk = super::clock_tree::peripheral_hz(bus, self.instance.core_gclk)?;
         let cpu = super::clock_tree::cpu_hz(bus)?;
-        let periods = match op {
+        // The device that stretches: the one claiming the address, or the
+        // selected one for its bytes. A NACKed address and STOP stretch nothing.
+        let (periods, device) = match op {
             Op::Address(byte) => {
                 let claimed = self
                     .devices
                     .iter()
-                    .any(|d| d.borrow().claims_address(byte >> 1));
-                if byte & 1 != 0 && claimed {
-                    19
-                } else {
-                    10
+                    .position(|d| d.borrow().claims_address(byte >> 1));
+                match claimed {
+                    // The read's first byte follows its address.
+                    Some(i) if byte & 1 != 0 => (19, Some((i, 2))),
+                    Some(i) => (10, Some((i, 1))),
+                    None => (10, None),
                 }
             }
-            Op::Write(_) | Op::ReadNext => 9,
-            Op::Stop => 1,
+            Op::Write(_) | Op::ReadNext => (9, self.selected.map(|i| (i, 1))),
+            Op::Stop => (1, None),
         };
-        (gclk > 0).then(|| (periods * scl_clocks(self.baud) * cpu).div_ceil(gclk))
+        let stretch = device.map_or(0, |(i, holds)| {
+            let ns = self.devices[i].borrow().clock_stretch_ns();
+            // A hold beyond the time-out is cut short there, once.
+            if self.low_timeout_enabled() && ns > LOW_TIMEOUT_NS {
+                LOW_TIMEOUT_NS
+            } else {
+                ns * holds
+            }
+        });
+        op_cycles(periods, self.baud, self.rise_ns, stretch, gclk, cpu)
+    }
+    fn low_timeout_enabled(&self) -> bool {
+        self.ctrla & LOWTOUTEN != 0
+    }
+    /// Whether `op` ends in an SCL low time-out: the addressed (or selected)
+    /// device holds SCL longer than the time-out while it is enabled.
+    fn times_out(&self, op: Op) -> bool {
+        let device = match op {
+            Op::Address(byte) => self
+                .devices
+                .iter()
+                .position(|d| d.borrow().claims_address(byte >> 1)),
+            Op::Write(_) | Op::ReadNext => self.selected,
+            Op::Stop => None,
+        };
+        self.low_timeout_enabled()
+            && device.is_some_and(|i| self.devices[i].borrow().clock_stretch_ns() > LOW_TIMEOUT_NS)
     }
     fn lines(&self) -> u8 {
         if self.enabled() {
@@ -349,9 +430,11 @@ impl Samd51SercomI2cm {
         match offset {
             0x00 if value & 1 != 0 => self.reset(),
             0x00 => {
-                // I2C master mode; SDAHOLD and RUNSTDBY admitted; PINOUT, timeouts,
-                // SCLSM and speed modes refused.
-                if value & 0x1c != MODE_I2C_MASTER || value & !(0x0030_0000 | 0x80 | 0x1e) != 0 {
+                // I2C master mode; SDAHOLD, LOWTOUTEN and RUNSTDBY admitted;
+                // PINOUT, the other timeouts, SCLSM and speed modes refused.
+                if value & 0x1c != MODE_I2C_MASTER
+                    || value & !(0x0030_0000 | LOWTOUTEN | 0x80 | 0x1e) != 0
+                {
                     return Self::refuse("CTRLA outside standard-mode I2C master");
                 }
                 if self.enabled() && (value ^ self.ctrla) & !2 != 0 {
@@ -516,9 +599,7 @@ impl Peripheral for Samd51SercomI2cm {
             }
         }
         self.deadline = None;
-        self.pending.set(self.queued.take());
-        self.completed += 1;
-        self.perform(op);
+        self.complete(op);
     }
     fn attach_cycle_clock(&mut self, clock: crate::CycleClock) {
         self.clock = Some(clock);
@@ -571,6 +652,78 @@ mod tests {
         assert_eq!(scl_clocks(230 | 230 << 8), 470);
         assert_eq!(scl_clocks(230), 470, "BAUDLOW 0 repeats BAUD");
         assert_eq!(scl_clocks(10 | 30 << 8), 50);
+    }
+
+    #[test]
+    fn rise_time_and_stretching_lengthen_an_operation() {
+        // ZI2C's 100 kHz on 48 MHz allowing 215 ns of rise: BAUD = BAUDLOW =
+        // 230, so a period is 470 + 48e6 * 215e-9 = 480.32 core clocks.
+        let baud = 230 | 230 << 8;
+        let (gclk, cpu) = (48_000_000, 120_000_000);
+        assert_eq!(op_cycles(1, baud, 0, 0, gclk, cpu), Some(1175));
+        assert_eq!(op_cycles(10, baud, 215, 0, gclk, cpu), Some(12_008));
+        assert_eq!(
+            op_cycles(1, baud, 215, 0, gclk, cpu),
+            Some(1201),
+            "1200.8, rounded up"
+        );
+        // 25 us of stretching is 3000 CPU cycles on top.
+        assert_eq!(
+            op_cycles(9, baud, 0, 25_000, gclk, cpu),
+            Some(9 * 1175 + 3000)
+        );
+        assert_eq!(op_cycles(1, baud, 0, 0, 0, cpu), None, "no core clock");
+    }
+
+    struct Holder(u64);
+    impl I2cDevice for Holder {
+        fn address(&self) -> u8 {
+            0x40
+        }
+        fn read(&mut self) -> u8 {
+            0
+        }
+        fn write(&mut self, _: u8) {}
+        fn clock_stretch_ns(&self) -> u64 {
+            self.0
+        }
+    }
+
+    #[test]
+    fn scl_held_past_the_low_timeout_ends_the_transfer() {
+        for (lowtout, hold, timed_out) in [
+            (true, 30_000_000, true),
+            (true, 20_000_000, false),
+            (false, 30_000_000, false),
+        ] {
+            let mut m = Samd51SercomI2cm::new(SERCOM_INSTANCES[2]);
+            m.attach_slave(Box::new(Holder(hold)));
+            let ctrla = MODE_I2C_MASTER | (2 << 20) | if lowtout { LOWTOUTEN } else { 0 };
+            m.write_u32(0, ctrla).unwrap();
+            m.write_u32(0, ctrla | 2).unwrap();
+            m.write_u16(0x1a, IDLE).unwrap();
+            m.write_u32(0x24, 0x40 << 1).unwrap();
+            let op = m.pending.get().unwrap();
+            m.complete(op);
+            // MB as normal; LOWTOUT and BUSERR with ERROR, and the bus released.
+            assert_eq!(m.read(0x18).unwrap() & MB, MB);
+            assert_eq!(m.read(0x18).unwrap() & ERROR != 0, timed_out, "hold {hold}");
+            let status = m.read_u16(0x1a).unwrap();
+            assert_eq!(status & (LOWTOUT | BUSERR) == LOWTOUT | BUSERR, timed_out);
+            assert_eq!(status & BUSSTATE == IDLE, timed_out);
+        }
+        // The cut-short hold counts the time-out once.
+        assert_eq!(
+            op_cycles(
+                10,
+                230 | 230 << 8,
+                0,
+                LOW_TIMEOUT_NS,
+                48_000_000,
+                120_000_000
+            ),
+            Some(11_750 + 3_000_000)
+        );
     }
 
     struct Regs {
