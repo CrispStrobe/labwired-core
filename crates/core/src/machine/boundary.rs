@@ -447,7 +447,7 @@ impl<C: Cpu> Machine<C> {
         // on the admitted path and consumed here; the admitted
         // planner and every public advance entry clear it before a new window,
         // so a later boundary error cannot carry it into another window.
-        let quiescent_chunk = mode == ExecutionMode::RunBatch && self.quiescent_chunk_retired;
+        let quiescent_chunk = self.quiescent_chunk_retired;
         if quiescent_chunk {
             self.quiescent_chunk_retired = false;
         }
