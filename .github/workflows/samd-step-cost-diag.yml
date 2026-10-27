@@ -43,10 +43,10 @@ jobs:
           echo "head=$head main=$main" | tee out/sources.txt
           git worktree add ../main-src "$main"
           git worktree add ../head-src "$head"
-          (cd ../main-src && cargo build --release -p labwired-cli --features event-scheduler --target-dir "$GITHUB_WORKSPACE/target")
-          cp target/release/labwired out/labwired-main
-          (cd ../head-src && cargo build --release -p labwired-cli --features event-scheduler --target-dir "$GITHUB_WORKSPACE/target")
-          cp target/release/labwired out/labwired-head
+          # Separate target dirs: a shared one produced byte-identical CLIs in run 40483088208.
+          (cd ../main-src && cargo build --release -p labwired-cli --features event-scheduler && git rev-parse HEAD && cp target/release/labwired "$GITHUB_WORKSPACE/out/labwired-main")
+          (cd ../head-src && cargo build --release -p labwired-cli --features event-scheduler && git rev-parse HEAD && cp target/release/labwired "$GITHUB_WORKSPACE/out/labwired-head")
+          cmp out/labwired-main out/labwired-head && { echo "identical CLIs"; exit 1; } || true
           sha256sum out/labwired-* | tee out/cli-sha256.txt
       - name: Measure both with retained callgrind outputs
         run: |
