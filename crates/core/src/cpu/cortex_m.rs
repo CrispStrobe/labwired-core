@@ -3671,6 +3671,12 @@ impl CortexM {
             self.waiting_for_event = false;
             self.consume_event();
         }
+        // Bus work can require single-cycle service while WFI is parked. A
+        // refused time skip must not execute the instruction after WFI. Keep
+        // the historical spin behaviour when idle acceleration is disabled.
+        if self.sleeping && config.idle_fast_forward_enabled && !self.wfi_wake_pending() {
+            return Ok(());
+        }
         // Leave WFI sleep before this step commits: the flag is re-armed only if
         // this instruction is itself a WFI with no wake event pending.
         self.set_core_sleeping(false);

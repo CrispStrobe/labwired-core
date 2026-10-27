@@ -79,6 +79,13 @@ and the existing default spin behavior. WFI/WFE idle admission also checks the
 shared controller before skipping its import boundary, retaining their existing
 PRIMASK distinction and BASEPRI/FAULTMASK/active-priority rules. An eight-case
 sleep/mask control requires both masked sleep and wake after clearing the mask.
+For this assembly, idle skipping reuses the all-inactive admission predicate:
+inert clock banks do not veto a skip, while pending operations, bus service,
+residents and observers still do. Other assemblies keep their existing idle
+admission policy. With idle fast-forward enabled, refused skips leave WFI
+parked while one-cycle bus service continues; the default disabled mode keeps
+its existing spin behaviour. Real DPLL lock-wait, gated I2C, enabled USB and
+DMA waiting for TC3 controls require this distinction without inventing an IRQ.
 The real generic UART stream control
 opens both the MCLK mask and SERCOM3's GCLK channel before checking TX/RX bytes.
 Hosted source tests, the unchanged 1× gate and measured initial
@@ -107,8 +114,15 @@ the8-pixel spare strip to stay black. These bounds match all51 retained
 native snapshots from the qualified reference; they reject both an untouched
 black display and a full-panel fill. They establish paint/layout coverage,
 while the stronger source-bound game campaign retains exact colours, movement
-and press/release requirements. The new CLI workflow remains unqualified until
-its official source-built runs and independent original audits pass.
+and press/release requirements.
+
+The [source-built CLI run](https://github.com/CrispStrobe/labwired-core/actions/runs/40420990511)
+passed both profiles at [candidate source](https://github.com/CrispStrobe/labwired-core/commit/7b042c4b1f3a5456d51fcbd7ed2da53298a45192).
+Its tested merge `6e6dc934a21ec5b0c06a1aec3803ad7febbddde8` has the same
+tree. The retained packet binds the fresh build to pinned sources, recorded
+compiler inputs and both 70-million-step results. The optimization's
+architectural controls, real-time gate and initial deterministic baseline remain
+pending.
 
 ## Performance floor and strict service
 

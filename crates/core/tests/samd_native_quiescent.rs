@@ -168,7 +168,10 @@ fn wfi_sleeps_and_enabled_irq_really_wakes_the_cpu() {
         }
         let report = m.advance(request).unwrap();
         assert_eq!(report.fuel_consumed, 37);
-        assert_eq!(report.primary_steps, 0, "sleep retires no instructions");
+        assert_eq!(
+            report.primary_steps, 0,
+            "sleep retires no instructions: strict={strict_mode}"
+        );
         assert_eq!(report.idle_cycles, 37, "actual idle accounting");
     }
     equal_state(&actual, &strict);
@@ -228,7 +231,7 @@ fn shared_nvic_sleep_wakes_preserve_wfi_wfe_mask_contracts() {
                 }
                 let report = m.advance(request).unwrap();
                 assert_eq!(report.fuel_consumed, 37);
-                assert_eq!(report.primary_steps, 0, "masked wake stays asleep");
+                assert_eq!(report.primary_steps, 0, "masked wake stays asleep: opcode={opcode:x}, primask={primask}, basepri={basepri:x}, faultmask={faultmask}, strict={strict_mode}");
                 assert_eq!(report.idle_cycles, 37);
                 assert_eq!(m.cpu.pc, 0x102);
                 assert_eq!(m.cpu.r0, 0);
@@ -240,6 +243,79 @@ fn shared_nvic_sleep_wakes_preserve_wfi_wfe_mask_contracts() {
             run(&mut actual, 17, false);
             run(&mut strict, 17, true);
             assert_eq!(actual.cpu.active_exception, 16);
+        }
+        equal_state(&actual, &strict);
+    }
+}
+#[test]
+fn active_bus_work_keeps_wfi_parked_and_serviced_without_skipping() {
+    for device in ["oscctrl", "sercom2", "usb", "dmac"] {
+        let mut actual = machine(&[0xbf30, 0x205a, 0xe7fe], &[], false);
+        let mut strict = machine(&[0xbf30, 0x205a, 0xe7fe], &[], false);
+        for m in [&mut actual, &mut strict] {
+            m.config.idle_fast_forward_enabled = true;
+        }
+        run(&mut actual, 1, false);
+        run(&mut strict, 1, true);
+        for m in [&mut actual, &mut strict] {
+            match device {
+                // DPLL0 waits for its disabled reference channel.
+                "oscctrl" => m.bus.write_u8(0x40001030, 2).unwrap(),
+                // A real pending address cannot complete with clocks off.
+                "sercom2" => {
+                    m.bus.write_u32(0x41012000, 0x16).unwrap();
+                    m.bus.write_u16(0x4101201a, 0x10).unwrap();
+                    m.bus.write_u32(0x41012024, 0xa0).unwrap();
+                }
+                // An enabled USB controller must still poll for host tokens.
+                "usb" => {
+                    m.bus.write_u32(0x40000810, 1 << 10).unwrap();
+                    m.bus.write_u32(0x40000818, 1).unwrap();
+                    m.bus.write_u8(0x41000000, 2).unwrap();
+                    m.bus.write_u8(0x41000008, 0).unwrap();
+                }
+                // A genuine half-word DAC channel waits for TC3 overflow.
+                "dmac" => {
+                    m.bus.write_u32(0x40000810, 1 << 9).unwrap();
+                    m.bus.write_u16(0x20001000, 0x0501).unwrap();
+                    m.bus.write_u16(0x20001002, 1).unwrap();
+                    m.bus.write_u32(0x20001004, 0x20002002).unwrap();
+                    m.bus.write_u32(0x20001008, 0x43002410).unwrap();
+                    m.bus.write_u32(0x2000100c, 0).unwrap();
+                    m.bus.write_u32(0x4100a034, 0x20001000).unwrap();
+                    m.bus.write_u32(0x4100a038, 0x20001200).unwrap();
+                    m.bus
+                        .write_u32(0x4100a040, (0x35 << 8) | (2 << 20) | 2)
+                        .unwrap();
+                    m.bus.write_u32(0x4100a000, 0x102).unwrap();
+                }
+                _ => unreachable!(),
+            }
+            let p = m.bus.peripherals.iter().find(|p| p.name == device).unwrap();
+            assert!(p.dev.needs_bus_tick(), "{device} really needs service");
+            assert!(
+                !p.dev.legacy_tick_active(),
+                "{device} has no IRQ to veto skipping"
+            );
+        }
+        for (m, strict_mode) in [(&mut actual, false), (&mut strict, true)] {
+            let mut request = AdvanceRequest::run(Some(37));
+            if strict_mode {
+                request = request.with_batch_cap(NonZeroU32::new(1).unwrap());
+            }
+            let report = m.advance(request).unwrap();
+            assert_eq!(report.fuel_consumed, 37);
+            assert_eq!(report.idle_cycles, 0, "{device} must not lose service");
+            // Primary quanta service the bus; WFI still fetches no MOVS.
+            assert_eq!(report.primary_steps, 37);
+            assert_eq!(m.cpu.pc, 0x102, "{device}: CPU stays parked");
+            assert_eq!(m.cpu.r0, 0);
+            assert_eq!(m.cpu.active_exception, 0);
+            let p = m.bus.peripherals.iter().find(|p| p.name == device).unwrap();
+            assert!(
+                p.dev.needs_bus_tick(),
+                "{device} remains live without a refusal"
+            );
         }
         equal_state(&actual, &strict);
     }
