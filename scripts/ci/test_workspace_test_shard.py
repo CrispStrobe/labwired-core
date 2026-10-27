@@ -51,7 +51,7 @@ def test_core_split_preserves_configuration_commands_and_read_only_cache():
         assert child["if"] == trigger
         assert child["runs-on"] == "ubuntu-24.04"
         # Feature-off runs its unit and integration suites back to back (~20 min).
-        assert child["timeout-minutes"] == (30 if child is feature_off else 20)
+        assert child["timeout-minutes"] == (45 if child is feature_off else 20)
         checkout = next(step for step in child["steps"] if step.get("uses") == "actions/checkout@v4")
         assert checkout["with"]["fetch-depth"] == 0
         rust = next(step for step in child["steps"] if step.get("name") == "Install Rust")

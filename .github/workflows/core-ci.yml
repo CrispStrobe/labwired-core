@@ -691,8 +691,11 @@ jobs:
     name: pr-feature-off
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
-    # The feature-off unit and integration suites now run close to 20 min.
-    timeout-minutes: 30
+    # Measured 2026-10-27: the labwired-core lib test binary alone compiles
+    # for 21+ min on a busy runner (the dependency cache restores only
+    # dependencies; the workspace crates always rebuild), then the guest
+    # steps follow. 30 min cancelled it mid-compile; this is a hang guard.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
