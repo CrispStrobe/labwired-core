@@ -96,11 +96,15 @@ impl Samd51Dac {
                 let (clock, elapsed) = (self.clock.take(), self.elapsed);
                 let conversions = std::mem::take(&mut self.conversions);
                 let total = self.total;
+                // SWRST resets registers; the board's references are wiring.
+                let (vrefa_mv, vddana_mv) = (self.vrefa_mv, self.vddana_mv);
                 *self = Self {
                     clock,
                     elapsed,
                     conversions,
                     total,
+                    vrefa_mv,
+                    vddana_mv,
                     ..Self::default()
                 };
             }
@@ -205,6 +209,8 @@ mod tests {
         // REFSEL 0 (VREFA unbuffered, the CODAL default): full scale is VREFA.
         assert_eq!(dac.output_millivolts(4095), Some(3300.0));
         assert!((dac.output_millivolts(2048).unwrap() - 1650.4).abs() < 0.1);
+        dac.write(0, 1).unwrap(); // SWRST keeps the board's references
+        assert_eq!(dac.output_millivolts(4095), Some(3300.0));
         dac.ctrlb = 3 << 1; // INTREF: the SUPC bandgap is not modelled
         assert_eq!(dac.output_millivolts(4095), None);
         assert_eq!(
