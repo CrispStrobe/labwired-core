@@ -91,11 +91,12 @@ impl<C: Cpu> Machine<C> {
     // mailboxes here keeps every store off the ordinary planner.
     #[cold]
     #[inline(never)]
-    fn quiescent_chunk_admitted(&mut self, request: AdvanceRequest) -> bool {
+    fn quiescent_chunk_admitted(&mut self) -> bool {
         self.quiescent_chunk_planned = false;
         self.quiescent_chunk_retired = false;
+        // `quiescent_chunk_enabled` already excludes single-step requests;
+        // taking the request here would make it escape the ordinary planner.
         self.bus.samd_native_quiescent_chunks
-            && !request.is_single()
             && self.config.peripheral_tick_interval == 1
             && self.config.batch_mode_enabled
             && self.config.decode_cache_enabled
@@ -118,7 +119,7 @@ impl<C: Cpu> Machine<C> {
         self.service_resident_edges_at_boundary();
         // The full predicate stays out of the ordinary planner's hot body.
         let quiescent_chunk =
-            self.quiescent_chunk_enabled && self.quiescent_chunk_admitted(request);
+            self.quiescent_chunk_enabled && self.quiescent_chunk_admitted();
         // Horizon for an exclusively checked RAM/register chunk. The configured
         // peripheral and resident service grid remains one cycle.
         let tick_interval = if quiescent_chunk {

@@ -38,7 +38,7 @@ jobs:
       - name: Build both CLIs (browser feature set)
         run: |
           mkdir -p out
-          head=$(git rev-parse HEAD^)
+          head=$(git rev-parse HEAD)  # diagnostic commit carries the candidate source
           main=$(git rev-parse origin/main)
           echo "head=$head main=$main" | tee out/sources.txt
           git worktree add ../main-src "$main"

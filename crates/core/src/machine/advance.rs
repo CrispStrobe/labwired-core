@@ -150,13 +150,22 @@ impl<C: Cpu> Machine<C> {
         }
         // Cache profile/request eligibility once per advance. Keep one
         // authoritative loop and the ordinary CPU-window/report return ABI.
-        self.quiescent_chunk_enabled =
-            !request.is_single() && self.bus.samd_native_quiescent_chunks;
-        // The mailboxes are only touched on the admitted path; start every
-        // advance from a known-empty state so an earlier error cannot leak.
+        // Other assemblies never raise any mailbox (all start false and only
+        // the admitted planner sets them), so they pay one load and branch.
+        if self.bus.samd_native_quiescent_chunks {
+            self.arm_quiescent_mailboxes(!request.is_single());
+        }
+        self.advance_inner(request, None)
+    }
+
+    /// Start every advance of the admitted assembly from known-empty
+    /// mailboxes so an earlier error cannot leak a marker into a new window.
+    #[cold]
+    #[inline(never)]
+    fn arm_quiescent_mailboxes(&mut self, enabled: bool) {
+        self.quiescent_chunk_enabled = enabled;
         self.quiescent_chunk_planned = false;
         self.quiescent_chunk_retired = false;
-        self.advance_inner(request, None)
     }
 
     /// Advances the machine exactly like [`Self::advance`], but executes each
@@ -194,9 +203,9 @@ impl<C: Cpu> Machine<C> {
         }
         // External backends do not implement the checked-chunk/elapsed-tick
         // contract. Preserve their original window and service grid.
-        self.quiescent_chunk_enabled = false;
-        self.quiescent_chunk_planned = false;
-        self.quiescent_chunk_retired = false;
+        if self.bus.samd_native_quiescent_chunks {
+            self.arm_quiescent_mailboxes(false);
+        }
         self.advance_inner(request, Some(&mut run_window))
     }
 
