@@ -646,11 +646,21 @@ Arcade, display/input/debugger, representative active native/WASM performance
 and installed adoption each retain their source/package/consumer gates. Keep
 the original inventories, notices, failures, captures, ACKs and pins unchanged.
 
-## Explicit native simulation assembly candidate — 2026-10-26
+## Explicit native simulation assembly candidate — 2026-10-27
 
 The [no-ASF SAMD51 assembly](samd-native-simulation-bundle.md) gives the existing
 qualified model subset a separate descriptor and registers the controller-memory
-colour model for config-driven consumers. Source assembly is pending native/WASM
-active-game qualification and qualified Lite adoption. The historical PyBadge
-module/glass contract remains unresolved; do not infer physical accuracy from
-this explicitly authored software assembly.
+colour model for config-driven consumers. The real CLI passed both scheduler
+profiles, nineteen architectural/assembly controls passed, and the initial
+reset-inactive Ir baselines and unchanged 1× gate have source-bound measurements
+in that contract. These results do not establish active-game real-time speed.
+
+Next, in order: pass every enabled final-head check and land Core; build two
+byte-identical production engine packages and pass the existing legacy suite,
+selected motion windows and actual source-built Node game before immutable
+publication; then update the exact Lite pins and qualify actual Chromium and
+installed Tauri/WebKit execution under the
+[adoption contract](https://github.com/CrispStrobe/brickwright-lite/blob/f790d72bb99d52edffec3bc14d57aa1d1e0756f3/docs/SAMD-NATIVE-GAME-ADOPTION.md).
+The normal native compile/import/GUI route remains a separate follow-up.
+The historical PyBadge module/glass contract remains unresolved; do not infer
+physical accuracy from this explicitly authored software assembly.

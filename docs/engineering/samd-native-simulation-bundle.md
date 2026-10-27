@@ -88,8 +88,11 @@ its existing spin behaviour. Real DPLL lock-wait, gated I2C, enabled USB and
 DMA waiting for TC3 controls require this distinction without inventing an IRQ.
 The real generic UART stream control
 opens both the MCLK mask and SERCOM3's GCLK channel before checking TX/RX bytes.
-Hosted source tests, the unchanged 1× gate and measured initial
-Ir baselines must still pass before this candidate can qualify.
+The [selected hosted campaign](https://github.com/CrispStrobe/labwired-core/actions/runs/40432630606)
+passed all seventeen architectural controls and both assembly controls on
+source `76b0b7b1ab8f7b8642c831ccafadf6ef833e199d`, with no skips.
+All enabled checks on the final baseline/documentation head must still pass
+before landing.
 The selected measurement workflow retains each original low/high Callgrind
 output, stdout/stderr, exact argument vector, step-mode selection and hashed
 CLI/fixture/chip bytes. The packet roster lets an independent reader reconstruct
@@ -116,13 +119,13 @@ black display and a full-panel fill. They establish paint/layout coverage,
 while the stronger source-bound game campaign retains exact colours, movement
 and press/release requirements.
 
-The [source-built CLI run](https://github.com/CrispStrobe/labwired-core/actions/runs/40420990511)
-passed both profiles at [candidate source](https://github.com/CrispStrobe/labwired-core/commit/7b042c4b1f3a5456d51fcbd7ed2da53298a45192).
-Its tested merge `6e6dc934a21ec5b0c06a1aec3803ad7febbddde8` has the same
+The [source-built CLI run](https://github.com/CrispStrobe/labwired-core/actions/runs/40432611281)
+passed both profiles at [candidate source](https://github.com/CrispStrobe/labwired-core/commit/76b0b7b1ab8f7b8642c831ccafadf6ef833e199d).
+Its tested merge `fca4e434ecc35f25c9128a63455eee91d9acb5b8` has the same
 tree. The retained packet binds the fresh build to pinned sources, recorded
-compiler inputs and both 70-million-step results. The optimization's
-architectural controls, real-time gate and initial deterministic baseline remain
-pending.
+compiler inputs and both 70-million-step results. The selected architectural
+and reset-inactive throughput campaign is recorded below; production WASM and
+Lite acceptance remain separate gates.
 
 ## Performance floor and strict service
 
@@ -142,3 +145,27 @@ The original real-time threshold, Ir regression budget, all earlier baseline
 values, and existing-board checks remain unchanged. This distinguishes CPU
 dispatch from peripheral service without adding a board waiver or claiming
 active-game real-time performance.
+
+## Initial reset-inactive measurements — 2026-10-27
+
+The [original measurement packet](https://github.com/CrispStrobe/labwired-core/actions/runs/40432630606/artifacts/12704442724)
+binds the selected source, compiler and Valgrind identities, actual CLI,
+descriptor and fixture bytes, all eight low/high invocations, and their raw
+Callgrind output. Independent reading of those retained bytes reconstructed:
+
+| Mode | Observed Ir per simulated instruction | Initial baseline |
+| --- | ---: | ---: |
+| Step | 1625.199951 | 1625.2 |
+| Batch | 9.129052 median of three repeats | 9.1 |
+
+The batch slopes were 9.129052, 9.128690 and 9.129068. Every low/high batch
+invocation reported an actually retired chunk of 1024 with `service_grid=1`.
+Only this new board's two baseline values are added; all earlier entries,
+the 3% regression budget, absolute noise allowance and loop-distinction check
+retain their existing values.
+
+CI's three 120-million-step real-time windows at the authored 120 MHz clock
+reported 4.3633–4.4128×, median 4.4017×. This passes the unchanged 1× gate for
+the reset-inactive fixture. Active peripherals and the connected game retain
+their strict execution paths; these numbers do not qualify game frame rate,
+input latency, browser/installed execution or physical timing.
