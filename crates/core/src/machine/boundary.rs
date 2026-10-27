@@ -54,14 +54,14 @@ impl<C: Cpu> Machine<C> {
         self.bus.service_resident_scheduled_edges();
     }
 
-    pub(crate) fn execute_cpu_window(
+    pub(crate) fn execute_cpu_window<const QUIESCENT: bool>(
         &mut self,
         mode: ExecutionMode,
         window: crate::machine::CpuWindow,
     ) -> SimResult<CoreProgress> {
         let span = crate::profile::span();
         let mut window = window;
-        if mode == ExecutionMode::RunBatch && window.quiescent_chunk {
+        if QUIESCENT && mode == ExecutionMode::RunBatch && window.quiescent_chunk {
             self.bus.set_current_cycle(self.total_cycles);
             self.bus.bus_trace.set_cycle(self.total_cycles);
             let retired =
@@ -410,7 +410,7 @@ impl<C: Cpu> Machine<C> {
         }
     }
 
-    pub(crate) fn commit_advance_boundary(
+    pub(crate) fn commit_advance_boundary<const QUIESCENT: bool>(
         &mut self,
         mode: ExecutionMode,
         _batch_start: u64,
@@ -448,7 +448,7 @@ impl<C: Cpu> Machine<C> {
             && progress.primary_steps > 1;
         let should_tick = if internally_committed_per_cycle_batch {
             false
-        } else if coalesced_dual_idle || progress.quiescent_chunk {
+        } else if coalesced_dual_idle || (QUIESCENT && progress.quiescent_chunk) {
             true
         } else if progress.timed_cycles.is_some() {
             // A timed core's window can end past a tick boundary (its last
@@ -463,14 +463,14 @@ impl<C: Cpu> Machine<C> {
             let saved_m = self.config.peripheral_tick_interval;
             let saved_b = self.bus.config.peripheral_tick_interval;
             let saved_grid = self.bus.resident_tick_interval_override;
-            if coalesced_dual_idle || progress.quiescent_chunk {
+            if coalesced_dual_idle || (QUIESCENT && progress.quiescent_chunk) {
                 self.bus.resident_tick_interval_override = Some(u64::from(saved_b.max(1)));
                 let n = progress.primary_steps.max(1);
                 self.config.peripheral_tick_interval = n;
                 self.bus.config.peripheral_tick_interval = n;
             }
             self.tick_peripherals_at_boundary();
-            if coalesced_dual_idle || progress.quiescent_chunk {
+            if coalesced_dual_idle || (QUIESCENT && progress.quiescent_chunk) {
                 self.config.peripheral_tick_interval = saved_m;
                 self.bus.config.peripheral_tick_interval = saved_b;
                 self.bus.resident_tick_interval_override = saved_grid;

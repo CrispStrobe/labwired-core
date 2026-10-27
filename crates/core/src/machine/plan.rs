@@ -88,7 +88,7 @@ pub(crate) struct WindowFill {
 }
 
 impl<C: Cpu> Machine<C> {
-    pub(crate) fn plan_cpu_window(
+    pub(crate) fn plan_cpu_window<const QUIESCENT: bool>(
         &mut self,
         request: AdvanceRequest,
         fuel_consumed: u64,
@@ -99,7 +99,8 @@ impl<C: Cpu> Machine<C> {
         self.service_resident_edges_at_boundary();
         // All other boards leave after this cached false bit; do not make
         // their existing hot path pay the profile's admission predicate.
-        let quiescent_chunk = self.bus.samd_native_quiescent_chunks
+        let quiescent_chunk = QUIESCENT
+            && self.bus.samd_native_quiescent_chunks
             && !request.is_single()
             && self.config.peripheral_tick_interval == 1
             && self.config.batch_mode_enabled

@@ -604,3 +604,34 @@ fn refused_register_error_has_the_same_committed_prefix() {
     assert!(a.to_string().contains("store outside the 8/16-bit slice"));
     equal_state(&actual, &strict);
 }
+
+#[test]
+fn external_window_runner_keeps_the_strict_service_grid() {
+    let mut actual = spin(false);
+    let mut strict = spin(false);
+    let mut windows = Vec::new();
+    let report = actual
+        .advance_with_window_runner(
+            AdvanceRequest::run(Some(1031)),
+            |cpu, bus, observers, config, count| {
+                windows.push(count);
+                cpu.step_batch(bus, observers, config, count)
+            },
+        )
+        .unwrap();
+    assert_eq!(report.primary_steps, 1031);
+    assert_eq!(report.fuel_consumed, 1031);
+    assert_eq!(windows.len(), 1031);
+    assert!(windows.iter().all(|count| *count == 1));
+    assert_eq!(actual.max_retired_quiescent_chunk(), 0);
+    run(&mut strict, 1031, true);
+    equal_state(&actual, &strict);
+
+    // The same warm machine still admits the in-tree checked primitive.
+    run(&mut actual, 1031, false);
+    run(&mut strict, 1031, true);
+    equal_state(&actual, &strict);
+    assert!(actual.max_retired_quiescent_chunk() >= 8);
+    assert_eq!(actual.config.peripheral_tick_interval, 1);
+    assert_eq!(actual.bus.config.peripheral_tick_interval, 1);
+}
