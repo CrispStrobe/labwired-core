@@ -1,0 +1,64 @@
+name: SAMD step-cost attribution (diagnostic only)
+
+# Scratch-branch diagnostic. Measures single-step host instruction cost of
+# origin/main and of this branch's parent source with the same toolchain and
+# retains the raw callgrind outputs for function-level comparison. It changes
+# no baseline and gates nothing.
+on:
+  push:
+    branches: [diag/samd-step-cost-attribution-20261027, diag/samd-step-cost-17e341-20261027]
+
+permissions:
+  contents: read
+
+jobs:
+  attribute:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          targets: thumbv6m-none-eabi,riscv32imc-unknown-none-elf
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: core-perf
+          workspaces: |
+            . -> target
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install tools
+        run: |
+          sudo apt-get update && sudo apt-get install -y valgrind gcc-avr binutils-avr avr-libc
+          python -m pip install --quiet pyyaml
+      - name: Build both CLIs (browser feature set)
+        run: |
+          mkdir -p out
+          head=$(git rev-parse HEAD)  # diagnostic commit carries the candidate source
+          main=$(git rev-parse origin/main)
+          echo "head=$head main=$main" | tee out/sources.txt
+          git worktree add ../main-src "$main"
+          git worktree add ../head-src "$head"
+          # Separate target dirs: a shared one produced byte-identical CLIs in run 40483088208.
+          (cd ../main-src && cargo build --release -p labwired-cli --features event-scheduler && git rev-parse HEAD && cp target/release/labwired "$GITHUB_WORKSPACE/out/labwired-main")
+          (cd ../head-src && cargo build --release -p labwired-cli --features event-scheduler && git rev-parse HEAD && cp target/release/labwired "$GITHUB_WORKSPACE/out/labwired-head")
+          cmp out/labwired-main out/labwired-head && { echo "identical CLIs"; exit 1; } || true
+          sha256sum out/labwired-* | tee out/cli-sha256.txt
+      - name: Measure both with retained callgrind outputs
+        run: |
+          for v in main head; do
+            LABWIRED_PERF_EVIDENCE_DIR="$PWD/out/raw-$v" \
+              python3 ../head-src/scripts/perf/board_perf.py \
+              --cli "$PWD/out/labwired-$v" --boards stm32f103,atmega328p \
+              --status-json "out/status-$v.json" 2>&1 | tee "out/report-$v.txt" || true
+          done
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: samd-step-cost-attribution
+          path: out/
+          retention-days: 14
