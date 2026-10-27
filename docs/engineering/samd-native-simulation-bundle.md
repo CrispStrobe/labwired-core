@@ -187,15 +187,24 @@ Shared-runtime review also leaves the existing silicon re-capture task open for
 manifest suites, retain raw comparisons and update capture/digest evidence only
 from that new capture. Simulated guest success does not complete this task.
 
-The later full-fleet gate retained a step-mode instruction-cost regression on
-existing boards. Its correction specializes the new chunk path at the outer
-advance call: ordinary boards and single-step requests compile without its
-planning, execution and commit checks. The selected SAMD specialization keeps
-all dynamic admission guards. External window runners retain their original
-service grid because they do not implement the checked-chunk tick contract.
-A separate control requires one-step external windows and then confirms that
-the same warm machine still coalesces through the native checked primitive;
-the selected hosted campaign must also detect restoration of the old widening.
-The corrected source still requires fresh full-fleet and selected measurements,
-architectural controls and actual guest checks before landing. Old baselines,
-noise limits and the real-time floor remain unchanged.
+The [full-fleet gate](https://github.com/CrispStrobe/labwired-core/actions/runs/40443757411)
+retained a step-mode instruction-cost regression on existing boards. A later
+[const-specialized candidate](https://github.com/CrispStrobe/labwired-core/actions/runs/40451364784)
+also failed the unchanged gate; do not treat its passing selected-profile
+measurements as fleet recovery. Retained raw Callgrind samples show changed
+compiler call boundaries and extra instructions, rather than a wall-clock
+outlier.
+
+The next candidate restores the qualified main's CPU-window and progress
+structures, keeps one authoritative advance loop and holds checked-window
+markers privately on the machine. Eligibility is cached once per public
+advance; the full dynamic admission and checked executor are separate helpers.
+External runners retain their original service grid. Planning overwrites each
+window's markers, execution consumes admission and marks only a positive
+retired prefix, and commit consumes that marker once. Ordinary execution keeps
+its existing return structures and strict execution call site.
+
+All twenty controls, the external-runner mutation, fresh actual guest checks and
+full-fleet/selected measurements must pass on the final runtime before landing.
+Old baselines, noise limits and the real-time floor remain unchanged. This
+candidate has no qualified performance result yet.

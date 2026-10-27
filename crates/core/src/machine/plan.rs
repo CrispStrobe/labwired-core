@@ -63,7 +63,6 @@ macro_rules! clamp_tick {
 pub(crate) struct CpuWindow {
     pub(crate) steps: u32,
     pub(crate) fill: Option<WindowFill>,
-    pub(crate) quiescent_chunk: bool,
 }
 
 /// How far a timed-cycle core may keep going to finish its tick window.
@@ -88,19 +87,9 @@ pub(crate) struct WindowFill {
 }
 
 impl<C: Cpu> Machine<C> {
-    pub(crate) fn plan_cpu_window<const QUIESCENT: bool>(
-        &mut self,
-        request: AdvanceRequest,
-        fuel_consumed: u64,
-        elapsed_cycles: u64,
-    ) -> CpuWindow {
-        use crate::machine::quantum_trace::clause;
-
-        self.service_resident_edges_at_boundary();
-        // All other boards leave after this cached false bit; do not make
-        // their existing hot path pay the profile's admission predicate.
-        let quiescent_chunk = QUIESCENT
-            && self.bus.samd_native_quiescent_chunks
+    #[inline(never)]
+    fn quiescent_chunk_admitted(&self, request: AdvanceRequest) -> bool {
+        self.bus.samd_native_quiescent_chunks
             && !request.is_single()
             && self.config.peripheral_tick_interval == 1
             && self.config.batch_mode_enabled
@@ -110,7 +99,23 @@ impl<C: Cpu> Machine<C> {
             && self.observers.is_empty()
             && !self.logic_capture.poll_active()
             && !self.logic_capture.push_active()
-            && self.bus.samd_quiescent_chunk_ready();
+            && self.bus.samd_quiescent_chunk_ready()
+    }
+
+    pub(crate) fn plan_cpu_window(
+        &mut self,
+        request: AdvanceRequest,
+        fuel_consumed: u64,
+        elapsed_cycles: u64,
+    ) -> CpuWindow {
+        use crate::machine::quantum_trace::clause;
+
+        self.service_resident_edges_at_boundary();
+        self.quiescent_chunk_planned = false;
+        self.quiescent_chunk_retired = false;
+        // The full predicate stays out of the ordinary planner's hot body.
+        let quiescent_chunk =
+            self.quiescent_chunk_enabled && self.quiescent_chunk_admitted(request);
         // Horizon for an exclusively checked RAM/register chunk. The configured
         // peripheral and resident service grid remains one cycle.
         let tick_interval = if quiescent_chunk {
@@ -406,10 +411,10 @@ impl<C: Cpu> Machine<C> {
             to_cycles: tick_interval - (self.total_cycles % tick_interval),
             max_steps: count_untick.min(u64::from(u32::MAX)) as u32,
         });
+        self.quiescent_chunk_planned = quiescent_chunk && count >= 8;
         CpuWindow {
             steps: count as u32,
             fill,
-            quiescent_chunk: quiescent_chunk && count >= 8,
         }
     }
 }

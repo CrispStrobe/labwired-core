@@ -565,8 +565,8 @@ jobs:
           import hashlib,json,subprocess
           source=Path('crates/core/src/machine/advance.rs')
           before=source.read_bytes()
-          old=b'self.advance_inner::<false>(request, Some(&mut run_window))'
-          new=b'self.advance_inner::<true>(request, Some(&mut run_window))'
+          old=b'self.quiescent_chunk_enabled = false;'
+          new=b'self.quiescent_chunk_enabled = !request.is_single() && self.bus.samd_native_quiescent_chunks;'
           assert before.count(old)==1
           try:
               source.write_bytes(before.replace(old,new))

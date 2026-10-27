@@ -750,7 +750,7 @@ fn secondary_parked_window_clamps_to_pending_scheduler_deadline() {
     machine.sched.schedule(500, 0, 0);
 
     let count = machine
-        .plan_cpu_window::<false>(AdvanceRequest::run(Some(2000)), 0, 0)
+        .plan_cpu_window(AdvanceRequest::run(Some(2000)), 0, 0)
         .steps;
 
     assert_eq!(
@@ -775,7 +775,7 @@ fn secondary_parked_window_clamps_to_parked_core_wake_deadline() {
     machine.bus.config.peripheral_tick_interval = 64;
 
     let count = machine
-        .plan_cpu_window::<false>(AdvanceRequest::run(Some(2000)), 0, 0)
+        .plan_cpu_window(AdvanceRequest::run(Some(2000)), 0, 0)
         .steps;
 
     assert_eq!(
@@ -1878,7 +1878,7 @@ fn resident_grid_clamps_parked_window_before_a_midwindow_arm() {
     machine.bus.config.peripheral_tick_interval = 64;
     attach_schedule_probe(&mut machine, true, 500);
     let count = machine
-        .plan_cpu_window::<false>(AdvanceRequest::run(Some(2000)), 0, 0)
+        .plan_cpu_window(AdvanceRequest::run(Some(2000)), 0, 0)
         .steps;
     assert_eq!(
         count,

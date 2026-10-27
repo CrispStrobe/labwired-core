@@ -148,14 +148,11 @@ impl<C: Cpu> Machine<C> {
         if let Some(report) = self.supply_gate(&request)? {
             return Ok(report);
         }
-        // Keep the software profile's chunk plumbing out of every ordinary
-        // CPU and every single-step instruction. The selected specialization
-        // still performs the complete dynamic admission at each boundary.
-        if !request.is_single() && self.bus.samd_native_quiescent_chunks {
-            self.advance_inner::<true>(request, None)
-        } else {
-            self.advance_inner::<false>(request, None)
-        }
+        // Cache profile/request eligibility once per advance. Keep one
+        // authoritative loop and the ordinary CPU-window/report return ABI.
+        self.quiescent_chunk_enabled =
+            !request.is_single() && self.bus.samd_native_quiescent_chunks;
+        self.advance_inner(request, None)
     }
 
     /// Advances the machine exactly like [`Self::advance`], but executes each
@@ -193,10 +190,11 @@ impl<C: Cpu> Machine<C> {
         }
         // External backends do not implement the checked-chunk/elapsed-tick
         // contract. Preserve their original window and service grid.
-        self.advance_inner::<false>(request, Some(&mut run_window))
+        self.quiescent_chunk_enabled = false;
+        self.advance_inner(request, Some(&mut run_window))
     }
 
-    fn advance_inner<const QUIESCENT: bool>(
+    fn advance_inner(
         &mut self,
         request: AdvanceRequest,
         mut run_window: Option<&mut WindowRunner<'_, C>>,
@@ -327,7 +325,7 @@ impl<C: Cpu> Machine<C> {
             }
 
             self.bus.reset_mmio_activity_counters();
-            let window = self.plan_cpu_window::<QUIESCENT>(request, state.fuel_consumed, elapsed);
+            let window = self.plan_cpu_window(request, state.fuel_consumed, elapsed);
             let count = window.steps;
             debug_assert!(count > 0);
             // Dual-core lockstep only while the secondary is active or still
@@ -371,10 +369,9 @@ impl<C: Cpu> Machine<C> {
                         secondary_steps: 0,
                         timed_cycles: None,
                         internally_committed_cycles: false,
-                        quiescent_chunk: false,
                     }
                 }
-                _ => self.execute_cpu_window::<QUIESCENT>(mode, window)?,
+                _ => self.execute_cpu_window(mode, window)?,
             };
             if progress.primary_steps == 0 {
                 // A native call can enter architectural wait without retiring
@@ -413,7 +410,7 @@ impl<C: Cpu> Machine<C> {
                 return Ok(state.report(AdvanceStop::NoProgress, self.total_cycles - start_cycles));
             }
 
-            self.commit_advance_boundary::<QUIESCENT>(mode, batch_start, progress)?;
+            self.commit_advance_boundary(mode, batch_start, progress)?;
             if self.sd_hle.is_some() {
                 self.service_sd_hle()?;
             }

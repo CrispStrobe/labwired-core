@@ -3221,7 +3221,7 @@ motor_models:
         [(0, 4096, 4096), (4096, 4096, 8192), (8192, 1808, 10_000)]
     {
         machine
-            .commit_advance_boundary::<false>(
+            .commit_advance_boundary(
                 crate::machine::ExecutionMode::RunBatch,
                 start,
                 crate::machine::CoreProgress {
@@ -3229,7 +3229,6 @@ motor_models:
                     secondary_steps: 0,
                     timed_cycles: None,
                     internally_committed_cycles: false,
-                    quiescent_chunk: false,
                 },
             )
             .unwrap();
@@ -3241,7 +3240,7 @@ motor_models:
     coincident.bus.config.peripheral_tick_interval = 8192;
     for (start, expected_anchor) in [(0, 4096), (4096, 8192)] {
         coincident
-            .commit_advance_boundary::<false>(
+            .commit_advance_boundary(
                 crate::machine::ExecutionMode::RunBatch,
                 start,
                 crate::machine::CoreProgress {
@@ -3249,7 +3248,6 @@ motor_models:
                     secondary_steps: 0,
                     timed_cycles: None,
                     internally_committed_cycles: false,
-                    quiescent_chunk: false,
                 },
             )
             .unwrap();

@@ -20,7 +20,6 @@ pub(crate) struct CoreProgress {
     /// This window published and charged its cycles internally, one retired
     /// instruction at a time. The outer boundary must not charge them again.
     pub internally_committed_cycles: bool,
-    pub quiescent_chunk: bool,
 }
 
 impl<C: Cpu> Machine<C> {
@@ -54,46 +53,62 @@ impl<C: Cpu> Machine<C> {
         self.bus.service_resident_scheduled_edges();
     }
 
-    pub(crate) fn execute_cpu_window<const QUIESCENT: bool>(
+    #[inline(always)]
+    pub(crate) fn execute_cpu_window(
         &mut self,
         mode: ExecutionMode,
         window: crate::machine::CpuWindow,
     ) -> SimResult<CoreProgress> {
         let span = crate::profile::span();
         let mut window = window;
-        if QUIESCENT && mode == ExecutionMode::RunBatch && window.quiescent_chunk {
-            self.bus.set_current_cycle(self.total_cycles);
-            self.bus.bus_trace.set_cycle(self.total_cycles);
-            let retired =
-                self.cpu
-                    .try_quiescent_memory_chunk(&mut self.bus, &self.config, window.steps);
-            if retired > 0 {
-                self.max_retired_quiescent_chunk = self.max_retired_quiescent_chunk.max(retired);
-                self.bus.current_cycle += u64::from(retired);
-                // The strict loop stamps transactions with the start of the
-                // last retired instruction before draining its boundary.
-                self.bus
-                    .bus_trace
-                    .set_cycle(self.total_cycles + u64::from(retired) - 1);
-                crate::profile::record_cpu(span);
-                return Ok(CoreProgress {
-                    primary_steps: retired,
-                    secondary_steps: 0,
-                    timed_cycles: None,
-                    internally_committed_cycles: false,
-                    quiescent_chunk: true,
-                });
-            }
-            // No architectural instruction retired. Preserve the exact ordinary
-            // one-instruction MMIO, exception and error path; never append it
-            // after a nonzero deferred prefix.
-            window.steps = 1;
-            window.fill = None;
-            window.quiescent_chunk = false;
-        }
-        let progress = self.execute_cpu_window_inner(mode, window);
+        let quiescent_planned = std::mem::take(&mut self.quiescent_chunk_planned);
+        self.quiescent_chunk_retired = false;
+        let checked = if quiescent_planned && mode == ExecutionMode::RunBatch {
+            self.try_execute_quiescent_window(&mut window)
+        } else {
+            None
+        };
+        let progress = match checked {
+            Some(progress) => Ok(progress),
+            None => self.execute_cpu_window_inner(mode, window),
+        };
         crate::profile::record_cpu(span);
         progress
+    }
+
+    // Only the explicitly admitted profile enters this body. Preserve a small
+    // ordinary executor wrapper and one common strict-execution call site.
+    #[inline(never)]
+    fn try_execute_quiescent_window(
+        &mut self,
+        window: &mut crate::machine::CpuWindow,
+    ) -> Option<CoreProgress> {
+        self.bus.set_current_cycle(self.total_cycles);
+        self.bus.bus_trace.set_cycle(self.total_cycles);
+        let retired =
+            self.cpu
+                .try_quiescent_memory_chunk(&mut self.bus, &self.config, window.steps);
+        if retired > 0 {
+            self.quiescent_chunk_retired = true;
+            self.max_retired_quiescent_chunk = self.max_retired_quiescent_chunk.max(retired);
+            self.bus.current_cycle += u64::from(retired);
+            // The strict loop stamps transactions with the start of the
+            // last retired instruction before draining its boundary.
+            self.bus
+                .bus_trace
+                .set_cycle(self.total_cycles + u64::from(retired) - 1);
+            return Some(CoreProgress {
+                primary_steps: retired,
+                secondary_steps: 0,
+                timed_cycles: None,
+                internally_committed_cycles: false,
+            });
+        }
+        // Zero means no architectural prefix retired: execute exactly one
+        // original MMIO/exception/error step at the common strict call site.
+        window.steps = 1;
+        window.fill = None;
+        None
     }
 
     fn execute_cpu_window_inner(
@@ -208,7 +223,6 @@ impl<C: Cpu> Machine<C> {
                         secondary_steps,
                         timed_cycles: None,
                         internally_committed_cycles: true,
-                        quiescent_chunk: false,
                     });
                 }
                 let executed = if parked_secondary && self.rtc_cntl_index.is_some() {
@@ -305,7 +319,6 @@ impl<C: Cpu> Machine<C> {
                     timed_cycles: clock_before
                         .map(|before| self.cpu.clock_cycles().saturating_sub(before)),
                     internally_committed_cycles: false,
-                    quiescent_chunk: false,
                 });
             }
         }
@@ -333,7 +346,6 @@ impl<C: Cpu> Machine<C> {
                     secondary_steps: 0,
                     timed_cycles: clock_before.map(|_| 0),
                     internally_committed_cycles: false,
-                    quiescent_chunk: false,
                 });
             }
             let timed_cycles =
@@ -356,7 +368,6 @@ impl<C: Cpu> Machine<C> {
                 secondary_steps: 0,
                 timed_cycles,
                 internally_committed_cycles: false,
-                quiescent_chunk: false,
             });
         }
 
@@ -377,7 +388,6 @@ impl<C: Cpu> Machine<C> {
             secondary_steps: 1,
             timed_cycles: None,
             internally_committed_cycles: false,
-            quiescent_chunk: false,
         })
     }
 
@@ -410,12 +420,15 @@ impl<C: Cpu> Machine<C> {
         }
     }
 
-    pub(crate) fn commit_advance_boundary<const QUIESCENT: bool>(
+    pub(crate) fn commit_advance_boundary(
         &mut self,
         mode: ExecutionMode,
         _batch_start: u64,
         progress: CoreProgress,
     ) -> SimResult<()> {
+        // Consume the checked-prefix marker exactly once, including on a later
+        // boundary error. Planning clears the mailbox before any new window.
+        let quiescent_chunk = std::mem::take(&mut self.quiescent_chunk_retired);
         let internally_committed_per_cycle_batch =
             mode == ExecutionMode::RunBatch && progress.internally_committed_cycles;
         if mode == ExecutionMode::RunBatch && !internally_committed_per_cycle_batch {
@@ -448,7 +461,7 @@ impl<C: Cpu> Machine<C> {
             && progress.primary_steps > 1;
         let should_tick = if internally_committed_per_cycle_batch {
             false
-        } else if coalesced_dual_idle || (QUIESCENT && progress.quiescent_chunk) {
+        } else if coalesced_dual_idle || quiescent_chunk {
             true
         } else if progress.timed_cycles.is_some() {
             // A timed core's window can end past a tick boundary (its last
@@ -463,14 +476,14 @@ impl<C: Cpu> Machine<C> {
             let saved_m = self.config.peripheral_tick_interval;
             let saved_b = self.bus.config.peripheral_tick_interval;
             let saved_grid = self.bus.resident_tick_interval_override;
-            if coalesced_dual_idle || (QUIESCENT && progress.quiescent_chunk) {
+            if coalesced_dual_idle || quiescent_chunk {
                 self.bus.resident_tick_interval_override = Some(u64::from(saved_b.max(1)));
                 let n = progress.primary_steps.max(1);
                 self.config.peripheral_tick_interval = n;
                 self.bus.config.peripheral_tick_interval = n;
             }
             self.tick_peripherals_at_boundary();
-            if coalesced_dual_idle || (QUIESCENT && progress.quiescent_chunk) {
+            if coalesced_dual_idle || quiescent_chunk {
                 self.config.peripheral_tick_interval = saved_m;
                 self.bus.config.peripheral_tick_interval = saved_b;
                 self.bus.resident_tick_interval_override = saved_grid;

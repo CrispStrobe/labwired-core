@@ -2930,6 +2930,11 @@ pub struct Machine<C: Cpu> {
     host_clock: Box<dyn host_time::HostClock + Send>,
     step_profile: StepProfile,
     max_retired_quiescent_chunk: u32,
+    // One-window mailboxes used only by the checked SAMD path.
+    // Keep these out of the ordinary CPU-window/report return ABI.
+    quiescent_chunk_enabled: bool,
+    quiescent_chunk_planned: bool,
+    quiescent_chunk_retired: bool,
 
     /// Phase 2B.1 (issue #192): event-driven peripheral scheduler. Active
     /// behaviour is gated behind the `event-scheduler` feature; the field
@@ -3706,6 +3711,9 @@ impl<C: Cpu> Machine<C> {
             host_clock: Box::new(host_time::StdHostClock::new()),
             step_profile: StepProfile::default(),
             max_retired_quiescent_chunk: 0,
+            quiescent_chunk_enabled: false,
+            quiescent_chunk_planned: false,
+            quiescent_chunk_retired: false,
             sched: sched::EventScheduler::new(),
             clocks: sched::ClockGraph::new(),
             rtc_cntl_index,
@@ -3864,6 +3872,8 @@ impl<C: Cpu> Machine<C> {
     pub fn reset_step_profile(&mut self) {
         self.step_profile = StepProfile::default();
         self.max_retired_quiescent_chunk = 0;
+        self.quiescent_chunk_planned = false;
+        self.quiescent_chunk_retired = false;
     }
 
     pub fn step_profile(&self) -> StepProfile {
