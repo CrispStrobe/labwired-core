@@ -1765,8 +1765,9 @@ jobs:
           if [ "${{ steps.apt-debs.outputs.cache-hit }}" = true ] && sudo dpkg -i ~/apt-debs/*.deb; then
             echo "installed from the cached packages"
           else
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi device-tree-compiler
+            # Time out a stalled mirror request and retry it.
+            sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update
+            sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y --no-install-recommends gcc-arm-none-eabi device-tree-compiler
           fi
           arm-none-eabi-gcc --version | head -1
           dtc --version

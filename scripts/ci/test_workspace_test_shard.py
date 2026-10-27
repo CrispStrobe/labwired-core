@@ -109,7 +109,7 @@ def test_workspace_cross_compiler_does_not_pull_unused_cxx_archives():
         step for step in steps
         if step.get("name") == "Add the C cross-compiler (OBD2 ECU firmware)"
     )
-    assert "sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi" in install["run"]
+    assert "install -y --no-install-recommends gcc-arm-none-eabi" in install["run"]
 
 
 def test_cross_compiler_packages_are_seeded_on_main_and_restored_by_the_shards():
