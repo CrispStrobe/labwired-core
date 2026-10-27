@@ -53,31 +53,44 @@ impl<C: Cpu> Machine<C> {
         self.bus.service_resident_scheduled_edges();
     }
 
-    #[inline(always)]
     pub(crate) fn execute_cpu_window(
         &mut self,
         mode: ExecutionMode,
-        window: crate::machine::CpuWindow,
+        mut window: crate::machine::CpuWindow,
     ) -> SimResult<CoreProgress> {
         let span = crate::profile::span();
-        let mut window = window;
-        let quiescent_planned = std::mem::take(&mut self.quiescent_chunk_planned);
-        self.quiescent_chunk_retired = false;
-        let checked = if quiescent_planned && mode == ExecutionMode::RunBatch {
-            self.try_execute_quiescent_window(&mut window)
-        } else {
-            None
-        };
-        let progress = match checked {
-            Some(progress) => Ok(progress),
-            None => self.execute_cpu_window_inner(mode, window),
-        };
+        // The planner raises this mailbox only on the admitted SAMD profile;
+        // every other window pays one load and branch, as on the original path.
+        if self.quiescent_chunk_planned {
+            if let Some(progress) = self.execute_planned_quiescent_window(mode, &mut window) {
+                crate::profile::record_cpu(span);
+                return Ok(progress);
+            }
+        }
+        let progress = self.execute_cpu_window_inner(mode, window);
         crate::profile::record_cpu(span);
         progress
     }
 
+    #[cold]
+    #[inline(never)]
+    fn execute_planned_quiescent_window(
+        &mut self,
+        mode: ExecutionMode,
+        window: &mut crate::machine::CpuWindow,
+    ) -> Option<CoreProgress> {
+        self.quiescent_chunk_planned = false;
+        self.quiescent_chunk_retired = false;
+        if mode == ExecutionMode::RunBatch {
+            self.try_execute_quiescent_window(window)
+        } else {
+            None
+        }
+    }
+
     // Only the explicitly admitted profile enters this body. Preserve a small
     // ordinary executor wrapper and one common strict-execution call site.
+    #[cold]
     #[inline(never)]
     fn try_execute_quiescent_window(
         &mut self,
@@ -426,9 +439,14 @@ impl<C: Cpu> Machine<C> {
         _batch_start: u64,
         progress: CoreProgress,
     ) -> SimResult<()> {
-        // Consume the checked-prefix marker exactly once, including on a later
-        // boundary error. Planning clears the mailbox before any new window.
-        let quiescent_chunk = std::mem::take(&mut self.quiescent_chunk_retired);
+        // Read the checked-prefix marker with a plain load. It is raised only
+        // on the admitted path and consumed here; the admitted
+        // planner and every public advance entry clear it before a new window,
+        // so a later boundary error cannot carry it into another window.
+        let quiescent_chunk = self.quiescent_chunk_retired;
+        if quiescent_chunk {
+            self.quiescent_chunk_retired = false;
+        }
         let internally_committed_per_cycle_batch =
             mode == ExecutionMode::RunBatch && progress.internally_committed_cycles;
         if mode == ExecutionMode::RunBatch && !internally_committed_per_cycle_batch {

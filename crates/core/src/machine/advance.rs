@@ -152,6 +152,10 @@ impl<C: Cpu> Machine<C> {
         // authoritative loop and the ordinary CPU-window/report return ABI.
         self.quiescent_chunk_enabled =
             !request.is_single() && self.bus.samd_native_quiescent_chunks;
+        // The mailboxes are only touched on the admitted path; start every
+        // advance from a known-empty state so an earlier error cannot leak.
+        self.quiescent_chunk_planned = false;
+        self.quiescent_chunk_retired = false;
         self.advance_inner(request, None)
     }
 
@@ -191,6 +195,8 @@ impl<C: Cpu> Machine<C> {
         // External backends do not implement the checked-chunk/elapsed-tick
         // contract. Preserve their original window and service grid.
         self.quiescent_chunk_enabled = false;
+        self.quiescent_chunk_planned = false;
+        self.quiescent_chunk_retired = false;
         self.advance_inner(request, Some(&mut run_window))
     }
 

@@ -87,8 +87,13 @@ pub(crate) struct WindowFill {
 }
 
 impl<C: Cpu> Machine<C> {
+    // Reached only when the advance cached eligibility. Clearing the
+    // mailboxes here keeps every store off the ordinary planner.
+    #[cold]
     #[inline(never)]
-    fn quiescent_chunk_admitted(&self, request: AdvanceRequest) -> bool {
+    fn quiescent_chunk_admitted(&mut self, request: AdvanceRequest) -> bool {
+        self.quiescent_chunk_planned = false;
+        self.quiescent_chunk_retired = false;
         self.bus.samd_native_quiescent_chunks
             && !request.is_single()
             && self.config.peripheral_tick_interval == 1
@@ -111,8 +116,6 @@ impl<C: Cpu> Machine<C> {
         use crate::machine::quantum_trace::clause;
 
         self.service_resident_edges_at_boundary();
-        self.quiescent_chunk_planned = false;
-        self.quiescent_chunk_retired = false;
         // The full predicate stays out of the ordinary planner's hot body.
         let quiescent_chunk =
             self.quiescent_chunk_enabled && self.quiescent_chunk_admitted(request);
@@ -411,7 +414,9 @@ impl<C: Cpu> Machine<C> {
             to_cycles: tick_interval - (self.total_cycles % tick_interval),
             max_steps: count_untick.min(u64::from(u32::MAX)) as u32,
         });
-        self.quiescent_chunk_planned = quiescent_chunk && count >= 8;
+        if quiescent_chunk && count >= 8 {
+            self.quiescent_chunk_planned = true;
+        }
         CpuWindow {
             steps: count as u32,
             fill,
