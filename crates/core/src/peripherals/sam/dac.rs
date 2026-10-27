@@ -3,7 +3,10 @@
 //! writes while the DAC is enabled (CTRLA.ENABLE, DACCTRL0.ENABLE) and its
 //! generic clock (GCLK PCHCTRL[42]) runs; STATUS.READY0 reports a started
 //! channel. Each conversion is recorded with its engine cycle as the channel's
-//! output code: the analog level, settling, refresh, dithering, the second
+//! output code. With the board's references declared (`vrefa_mv`, the VREFA
+//! pad, and `vddana_mv`), `output_millivolts` gives the nominal level of a code,
+//! DATA / 4095 x VREF for the REFSEL selected (DS60001507F 47.6.2): no gain,
+//! offset or linearity error, settling or load. Refresh, dithering, the second
 //! channel, differential mode, events, interrupts and DATABUF are not modelled
 //! and their non-default settings are refused.
 use crate::{Bus, Peripheral, SimResult, SimulationError};
@@ -24,11 +27,32 @@ pub struct Samd51Dac {
     elapsed: u64,
     conversions: Vec<(u64, u16)>,
     total: u64,
+    /// Board references in millivolts: the VREFA pad and VDDANA.
+    vrefa_mv: Option<f64>,
+    vddana_mv: Option<f64>,
 }
 
 impl Samd51Dac {
     pub fn new() -> Self {
         Self::default()
+    }
+    /// The board's VREFA pad and VDDANA levels.
+    pub fn with_references(mut self, vrefa_mv: Option<f64>, vddana_mv: Option<f64>) -> Self {
+        self.vrefa_mv = vrefa_mv;
+        self.vddana_mv = vddana_mv;
+        self
+    }
+    /// Nominal output level of `code` for the selected reference: VREFA
+    /// unbuffered or buffered (REFSEL 0, 2) or VDDANA (1). `None` for the
+    /// internal reference (3), whose SUPC bandgap is not modelled, or an
+    /// undeclared board reference.
+    pub fn output_millivolts(&self, code: u16) -> Option<f64> {
+        let vref = match (self.ctrlb >> 1) & 3 {
+            0 | 2 => self.vrefa_mv?,
+            1 => self.vddana_mv?,
+            _ => return None,
+        };
+        Some(f64::from(code & 0xfff) * vref / 4095.0)
     }
     fn refuse<T>(what: &str) -> SimResult<T> {
         Err(SimulationError::NotImplemented(format!(
@@ -174,6 +198,21 @@ impl Peripheral for Samd51Dac {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn output_level_follows_the_selected_reference() {
+        let mut dac = Samd51Dac::new().with_references(Some(3300.0), Some(3300.0));
+        // REFSEL 0 (VREFA unbuffered, the CODAL default): full scale is VREFA.
+        assert_eq!(dac.output_millivolts(4095), Some(3300.0));
+        assert!((dac.output_millivolts(2048).unwrap() - 1650.4).abs() < 0.1);
+        dac.ctrlb = 3 << 1; // INTREF: the SUPC bandgap is not modelled
+        assert_eq!(dac.output_millivolts(4095), None);
+        assert_eq!(
+            Samd51Dac::new().output_millivolts(1),
+            None,
+            "no declared reference"
+        );
+    }
 
     #[test]
     fn conversions_need_enable_channel_and_clock() {

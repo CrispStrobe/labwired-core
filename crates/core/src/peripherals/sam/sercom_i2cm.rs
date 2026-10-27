@@ -20,7 +20,14 @@ use std::cell::{Cell, RefCell};
 const MB: u8 = 1;
 const SB: u8 = 1 << 1;
 const ERROR: u8 = 1 << 7;
+const BUSERR: u16 = 1;
 const RXNACK: u16 = 1 << 2;
+const LOWTOUT: u16 = 1 << 6;
+/// CTRLA.LOWTOUTEN: SCL held low beyond the time-out ends the transfer.
+const LOWTOUTEN: u32 = 1 << 30;
+/// SCL low time-out: 25-35 ms (DS60001507F 36.6.2.4.6); the model takes the
+/// earliest, 25 ms.
+const LOW_TIMEOUT_NS: u64 = 25_000_000;
 const BUSSTATE: u16 = 3 << 4;
 const IDLE: u16 = 1 << 4;
 const OWNER: u16 = 2 << 4;
@@ -315,6 +322,20 @@ impl Samd51SercomI2cm {
             Op::Stop => self.stop_selected(),
         }
     }
+    /// The pending operation `op` reaches the end of its bus time.
+    fn complete(&mut self, op: Op) {
+        self.pending.set(self.queued.take());
+        self.completed += 1;
+        let timed_out = self.times_out(op);
+        self.perform(op);
+        if timed_out {
+            // The master releases SCL, completes the operation with MB or SB
+            // as normal, sends STOP, and reports LOWTOUT and BUSERR (ERROR).
+            self.status |= LOWTOUT | BUSERR;
+            self.intflag.set(self.intflag.get() | ERROR);
+            self.stop_selected();
+        }
+    }
     fn command(&mut self, cmd: u32) {
         match cmd {
             2 if self.reading => self.pending.set(Some(Op::ReadNext)),
@@ -346,9 +367,32 @@ impl Samd51SercomI2cm {
             Op::Stop => (1, None),
         };
         let stretch = device.map_or(0, |(i, holds)| {
-            self.devices[i].borrow().clock_stretch_ns() * holds
+            let ns = self.devices[i].borrow().clock_stretch_ns();
+            // A hold beyond the time-out is cut short there, once.
+            if self.low_timeout_enabled() && ns > LOW_TIMEOUT_NS {
+                LOW_TIMEOUT_NS
+            } else {
+                ns * holds
+            }
         });
         op_cycles(periods, self.baud, self.rise_ns, stretch, gclk, cpu)
+    }
+    fn low_timeout_enabled(&self) -> bool {
+        self.ctrla & LOWTOUTEN != 0
+    }
+    /// Whether `op` ends in an SCL low time-out: the addressed (or selected)
+    /// device holds SCL longer than the time-out while it is enabled.
+    fn times_out(&self, op: Op) -> bool {
+        let device = match op {
+            Op::Address(byte) => self
+                .devices
+                .iter()
+                .position(|d| d.borrow().claims_address(byte >> 1)),
+            Op::Write(_) | Op::ReadNext => self.selected,
+            Op::Stop => None,
+        };
+        self.low_timeout_enabled()
+            && device.is_some_and(|i| self.devices[i].borrow().clock_stretch_ns() > LOW_TIMEOUT_NS)
     }
     fn lines(&self) -> u8 {
         if self.enabled() {
@@ -386,9 +430,11 @@ impl Samd51SercomI2cm {
         match offset {
             0x00 if value & 1 != 0 => self.reset(),
             0x00 => {
-                // I2C master mode; SDAHOLD and RUNSTDBY admitted; PINOUT, timeouts,
-                // SCLSM and speed modes refused.
-                if value & 0x1c != MODE_I2C_MASTER || value & !(0x0030_0000 | 0x80 | 0x1e) != 0 {
+                // I2C master mode; SDAHOLD, LOWTOUTEN and RUNSTDBY admitted;
+                // PINOUT, the other timeouts, SCLSM and speed modes refused.
+                if value & 0x1c != MODE_I2C_MASTER
+                    || value & !(0x0030_0000 | LOWTOUTEN | 0x80 | 0x1e) != 0
+                {
                     return Self::refuse("CTRLA outside standard-mode I2C master");
                 }
                 if self.enabled() && (value ^ self.ctrla) & !2 != 0 {
@@ -553,9 +599,7 @@ impl Peripheral for Samd51SercomI2cm {
             }
         }
         self.deadline = None;
-        self.pending.set(self.queued.take());
-        self.completed += 1;
-        self.perform(op);
+        self.complete(op);
     }
     fn attach_cycle_clock(&mut self, clock: crate::CycleClock) {
         self.clock = Some(clock);
@@ -629,6 +673,57 @@ mod tests {
             Some(9 * 1175 + 3000)
         );
         assert_eq!(op_cycles(1, baud, 0, 0, 0, cpu), None, "no core clock");
+    }
+
+    struct Holder(u64);
+    impl I2cDevice for Holder {
+        fn address(&self) -> u8 {
+            0x40
+        }
+        fn read(&mut self) -> u8 {
+            0
+        }
+        fn write(&mut self, _: u8) {}
+        fn clock_stretch_ns(&self) -> u64 {
+            self.0
+        }
+    }
+
+    #[test]
+    fn scl_held_past_the_low_timeout_ends_the_transfer() {
+        for (lowtout, hold, timed_out) in [
+            (true, 30_000_000, true),
+            (true, 20_000_000, false),
+            (false, 30_000_000, false),
+        ] {
+            let mut m = Samd51SercomI2cm::new(SERCOM_INSTANCES[2]);
+            m.attach_slave(Box::new(Holder(hold)));
+            let ctrla = MODE_I2C_MASTER | (2 << 20) | if lowtout { LOWTOUTEN } else { 0 };
+            m.write_u32(0, ctrla).unwrap();
+            m.write_u32(0, ctrla | 2).unwrap();
+            m.write_u16(0x1a, IDLE).unwrap();
+            m.write_u32(0x24, 0x40 << 1).unwrap();
+            let op = m.pending.get().unwrap();
+            m.complete(op);
+            // MB as normal; LOWTOUT and BUSERR with ERROR, and the bus released.
+            assert_eq!(m.read(0x18).unwrap() & MB, MB);
+            assert_eq!(m.read(0x18).unwrap() & ERROR != 0, timed_out, "hold {hold}");
+            let status = m.read_u16(0x1a).unwrap();
+            assert_eq!(status & (LOWTOUT | BUSERR) == LOWTOUT | BUSERR, timed_out);
+            assert_eq!(status & BUSSTATE == IDLE, timed_out);
+        }
+        // The cut-short hold counts the time-out once.
+        assert_eq!(
+            op_cycles(
+                10,
+                230 | 230 << 8,
+                0,
+                LOW_TIMEOUT_NS,
+                48_000_000,
+                120_000_000
+            ),
+            Some(11_750 + 3_000_000)
+        );
     }
 
     struct Regs {

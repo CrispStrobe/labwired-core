@@ -347,8 +347,12 @@ fn build_samd51_board_model(
     kind: &str,
     p_cfg: &PeripheralConfig,
 ) -> anyhow::Result<Box<dyn Peripheral>> {
-    // The I2C master's only option is the bus's SCL rise time.
-    let admitted = |key: &String| kind == "samd51_sercom_i2cm" && key == "scl_rise_ns";
+    // The I2C master's only option is the bus's SCL rise time; the DAC's are
+    // the board's reference levels.
+    let admitted = |key: &String| {
+        kind == "samd51_sercom_i2cm" && key == "scl_rise_ns"
+            || kind == "samd51_dac" && (key == "vrefa_mv" || key == "vddana_mv")
+    };
     if !p_cfg.config.keys().all(admitted) {
         anyhow::bail!("{kind} admits no config overrides");
     }
@@ -390,7 +394,11 @@ fn build_samd51_board_model(
                 anyhow::bail!("{kind} requires base {base:#x} and no IRQ");
             }
             if kind == "samd51_dac" {
-                Box::new(crate::peripherals::sam::dac::Samd51Dac::new())
+                let mv = |key: &str| p_cfg.config.get(key).and_then(|v| v.as_f64());
+                Box::new(
+                    crate::peripherals::sam::dac::Samd51Dac::new()
+                        .with_references(mv("vrefa_mv"), mv("vddana_mv")),
+                )
             } else {
                 Box::new(crate::peripherals::sam::pac::Samd51Pac::new())
             }
