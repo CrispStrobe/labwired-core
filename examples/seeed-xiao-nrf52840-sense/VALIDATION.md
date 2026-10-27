@@ -2,6 +2,21 @@
 
 Validation date: 2026-05-27
 
+## Authored source guest in CI — 2026-10-27
+
+The `xiao-source-guest` job builds `firmware-xiao-nrf52840-sense-demo` from
+source and runs the unchanged `io-smoke.yaml` through the actual CLI and XIAO
+system manifest. Its five-million-step budget requires the startup line and
+ordered red/green/blue on/off messages derived from GPIO OUT readback. Source,
+compiler and binary identities and actual CLI observations are retained;
+compiled binaries are not part of that evidence artifact.
+
+This is a candidate until its official run passes. It establishes an authored
+UART/GPIO assembly boundary for shared-runtime review. Physical LED behaviour,
+sensor operation, electrical timing and renewed silicon captures remain
+separate. Updating a drift ACK still requires explicit human acknowledgement
+of the exact digest after affected guest qualification.
+
 ## Hardware Presence
 
 The connected board enumerated on USB as:
