@@ -142,6 +142,28 @@ fn scl_clocks(baud: u32) -> u64 {
     10 + high + low
 }
 
+/// CPU cycles of `periods` SCL periods at BAUD, the rise time and the core
+/// clock, plus `stretch_ns` of SCL held low by the device.
+fn op_cycles(
+    periods: u64,
+    baud: u32,
+    rise_ns: u64,
+    stretch_ns: u64,
+    gclk: u64,
+    cpu: u64,
+) -> Option<u64> {
+    if gclk == 0 {
+        return None;
+    }
+    // Core clocks x 1e9 per period, so the rise term stays exact.
+    let period =
+        u128::from(scl_clocks(baud)) * 1_000_000_000 + u128::from(gclk) * u128::from(rise_ns);
+    let bus =
+        (u128::from(periods) * period * u128::from(cpu)).div_ceil(u128::from(gclk) * 1_000_000_000);
+    let stretch = (u128::from(stretch_ns) * u128::from(cpu)).div_ceil(1_000_000_000);
+    Some((bus + stretch) as u64)
+}
+
 pub struct Samd51SercomI2cm {
     instance: SercomInstance,
     ctrla: u32,
@@ -165,6 +187,9 @@ pub struct Samd51SercomI2cm {
     /// An address written while a STOP was pending; issued after it.
     queued: Option<Op>,
     completed: u64,
+    /// SCL rise time the board declares (`scl_rise_ns`): each SCL period is
+    /// `10 + BAUD + BAUDLOW + f_core * t_rise` core clocks (DS60001507F 36.6.2.4.1).
+    rise_ns: u64,
 }
 
 impl Samd51SercomI2cm {
@@ -189,7 +214,13 @@ impl Samd51SercomI2cm {
             deadline: None,
             queued: None,
             completed: 0,
+            rise_ns: 0,
         }
+    }
+    /// The board's SCL rise time in nanoseconds.
+    pub fn with_scl_rise_ns(mut self, rise_ns: u64) -> Self {
+        self.rise_ns = rise_ns;
+        self
     }
     fn refuse<T>(what: &str) -> SimResult<T> {
         Err(SimulationError::NotImplemented(format!(
@@ -216,7 +247,7 @@ impl Samd51SercomI2cm {
         let devices = std::mem::take(&mut self.devices);
         let (transactions, addresses) = (self.transactions, std::mem::take(&mut self.addresses));
         let clock = self.clock.take();
-        *self = Self::new(self.instance);
+        *self = Self::new(self.instance).with_scl_rise_ns(self.rise_ns);
         self.clock = clock;
         self.devices = devices;
         self.transactions = transactions;
@@ -296,22 +327,28 @@ impl Samd51SercomI2cm {
     fn duration(&self, bus: &dyn Bus, op: Op) -> Option<u64> {
         let gclk = super::clock_tree::peripheral_hz(bus, self.instance.core_gclk)?;
         let cpu = super::clock_tree::cpu_hz(bus)?;
-        let periods = match op {
+        // The device that stretches: the one claiming the address, or the
+        // selected one for its bytes. A NACKed address and STOP stretch nothing.
+        let (periods, device) = match op {
             Op::Address(byte) => {
                 let claimed = self
                     .devices
                     .iter()
-                    .any(|d| d.borrow().claims_address(byte >> 1));
-                if byte & 1 != 0 && claimed {
-                    19
-                } else {
-                    10
+                    .position(|d| d.borrow().claims_address(byte >> 1));
+                match claimed {
+                    // The read's first byte follows its address.
+                    Some(i) if byte & 1 != 0 => (19, Some((i, 2))),
+                    Some(i) => (10, Some((i, 1))),
+                    None => (10, None),
                 }
             }
-            Op::Write(_) | Op::ReadNext => 9,
-            Op::Stop => 1,
+            Op::Write(_) | Op::ReadNext => (9, self.selected.map(|i| (i, 1))),
+            Op::Stop => (1, None),
         };
-        (gclk > 0).then(|| (periods * scl_clocks(self.baud) * cpu).div_ceil(gclk))
+        let stretch = device.map_or(0, |(i, holds)| {
+            self.devices[i].borrow().clock_stretch_ns() * holds
+        });
+        op_cycles(periods, self.baud, self.rise_ns, stretch, gclk, cpu)
     }
     fn lines(&self) -> u8 {
         if self.enabled() {
@@ -571,6 +608,27 @@ mod tests {
         assert_eq!(scl_clocks(230 | 230 << 8), 470);
         assert_eq!(scl_clocks(230), 470, "BAUDLOW 0 repeats BAUD");
         assert_eq!(scl_clocks(10 | 30 << 8), 50);
+    }
+
+    #[test]
+    fn rise_time_and_stretching_lengthen_an_operation() {
+        // ZI2C's 100 kHz on 48 MHz allowing 215 ns of rise: BAUD = BAUDLOW =
+        // 230, so a period is 470 + 48e6 * 215e-9 = 480.32 core clocks.
+        let baud = 230 | 230 << 8;
+        let (gclk, cpu) = (48_000_000, 120_000_000);
+        assert_eq!(op_cycles(1, baud, 0, 0, gclk, cpu), Some(1175));
+        assert_eq!(op_cycles(10, baud, 215, 0, gclk, cpu), Some(12_008));
+        assert_eq!(
+            op_cycles(1, baud, 215, 0, gclk, cpu),
+            Some(1201),
+            "1200.8, rounded up"
+        );
+        // 25 us of stretching is 3000 CPU cycles on top.
+        assert_eq!(
+            op_cycles(9, baud, 0, 25_000, gclk, cpu),
+            Some(9 * 1175 + 3000)
+        );
+        assert_eq!(op_cycles(1, baud, 0, 0, 0, cpu), None, "no core clock");
     }
 
     struct Regs {

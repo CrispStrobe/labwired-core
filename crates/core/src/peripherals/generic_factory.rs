@@ -347,7 +347,9 @@ fn build_samd51_board_model(
     kind: &str,
     p_cfg: &PeripheralConfig,
 ) -> anyhow::Result<Box<dyn Peripheral>> {
-    if !p_cfg.config.is_empty() {
+    // The I2C master's only option is the bus's SCL rise time.
+    let admitted = |key: &String| kind == "samd51_sercom_i2cm" && key == "scl_rise_ns";
+    if !p_cfg.config.keys().all(admitted) {
         anyhow::bail!("{kind} admits no config overrides");
     }
     Ok(match kind {
@@ -405,7 +407,8 @@ fn build_samd51_board_model(
             if p_cfg.irq.is_some() {
                 anyhow::bail!("SAMD51 SERCOM I2C master takes no single IRQ");
             }
-            Box::new(Samd51SercomI2cm::new(*instance))
+            let rise = p_cfg.config.get("scl_rise_ns").and_then(|v| v.as_u64());
+            Box::new(Samd51SercomI2cm::new(*instance).with_scl_rise_ns(rise.unwrap_or(0)))
         }
         "samd51_eic" => {
             // Sixteen channel lines (IRQ 12..27) are reported by the model itself.
