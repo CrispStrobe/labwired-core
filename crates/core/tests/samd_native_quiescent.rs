@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! Authored instruction controls for inactive RAM-only chunks. These are not
 //! the independently source-built PXT/native board qualification.
-#![cfg(feature = "event-scheduler")]
+// Cargo requires event-scheduler for this target. Do not turn a feature-off
+// invocation into an empty, successful test binary with a crate-level cfg.
 use labwired_config::{ChipDescriptor, SystemManifest};
 use labwired_core::{
     bus::SystemBus,

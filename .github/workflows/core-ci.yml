@@ -1398,6 +1398,7 @@ jobs:
           --test rp2040_i2c_irq_delivery
           --test stm32f103_dma_walk_differential
           --test systick_walk_differential
+          --test samd_native_quiescent
           --test board_batch_width
           --test nrf54l15_uarte_walk_differential
           --test nrf54l15_twim_walk_differential
