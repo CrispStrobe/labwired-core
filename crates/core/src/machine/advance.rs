@@ -168,6 +168,20 @@ impl<C: Cpu> Machine<C> {
         self.quiescent_chunk_retired = false;
     }
 
+    /// Dual-core lockstep only while the secondary is active or still held in
+    /// reset. When APP is WAITI-parked, batch the primary.
+    #[inline(never)]
+    fn batch_execution_mode(&self) -> ExecutionMode {
+        let secondary_active = self.cpu_secondary.as_ref().is_some_and(|sec| {
+            sec.secondary_execution_state() == crate::SecondaryExecutionState::Active
+        });
+        if secondary_active {
+            ExecutionMode::RunDual
+        } else {
+            ExecutionMode::RunBatch
+        }
+    }
+
     /// Advances the machine exactly like [`Self::advance`], but executes each
     /// planned CPU window through `run_window` instead of the in-tree CPU
     /// path.
@@ -345,17 +359,13 @@ impl<C: Cpu> Machine<C> {
             debug_assert!(count > 0);
             // Dual-core lockstep only while the secondary is active or still
             // held in reset. When APP is WAITI-parked, batch the primary.
+            // Keep the single-step selection a real branch: an outlined batch
+            // selector stops LLVM from if-converting (speculating) the
+            // secondary-core state load into every single-step window.
             let mode = if request.is_single() {
                 ExecutionMode::SingleDirect
             } else {
-                let secondary_active = self.cpu_secondary.as_ref().is_some_and(|sec| {
-                    sec.secondary_execution_state() == crate::SecondaryExecutionState::Active
-                });
-                if secondary_active {
-                    ExecutionMode::RunDual
-                } else {
-                    ExecutionMode::RunBatch
-                }
+                self.batch_execution_mode()
             };
             let batch_start = self.total_cycles;
             let progress = match run_window.as_deref_mut() {
