@@ -965,6 +965,44 @@ jobs:
   # to evict THIS one — so the PR lane's `Cache dependencies` step above now
   # carries `save-if: false`, the same remedy the `pr-workspace-tests` note
   # below records for the `core-ci` key: main owns the cache, PRs only read it.
+  apt-warm:
+    name: apt-warm
+    # push-to-main only, for the reason pr-gate-warm gives: a cache saved on a
+    # PR ref is readable by that PR alone, one saved on main by every PR.
+    # Seeds the cross-compiler packages pr-workspace-tests installs, keyed by
+    # the runner image so an image update re-seeds on the next main push.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    timeout-minutes: 45
+    steps:
+      - name: Name the runner image
+        id: image
+        run: echo "id=$ImageOS-$ImageVersion" >> "$GITHUB_OUTPUT"
+      - name: Look for this image's packages
+        id: apt-debs
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/apt-debs
+          key: apt-arm-dtc-${{ steps.image.outputs.id }}-v1
+          lookup-only: true
+      - name: Download the packages
+        if: steps.apt-debs.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          mkdir -p ~/apt-debs/partial
+          sudo apt-get install -y --download-only --no-install-recommends \
+            -o Dir::Cache::archives="$HOME/apt-debs" gcc-arm-none-eabi device-tree-compiler
+          sudo chown -R "$USER" ~/apt-debs
+          rm -rf ~/apt-debs/partial ~/apt-debs/lock
+          ls ~/apt-debs
+      - name: Save them on main
+        if: steps.apt-debs.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/apt-debs
+          key: apt-arm-dtc-${{ steps.image.outputs.id }}-v1
+
   pr-gate-warm:
     name: pr-gate-warm
     # push-to-main only. Not `pull_request` (a PR-ref save is the problem this
@@ -1706,14 +1744,32 @@ jobs:
       # Without it the test was allow-listed known-red (#960) and therefore
       # proved NOTHING on every PR — a gate that cannot build its inputs is not
       # a gate. Same package core-coverage-matrix-smoke.yml already installs.
+      # The packages come from main's cache when apt-warm has seeded one for
+      # this runner image: downloading them from the Ubuntu mirror took 21 of
+      # 39 minutes on two of three shards (2026-10-27).
+      - name: Name the runner image
+        id: image
+        run: echo "id=$ImageOS-$ImageVersion" >> "$GITHUB_OUTPUT"
+      - name: Restore the cross-compiler packages
+        id: apt-debs
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/apt-debs
+          key: apt-arm-dtc-${{ steps.image.outputs.id }}-v1
       - name: Add the C cross-compiler (OBD2 ECU firmware)
         run: |
-          sudo apt-get update
           # The ECU is freestanding C linked with -nostdlib. Recommended
           # newlib/C++ archives add hundreds of MB without serving this test;
           # stalled downloads exhausted two shards' 45-minute budgets.
           # Workspace integration suites also compile/tamper actual RV1103 DTBs.
-          sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi device-tree-compiler
+          if [ "${{ steps.apt-debs.outputs.cache-hit }}" = true ] && sudo dpkg -i ~/apt-debs/*.deb; then
+            echo "installed from the cached packages"
+          else
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi device-tree-compiler
+          fi
+          arm-none-eabi-gcc --version | head -1
+          dtc --version
 
       # READ-ONLY. This lane restores main's `core-ci` target dir; it must not
       # write one back, for a reason that is easy to miss: GitHub scopes caches
