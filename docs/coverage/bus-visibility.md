@@ -105,6 +105,8 @@ Chips that cannot yet produce edges for a bus are listed here with a reason — 
   * UART: no LPUART2 bring-up in this harness; bytes are proven by the s32k388-evb survival smoke
 * **sam4s16c**
   * UART: no UART0 bring-up in this harness; bytes are proven by the sam4s-xplained survival smoke
+* **samd51-no-asf-simulation**
+  * UART: Software assembly retains unselected generic SERCOM3 without gate bring-up; selected SAMD USART publishes bytes but no PadLines wire. Native byte acceptance is separate; no UART edge coverage is claimed
 * **same70q21b**
   * UART: no USART1 bring-up in this harness; bytes are proven by the sam-e70-xplained survival smoke
 * **stm32f072**
@@ -181,6 +183,7 @@ Chips that cannot yet produce edges for a bus are listed here with a reason — 
 | rv1103 | — | — | — |
 | s32k388 | — | — | — |
 | sam4s16c | — | — | — |
+| samd51-no-asf-simulation | — | — | — |
 | same70q21b | — | — | — |
 | stm32f072 | ✓ | ✓ | — |
 | stm32f103 | ✓ | ✓ | ✓ |

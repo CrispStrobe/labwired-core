@@ -41,15 +41,13 @@ unmodeled CMCC TYPE register to remain refused. Existing fleet probes, model
 access rules, silicon comparisons and earlier conformance values are unchanged.
 An L0 estate row grants no running-firmware or physical-accuracy coverage.
 
-Current integration failures remain explicit: the authored profile's reset-spin
-benchmark measured about 0.02× real time at 120MHz with one instruction per batch.
-The 1× gate and all earlier baselines remain unchanged. The conservative legacy
-walk prevents wide execution; any optimization must preserve active-model
-service, MMIO arming boundaries and exact elapsed cycles, then pass differential
-and affected native-guest qualification before new measurements are admitted.
-The generic unselected SERCOM3 has the same unsupported wire-gate bring-up as
-the original SAMD descriptors; the selected SAMD USART explicitly publishes
-bytes without a PadLines wire. Byte acceptance does not grant UART edge coverage.
+An [earlier throughput campaign](https://github.com/CrispStrobe/labwired-core/actions/runs/40375660666)
+measured about 0.02× real time at the authored 120 MHz clock with one instruction
+per batch and failed the unchanged 1× gate. Preserve that failure alongside the
+later checked-execution controls and measurements below. All earlier baselines
+remain unchanged. Generic SERCOM3 byte-stream controls open its MCLK and GCLK
+gates; the selected SAMD USART also publishes bytes without a PadLines wire.
+Byte acceptance does not grant UART edge coverage.
 Bank-width controls must open the USB/DAC MCLK gates first: a clock-gated zero
 read is not evidence that a reserved register was admitted by the model.
 
@@ -62,8 +60,8 @@ CrispStrobe PyBadge adaptation and no-ASF assembly credit.
 
 The performance candidate adds an explicit CPU capability for already checked
 RAM/register-only chunks. It is admitted only for this reviewed memory/model
-assembly with no attached devices, observers, capture, JIT, pending operation,
-active legacy work or active bus service. Unknown CPUs return zero. A nonzero
+assembly with no attached devices, observers, capture, compiled JIT backend,
+pending operation, active legacy work or active bus service. Unknown CPUs return zero. A nonzero
 prefix commits its actual elapsed cycles immediately; zero executes one original
 strict instruction. MMIO and unsupported operations never follow an uncommitted
 prefix. The configured tick/resident grid and the conservative public interval
@@ -169,3 +167,35 @@ reported 4.3633–4.4128×, median 4.4017×. This passes the unchanged 1× gate 
 the reset-inactive fixture. Active peripherals and the connected game retain
 their strict execution paths; these numbers do not qualify game frame rate,
 input latency, browser/installed execution or physical timing.
+
+## Supplier and consumer follow-up
+
+The [engine producer change](https://github.com/CrispStrobe/bw-board/pull/711)
+must carry the qualified Core source through two matching builds, the legacy
+suite, selected motion windows and the actual source-built Node game before
+immutable publication. The
+[Lite qualification infrastructure](https://github.com/CrispStrobe/brickwright-lite/pull/1456)
+registers the dispatch-only acceptance path. After its checks and landing,
+advance the exact engine/profile pins and bind official frontend/native inputs
+to actual Chromium and installed Tauri/WebKit game observations. Keep the normal
+native compile/import/GUI route and physical captures as separately scoped work.
+
+Shared-runtime review also leaves the existing silicon re-capture task open for
+`nrf52840`, `seeed-xiao-nrf52840-sense`, `stm32h563`, `nucleo-l476rg`,
+`nucleo-l073rz`, `stm32f103` and `stm32f407`. Their existing ACK expiry remains
+2026-11-12. A separately authorized hardware session must follow each board's
+manifest suites, retain raw comparisons and update capture/digest evidence only
+from that new capture. Simulated guest success does not complete this task.
+
+The later full-fleet gate retained a step-mode instruction-cost regression on
+existing boards. Its correction specializes the new chunk path at the outer
+advance call: ordinary boards and single-step requests compile without its
+planning, execution and commit checks. The selected SAMD specialization keeps
+all dynamic admission guards. External window runners retain their original
+service grid because they do not implement the checked-chunk tick contract.
+A separate control requires one-step external windows and then confirms that
+the same warm machine still coalesces through the native checked primitive;
+the selected hosted campaign must also detect restoration of the old widening.
+The corrected source still requires fresh full-fleet and selected measurements,
+architectural controls and actual guest checks before landing. Old baselines,
+noise limits and the real-time floor remain unchanged.

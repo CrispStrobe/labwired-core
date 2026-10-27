@@ -11,8 +11,17 @@ ordered red/green/blue on/off messages derived from GPIO OUT readback. Source,
 compiler and binary identities and actual CLI observations are retained;
 compiled binaries are not part of that evidence artifact.
 
-This is a candidate until its official run passes. It establishes an authored
-UART/GPIO assembly boundary for shared-runtime review. Physical LED behaviour,
+[The source-built guest passed](https://github.com/CrispStrobe/labwired-core/actions/runs/40443757158/job/121992313209)
+on reviewed source `6161c915fb2443a1064ac1e78253409f43ddce10`. Its actual CI
+checkout `a5c7deb69fd4fc0bb7b104f781dce0085fb93028` has the same tree. An
+independent original-reader verified all 21 packet members, 869 source-file
+hashes, all three CLI assertions and the startup plus six ordered GPIO-readback
+messages from raw UART output. The executed firmware SHA256 is
+`4d14845f7cfc9c7f102d6c3d6d709087248e1322c4c81d2b186c554dc56b2a3c`.
+
+This establishes an authored UART/GPIO assembly boundary for shared-runtime
+review. The architectural WFI controls remain a separate qualification arm.
+Physical LED behaviour,
 sensor operation, electrical timing and renewed silicon captures remain
 separate. Updating a drift ACK still requires explicit human acknowledgement
 of the exact digest after affected guest qualification.
