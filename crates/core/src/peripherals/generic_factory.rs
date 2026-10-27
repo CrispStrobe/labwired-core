@@ -776,10 +776,15 @@ pub fn try_build(
                     "SAMD51 DMAC board profile requires explicit mclk AHBMASK bit9 binding"
                 );
             }
+            let latency = p_cfg
+                .config
+                .get("request_latency_cycles")
+                .and_then(|v| v.as_u64());
             Box::new(
                 crate::peripherals::sam::dmac_byte::SamDmacByte::new_samd51_board(
                     p_cfg.base_address,
-                ),
+                )
+                .with_request_latency(latency.unwrap_or(0)),
             )
         }
         "sam_dmac_sercom4_tx_byte" => {
