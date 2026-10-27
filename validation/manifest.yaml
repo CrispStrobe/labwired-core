@@ -463,7 +463,7 @@ boards:
     drift_ack_expires: 2026-11-12
     # A10 / PR244: source-built stack-reuse guest passed under the scheduler.
     # UARTE buffer capture changes; physical re-capture remains owed.
-    drift_ack_digest: 208335255811adc57d47a5e2b58972739c6ff22832f4a069c9a0706b41fbc7a7
+    drift_ack_digest: 40fb0aa27416c909e75a5c078593e51d02b55e8d4891fe709d071c88c23d12b1
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -936,7 +936,7 @@ boards:
     drift_ack_expires: 2026-11-12
     # A10 / PR244: source-built stack-reuse guest passed under the scheduler.
     # UARTE buffer capture changes; physical re-capture remains owed.
-    drift_ack_digest: 208335255811adc57d47a5e2b58972739c6ff22832f4a069c9a0706b41fbc7a7
+    drift_ack_digest: 40fb0aa27416c909e75a5c078593e51d02b55e8d4891fe709d071c88c23d12b1
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -1553,7 +1553,7 @@ boards:
     # reset mask/IT/xPSR/LR semantics changed. ACK, NOT a physical capture.
     # Preserve the existing acknowledgement age; physical re-capture is owed.
     drift_ack_expires: 2026-11-12
-    drift_ack_digest: 9d376c7350d03b48e216afcd177ac02cdf265921275307c681316458f9d50390
+    drift_ack_digest: 60dcf293d9b14782e175d7cb8c215c540cb453f163f635ce36902e263cedd9f9
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3449,7 +3449,7 @@ boards:
     # reset mask/IT/xPSR/LR semantics changed. ACK, NOT a physical capture.
     # Preserve the existing acknowledgement age; physical re-capture is owed.
     drift_ack_expires: 2026-11-12
-    drift_ack_digest: 56a7dcc46a62321cdb0d340e144b1ca5af7c751623ae09263ecf89ffd012a6cf
+    drift_ack_digest: fae7918001157995f72a3578ee814710acdb6880384828fbe4e77c1e339dc288
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4357,7 +4357,7 @@ boards:
     # reset mask/IT/xPSR/LR semantics changed. ACK, NOT a physical capture.
     # Preserve the existing acknowledgement age; physical re-capture is owed.
     drift_ack_expires: 2026-11-12
-    drift_ack_digest: a9b603de15d74d989566e3c014280af944edc8749c9e607c3a80de54cb3abe92
+    drift_ack_digest: 3db55a0d6b97210b722913a2aaf3355389e31d0359ff088c6b3ff86669820755
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5261,7 +5261,7 @@ boards:
     # reset mask/IT/xPSR/LR semantics changed. ACK, NOT a physical capture.
     # Preserve the existing acknowledgement age; physical re-capture is owed.
     drift_ack_expires: 2026-11-12
-    drift_ack_digest: 3d003b2cf4e69ae054218d616d1a40bd97521429ae14bd69d1599bdd5c3679d7
+    drift_ack_digest: da1fc83bafe8826d9c1202382a78417084f890de775e4033e672725d3a1098a1
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -6204,7 +6204,7 @@ boards:
     # reset mask/IT/xPSR/LR semantics changed. ACK, NOT a physical capture.
     # Preserve the existing acknowledgement age; physical re-capture is owed.
     drift_ack_expires: 2026-11-12
-    drift_ack_digest: be7fe7bf7e43326219082460dc64d3bce4ffda4b314abebb91ce1e6ca3daef86
+    drift_ack_digest: ae1c3c159f9d9d156873879e3a5db3674240362cf27a693cc80210f77f67fb2a
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
