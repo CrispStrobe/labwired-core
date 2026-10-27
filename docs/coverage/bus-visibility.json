@@ -291,6 +291,10 @@
   },
   {
     "buses": [],
+    "name": "samd51-no-asf-simulation"
+  },
+  {
+    "buses": [],
     "name": "same70q21b"
   },
   {
