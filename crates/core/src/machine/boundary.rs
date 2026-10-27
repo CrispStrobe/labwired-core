@@ -56,17 +56,9 @@ impl<C: Cpu> Machine<C> {
     pub(crate) fn execute_cpu_window(
         &mut self,
         mode: ExecutionMode,
-        mut window: crate::machine::CpuWindow,
+        window: crate::machine::CpuWindow,
     ) -> SimResult<CoreProgress> {
         let span = crate::profile::span();
-        // The planner raises this mailbox only on the admitted SAMD profile;
-        // every other window pays one load and branch, as on the original path.
-        if self.quiescent_chunk_planned {
-            if let Some(progress) = self.execute_planned_quiescent_window(mode, &mut window) {
-                crate::profile::record_cpu(span);
-                return Ok(progress);
-            }
-        }
         let progress = self.execute_cpu_window_inner(mode, window);
         crate::profile::record_cpu(span);
         progress
@@ -127,7 +119,7 @@ impl<C: Cpu> Machine<C> {
     fn execute_cpu_window_inner(
         &mut self,
         mode: ExecutionMode,
-        window: crate::machine::CpuWindow,
+        mut window: crate::machine::CpuWindow,
     ) -> SimResult<CoreProgress> {
         let count = window.steps;
         match mode {
@@ -156,6 +148,18 @@ impl<C: Cpu> Machine<C> {
                 }
             }
             ExecutionMode::RunBatch => {
+                // The planner raises this mailbox only on the admitted SAMD
+                // profile and only for batch windows, so single-step windows
+                // never read it. A refused chunk narrows the window to one
+                // original strict step below.
+                let count = if self.quiescent_chunk_planned {
+                    match self.execute_planned_quiescent_window(mode, &mut window) {
+                        Some(progress) => return Ok(progress),
+                        None => window.steps,
+                    }
+                } else {
+                    count
+                };
                 self.bus.set_current_cycle(self.total_cycles);
                 self.bus.bus_trace.set_cycle(self.total_cycles);
                 if self.logic_capture.push_active() {
@@ -443,7 +447,7 @@ impl<C: Cpu> Machine<C> {
         // on the admitted path and consumed here; the admitted
         // planner and every public advance entry clear it before a new window,
         // so a later boundary error cannot carry it into another window.
-        let quiescent_chunk = self.quiescent_chunk_retired;
+        let quiescent_chunk = mode == ExecutionMode::RunBatch && self.quiescent_chunk_retired;
         if quiescent_chunk {
             self.quiescent_chunk_retired = false;
         }
