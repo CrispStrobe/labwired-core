@@ -96,7 +96,7 @@ impl<C: Cpu> Machine<C> {
         self.quiescent_chunk_retired = false;
         // `quiescent_chunk_enabled` already excludes single-step requests;
         // taking the request here would make it escape the ordinary planner.
-        self.bus.samd_native_quiescent_chunks
+        let admitted = self.bus.samd_native_quiescent_chunks
             && self.config.peripheral_tick_interval == 1
             && self.config.batch_mode_enabled
             && self.config.decode_cache_enabled
@@ -105,7 +105,12 @@ impl<C: Cpu> Machine<C> {
             && self.observers.is_empty()
             && !self.logic_capture.poll_active()
             && !self.logic_capture.push_active()
-            && self.bus.samd_quiescent_chunk_ready()
+            && self.bus.samd_quiescent_chunk_ready();
+        // Raise the execution mailbox here rather than in the ordinary
+        // planner body. A window that ends up shorter than the CPU's chunk
+        // minimum is refused there and narrowed to one original strict step.
+        self.quiescent_chunk_planned = admitted;
+        admitted
     }
 
     pub(crate) fn plan_cpu_window(
@@ -415,9 +420,6 @@ impl<C: Cpu> Machine<C> {
             to_cycles: tick_interval - (self.total_cycles % tick_interval),
             max_steps: count_untick.min(u64::from(u32::MAX)) as u32,
         });
-        if quiescent_chunk && count >= 8 {
-            self.quiescent_chunk_planned = true;
-        }
         CpuWindow {
             steps: count as u32,
             fill,
