@@ -2932,6 +2932,7 @@ pub struct Machine<C: Cpu> {
     max_retired_quiescent_chunk: u32,
     // One-window mailboxes used only by the checked SAMD path.
     // Keep these out of the ordinary CPU-window/report return ABI.
+    // `enabled` is false only while an external window runner executes.
     quiescent_chunk_enabled: bool,
     quiescent_chunk_planned: bool,
     quiescent_chunk_retired: bool,
@@ -3711,7 +3712,7 @@ impl<C: Cpu> Machine<C> {
             host_clock: Box::new(host_time::StdHostClock::new()),
             step_profile: StepProfile::default(),
             max_retired_quiescent_chunk: 0,
-            quiescent_chunk_enabled: false,
+            quiescent_chunk_enabled: true,
             quiescent_chunk_planned: false,
             quiescent_chunk_retired: false,
             sched: sched::EventScheduler::new(),

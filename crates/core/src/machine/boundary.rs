@@ -1,5 +1,6 @@
 //! Owns CPU execution and post-execution lifecycle commits.
 
+use super::plan::WindowHooks;
 use crate::{Cpu, Machine, SimResult};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,78 +54,47 @@ impl<C: Cpu> Machine<C> {
         self.bus.service_resident_scheduled_edges();
     }
 
-    pub(crate) fn execute_cpu_window(
+    pub(crate) fn execute_cpu_window<H: WindowHooks>(
         &mut self,
         mode: ExecutionMode,
-        mut window: crate::machine::CpuWindow,
+        window: crate::machine::CpuWindow,
     ) -> SimResult<CoreProgress> {
         let span = crate::profile::span();
-        // The planner raises this mailbox only on the admitted SAMD profile;
-        // every other window pays one load and branch, as on the original path.
-        if self.quiescent_chunk_planned {
-            if let Some(progress) = self.execute_planned_quiescent_window(mode, &mut window) {
-                crate::profile::record_cpu(span);
-                return Ok(progress);
-            }
-        }
-        let progress = self.execute_cpu_window_inner(mode, window);
+        let progress = self.execute_cpu_window_inner::<H>(mode, window);
         crate::profile::record_cpu(span);
         progress
     }
 
     #[cold]
     #[inline(never)]
-    fn execute_planned_quiescent_window(
-        &mut self,
-        mode: ExecutionMode,
-        window: &mut crate::machine::CpuWindow,
-    ) -> Option<CoreProgress> {
+    fn execute_planned_quiescent_window(&mut self, steps: u32) -> Option<CoreProgress> {
         self.quiescent_chunk_planned = false;
         self.quiescent_chunk_retired = false;
-        if mode == ExecutionMode::RunBatch {
-            self.try_execute_quiescent_window(window)
-        } else {
-            None
-        }
-    }
-
-    // Only the explicitly admitted profile enters this body. Preserve a small
-    // ordinary executor wrapper and one common strict-execution call site.
-    #[cold]
-    #[inline(never)]
-    fn try_execute_quiescent_window(
-        &mut self,
-        window: &mut crate::machine::CpuWindow,
-    ) -> Option<CoreProgress> {
         self.bus.set_current_cycle(self.total_cycles);
         self.bus.bus_trace.set_cycle(self.total_cycles);
-        let retired =
-            self.cpu
-                .try_quiescent_memory_chunk(&mut self.bus, &self.config, window.steps);
-        if retired > 0 {
-            self.quiescent_chunk_retired = true;
-            self.max_retired_quiescent_chunk = self.max_retired_quiescent_chunk.max(retired);
-            self.bus.current_cycle += u64::from(retired);
-            // The strict loop stamps transactions with the start of the
-            // last retired instruction before draining its boundary.
-            self.bus
-                .bus_trace
-                .set_cycle(self.total_cycles + u64::from(retired) - 1);
-            return Some(CoreProgress {
-                primary_steps: retired,
-                secondary_steps: 0,
-                timed_cycles: None,
-                internally_committed_cycles: false,
-            });
+        let retired = self
+            .cpu
+            .try_quiescent_memory_chunk(&mut self.bus, &self.config, steps);
+        if retired == 0 {
+            return None;
         }
-        // Zero means no architectural prefix retired: execute exactly one
-        // original MMIO/exception/error step at the common strict call site.
-        window.steps = 1;
-        window.fill = None;
-        None
+        self.quiescent_chunk_retired = true;
+        self.max_retired_quiescent_chunk = self.max_retired_quiescent_chunk.max(retired);
+        self.bus.current_cycle += u64::from(retired);
+        // The strict loop stamps transactions with the start of the
+        // last retired instruction before draining its boundary.
+        self.bus
+            .bus_trace
+            .set_cycle(self.total_cycles + u64::from(retired) - 1);
+        Some(CoreProgress {
+            primary_steps: retired,
+            secondary_steps: 0,
+            timed_cycles: None,
+            internally_committed_cycles: false,
+        })
     }
 
-    fn execute_cpu_window_inner(
+    fn execute_cpu_window_inner<H: WindowHooks>(
         &mut self,
         mode: ExecutionMode,
         window: crate::machine::CpuWindow,
@@ -156,6 +126,24 @@ impl<C: Cpu> Machine<C> {
                 }
             }
             ExecutionMode::RunBatch => {
+                // Raised only by the admitted SAMD planner; every other batch
+                // window pays one load and branch, single steps none.
+                // Zero retired means no architectural prefix: execute exactly
+                // one original MMIO/exception/error step in this strict arm.
+                let (count, window) = if H::CHECKED && self.quiescent_chunk_planned {
+                    match self.execute_planned_quiescent_window(count) {
+                        Some(progress) => return Ok(progress),
+                        None => (
+                            1,
+                            crate::machine::CpuWindow {
+                                steps: 1,
+                                fill: None,
+                            },
+                        ),
+                    }
+                } else {
+                    (count, window)
+                };
                 self.bus.set_current_cycle(self.total_cycles);
                 self.bus.bus_trace.set_cycle(self.total_cycles);
                 if self.logic_capture.push_active() {
@@ -433,20 +421,22 @@ impl<C: Cpu> Machine<C> {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn commit_advance_boundary(
+        &mut self,
+        mode: ExecutionMode,
+        batch_start: u64,
+        progress: CoreProgress,
+    ) -> SimResult<()> {
+        self.commit_advance_boundary_with::<super::plan::Ordinary>(mode, batch_start, progress)
+    }
+
+    pub(crate) fn commit_advance_boundary_with<H: WindowHooks>(
         &mut self,
         mode: ExecutionMode,
         _batch_start: u64,
         progress: CoreProgress,
     ) -> SimResult<()> {
-        // Read the checked-prefix marker with a plain load. It is raised only
-        // on the admitted path and consumed here; the admitted
-        // planner and every public advance entry clear it before a new window,
-        // so a later boundary error cannot carry it into another window.
-        let quiescent_chunk = self.quiescent_chunk_retired;
-        if quiescent_chunk {
-            self.quiescent_chunk_retired = false;
-        }
         let internally_committed_per_cycle_batch =
             mode == ExecutionMode::RunBatch && progress.internally_committed_cycles;
         if mode == ExecutionMode::RunBatch && !internally_committed_per_cycle_batch {
@@ -474,12 +464,14 @@ impl<C: Cpu> Machine<C> {
         // Dual-core WAITI coalesced batch: primary advanced N cycles while APP
         // was parked; peripherals must advance by N, not by tick_interval once.
         // Detected via secondary_steps == primary_steps from the parked path.
+        // A retired checked SAMD chunk commits its exact elapsed prefix the
+        // same way: peripherals advance by N on the unchanged one-cycle grid.
         let coalesced_dual_idle = mode == ExecutionMode::RunBatch
-            && progress.secondary_steps > 0
-            && progress.primary_steps > 1;
+            && ((progress.secondary_steps > 0 && progress.primary_steps > 1)
+                || (H::CHECKED && std::mem::take(&mut self.quiescent_chunk_retired)));
         let should_tick = if internally_committed_per_cycle_batch {
             false
-        } else if coalesced_dual_idle || quiescent_chunk {
+        } else if coalesced_dual_idle {
             true
         } else if progress.timed_cycles.is_some() {
             // A timed core's window can end past a tick boundary (its last
@@ -494,14 +486,14 @@ impl<C: Cpu> Machine<C> {
             let saved_m = self.config.peripheral_tick_interval;
             let saved_b = self.bus.config.peripheral_tick_interval;
             let saved_grid = self.bus.resident_tick_interval_override;
-            if coalesced_dual_idle || quiescent_chunk {
+            if coalesced_dual_idle {
                 self.bus.resident_tick_interval_override = Some(u64::from(saved_b.max(1)));
                 let n = progress.primary_steps.max(1);
                 self.config.peripheral_tick_interval = n;
                 self.bus.config.peripheral_tick_interval = n;
             }
             self.tick_peripherals_at_boundary();
-            if coalesced_dual_idle || quiescent_chunk {
+            if coalesced_dual_idle {
                 self.config.peripheral_tick_interval = saved_m;
                 self.bus.config.peripheral_tick_interval = saved_b;
                 self.bus.resident_tick_interval_override = saved_grid;

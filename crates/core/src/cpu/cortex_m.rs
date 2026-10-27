@@ -3674,12 +3674,15 @@ impl CortexM {
         // Bus work can require single-cycle service while WFI is parked. A
         // refused time skip must not execute the instruction after WFI. Keep
         // the historical spin behaviour when idle acceleration is disabled.
-        if self.sleeping && config.idle_fast_forward_enabled && !self.wfi_wake_pending() {
-            return Ok(());
-        }
         // Leave WFI sleep before this step commits: the flag is re-armed only if
-        // this instruction is itself a WFI with no wake event pending.
-        self.set_core_sleeping(false);
+        // this instruction is itself a WFI with no wake event pending. The
+        // ordinary awake step tests the same flag `set_core_sleeping` tests.
+        if self.sleeping {
+            if config.idle_fast_forward_enabled && !self.wfi_wake_pending() {
+                return Ok(());
+            }
+            self.set_core_sleeping(false);
+        }
         // Check for pending exceptions before executing instruction.
         // Use real ARMv7-M priority dispatch: pick the highest-priority
         // pending exception (smallest numeric priority value), and only

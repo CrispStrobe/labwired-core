@@ -59,6 +59,23 @@ macro_rules! clamp_tick {
 /// cheaper instructions stops short of the boundary, the leftover is divided
 /// again next plan, and the widths decay geometrically: measured 23.68 on
 /// `atmega328p` where `512 / 4` is 128.
+/// Selects, once per public advance, whether the window loop carries the
+/// checked SAMD chunk hooks. Every other machine runs [`Ordinary`], whose
+/// monomorphised loop contains none of them.
+pub(crate) trait WindowHooks {
+    const CHECKED: bool;
+}
+
+pub(crate) struct Ordinary;
+impl WindowHooks for Ordinary {
+    const CHECKED: bool = false;
+}
+
+pub(crate) struct CheckedChunks;
+impl WindowHooks for CheckedChunks {
+    const CHECKED: bool = true;
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CpuWindow {
     pub(crate) steps: u32,
@@ -87,10 +104,6 @@ pub(crate) struct WindowFill {
 }
 
 impl<C: Cpu> Machine<C> {
-    // Reached only when the advance cached eligibility. Clearing the
-    // mailboxes here keeps every store off the ordinary planner.
-    #[cold]
-    #[inline(never)]
     fn quiescent_chunk_admitted(&mut self, request: AdvanceRequest) -> bool {
         self.quiescent_chunk_planned = false;
         self.quiescent_chunk_retired = false;
@@ -107,7 +120,66 @@ impl<C: Cpu> Machine<C> {
             && self.bus.samd_quiescent_chunk_ready()
     }
 
+    /// Checked SAMD horizon, reached only when the ordinary one-cycle grid
+    /// would cut a multi-step window short. On admission it applies the
+    /// 1024-cycle chunk horizon plus the resident-edge and scheduler
+    /// deadlines that the ordinary planner applies only on a wider grid, and
+    /// raises the one-window mailbox. False keeps the ordinary tick clamp.
+    #[cold]
+    #[inline(never)]
+    fn plan_quiescent_chunk(
+        &mut self,
+        request: AdvanceRequest,
+        step_cycles: u64,
+        count: &mut u64,
+        count_untick: &mut u64,
+    ) -> bool {
+        if !self.quiescent_chunk_admitted(request) {
+            return false;
+        }
+        const HORIZON: u64 = 1024;
+        let steps_within = |cycles: u64| (cycles / step_cycles).max(1);
+        let mut c = (*count).min(steps_within(HORIZON - (self.total_cycles % HORIZON)));
+        let mut u = *count_untick;
+        if c > 1 {
+            if let Some(deadline) = self.bus.next_resident_edge_deadline_cycle() {
+                let limit = steps_within(deadline.saturating_sub(self.total_cycles))
+                    .min(u64::from(u32::MAX));
+                c = c.min(limit);
+                u = u.min(limit);
+            }
+        }
+        if c > 1 {
+            if let Some(deadline) = self.sched.next_event_deadline() {
+                let until = if deadline > self.total_cycles {
+                    deadline - self.total_cycles
+                } else {
+                    1
+                };
+                let limit = steps_within(until);
+                c = c.min(limit);
+                u = u.min(limit);
+            }
+        }
+        if c.max(1) >= 8 {
+            self.quiescent_chunk_planned = true;
+        }
+        *count = c;
+        *count_untick = u;
+        true
+    }
+
+    #[cfg(test)]
     pub(crate) fn plan_cpu_window(
+        &mut self,
+        request: AdvanceRequest,
+        fuel_consumed: u64,
+        elapsed_cycles: u64,
+    ) -> CpuWindow {
+        self.plan_cpu_window_with::<Ordinary>(request, fuel_consumed, elapsed_cycles)
+    }
+
+    pub(crate) fn plan_cpu_window_with<H: WindowHooks>(
         &mut self,
         request: AdvanceRequest,
         fuel_consumed: u64,
@@ -116,16 +188,7 @@ impl<C: Cpu> Machine<C> {
         use crate::machine::quantum_trace::clause;
 
         self.service_resident_edges_at_boundary();
-        // The full predicate stays out of the ordinary planner's hot body.
-        let quiescent_chunk =
-            self.quiescent_chunk_enabled && self.quiescent_chunk_admitted(request);
-        // Horizon for an exclusively checked RAM/register chunk. The configured
-        // peripheral and resident service grid remains one cycle.
-        let tick_interval = if quiescent_chunk {
-            1024
-        } else {
-            u64::from(self.config.peripheral_tick_interval.max(1))
-        };
+        let tick_interval = u64::from(self.config.peripheral_tick_interval.max(1));
         // Every clamp below that is measured in cycles is turned into a step
         // count. One step is one cycle on most cores; on a core whose step
         // cycles are clock time (AVR, up to 4) the budget is divided by the
@@ -349,12 +412,21 @@ impl<C: Cpu> Machine<C> {
         } else {
             // Normal path: batch only up to the next peripheral tick boundary.
             let until_tick = tick_interval - (self.total_cycles % tick_interval);
-            clamp_tick!(
-                count,
-                binder,
-                clause::TICK_BOUNDARY,
-                steps_within(until_tick)
-            );
+            // Only a window the ordinary grid would cut short can widen. A
+            // single step (count 1) never reaches the checked SAMD planner,
+            // so the per-instruction path is unchanged.
+            if !(H::CHECKED
+                && steps_within(until_tick) < count
+                && self.quiescent_chunk_enabled
+                && self.plan_quiescent_chunk(request, step_cycles, &mut count, &mut count_untick))
+            {
+                clamp_tick!(
+                    count,
+                    binder,
+                    clause::TICK_BOUNDARY,
+                    steps_within(until_tick)
+                );
+            }
         }
 
         // Scheduler/resident waveform deadlines narrow the window on BOTH the
@@ -414,9 +486,6 @@ impl<C: Cpu> Machine<C> {
             to_cycles: tick_interval - (self.total_cycles % tick_interval),
             max_steps: count_untick.min(u64::from(u32::MAX)) as u32,
         });
-        if quiescent_chunk && count >= 8 {
-            self.quiescent_chunk_planned = true;
-        }
         CpuWindow {
             steps: count as u32,
             fill,
