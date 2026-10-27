@@ -212,6 +212,16 @@ impl I2cDevice for Tca9548a {
     /// that shares the switch's address collides with the control register.
     /// The datasheet warns against that layout; the model reproduces it instead
     /// of hiding it.
+    /// The selected downstream devices share SCL: the longest hold wins.
+    fn clock_stretch_ns(&self) -> u64 {
+        self.selected
+            .downstream
+            .iter()
+            .map(|&(ch, i)| self.channels[ch][i].clock_stretch_ns())
+            .max()
+            .unwrap_or(0)
+    }
+
     fn select_address(&mut self, addr: u8) {
         self.selected = Selection {
             control: addr == self.address,
