@@ -212,6 +212,21 @@ ordinary executor, planner and commit each read one marker without a store. The
 executor wrapper is no longer forced inline and the checked helpers are cold.
 This is an unmeasured hypothesis until the unchanged fleet gate passes.
 
+That follow-up (exact-head fleet run 40471913258) did not recover either. The
+current candidate therefore separates the loop by type, not by per-window flags.
+The public advance reads the construction-time SAMD bus flag once and enters
+`advance_inner::<Ordinary>` or `advance_inner::<CheckedChunks>`. In the ordinary
+monomorphisation the planner, executor and commit contain no checked-chunk hook.
+The checked loop widens only a multi-step window the one-cycle grid would cut,
+applies the resident-edge and scheduler deadlines on the cold admitted path,
+executes a planned chunk inside the batch arm and commits its retired prefix
+through the existing coalesced-tick branch. External window runners use the
+checked loop with eligibility forced off. A Cortex-M awake step tests `sleeping`
+once, as before. An offline diagnostic Callgrind build of the same fleet
+harness measured this candidate at or below the main baseline on STM32F407,
+ATSAMD21 and RP2040 step mode. That diagnostic is not qualification: the
+unchanged hosted fleet gate, controls, mutation and guests still decide.
+
 All twenty controls, the external-runner mutation, fresh actual guest checks and
 full-fleet/selected measurements must pass on the final runtime before landing.
 Old baselines, noise limits and the real-time floor remain unchanged. This
