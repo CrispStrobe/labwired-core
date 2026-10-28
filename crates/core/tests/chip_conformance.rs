@@ -411,6 +411,14 @@ const CHIPS: &[ChipConf] = &[
         behavior_gate: Some("firmware_survival::test_atsamd51_metro_m4_smoke_survival"),
     },
     ChipConf {
+        name: "samd51-no-asf-simulation",
+        yaml: "configs/chips/samd51-no-asf-simulation.yaml",
+        reset_oracle: None,
+        // Explicit source-built assembly only. Actual native/WASM campaign is
+        // separate; no in-tree running-firmware or silicon gate is claimed.
+        behavior_gate: None,
+    },
+    ChipConf {
         name: "atsamd51-pybadge",
         yaml: "configs/chips/atsamd51-pybadge.yaml",
         reset_oracle: None,
@@ -1241,11 +1249,16 @@ fn measure(c: &ChipConf) -> Record {
     let bus = SystemBus::from_config(&chip, &dummy_manifest(&abs_str))
         .unwrap_or_else(|e| panic!("{}: build bus: {e}", c.name));
 
-    // Estate: every wired peripheral's base reads without a bus fault.
-    let estate_ok = chip
-        .peripherals
-        .iter()
-        .all(|p| bus.read_u32(p.base_address).is_ok());
+    // Estate probes a model's admitted control/config register at its width.
+    // These opt-in SAMD slices deliberately refuse a word crossing reserved
+    // bytes; accepting the actual CTRLA read must not make those gaps readable.
+    // Existing fleet types retain their original word probe.
+    let estate_ok = chip.peripherals.iter().all(|p| match p.r#type.as_str() {
+        "samd51_cmcc_board" => bus.read_u32(p.base_address + 4).is_ok(), // CFG; TYPE is outside this slice
+        "samd51_nvmctrl_manual_storage" => bus.read_u16(p.base_address).is_ok(),
+        "samd51_dac" | "samd51_usb_device_banks" => bus.read_u8(p.base_address).is_ok(),
+        _ => bus.read_u32(p.base_address).is_ok(),
+    });
 
     // Registers vs silicon: how much of the deterministic cold-reset state the
     // sim reproduces. Registers a cold model physically can't reproduce from a

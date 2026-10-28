@@ -112,6 +112,35 @@ impl SystemBus {
                 .any(|entry| entry.dev.has_pending_op())
     }
 
+    /// Eligibility for a checked memory-only chunk, never arbitrary CPU batching.
+    /// A legacy inactive bit alone is insufficient: DMA/USB/ADC/clock bus passes
+    /// may have work even when their legacy IRQ walk is empty.
+    pub(crate) fn samd_quiescent_chunk_ready(&self) -> bool {
+        self.samd_native_quiescent_chunks
+            // Host writes between advances can arm an event before it has
+            // entered the Machine scheduler heap. The strict boundary must
+            // publish/enqueue it before any checked chunk is admitted.
+            && self.pending_schedule.is_empty()
+            && self.config.peripheral_tick_interval == 1
+            && self.gpio_devices.is_empty()
+            && self.observers.is_empty()
+            && !self.logic_tap.push_armed()
+            && self.peripherals.iter().all(|p| {
+                !p.dev.has_pending_op()
+                    && !p.dev.needs_bus_tick()
+                    && !p.dev.idle_poll_bus_tick()
+                    && (p.dev.uses_scheduler()
+                        || !p.dev.needs_legacy_walk()
+                        || !p.dev.legacy_tick_active())
+                    && !(p.base
+                        < self
+                            .ram
+                            .base_addr
+                            .saturating_add(self.ram.data.len() as u64)
+                        && self.ram.base_addr < p.base.saturating_add(p.size))
+            })
+    }
+
     /// Largest recommended peripheral interval; never changes the configured grid.
     ///
     /// Non-relaxable arms are checked directly rather than through

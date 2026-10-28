@@ -274,6 +274,39 @@ impl SystemBus {
         }
 
         let mut bus = Self {
+            samd_native_quiescent_chunks: cfg!(feature = "event-scheduler")
+                && plugins.is_empty()
+                && chip.name == "samd51-no-asf-simulation"
+                && chip.core.as_deref() == Some("cortex-m4")
+                && chip.flash.base == 0
+                && chip.flash.size == 0x80000
+                && chip.ram.base == 0x20000000
+                && chip.ram.size == 0x30000
+                && chip.peripherals.iter().all(|p| {
+                    matches!(
+                        p.r#type.as_str(),
+                        "gpio"
+                            | "sam_mclk"
+                            | "sam_sercom_spi"
+                            | "samd51_adc"
+                            | "samd51_cmcc_board"
+                            | "samd51_dac"
+                            | "samd51_dmac_board"
+                            | "samd51_eic"
+                            | "samd51_gclk"
+                            | "samd51_nvmctrl_manual_storage"
+                            | "samd51_oscctrl"
+                            | "samd51_pac"
+                            | "samd51_sercom_i2cm"
+                            | "samd51_sercom_usart"
+                            | "samd51_tc"
+                            | "samd51_tcc"
+                            | "samd51_usb_device_banks"
+                            | "stub"
+                            | "systick"
+                            | "uart"
+                    )
+                }),
             flash_thunks: std::collections::HashMap::new(),
             flash: LinearMemory::new_erased(flash_size as usize, chip.flash.base),
             ram: LinearMemory::new(ram_size as usize, chip.ram.base),

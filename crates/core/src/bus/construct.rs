@@ -10,6 +10,7 @@ impl SystemBus {
     pub fn new() -> Self {
         // Default initialization for tests
         let mut bus = Self {
+            samd_native_quiescent_chunks: false,
             flash_thunks: std::collections::HashMap::new(),
             flash: LinearMemory::new_erased(1024 * 1024, 0x0),
             ram: LinearMemory::new(1024 * 1024, 0x2000_0000),
@@ -144,6 +145,7 @@ impl SystemBus {
     /// are zero-sized so they never satisfy a read.
     pub fn empty() -> Self {
         let mut bus = Self {
+            samd_native_quiescent_chunks: false,
             flash_thunks: std::collections::HashMap::new(),
             flash: LinearMemory::new_erased(0, 0),
             ram: LinearMemory::new(0, 0),

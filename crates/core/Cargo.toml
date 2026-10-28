@@ -178,6 +178,11 @@ required-features = ["event-scheduler"]
 name = "esp32_classic_ahb_fifo_wakes_uart"
 required-features = ["event-scheduler"]
 
+# Cargo owns this gate; feature-off must not build an empty test binary.
+[[test]]
+name = "samd_native_quiescent"
+required-features = ["event-scheduler"]
+
 # #![cfg(feature = "event-scheduler")]
 [[test]]
 name = "board_batch_width"

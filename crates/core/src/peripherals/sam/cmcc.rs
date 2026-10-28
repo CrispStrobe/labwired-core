@@ -76,6 +76,11 @@ impl Peripheral for Samd51Cmcc {
     fn peek(&self, offset: u64) -> Option<u8> {
         self.read(offset).ok()
     }
+    fn legacy_tick_active(&self) -> bool {
+        // No work lives in tick/tick_elapsed. Bus service and pending operations
+        // remain independently mandatory and prohibit quiescent chunks.
+        false
+    }
     fn as_any(&self) -> Option<&dyn Any> {
         Some(self)
     }

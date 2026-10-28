@@ -1440,6 +1440,7 @@ jobs:
           --test rp2040_i2c_irq_delivery
           --test stm32f103_dma_walk_differential
           --test systick_walk_differential
+          --test samd_native_quiescent
           --test board_batch_width
           --test nrf54l15_uarte_walk_differential
           --test nrf54l15_twim_walk_differential
@@ -1649,6 +1650,80 @@ jobs:
       - name: Build demo-lab firmware from source and run every lab smoke script
         if: steps.scope.outputs.run == 'true'
         run: scripts/ci/lab-smoke-from-source.sh target/debug/labwired
+
+  xiao-source-guest:
+    name: xiao-source-guest
+    if: github.repository == 'CrispStrobe/labwired-core' && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Select changes affecting the XIAO guest
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != pull_request ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            changed="$(git diff --name-only "$BASE_SHA"...HEAD)"
+            if grep -Eq '^(crates/|configs/|examples/seeed-xiao-nrf52840-sense/|Cargo\.(toml|lock)$|rust-toolchain\.toml$|\.github/workflows/core-ci\.yml$)' <<< "$changed"; then
+              echo "run=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "run=false" >> "$GITHUB_OUTPUT"
+              echo "No source or XIAO input changed; source guest not required."
+            fi
+          fi
+      - uses: dtolnay/rust-toolchain@1.95.0
+        if: steps.scope.outputs.run == 'true'
+        with:
+          targets: thumbv7em-none-eabi
+      - uses: Swatinem/rust-cache@v2
+        if: steps.scope.outputs.run == 'true'
+        with:
+          shared-key: core-xiao-source-guest
+          workspaces: . -> target
+          cache-on-failure: true
+      - name: Freeze authored XIAO source and compiler inputs
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p xiao-guest-evidence/source
+          git rev-parse HEAD > xiao-guest-evidence/source.txt
+          rustc --version --verbose > xiao-guest-evidence/rustc.txt
+          cargo --version > xiao-guest-evidence/cargo.txt
+          git ls-files -z Cargo.toml Cargo.lock rust-toolchain.toml crates/core/Cargo.toml crates/core/src crates/cli crates/config crates/firmware-xiao-nrf52840-sense-demo configs/chips/nrf52840.yaml configs/systems/seeed-xiao-nrf52840-sense.yaml examples/seeed-xiao-nrf52840-sense/io-smoke.yaml .github/workflows/core-ci.yml | xargs -0 sha256sum > xiao-guest-evidence/source-sha256.txt
+          cp crates/firmware-xiao-nrf52840-sense-demo/src/main.rs xiao-guest-evidence/source/demo.rs
+          cp crates/firmware-xiao-nrf52840-sense-demo/memory.x xiao-guest-evidence/source/memory.x
+          cp crates/firmware-xiao-nrf52840-sense-demo/build.rs xiao-guest-evidence/source/build.rs
+          cp crates/firmware-xiao-nrf52840-sense-demo/Cargo.toml xiao-guest-evidence/source/firmware-Cargo.toml
+          cp LICENSE xiao-guest-evidence/source/LICENSE
+          cp examples/seeed-xiao-nrf52840-sense/io-smoke.yaml xiao-guest-evidence/source/io-smoke.yaml
+          cp configs/systems/seeed-xiao-nrf52840-sense.yaml xiao-guest-evidence/source/system.yaml
+      - name: Build the existing public XIAO demo and simulator
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          cargo build --release --locked -p firmware-xiao-nrf52840-sense-demo --target thumbv7em-none-eabi 2>&1 | tee xiao-guest-evidence/firmware-build.log
+          cargo build --locked -p labwired-cli --features event-scheduler 2>&1 | tee xiao-guest-evidence/cli-build.log
+          sha256sum target/thumbv7em-none-eabi/release/firmware-xiao-nrf52840-sense-demo target/debug/labwired > xiao-guest-evidence/binary-sha256.txt
+      - name: Execute the actual XIAO system and unchanged UART GPIO assertions
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          target/debug/labwired test --script examples/seeed-xiao-nrf52840-sense/io-smoke.yaml --output-dir xiao-guest-evidence/cli 2>&1 | tee xiao-guest-evidence/cli.log
+      - name: Retain source identities and actual observations
+        if: always() && steps.scope.outputs.run == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: xiao-source-guest
+          path: xiao-guest-evidence/
+          if-no-files-found: error
+          retention-days: 14
 
   xtensa-flash-boot:
     name: xtensa-flash-boot

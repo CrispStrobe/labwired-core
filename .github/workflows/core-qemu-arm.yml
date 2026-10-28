@@ -146,9 +146,11 @@ jobs:
         with:
           shared-key: native-arm-system
       - name: Install native and compiled-DTB build tools
+        # The reviewed helper is freestanding C (-nostdlib); keep its compiler
+        # pin while avoiding optional ARM C++ runtime downloads during setup.
         # A stalled mirror download once held this step for the job's whole
         # 45 minutes: time out each request and retry instead.
-        run: sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update && sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y cmake ninja-build clang device-tree-compiler busybox gcc-arm-none-eabi=15:13.2.rel1-2
+        run: sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update && sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y --no-install-recommends cmake ninja-build clang device-tree-compiler busybox gcc-arm-none-eabi=15:13.2.rel1-2
       - name: Check strict joint preparation, historical modules and CI input contracts
         run: |
           python3 -m unittest discover -s scripts/tests -p test_prepare_rv1103_basket.py

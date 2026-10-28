@@ -1,5 +1,6 @@
 //! Owns CPU execution and post-execution lifecycle commits.
 
+use super::plan::WindowHooks;
 use crate::{Cpu, Machine, SimResult};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,18 +54,47 @@ impl<C: Cpu> Machine<C> {
         self.bus.service_resident_scheduled_edges();
     }
 
-    pub(crate) fn execute_cpu_window(
+    pub(crate) fn execute_cpu_window<H: WindowHooks>(
         &mut self,
         mode: ExecutionMode,
         window: crate::machine::CpuWindow,
     ) -> SimResult<CoreProgress> {
         let span = crate::profile::span();
-        let progress = self.execute_cpu_window_inner(mode, window);
+        let progress = self.execute_cpu_window_inner::<H>(mode, window);
         crate::profile::record_cpu(span);
         progress
     }
 
-    fn execute_cpu_window_inner(
+    #[cold]
+    #[inline(never)]
+    fn execute_planned_quiescent_window(&mut self, steps: u32) -> Option<CoreProgress> {
+        self.quiescent_chunk_planned = false;
+        self.quiescent_chunk_retired = false;
+        self.bus.set_current_cycle(self.total_cycles);
+        self.bus.bus_trace.set_cycle(self.total_cycles);
+        let retired = self
+            .cpu
+            .try_quiescent_memory_chunk(&mut self.bus, &self.config, steps);
+        if retired == 0 {
+            return None;
+        }
+        self.quiescent_chunk_retired = true;
+        self.max_retired_quiescent_chunk = self.max_retired_quiescent_chunk.max(retired);
+        self.bus.current_cycle += u64::from(retired);
+        // The strict loop stamps transactions with the start of the
+        // last retired instruction before draining its boundary.
+        self.bus
+            .bus_trace
+            .set_cycle(self.total_cycles + u64::from(retired) - 1);
+        Some(CoreProgress {
+            primary_steps: retired,
+            secondary_steps: 0,
+            timed_cycles: None,
+            internally_committed_cycles: false,
+        })
+    }
+
+    fn execute_cpu_window_inner<H: WindowHooks>(
         &mut self,
         mode: ExecutionMode,
         window: crate::machine::CpuWindow,
@@ -96,6 +126,24 @@ impl<C: Cpu> Machine<C> {
                 }
             }
             ExecutionMode::RunBatch => {
+                // Raised only by the admitted SAMD planner; every other batch
+                // window pays one load and branch, single steps none.
+                // Zero retired means no architectural prefix: execute exactly
+                // one original MMIO/exception/error step in this strict arm.
+                let (count, window) = if H::CHECKED && self.quiescent_chunk_planned {
+                    match self.execute_planned_quiescent_window(count) {
+                        Some(progress) => return Ok(progress),
+                        None => (
+                            1,
+                            crate::machine::CpuWindow {
+                                steps: 1,
+                                fill: None,
+                            },
+                        ),
+                    }
+                } else {
+                    (count, window)
+                };
                 self.bus.set_current_cycle(self.total_cycles);
                 self.bus.bus_trace.set_cycle(self.total_cycles);
                 if self.logic_capture.push_active() {
@@ -373,7 +421,17 @@ impl<C: Cpu> Machine<C> {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn commit_advance_boundary(
+        &mut self,
+        mode: ExecutionMode,
+        batch_start: u64,
+        progress: CoreProgress,
+    ) -> SimResult<()> {
+        self.commit_advance_boundary_with::<super::plan::Ordinary>(mode, batch_start, progress)
+    }
+
+    pub(crate) fn commit_advance_boundary_with<H: WindowHooks>(
         &mut self,
         mode: ExecutionMode,
         _batch_start: u64,
@@ -406,9 +464,11 @@ impl<C: Cpu> Machine<C> {
         // Dual-core WAITI coalesced batch: primary advanced N cycles while APP
         // was parked; peripherals must advance by N, not by tick_interval once.
         // Detected via secondary_steps == primary_steps from the parked path.
+        // A retired checked SAMD chunk commits its exact elapsed prefix the
+        // same way: peripherals advance by N on the unchanged one-cycle grid.
         let coalesced_dual_idle = mode == ExecutionMode::RunBatch
-            && progress.secondary_steps > 0
-            && progress.primary_steps > 1;
+            && ((progress.secondary_steps > 0 && progress.primary_steps > 1)
+                || (H::CHECKED && std::mem::take(&mut self.quiescent_chunk_retired)));
         let should_tick = if internally_committed_per_cycle_batch {
             false
         } else if coalesced_dual_idle {

@@ -59,6 +59,8 @@ Chips that cannot yet produce edges for a bus are listed here with a reason — 
   * I2C: rp2350 from_config bus not yet edge-gated (no line cells)
   * SPI: rp2350 from_config bus not yet edge-gated (no line cells)
   * UART: rp2350 from_config bus not yet edge-gated (no line cells)
+* **samd51-no-asf-simulation**
+  * UART: Software assembly retains unselected generic SERCOM3 without gate bring-up; selected SAMD USART publishes bytes but no PadLines wire. Native byte acceptance is separate; no UART edge coverage is claimed
 
 | Chip | I2C | SPI | UART |
 |------|-----|-----|------|
@@ -86,6 +88,7 @@ Chips that cannot yet produce edges for a bus are listed here with a reason — 
 | rp2040 | ✓ | ✓ | ✓ |
 | rp2350 | — | — | — |
 | rv1103 | — | — | — |
+| samd51-no-asf-simulation | — | — | — |
 | stm32f103 | ✓ | ✓ | ✓ |
 | stm32f401 | ✓ | ✓ | ✓ |
 | stm32f401cdu6 | ✓ | ✓ | ✓ |

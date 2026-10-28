@@ -269,6 +269,9 @@ pub(crate) fn with_clr_alias_write<R>(f: impl FnOnce() -> R) -> R {
 }
 
 pub struct SystemBus {
+    /// Audited software assembly may try checked RAM/register-only chunks
+    /// while every legacy and bus-aware resident is inactive. Not a timing waiver.
+    pub(crate) samd_native_quiescent_chunks: bool,
     pub(crate) supply_domains: crate::peripherals::components::supply_domain::SupplyDomains,
     pub flash: LinearMemory,
     pub ram: LinearMemory,
