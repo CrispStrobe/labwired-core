@@ -1237,6 +1237,58 @@
       "inputs": []
     },
     {
+      "device_type": "st7735r-memory-simulation",
+      "label": "ST7735R controller memory (simulation)",
+      "summary": "Explicit RGBSET-dependent controller-memory simulation.",
+      "detail": "Authored software view of 132x162 GM00 controller memory with RGB444/RGB565/RGB666 stream decoding. Colours remain unknown until a complete guest RGBSET upload. Reset/backlight GPIO and SPI command/data framing are modelled. No physical module, glass aperture, gamma, analogue colour or hardware timing claim.",
+      "transport": "spi",
+      "category": "spi",
+      "config_keys": [
+        {
+          "name": "cs_pin",
+          "ty": "str",
+          "doc": "SPI chip-select GPIO."
+        },
+        {
+          "name": "dc_pin",
+          "ty": "str",
+          "doc": "Actual command/data GPIO; no inferred framing."
+        },
+        {
+          "name": "reset_pin",
+          "ty": "str",
+          "doc": "Active-low reset GPIO."
+        },
+        {
+          "name": "backlight_pin",
+          "ty": "str",
+          "doc": "Active-high backlight GPIO."
+        },
+        {
+          "name": "col_offset",
+          "ty": "int",
+          "doc": "Authored controller-memory view column origin; not measured glass."
+        },
+        {
+          "name": "row_offset",
+          "ty": "int",
+          "doc": "Authored controller-memory view row origin; not measured glass."
+        },
+        {
+          "name": "cols",
+          "ty": "int",
+          "doc": "Authored controller-memory view width."
+        },
+        {
+          "name": "rows",
+          "ty": "int",
+          "doc": "Authored controller-memory view height."
+        }
+      ],
+      "labs": [],
+      "inputs": []
+    },
+    {
       "device_type": "inmp441",
       "label": "INMP441 I2S Mic",
       "summary": "Omnidirectional MEMS microphone, 24-bit I2S digital output.",

@@ -1,0 +1,88 @@
+// SPDX-License-Identifier: MIT
+//! Assembly controls only. Actual native/WASM game qualification is separate.
+use labwired_config::{ChipDescriptor, SystemManifest};
+use labwired_core::{bus::SystemBus, Bus};
+
+#[test]
+fn explicit_simulation_bundle_selects_models_and_named_inputs() {
+    let chip: ChipDescriptor = serde_yaml::from_str(include_str!(
+        "../../../configs/chips/samd51-no-asf-simulation.yaml"
+    ))
+    .unwrap();
+    let manifest: SystemManifest = serde_yaml::from_str(include_str!(
+        "../../../configs/systems/samd51-no-asf-simulation.yaml"
+    ))
+    .unwrap();
+    assert_eq!(chip.reset_vector_offset, 0);
+    let selected = |id: &str, kind: &str| {
+        assert_eq!(
+            chip.peripherals
+                .iter()
+                .filter(|p| p.id == id && p.r#type == kind)
+                .count(),
+            1
+        );
+    };
+    selected("usb", "samd51_usb_device_banks");
+    selected("dmac", "samd51_dmac_board");
+    selected("nvmctrl", "samd51_nvmctrl_manual_storage");
+    selected("tcc0", "samd51_tcc");
+    assert_eq!(chip.memory_regions.len(), 2);
+    assert_eq!(chip.memory_regions[0].base, 0x00800000);
+    assert_eq!(chip.memory_regions[1].base, 0x00806000);
+    assert_eq!(manifest.external_devices.len(), 2);
+    let bus = SystemBus::from_config(&chip, &manifest).expect("registered explicit assembly");
+    assert!(bus.peripherals.iter().any(|p| p.name == "sercom4"));
+    assert!(
+        !bus.gpio_devices.is_empty(),
+        "actual button/reset/backlight kits attached"
+    );
+}
+
+#[test]
+fn narrow_base_controls_do_not_admit_reserved_word_reads() {
+    let chip: ChipDescriptor = serde_yaml::from_str(include_str!(
+        "../../../configs/chips/samd51-no-asf-simulation.yaml"
+    ))
+    .unwrap();
+    let manifest: SystemManifest = serde_yaml::from_str(include_str!(
+        "../../../configs/systems/samd51-no-asf-simulation.yaml"
+    ))
+    .unwrap();
+    let mut bus = SystemBus::from_config(&chip, &manifest).unwrap();
+    assert_eq!(
+        bus.read_u32(0x41006004).unwrap(),
+        0,
+        "admitted CMCC CFG reset"
+    );
+    assert!(
+        bus.read_u8(0x41006000).is_err(),
+        "unmodeled TYPE remains refused"
+    );
+    assert!(
+        bus.read_u32(0x41006000).is_err(),
+        "no invented CMCC TYPE word"
+    );
+    assert!(bus.read_u16(0x41004000).is_ok(), "actual NVM CTRLA width");
+    assert!(
+        bus.read_u32(0x41004000).is_err(),
+        "reserved bytes stay refused"
+    );
+    // A closed MCLK gate intentionally returns zero without reaching the
+    // model. Open the actual banks before testing their admitted widths.
+    assert_eq!(bus.read_u32(0x41000000).unwrap(), 0, "gated USB reads zero");
+    assert_eq!(bus.read_u32(0x43002400).unwrap(), 0, "gated DAC reads zero");
+    bus.write_u32(0x40000810, 1 << 10).unwrap(); // AHBMASK.USB
+    bus.write_u32(0x40000818, 1 << 0).unwrap(); // APBBMASK.USB
+    bus.write_u32(0x40000820, 1 << 9).unwrap(); // APBDMASK.DAC
+    assert!(bus.read_u8(0x41000000).is_ok(), "actual USB CTRLA width");
+    assert!(
+        bus.read_u32(0x41000000).is_err(),
+        "reserved USB bytes stay refused"
+    );
+    assert!(bus.read_u8(0x43002400).is_ok(), "actual DAC CTRLA width");
+    assert!(
+        bus.read_u32(0x43002400).is_err(),
+        "reserved bytes stay refused"
+    );
+}

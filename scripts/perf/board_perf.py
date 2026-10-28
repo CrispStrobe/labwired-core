@@ -152,6 +152,7 @@ USAGE
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -767,6 +768,7 @@ class Run(NamedTuple):
     instructions: int | None = None
     steps_per_batch: float | None = None
     tick_interval: int | None = None
+    quiescent_max_retired: int | None = None
 
 
 def same_loop_baselines(baselines: dict, ratio: float = SAME_LOOP_RATIO) -> list[str]:
@@ -791,6 +793,42 @@ def same_loop_baselines(baselines: dict, ratio: float = SAME_LOOP_RATIO) -> list
     return found
 
 
+def retain_measurement(root: Path, command: list[str], env: dict[str, str],
+                       proc: subprocess.CompletedProcess, callgrind: Path,
+                       cli: Path, chip: Path, firmware: Path, steps: int, mode: str) -> None:
+    """Keep the original invocation for an independent reader; never execute it again."""
+    root.mkdir(parents=True, exist_ok=True)
+    assets = root / "assets"
+    assets.mkdir(exist_ok=True)
+    identities = {}
+    for label, source in [("cli", cli), ("chip", chip), ("firmware", firmware)]:
+        raw = source.read_bytes()
+        digest = hashlib.sha256(raw).hexdigest()
+        destination = assets / digest
+        if destination.exists():
+            if destination.read_bytes() != raw:
+                raise RuntimeError("measurement asset collision")
+        else:
+            with destination.open("xb") as output:
+                output.write(raw)
+        identities[label] = {"sha256": digest, "bytes": len(raw)}
+    packet = Path(tempfile.mkdtemp(prefix="sample-", dir=root))
+    files = {"stdout.txt": proc.stdout.encode(), "stderr.txt": proc.stderr.encode()}
+    if callgrind.exists():
+        files["callgrind.out"] = callgrind.read_bytes()
+    record = {"board": chip.stem, "mode": mode, "steps": steps,
+              "argv": command, "returncode": proc.returncode,
+              "environment": {"LABWIRED_ARM_SINGLE_STEP": env.get("LABWIRED_ARM_SINGLE_STEP")},
+              "assets": identities, "files": {}}
+    for name, raw in files.items():
+        (packet / name).write_bytes(raw)
+        record["files"][name] = {"sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}
+    raw = (json.dumps(record, indent=2, sort_keys=True) + "\n").encode()
+    (packet / "sample.json").write_bytes(raw)
+    with (root / "samples.jsonl").open("a") as roster:
+        roster.write(json.dumps({"packet": packet.name, "sha256": hashlib.sha256(raw).hexdigest()}) + "\n")
+
+
 def measure_once(cli: Path, chip: Path, firmware: Path, steps: int, mode: str) -> Run:
     """Retired host instructions for a full run of `steps` simulated steps."""
     # `--batched` does not select the ARM loop. `run_firmware_arm` takes
@@ -804,27 +842,34 @@ def measure_once(cli: Path, chip: Path, firmware: Path, steps: int, mode: str) -
     if mode == MODE_STEP:
         env["LABWIRED_ARM_SINGLE_STEP"] = "1"
     with tempfile.TemporaryDirectory() as tmp:
+        command = [
+            "valgrind",
+            "--tool=callgrind",
+            f"--callgrind-out-file={tmp}/cg.out",
+            "--cache-sim=no",
+            "--branch-sim=no",
+            str(cli),
+            "run",
+            "--chip",
+            str(chip),
+            "--firmware",
+            str(firmware),
+            "--max-steps",
+            str(steps),
+            *extra,
+        ]
         proc = subprocess.run(
-            [
-                "valgrind",
-                "--tool=callgrind",
-                f"--callgrind-out-file={tmp}/cg.out",
-                "--cache-sim=no",
-                "--branch-sim=no",
-                str(cli),
-                "run",
-                "--chip",
-                str(chip),
-                "--firmware",
-                str(firmware),
-                "--max-steps",
-                str(steps),
-                *extra,
-            ],
+            command,
             capture_output=True,
             text=True,
             env=env,
         )
+        evidence = env.get("LABWIRED_PERF_EVIDENCE_DIR")
+        if evidence:
+            retain_measurement(Path(evidence), command, env, proc,
+                               Path(tmp) / "cg.out", cli, chip, firmware, steps, mode)
+    if proc.returncode != 0:
+        raise RuntimeError(f"measurement exited {proc.returncode}: {proc.stderr[-2000:]}")
     match = IREFS_RE.search(proc.stderr)
     if not match:
         raise RuntimeError(
@@ -867,7 +912,23 @@ def measure_once(cli: Path, chip: Path, firmware: Path, steps: int, mode: str) -
             f"{chip.stem}: batched run was asked for {steps} steps but retired "
             f"{instructions}; the slope denominator would be wrong"
         )
-    return Run(irefs, instructions, float(proof.group(3)), int(proof.group(4)))
+    interval = int(proof.group(4))
+    quiescent = parse_quiescent_witness(proc.stderr, instructions, interval)
+    return Run(irefs, instructions, float(proof.group(3)), interval, quiescent)
+
+
+def parse_quiescent_witness(stderr: str, instructions: int, interval: int) -> int | None:
+    """Actual retirement evidence, never a configured batching hint."""
+    lines = [line for line in stderr.splitlines() if line.startswith("[quiescent-chunks]")]
+    if not lines:
+        return None
+    match = re.fullmatch(r"\[quiescent-chunks\] service_grid=1 max_retired=([1-9][0-9]{0,9})", lines[0])
+    if len(lines) != 1 or not match or interval != 1:
+        raise ModeNotTakenError("invalid or ambiguous strict-service CPU chunk witness")
+    retired = int(match.group(1))
+    if retired > instructions:
+        raise ModeNotTakenError("CPU chunk witness exceeds actual retired instructions")
+    return retired
 
 
 class Measurement(NamedTuple):
@@ -876,6 +937,18 @@ class Measurement(NamedTuple):
     ir_per_step: float
     steps_per_batch: float | None = None
     tick_interval: int | None = None
+    quiescent_max_retired: int | None = None
+
+
+def scheduler_contract_met(measured: Measurement) -> bool:
+    if measured.tick_interval is not None and measured.tick_interval >= MIN_RECOMMENDED_TICK_INTERVAL:
+        return True
+    # Keep the same 1024-instruction dispatcher floor while allowing the
+    # qualified memory-only capability to preserve a STRICT peripheral grid.
+    # Missing proof, idle fuel and a merely configured horizon do not qualify.
+    return (measured.tick_interval == 1 and
+            measured.quiescent_max_retired is not None and
+            measured.quiescent_max_retired >= MIN_RECOMMENDED_TICK_INTERVAL)
 
 
 def measure_board(cli: Path, board: str, firmware: Path, mode: str) -> Measurement:
@@ -892,6 +965,9 @@ def measure_board(cli: Path, board: str, firmware: Path, mode: str) -> Measureme
                 (high.irefs - low.irefs) / (STEPS_HIGH - STEPS_LOW),
                 high.steps_per_batch,
                 high.tick_interval,
+                min(low.quiescent_max_retired, high.quiescent_max_retired)
+                if low.quiescent_max_retired is not None and high.quiescent_max_retired is not None
+                else None,
             )
         )
     return Measurement(
@@ -904,6 +980,9 @@ def measure_board(cli: Path, board: str, firmware: Path, mode: str) -> Measureme
         if mode == MODE_BATCH
         else None,
         samples[-1].tick_interval,
+        min(sample.quiescent_max_retired for sample in samples)
+        if all(sample.quiescent_max_retired is not None for sample in samples)
+        else None,
     )
 
 
@@ -1080,16 +1159,14 @@ def main() -> int:
                 unmeasurable.append(str(exc))
                 continue
             measured.setdefault(board, {})[mode] = round(m.ir_per_step, 1)
-            if mode == MODE_BATCH and (
-                m.tick_interval is None
-                or m.tick_interval < MIN_RECOMMENDED_TICK_INTERVAL
-            ):
+            if mode == MODE_BATCH and not scheduler_contract_met(m):
                 contract_failures.append(
                     {
                         "board": board,
                         "mode": mode,
                         "tick_interval": m.tick_interval,
                         "minimum": MIN_RECOMMENDED_TICK_INTERVAL,
+                        "quiescent_max_retired": m.quiescent_max_retired,
                     }
                 )
             # `steps_per_batch` is not gated — it is a property of the bus, not
@@ -1099,6 +1176,8 @@ def main() -> int:
             width = (
                 f"{m.steps_per_batch:>6.1f}" if m.steps_per_batch is not None else " " * 6
             )
+            if m.quiescent_max_retired is not None:
+                print(f"{board}: strict peripheral grid=1, minimum witnessed CPU chunk across every low/high repeat={m.quiescent_max_retired}")
             base = baselines.get(board, {}).get(mode)
             if base is None:
                 print(
@@ -1288,9 +1367,9 @@ def main() -> int:
                 file=sys.stderr,
             )
         print(
-            "\nThe 1024-cycle recommendation is the measured all-chip performance "
-            "floor. Re-prove fidelity and deliberately update the ratchet before "
-            "lowering it.",
+            "\nThe 1024-instruction dispatcher floor is unchanged: require the "
+            "original recommendation, or a strict service grid of one with an "
+            "actual retired CPU-chunk witness of at least 1024 in every low/high repeat.",
             file=sys.stderr,
         )
 

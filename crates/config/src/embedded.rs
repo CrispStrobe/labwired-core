@@ -240,6 +240,10 @@ pub static EMBEDDED_DEVICES: &[(&[&str], &str)] = &[
         include_str!("../../../configs/devices/ssd1306_128x32.yaml"),
     ),
     (
+        &["st7735r-memory-simulation"],
+        include_str!("../../../configs/devices/st7735r-memory-simulation.yaml"),
+    ),
+    (
         &["st7789-170x320"],
         include_str!("../../../configs/devices/st7789.yaml"),
     ),

@@ -577,6 +577,9 @@ fn every_shipped_descriptor_is_ratcheted() {
         // (pybadge_config.rs): no silicon oracle, no executing-fidelity
         // differential, not a bundled-configs.ts catalog board.
         "atsamd51-pybadge",
+        // Explicit source-built software assembly; not in bundled-configs.ts.
+        // Native/WASM game and downstream adoption are separately required.
+        "samd51-no-asf-simulation",
         "ra4m1",
         "imxrt1064",
         "stm32f746",

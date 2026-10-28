@@ -1,0 +1,454 @@
+# SPDX-License-Identifier: MIT
+# Upstream SAMD51 foundation: Copyright (C) 2026 Andrii Shylenko.
+# PyBadge adaptation and no-ASF assembly: Copyright (C) 2026 CrispStrobe contributors.
+# Direct base is this fork's PyBadge descriptor, not an upstream-authored PyBadge target:
+# https://github.com/CrispStrobe/labwired-core/blob/21ab8403c6b9d32d3e28152b4da7ad6b2e2908ce/configs/chips/atsamd51-pybadge.yaml
+# CrispStrobe introduced PyBadge in 8c894bdbe591c74d135811d6cc33574f8b4755cf;
+# upstream later imported that work in 94c57039d346a54bfb93c862e9ca834811b384ab.
+# Original upstream SAMD51 foundation:
+# https://github.com/w1ne/labwired-core/blob/fc463fcd17871d8ba9353999189aec112aee5f36/configs/chips/atsamd51.yaml
+# Explicit authored no-ASF simulation configuration; not silicon-qualified.
+# Load the separately authored calibration blobs; they are not device captures.
+name: samd51-no-asf-simulation
+arch: arm
+core: cortex-m4
+cpu_hz: 120000000
+flash:
+  base: 0
+  size: 512KB
+ram:
+  base: 536870912
+  size: 192KB
+reset_vector_offset: 0
+pins:
+  PA0:
+    gpio: porta
+    bit: 0
+  PA1:
+    gpio: porta
+    bit: 1
+  PA2:
+    gpio: porta
+    bit: 2
+  PA3:
+    gpio: porta
+    bit: 3
+  PA4:
+    gpio: porta
+    bit: 4
+  PA5:
+    gpio: porta
+    bit: 5
+  PA6:
+    gpio: porta
+    bit: 6
+  PA7:
+    gpio: porta
+    bit: 7
+  PA8:
+    gpio: porta
+    bit: 8
+  PA9:
+    gpio: porta
+    bit: 9
+  PA10:
+    gpio: porta
+    bit: 10
+  PA11:
+    gpio: porta
+    bit: 11
+  PA12:
+    gpio: porta
+    bit: 12
+  PA13:
+    gpio: porta
+    bit: 13
+  PA14:
+    gpio: porta
+    bit: 14
+  PA15:
+    gpio: porta
+    bit: 15
+  PA17:
+    gpio: porta
+    bit: 17
+    functions:
+    - type: uart
+      peripheral: sercom1
+      role: rx
+  PA18:
+    gpio: porta
+    bit: 18
+  PA19:
+    gpio: porta
+    bit: 19
+  PA20:
+    gpio: porta
+    bit: 20
+  PA21:
+    gpio: porta
+    bit: 21
+  PA23:
+    gpio: porta
+    bit: 23
+    functions:
+    - type: uart
+      peripheral: sercom3
+      role: rx
+  PA22:
+    gpio: porta
+    bit: 22
+    functions:
+    - type: uart
+      peripheral: sercom3
+      role: tx
+  PA16:
+    gpio: porta
+    bit: 16
+    functions:
+    - type: gpio
+      peripheral: porta
+    - type: uart
+      peripheral: sercom1
+      role: tx
+  PA24:
+    gpio: porta
+    bit: 24
+  PA25:
+    gpio: porta
+    bit: 25
+  PA26:
+    gpio: porta
+    bit: 26
+  PA27:
+    gpio: porta
+    bit: 27
+  PA28:
+    gpio: porta
+    bit: 28
+  PA29:
+    gpio: porta
+    bit: 29
+  PA30:
+    gpio: porta
+    bit: 30
+  PA31:
+    gpio: porta
+    bit: 31
+  PB0:
+    gpio: portb
+    bit: 0
+  PB1:
+    gpio: portb
+    bit: 1
+  PB2:
+    gpio: portb
+    bit: 2
+  PB3:
+    gpio: portb
+    bit: 3
+  PB4:
+    gpio: portb
+    bit: 4
+  PB5:
+    gpio: portb
+    bit: 5
+  PB6:
+    gpio: portb
+    bit: 6
+  PB7:
+    gpio: portb
+    bit: 7
+  PB8:
+    gpio: portb
+    bit: 8
+  PB9:
+    gpio: portb
+    bit: 9
+  PB10:
+    gpio: portb
+    bit: 10
+  PB11:
+    gpio: portb
+    bit: 11
+  PB12:
+    gpio: portb
+    bit: 12
+  PB13:
+    gpio: portb
+    bit: 13
+  PB14:
+    gpio: portb
+    bit: 14
+  PB15:
+    gpio: portb
+    bit: 15
+  PB16:
+    gpio: portb
+    bit: 16
+  PB17:
+    gpio: portb
+    bit: 17
+  PB18:
+    gpio: portb
+    bit: 18
+  PB19:
+    gpio: portb
+    bit: 19
+  PB20:
+    gpio: portb
+    bit: 20
+  PB21:
+    gpio: portb
+    bit: 21
+  PB22:
+    gpio: portb
+    bit: 22
+  PB23:
+    gpio: portb
+    bit: 23
+  PB24:
+    gpio: portb
+    bit: 24
+  PB25:
+    gpio: portb
+    bit: 25
+  PB26:
+    gpio: portb
+    bit: 26
+  PB27:
+    gpio: portb
+    bit: 27
+  PB28:
+    gpio: portb
+    bit: 28
+  PB29:
+    gpio: portb
+    bit: 29
+  PB30:
+    gpio: portb
+    bit: 30
+  PB31:
+    gpio: portb
+    bit: 31
+peripherals:
+- id: sercom4
+  type: sam_sercom_spi
+  base_address: 1124073472
+  size: 256B
+  irq: 62
+  clock:
+    controller: mclk
+    reg: APBDMASK
+    bit: 0
+  config:
+    gclk_id: 34
+    port_base: 1090551936
+    sck_bit: 13
+    mosi_bit: 15
+    pad_mux: 2
+    dopo: 2
+- id: mclk
+  type: sam_mclk
+  base_address: 1073743872
+  size: 256B
+- id: porta
+  type: gpio
+  base_address: 1090551808
+  size: 128B
+  config:
+    profile: sam_port
+- id: portb
+  type: gpio
+  base_address: 1090551936
+  size: 128B
+  config:
+    profile: sam_port
+- id: systick
+  type: systick
+  base_address: 3758153744
+- id: sercom3
+  type: uart
+  base_address: 1090600960
+  size: 256B
+  irq: 58
+  clock:
+    controller: mclk
+    reg: APBBMASK
+    bit: 10
+  config:
+    profile: sercom
+    gclk_id: 24
+- id: qspi
+  type: stub
+  base_address: 1107309568
+  size: 1KB
+- id: gclk
+  type: samd51_gclk
+  base_address: 1073748992
+  size: 1KB
+- id: oscctrl
+  type: samd51_oscctrl
+  base_address: 1073745920
+  size: 256B
+- id: cmcc
+  type: samd51_cmcc_board
+  base_address: 1090543616
+  size: 256B
+- id: nvmctrl
+  type: samd51_nvmctrl_manual_storage
+  base_address: 1090535424
+  size: 256B
+- id: tc0
+  type: samd51_tc
+  base_address: 1073756160
+  size: 64B
+  irq: 107
+- id: tc1
+  type: samd51_tc
+  base_address: 1073757184
+  size: 64B
+  irq: 108
+- id: tc2
+  type: samd51_tc
+  base_address: 1090625536
+  size: 64B
+  irq: 109
+- id: tc3
+  type: samd51_tc
+  base_address: 1090633728
+  size: 64B
+  irq: 110
+- id: usb
+  type: samd51_usb_device_banks
+  base_address: 1090519040
+  size: 1KB
+  irq: 80
+  clock:
+  - controller: mclk
+    reg: AHBMASK
+    bit: 10
+  - controller: mclk
+    reg: APBBMASK
+    bit: 0
+- id: tc4
+  type: samd51_tc
+  base_address: 1107301376
+  size: 64B
+  irq: 111
+- id: tc5
+  type: samd51_tc
+  base_address: 1107302400
+  size: 64B
+  irq: 112
+- id: dmac
+  type: samd51_dmac_board
+  base_address: 1090560000
+  size: 1KB
+  irq: 31
+  clock:
+  - controller: mclk
+    reg: AHBMASK
+    bit: 9
+- id: eic
+  type: samd51_eic
+  base_address: 1073752064
+  size: 64B
+- id: sercom2
+  type: samd51_sercom_i2cm
+  base_address: 1090592768
+  size: 64B
+- id: sercom5
+  type: samd51_sercom_usart
+  base_address: 1124074496
+  size: 256B
+  irq: 66
+  clock:
+    controller: mclk
+    reg: APBDMASK
+    bit: 1
+  config:
+    gclk_id: 35
+    tx_port_base: 1090551936
+    tx_bit: 16
+    rx_port_base: 1090551936
+    rx_bit: 17
+    pad_mux: 2
+    txpo: 0
+    rxpo: 1
+- id: dac
+  type: samd51_dac
+  base_address: 1124082688
+  size: 32B
+  clock:
+    controller: mclk
+    reg: APBDMASK
+    bit: 9
+- id: pac
+  type: samd51_pac
+  base_address: 1073741824
+  size: 1KB
+- id: tcc0
+  type: samd51_tcc
+  base_address: 1090609152
+  size: 128B
+  irq: 85
+- id: tcc1
+  type: samd51_tcc
+  base_address: 1090617344
+  size: 128B
+  irq: 92
+- id: tcc2
+  type: samd51_tcc
+  base_address: 1107299328
+  size: 128B
+  irq: 97
+- id: tcc3
+  type: samd51_tcc
+  base_address: 1107300352
+  size: 128B
+  irq: 101
+- id: tcc4
+  type: samd51_tcc
+  base_address: 1124077568
+  size: 128B
+  irq: 104
+- id: sercom1
+  type: sam_sercom_spi
+  base_address: 1073755136
+  size: 256B
+  irq: 50
+  clock:
+    controller: mclk
+    reg: APBAMASK
+    bit: 13
+  config:
+    gclk_id: 8
+    sck_port_base: 1090551808
+    sck_bit: 17
+    mosi_port_base: 1090551936
+    mosi_bit: 23
+    miso_port_base: 1090551936
+    miso_bit: 22
+    dipo: 2
+    pad_mux: 2
+    dopo: 2
+    dma_tx_trigger: 7
+    dma_rx_trigger: 6
+- id: adc0
+  type: samd51_adc
+  base_address: 1124080640
+  size: 80B
+- id: adc1
+  type: samd51_adc
+  base_address: 1124081664
+  size: 80B
+memory_regions:
+- name: authored_samd51_calibration
+  base: 8388608
+  size: 1KB
+  image_env: LABWIRED_SAMD51_SIM_SW0
+- name: authored_samd51_serial
+  base: 8413184
+  size: 1KB
+  image_env: LABWIRED_SAMD51_SIM_SERIAL

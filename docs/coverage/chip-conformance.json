@@ -262,6 +262,13 @@
     "behavior": false,
     "excluded": 0,
     "level": 0,
+    "name": "samd51-no-asf-simulation",
+    "reg_match": 0
+  },
+  {
+    "behavior": false,
+    "excluded": 0,
+    "level": 0,
     "name": "atsamd51-pybadge",
     "reg_match": 0
   },

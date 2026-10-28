@@ -288,6 +288,13 @@ const EXCLUSIONS: &[(&str, BusKind, &str)] = &[
          layout); no UART bring-up for this chip family in the edge gate yet",
     ),
     (
+        "samd51-no-asf-simulation",
+        BusKind::Uart,
+        "Software assembly retains unselected generic SERCOM3 without gate bring-up; \
+         selected SAMD USART publishes bytes but no PadLines wire. Native byte \
+         acceptance is separate; no UART edge coverage is claimed",
+    ),
+    (
         "ra4m1",
         BusKind::Uart,
         "Uno R4 Minima SCI2 uses generic type:uart (sci layout); no UART \
