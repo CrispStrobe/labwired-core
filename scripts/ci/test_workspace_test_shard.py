@@ -33,7 +33,7 @@ def test_core_pr_lanes_pin_the_existing_ubuntu_24_image_without_changing_nightly
     jobs = core_workflow_jobs()
     for name in (
         "release-runner-contract", "fmt-autofix", "pr-default-members",
-        "pr-feature-off", "pr-gate", "pr-gate-warm", "browser-layer",
+        "pr-feature-off", "pr-gate", "pr-gate-warm", "apt-warm", "browser-layer",
         "pr-scheduler-observable", "xtensa-flash-boot", "pr-workspace-tests",
         "pr-workspace-tests-aggregate",
     ):
@@ -50,7 +50,8 @@ def test_core_split_preserves_configuration_commands_and_read_only_cache():
     for child in (default, feature_off):
         assert child["if"] == trigger
         assert child["runs-on"] == "ubuntu-24.04"
-        assert child["timeout-minutes"] == 20
+        # Feature-off runs its unit and integration suites back to back (~20 min).
+        assert child["timeout-minutes"] == (45 if child is feature_off else 20)
         checkout = next(step for step in child["steps"] if step.get("uses") == "actions/checkout@v4")
         assert checkout["with"]["fetch-depth"] == 0
         rust = next(step for step in child["steps"] if step.get("name") == "Install Rust")
@@ -108,7 +109,26 @@ def test_workspace_cross_compiler_does_not_pull_unused_cxx_archives():
         step for step in steps
         if step.get("name") == "Add the C cross-compiler (OBD2 ECU firmware)"
     )
-    assert "sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi" in install["run"]
+    assert "install -y --no-install-recommends gcc-arm-none-eabi" in install["run"]
+
+
+def test_cross_compiler_packages_are_seeded_on_main_and_restored_by_the_shards():
+    jobs = core_workflow_jobs()
+
+    def cache_keys(job, uses):
+        return [step["with"]["key"] for step in jobs[job]["steps"]
+                if step.get("uses", "").startswith(uses)]
+
+    restored = cache_keys("pr-workspace-tests", "actions/cache/restore")
+    saved = cache_keys("apt-warm", "actions/cache/save")
+    # One key, so a PR restores exactly what main saved for its runner image.
+    assert restored and restored == saved
+    assert jobs["apt-warm"]["if"] == "github.event_name == 'push'"
+    warm = next(step["run"] for step in jobs["apt-warm"]["steps"]
+                if step.get("name") == "Download the packages")
+    # The same package set, without the recommended archives.
+    assert "--download-only --no-install-recommends" in warm
+    assert "gcc-arm-none-eabi device-tree-compiler" in warm
 
 
 # ── libtest output parsing ───────────────────────────────────────────────────

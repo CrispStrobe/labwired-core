@@ -62,7 +62,13 @@ pub struct Samd51UsbDeviceBanks {
     replies: VecDeque<HostReply>,
     refusal: Option<String>,
     transactions: u64,
+    /// The board's DFLL48M open-loop error in ppm (`dfll_open_loop_ppm`,
+    /// default 0). The USB bit clock carries it unless the DFLL is locked to
+    /// the host's start of frame.
+    dfll_open_loop_ppm: i64,
 }
+/// Full speed: the bit clock within +-0.25 % of 12 Mbit/s (USB 2.0, 7.1.11).
+const FULL_SPEED_TOLERANCE_PPM: i64 = 2_500;
 impl Default for Samd51UsbDeviceBanks {
     fn default() -> Self {
         Self {
@@ -78,12 +84,39 @@ impl Default for Samd51UsbDeviceBanks {
             replies: VecDeque::new(),
             refusal: None,
             transactions: 0,
+            dfll_open_loop_ppm: 0,
         }
     }
 }
 impl Samd51UsbDeviceBanks {
     pub fn new() -> Self {
         Self::default()
+    }
+    /// The board's DFLL48M open-loop error.
+    pub fn with_dfll_open_loop_ppm(mut self, ppm: i64) -> Self {
+        self.dfll_open_loop_ppm = ppm;
+        self
+    }
+    /// Whether the bit clock is within full speed's tolerance: exact while the
+    /// DFLL48M (USB's GCLK source) recovers its clock from the start of frame
+    /// (DFLLCTRLA.ENABLE, DFLLCTRLB.MODE and USBCRM, DFLLMUL.MUL = 48000),
+    /// otherwise off by the board's declared open-loop error. Outside the
+    /// tolerance the host decodes nothing the device sends, nor the device
+    /// what the host sends: no transaction completes.
+    fn bit_clock_in_tolerance(&self, bus: &mut dyn Bus) -> SimResult<bool> {
+        // No declared error: an exact DFLL, and no OSCCTRL dependency.
+        if self.dfll_open_loop_ppm == 0 {
+            return Ok(true);
+        }
+        let recovering = bus.read_u8(0x4000101c)? & 2 != 0
+            && bus.read_u8(0x40001020)? & 0x09 == 0x09
+            && bus.read_u32(0x40001028)? & 0xffff == 48_000;
+        let error = if recovering {
+            0
+        } else {
+            self.dfll_open_loop_ppm
+        };
+        Ok(error.abs() <= FULL_SPEED_TOLERANCE_PPM)
     }
     pub fn queue_host(&mut self, token: HostToken) -> SimResult<()> {
         if self.host.len() >= QUEUE_CAP || self.refusal.is_some() {
@@ -193,6 +226,9 @@ impl Samd51UsbDeviceBanks {
             return Ok(());
         };
         if !self.live() || self.replies.len() >= QUEUE_CAP || !Self::clocks_and_pins(bus)? {
+            return Ok(());
+        }
+        if !self.bit_clock_in_tolerance(bus)? {
             return Ok(());
         }
         if matches!(token, HostToken::Reset) {
@@ -318,9 +354,10 @@ impl Peripheral for Samd51UsbDeviceBanks {
     fn on_system_reset(&mut self) {
         // A reset device leaves the bus: the host's queued transactions and
         // unread replies die with the connection. The count is evidence.
-        let transactions = self.transactions;
+        let (transactions, ppm) = (self.transactions, self.dfll_open_loop_ppm);
         *self = Self {
             transactions,
+            dfll_open_loop_ppm: ppm,
             ..Self::default()
         };
     }
@@ -410,9 +447,12 @@ impl Peripheral for Samd51UsbDeviceBanks {
                 if value & 1 != 0 {
                     let host = std::mem::take(&mut self.host);
                     let replies = std::mem::take(&mut self.replies);
+                    // SWRST resets registers; the board's clock error is not one.
+                    let ppm = self.dfll_open_loop_ppm;
                     *self = Self::default();
                     self.host = host;
                     self.replies = replies;
+                    self.dfll_open_loop_ppm = ppm;
                 } else {
                     self.control = value;
                 }
@@ -601,6 +641,34 @@ mod tests {
         m.word(address, BUFFER);
         m.word(address + 4, (3 << 28) | count);
     }
+    #[test]
+    fn an_open_loop_dfll_outside_full_speed_tolerance_completes_nothing() {
+        // +16875 ppm: the datasheet's 48.81 MHz open-loop bound at 0..60 C.
+        let mut m = Memory::new();
+        for (address, value) in [(0x4000101c, 0x82u32), (0x40001020, 0), (0x40001028, 0)] {
+            m.word(address, value);
+        }
+        let mut c = Samd51UsbDeviceBanks::new().with_dfll_open_loop_ppm(16_875);
+        c.control = 2; // ENABLE
+        c.device_control = 0; // attached
+        c.queue_host(HostToken::Reset).unwrap();
+        c.service(&mut m).unwrap();
+        assert_eq!(c.take_host_reply(), None, "open loop: nothing decodes");
+        // Clock recovery on the start of frame: MODE | USBCRM, MUL 48000.
+        m.word(0x40001020, 0x19);
+        m.word(0x40001028, 48_000 | 1 << 16 | 1 << 26);
+        c.service(&mut m).unwrap();
+        assert_eq!(c.take_host_reply(), Some(HostReply::Reset));
+        // Within tolerance the open loop is fine.
+        let mut c = Samd51UsbDeviceBanks::new().with_dfll_open_loop_ppm(2_000);
+        c.control = 2;
+        c.device_control = 0;
+        m.word(0x40001020, 0);
+        c.queue_host(HostToken::Reset).unwrap();
+        c.service(&mut m).unwrap();
+        assert_eq!(c.take_host_reply(), Some(HostReply::Reset));
+    }
+
     #[test]
     fn setup_uses_four_byte_aligned_real_ram_and_general_irq() {
         let mut c = controller();

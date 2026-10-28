@@ -462,9 +462,18 @@ fn build_samd51_board_model(
 #[cold]
 #[inline(never)]
 fn build_samd51_usb_device_banks(p_cfg: &PeripheralConfig) -> anyhow::Result<Box<dyn Peripheral>> {
-    if p_cfg.base_address != 0x41000000 || p_cfg.irq != Some(80) || !p_cfg.config.is_empty() {
-        anyhow::bail!("SAMD51 USB banks require base0x41000000, IRQ80 and no config overrides");
+    // The only option is the board's DFLL48M open-loop error.
+    if p_cfg.base_address != 0x41000000
+        || p_cfg.irq != Some(80)
+        || p_cfg.config.keys().any(|k| k != "dfll_open_loop_ppm")
+    {
+        anyhow::bail!("SAMD51 USB banks require base0x41000000, IRQ80 and no config overrides but dfll_open_loop_ppm");
     }
+    let ppm = p_cfg
+        .config
+        .get("dfll_open_loop_ppm")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
     if !p_cfg.clock.as_ref().is_some_and(|clocks| {
         let gates = clocks.as_slice();
         gates.len() == 2
@@ -479,7 +488,8 @@ fn build_samd51_usb_device_banks(p_cfg: &PeripheralConfig) -> anyhow::Result<Box
         anyhow::bail!("SAMD51 USB banks require exact mclk AHBMASKbit10 and APBBMASKbit0 bindings");
     }
     Ok(Box::new(
-        crate::peripherals::sam::usb_device::Samd51UsbDeviceBanks::new(),
+        crate::peripherals::sam::usb_device::Samd51UsbDeviceBanks::new()
+            .with_dfll_open_loop_ppm(ppm),
     ))
 }
 
@@ -776,10 +786,15 @@ pub fn try_build(
                     "SAMD51 DMAC board profile requires explicit mclk AHBMASK bit9 binding"
                 );
             }
+            let latency = p_cfg
+                .config
+                .get("request_latency_cycles")
+                .and_then(|v| v.as_u64());
             Box::new(
                 crate::peripherals::sam::dmac_byte::SamDmacByte::new_samd51_board(
                     p_cfg.base_address,
-                ),
+                )
+                .with_request_latency(latency.unwrap_or(0)),
             )
         }
         "sam_dmac_sercom4_tx_byte" => {

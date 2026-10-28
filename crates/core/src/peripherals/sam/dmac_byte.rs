@@ -114,6 +114,14 @@ pub struct SamDmacByte {
     writeback: u32,
     channels: [Channel; 32],
     refusal: Option<&'static str>,
+    /// CPU cycles from a SERCOM's request to the channel's beat (board
+    /// profile, `request_latency_cycles`; default 0, the same bus tick).
+    /// Silicon services a request after arbitration and a descriptor fetch;
+    /// the datasheet gives no single figure, so the board declares one.
+    latency: u64,
+    /// When each channel's current request was first seen.
+    seen: [Option<u64>; 32],
+    clock: Option<crate::CycleClock>,
 }
 
 impl SamDmacByte {
@@ -138,7 +146,31 @@ impl SamDmacByte {
             writeback: 0,
             channels: [Channel::default(); 32],
             refusal: None,
+            latency: 0,
+            seen: [None; 32],
+            clock: None,
         }
+    }
+
+    /// The board's request-to-beat latency in CPU cycles.
+    pub fn with_request_latency(mut self, cycles: u64) -> Self {
+        self.latency = cycles;
+        self
+    }
+
+    /// Whether channel `index`'s pending SERCOM request has waited out the
+    /// latency; the wait restarts with the next request.
+    fn due(&mut self, index: usize) -> bool {
+        if self.latency == 0 {
+            return true;
+        }
+        let now = self.clock.as_ref().map_or(0, |c| c.now());
+        let at = *self.seen[index].get_or_insert(now);
+        if now < at + self.latency {
+            return false;
+        }
+        self.seen[index] = None;
+        true
     }
 
     fn lines(&self) -> [bool; 5] {
@@ -204,7 +236,12 @@ impl SamDmacByte {
                             "SAM DMAC reset requires disabled controller".into(),
                         ));
                     }
-                    *self = Self::with_profile(self.mmio_base, self.profile);
+                    // SWRST resets registers; the board's latency and the
+                    // bus clock are not registers.
+                    let (latency, clock) = (self.latency, self.clock.take());
+                    *self = Self::with_profile(self.mmio_base, self.profile)
+                        .with_request_latency(latency);
+                    self.clock = clock;
                 } else {
                     if requested & !0x0f02 != 0 {
                         return Err(SimulationError::NotImplemented(
@@ -438,6 +475,7 @@ impl SamDmacByte {
                 return;
             }
             match bus.dma_rx_request(source) {
+                Some(true) if !self.due(index) => return,
                 Some(true) => {}
                 Some(false) => return, // No byte received yet.
                 None => {
@@ -468,6 +506,7 @@ impl SamDmacByte {
                 return;
             }
             match bus.dma_tx_request(destination) {
+                Some(true) if !self.due(index) => return,
                 Some(true) => {}
                 Some(false) => return, // No data read, count or writeback progress.
                 None => {
@@ -542,7 +581,12 @@ impl SamDmacByte {
 
 impl Peripheral for SamDmacByte {
     fn on_system_reset(&mut self) {
-        *self = Self::with_profile(self.mmio_base, self.profile);
+        let (latency, clock) = (self.latency, self.clock.take());
+        *self = Self::with_profile(self.mmio_base, self.profile).with_request_latency(latency);
+        self.clock = clock;
+    }
+    fn attach_cycle_clock(&mut self, clock: crate::CycleClock) {
+        self.clock = Some(clock);
     }
     fn read(&self, offset: u64) -> SimResult<u8> {
         if let Some(reason) = self.refusal {
@@ -659,5 +703,28 @@ impl Peripheral for SamDmacByte {
                 "control":c.control,"flags":c.flags,"pending":c.pending,
                 "remaining":c.descriptor.map(|d|d.remaining)
             })).collect::<Vec<_>>()})
+    }
+}
+
+#[cfg(test)]
+mod latency_tests {
+    use super::*;
+
+    #[test]
+    fn a_request_waits_the_declared_latency_then_restarts() {
+        let clock = crate::CycleClock::default();
+        let mut dmac = SamDmacByte::new_samd51_board(0x4100a000).with_request_latency(8);
+        dmac.attach_cycle_clock(clock.clone());
+        clock.publish(100);
+        assert!(!dmac.due(3), "first seen at 100");
+        clock.publish(107);
+        assert!(!dmac.due(3));
+        clock.publish(108);
+        assert!(dmac.due(3), "eight cycles later");
+        assert!(!dmac.due(3), "the next request waits again");
+        assert!(
+            SamDmacByte::new_samd51_board(0x4100a000).due(3),
+            "no latency: the same tick"
+        );
     }
 }
