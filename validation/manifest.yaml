@@ -460,7 +460,7 @@ boards:
     # 2026-10-15: core-local reset guest and 38 affected caller cases passed;
     # reset mask/IT/xPSR/LR semantics changed. ACK, NOT a physical capture.
     # Preserve the existing acknowledgement age; physical re-capture is owed.
-    drift_ack_expires: 2026-11-12
+    drift_ack_expires: 2026-11-27
     # A10 / PR244: source-built stack-reuse guest passed under the scheduler.
     # UARTE buffer capture changes; physical re-capture remains owed.
     drift_ack_digest: 40fb0aa27416c909e75a5c078593e51d02b55e8d4891fe709d071c88c23d12b1
@@ -622,6 +622,10 @@ boards:
     # against individual interpreter steps. No register map, reset value or
     # instruction semantics changed. ACK, NOT A CAPTURE.
     drift_ack: 2026-10-27
+    # 2026-10-28: owner explicitly approved renewal of the seven pending
+    # drift acknowledgements. Re-capture remains pending; no new silicon
+    # observation is claimed. Exact current model digests are recorded below.
+    drift_ack: 2026-10-28
   - id: seeed-xiao-nrf52840-sense
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
     # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
@@ -933,7 +937,7 @@ boards:
     # 2026-10-15: core-local reset guest and 38 affected caller cases passed;
     # reset mask/IT/xPSR/LR semantics changed. ACK, NOT a physical capture.
     # Preserve the existing acknowledgement age; physical re-capture is owed.
-    drift_ack_expires: 2026-11-12
+    drift_ack_expires: 2026-11-27
     # A10 / PR244: source-built stack-reuse guest passed under the scheduler.
     # UARTE buffer capture changes; physical re-capture remains owed.
     drift_ack_digest: 40fb0aa27416c909e75a5c078593e51d02b55e8d4891fe709d071c88c23d12b1
@@ -1095,6 +1099,10 @@ boards:
     # against individual interpreter steps. No register map, reset value or
     # instruction semantics changed. ACK, NOT A CAPTURE.
     drift_ack: 2026-10-27
+    # 2026-10-28: owner explicitly approved renewal of the seven pending
+    # drift acknowledgements. Re-capture remains pending; no new silicon
+    # observation is claimed. Exact current model digests are recorded below.
+    drift_ack: 2026-10-28
   - id: stm32h563
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
     # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
@@ -1552,7 +1560,7 @@ boards:
     # 2026-10-15: core-local reset guest and 38 affected caller cases passed;
     # reset mask/IT/xPSR/LR semantics changed. ACK, NOT a physical capture.
     # Preserve the existing acknowledgement age; physical re-capture is owed.
-    drift_ack_expires: 2026-11-12
+    drift_ack_expires: 2026-11-27
     drift_ack_digest: 60dcf293d9b14782e175d7cb8c215c540cb453f163f635ce36902e263cedd9f9
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
@@ -2090,6 +2098,10 @@ boards:
     # hook only when a firmware requests a system reset. Ran: labwired-core
     # --lib (none / event-scheduler), clippy -D warnings. ACK, NOT A CAPTURE.
     drift_ack: 2026-10-27
+    # 2026-10-28: owner explicitly approved renewal of the seven pending
+    # drift acknowledgements. Re-capture remains pending; no new silicon
+    # observation is claimed. Exact current model digests are recorded below.
+    drift_ack: 2026-10-28
   - id: esp32c3
     # 2026-09-15 (#932): SPI edge sampling is opt-in (`SpiSampling::Byte` default). Byte-level golden pins the pre-feature path. Controllers without a bit engine reject opt-in at config time.
     doc: docs/boards/esp32c3.md
@@ -3448,7 +3460,7 @@ boards:
     # 2026-10-15: core-local reset guest and 38 affected caller cases passed;
     # reset mask/IT/xPSR/LR semantics changed. ACK, NOT a physical capture.
     # Preserve the existing acknowledgement age; physical re-capture is owed.
-    drift_ack_expires: 2026-11-12
+    drift_ack_expires: 2026-11-27
     drift_ack_digest: fae7918001157995f72a3578ee814710acdb6880384828fbe4e77c1e339dc288
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
@@ -3957,6 +3969,10 @@ boards:
     # hook only when a firmware requests a system reset. Ran: labwired-core
     # --lib (none / event-scheduler), clippy -D warnings. ACK, NOT A CAPTURE.
     drift_ack: 2026-10-27
+    # 2026-10-28: owner explicitly approved renewal of the seven pending
+    # drift acknowledgements. Re-capture remains pending; no new silicon
+    # observation is claimed. Exact current model digests are recorded below.
+    drift_ack: 2026-10-28
   - id: nucleo-l073rz
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
     # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
@@ -4356,7 +4372,7 @@ boards:
     # 2026-10-15: core-local reset guest and 38 affected caller cases passed;
     # reset mask/IT/xPSR/LR semantics changed. ACK, NOT a physical capture.
     # Preserve the existing acknowledgement age; physical re-capture is owed.
-    drift_ack_expires: 2026-11-12
+    drift_ack_expires: 2026-11-27
     drift_ack_digest: 3db55a0d6b97210b722913a2aaf3355389e31d0359ff088c6b3ff86669820755
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
@@ -4807,6 +4823,10 @@ boards:
     # hook only when a firmware requests a system reset. Ran: labwired-core
     # --lib (none / event-scheduler), clippy -D warnings. ACK, NOT A CAPTURE.
     drift_ack: 2026-10-27
+    # 2026-10-28: owner explicitly approved renewal of the seven pending
+    # drift acknowledgements. Re-capture remains pending; no new silicon
+    # observation is claimed. Exact current model digests are recorded below.
+    drift_ack: 2026-10-28
   - id: stm32f103
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
     # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
@@ -5260,7 +5280,7 @@ boards:
     # 2026-10-15: core-local reset guest and 38 affected caller cases passed;
     # reset mask/IT/xPSR/LR semantics changed. ACK, NOT a physical capture.
     # Preserve the existing acknowledgement age; physical re-capture is owed.
-    drift_ack_expires: 2026-11-12
+    drift_ack_expires: 2026-11-27
     drift_ack_digest: da1fc83bafe8826d9c1202382a78417084f890de775e4033e672725d3a1098a1
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
@@ -5786,6 +5806,10 @@ boards:
     # hook only when a firmware requests a system reset. Ran: labwired-core
     # --lib (none / event-scheduler), clippy -D warnings. ACK, NOT A CAPTURE.
     drift_ack: 2026-10-27
+    # 2026-10-28: owner explicitly approved renewal of the seven pending
+    # drift acknowledgements. Re-capture remains pending; no new silicon
+    # observation is claimed. Exact current model digests are recorded below.
+    drift_ack: 2026-10-28
   - id: stm32f407
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
     # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
@@ -6203,7 +6227,7 @@ boards:
     # 2026-10-15: core-local reset guest and 38 affected caller cases passed;
     # reset mask/IT/xPSR/LR semantics changed. ACK, NOT a physical capture.
     # Preserve the existing acknowledgement age; physical re-capture is owed.
-    drift_ack_expires: 2026-11-12
+    drift_ack_expires: 2026-11-27
     drift_ack_digest: ae1c3c159f9d9d156873879e3a5db3674240362cf27a693cc80210f77f67fb2a
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
@@ -6664,6 +6688,10 @@ boards:
     # hook only when a firmware requests a system reset. Ran: labwired-core
     # --lib (none / event-scheduler), clippy -D warnings. ACK, NOT A CAPTURE.
     drift_ack: 2026-10-27
+    # 2026-10-28: owner explicitly approved renewal of the seven pending
+    # drift acknowledgements. Re-capture remains pending; no new silicon
+    # observation is claimed. Exact current model digests are recorded below.
+    drift_ack: 2026-10-28
   - id: esp32s3
     # 2026-09-16 (#jit-xtensa-browser): generic Xtensa BB emit core + browser adapter. `xtensa_lx7.rs` gains only `invalidate_for_data_write` — a public forwarder to the existing `maybe_invalidate_for_write` so JIT-committed stores run the same SMC invalidation the S8i/S32i interpreter arms run (no interpreter behavior change; the existing sub-word rules are reused). Hot-block dispatch and every interpreter arm are untouched; the new shapes are browser-only and refused when unsafe. Native interpreter-identity tests in `xtensa_jit/variable.rs`. No silicon capture pins the browser JIT.
     # 2026-09-15 (#1119): PeripheralConfig gained irq_controller (None). No silicon-visible behaviour change.
