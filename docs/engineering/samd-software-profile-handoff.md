@@ -1,79 +1,73 @@
-# SAMD software-profile handoff — 2026-10-27
+# SAMD software-profile handoff — updated 2026-10-28
 
-**Unfinished: do not merge or release the current runtime candidate.** Continue
-[PR262](https://github.com/CrispStrobe/labwired-core/pull/262); do not start a
-second implementation. Runtime candidate `a92a399fdd861e30e58ca316137b54687629eaa4`
-restores the ordinary CPU-window/progress structures, keeps one authoritative
-advance loop and isolates checked SAMD work behind cached eligibility and
-private per-window markers. Refresh the PR head: later documentation integration
-may advance it. This candidate has static review/format/workflow checks only.
+**Core work for this lane is complete and merged.** The downstream engine
+release (bw-board) and Lite adoption are still open; see the
+[producer handoff](https://github.com/CrispStrobe/bw-board/blob/master/docs/SAMD-ENGINE-RELEASE-HANDOFF.md)
+and the [Lite handoff](https://github.com/CrispStrobe/brickwright-lite/blob/main/docs/SAMD-NATIVE-GAME-HANDOFF.md).
+Do not open a new Core runtime PR for this lane unless one of the open tasks
+below proves a Core defect.
 
-## Completed evidence and its boundary
+## What landed
 
-[Core PR263](https://github.com/CrispStrobe/labwired-core/pull/263) and CODAL PRs91–98
-landed after qualification. CODAL had no open PRs at this checkpoint.
+[PR262](https://github.com/CrispStrobe/labwired-core/pull/262) merged normally on
+its matched head `1f1beefcdf5e3720e98db8be75b0d64d6efe0bec` as
+`3b655aef4085082152129c84849d4e2ad5004a7f`. The landed tree equals the tree that
+CI tested. Every enabled exact-head check passed; only declared jobs were skipped.
+This commit is the Core pin for the downstream engine.
 
-Earlier runtime `7f47d2fb16eba0d31548f4ae52a13756b09f9364` passed
-[20 controls, the external-runner mutation and selected measurements](https://github.com/CrispStrobe/labwired-core/actions/runs/40449039908).
-An independent reader reconstructed eight original Callgrind samples: 1667.2
-Ir/step, 9.2 Ir/batched step. Three native inactive-fixture runs had a 4.64×
-real-time median. This is not active-game, browser or physical performance.
-Its [actual source-built CLI game](https://github.com/CrispStrobe/labwired-core/actions/runs/40448925872)
-passed both scheduler profiles at 70 million steps; the tested merge tree equalled
-the reviewed tree. Package/source/compiler/report joins were independently read.
-These receipts qualify their original source, **not the new candidate**.
+- **Hot-path isolation.** Boards without the SAMD software profile run their own
+  copy of the advance loop with no SAMD hooks (`advance_inner::<Ordinary>`); the
+  SAMD profile runs `advance_inner::<CheckedChunks>`. The choice is fixed when the
+  bus is built and read once per advance. Earlier variants (cached flags, forced
+  inlining removal, const-specialised helpers) all cost about 4–8% per step on the
+  fleet and were rejected by measurement.
+- **Fleet throughput** ([run](https://github.com/CrispStrobe/labwired-core/actions/runs/40578811706)):
+  no regression rows; for example STM32F407 929.3 vs 915.7 Ir/step (+1.5%),
+  ATSAMD21 +1.6%, PyBadge +2.5%, ESP32-S3 +0.9%, all within the unchanged 3% bound.
+- **Selected SAMD profile** ([run](https://github.com/CrispStrobe/labwired-core/actions/runs/40599699118)):
+  20 controls and the external-runner mutation passed; 1644.5 Ir/step, 9.3 Ir per
+  batched step (three batch slopes ≈9.308), native inactive-fixture median 7.59×
+  real time. Independently re-read from the original samples.
+- **Source-built CLI game** ([run](https://github.com/CrispStrobe/labwired-core/actions/runs/40578811875)):
+  both scheduler profiles passed at 70 million steps.
+- **Drift ACK.** The seven entries `nrf52840`, `seeed-xiao-nrf52840-sense`,
+  `stm32h563`, `nucleo-l476rg`, `nucleo-l073rz`, `stm32f103`, `stm32f407` were
+  re-acknowledged by the operator on 2026-10-27 for the digests at the landed
+  source. Expiry **2026-11-12**, captures and watch lists unchanged. This is
+  simulator-drift acknowledgement only, not a silicon re-capture.
 
-CrispStrobe authored the [PyBadge adaptation](https://github.com/CrispStrobe/labwired-core/commit/8c894bdbe591c74d135811d6cc33574f8b4755cf).
-Retain its credit separately from the upstream SAMD51 foundation's notice.
-Do not attribute the owned adaptation to its later upstream import.
+These results qualify the landed commit only. They are not active-game,
+browser, installed-app or physical-hardware performance claims.
 
-## Retained failures
+## Retained failures (do not delete or relabel)
 
-The [first fleet run](https://github.com/CrispStrobe/labwired-core/actions/runs/40443757411)
-reported about 4% extra step cost on existing boards. The
-[const-specialized integration](https://github.com/CrispStrobe/labwired-core/actions/runs/40451364784)
-also failed, including 7.9% on ATSAMD21. Passing selected-profile measurements do
-not establish fleet recovery. Original raw profiles show changed compiler call
-boundaries and about 42 extra Ir/step; an exact spill/prologue cause is unproven.
-Never raise old baselines to accept this regression.
+- Fleet throughput failed for every earlier runtime variant, e.g.
+  [first](https://github.com/CrispStrobe/labwired-core/actions/runs/40443757411),
+  [const-specialised](https://github.com/CrispStrobe/labwired-core/actions/runs/40451364784),
+  [a92](https://github.com/CrispStrobe/labwired-core/actions/runs/40459382058),
+  [99404e4](https://github.com/CrispStrobe/labwired-core/actions/runs/40471913258).
+- Rust Core CI failed on the drift check at `99404e4` until the ACK was applied.
+  That was the intended human gate, not a test failure.
 
-Three direct unit-test callers also failed compilation after the const API
-change. Their assertions were preserved; the new candidate restores plain calls.
-Search tracked Git objects as well as present files in sparse checkouts.
+## Open tasks
 
-## Ordered next steps
+1. **Drift ACK expiry — due before 2026-11-12.** The ACK above expires on
+   2026-11-12. Before then either (a) re-capture the seven boards on real
+   hardware (a separately authorized hardware task; never flash without explicit
+   operator approval), or (b) ask the operator for an explicit new dated ACK of the
+   then-current digests (`python3 scripts/generate_validation_status.py --digests`).
+   Never bulk-stamp, never extend the expiry without that approval. Any later edit
+   to a watched model file (for example `crates/core/src/cpu/cortex_m.rs`) changes
+   the digests again and needs a new approval.
+2. **Only if a downstream task proves a Core defect**, fix it on a new branch from
+   `main` with a new PR, and require the same gates: fleet throughput, selected
+   profile dispatch of `core-perf.yml` with `samd_profile_only=true` (once, on the
+   qualification carrier branch advanced to the exact head), CLI game, all enabled
+   exact-head checks, then a matched-head merge.
+   The WASM motion and radio-pair problems seen downstream were measured and are
+   **not** Core defects (same-runner A/B: old engine 1.363× vs new 1.340× median).
 
-1. Fetch and inspect PR262's exact current head and all enabled checks. Preserve
-   other owners' main changes. Read the
-   [candidate contract](https://github.com/CrispStrobe/labwired-core/blob/a92a399fdd861e30e58ca316137b54687629eaa4/docs/engineering/samd-native-simulation-bundle.md).
-   Review the mailbox lifecycle, strict zero-prefix fallback, external-runner
-   refusal and unchanged admission guards before final qualification.
-2. Require fresh hosted 20 controls, detected-and-restored external-runner mutation,
-   actual CLI game in both profiles, scheduler/WFI/SysTick, firmware survival,
-   actual XIAO source guest and full-fleet recovery. A green no-op or empty test
-   does not qualify. Engine builds and guest runs belong in hosted CI.
-3. No selected manual campaign has been dispatched for this latest runtime.
-   Once final, normally advance the existing qualification carrier to that
-   exact head and dispatch `core-perf.yml` **once**, `samd_profile_only=true`.
-   Bind a new independent reader to source/run. Require eight original samples,
-   service grid1 and actual retired chunk>=1024 in every low/high batch repeat.
-   Preserve 1×, 3% relative cost, 0.5 Ir noise and every earlier baseline.
-   Admit metadata before acquiring originals once; consult the ignored local
-   handoff before downloading anything already retained.
-4. Recompute `python3 scripts/generate_validation_status.py --digests`.
-   Explicit human ACK is still needed for seven manifest entries: `nrf52840`,
-   `seeed-xiao-nrf52840-sense`, `stm32h563`, `nucleo-l476rg`, `nucleo-l073rz`,
-   `stm32f103`, `stm32f407`. After affected qualification, obtain approval of
-   exact digests, record the actual review date, preserve the explicit
-   **2026-11-12** expiry/captures/watch lists, and regenerate status. No
-   unrestricted bulk stamping. No ACK was applied in this session.
-5. Pass every enabled final-head check; perform the normal matched-head merge
-   and verify parents/tree. Then follow the
-   [producer handoff](https://github.com/CrispStrobe/bw-board/blob/master/docs/SAMD-ENGINE-RELEASE-HANDOFF.md)
-   and [Lite handoff](https://github.com/CrispStrobe/brickwright-lite/blob/main/docs/SAMD-NATIVE-GAME-HANDOFF.md).
-
-Silicon re-capture remains a separately authorized hardware task. The nRF/XIAO
-entries share historical evidence; do not claim seven independent physical
-validations. Normal native SAMD GUI routing, active-game real-time speed and
-physical panel/electrical accuracy remain separate work. Source-built firmware
-survival defaults idle handling off; direct WFI controls cover the changed branch.
+Separate scope, not part of this lane: silicon re-capture, normal native SAMD GUI
+routing, active-game real-time speed, physical panel/electrical accuracy.
+Retain the PyBadge adaptation credit (owned by CrispStrobe) separately from the
+upstream SAMD51 foundation notice.
