@@ -432,7 +432,11 @@ continues to follow its declared clear rules. Combining these events with device
 timers is rejected until cross-clock ordering is implemented and qualified.
 Review selected sensor cancellation and clear semantics before using the event. Wire P0.25 only after those contracts
 are implemented and prove sensor assertion/deassertion and mask/reset through
-real GPIO/GPIOTE guest observations in both scheduler profiles. Subsequently
+real GPIO/GPIOTE guest observations in both scheduler profiles. Event-mode
+GPIOTE must recognize the first reported transition even if the selected input
+was already high before the channel was enabled. The authored shared-line
+guest checks falling-event counts, rising-edge masking and a second falling
+edge; it does not by itself qualify a CPU interrupt handler or sensor IRQ. Subsequently
 qualify RUNMIC bias/control,
 timed ADC sampling and speaker path with explicit units/cadence and bounded
 observations; no host-forced data-ready flags.
