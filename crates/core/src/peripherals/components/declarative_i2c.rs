@@ -682,9 +682,18 @@ impl GenericI2cDevice {
     /// for each reading). `stored` is the register's value AFTER the write.
     fn start_conversions(&mut self, register: &str, stored: u32) {
         for (i, rule) in self.data_ready.iter().enumerate() {
-            if rule.start_register == register && rule_started(rule, stored) {
-                self.dr_state[i] =
-                    DataReadyState::Converting(self.elapsed_us.saturating_add(rule.conversion_us));
+            if rule.start_register == register {
+                if rule_started(rule, stored) {
+                    self.dr_state[i] = DataReadyState::Converting(
+                        self.elapsed_us.saturating_add(rule.conversion_us),
+                    );
+                } else if self.dr_event_subscribed[i]
+                    && matches!(self.dr_state[i], DataReadyState::Converting(_))
+                {
+                    // A stopped in-flight conversion cannot report completion.
+                    // Leave an already-ready result to its declared clear rules.
+                    self.dr_state[i] = DataReadyState::Idle;
+                }
             }
         }
     }
@@ -2162,6 +2171,9 @@ pub(crate) fn validate_descriptor(descriptor: &DeviceDescriptor) -> Result<()> {
     super::declarative_gpio::validate_rule_names(descriptor)?;
     for rule in &descriptor.behavior.rules {
         if let Event::DataReady { name } = &rule.on {
+            if !descriptor.behavior.timers.is_empty() {
+                bail!("data-ready events cannot yet be combined with device timers");
+            }
             if spec
                 .data_ready
                 .iter()
@@ -4278,6 +4290,21 @@ metadata:
     }
 
     #[test]
+    fn stopping_a_subscribed_conversion_cancels_its_pending_event() {
+        let mut d = GenericI2cDevice::from_yaml(&autonomous_fixture(), 0).unwrap();
+        d.advance_time_us(1);
+        write8(&mut d, 0x00, 1);
+        d.advance_time_us(10_000);
+        write8(&mut d, 0x00, 0);
+        d.advance_time_us(100_000);
+        assert_eq!(d.dr_state[0], DataReadyState::Idle);
+        assert!(d.take_pin_drives().is_empty());
+        write8(&mut d, 0x00, 1);
+        d.advance_time_us(33_000);
+        assert_eq!(d.take_pin_drives(), vec![("INT".to_string(), false)]);
+    }
+
+    #[test]
     fn unsubscribed_data_ready_preserves_read_driven_promotion() {
         let mut d = GenericI2cDevice::from_yaml(TOF_FIXTURE, 0).unwrap();
         d.advance_time_us(1);
@@ -4298,6 +4325,15 @@ metadata:
         .is_err());
         let duplicate = yaml.replace("      - name: range\n", "      - name: range\n        start_register: SYSRANGE_START\n        start_mask: 0x01\n        ready_register: RESULT_INTERRUPT_STATUS\n        ready_mask: 0x07\n        conversion_us: 33000\n      - name: range\n");
         assert!(GenericI2cDevice::from_yaml(&duplicate, 0).is_err());
+        let mixed_timer = yaml.replace(
+            "  outputs: [INT]",
+            "  timers: [{ name: clock, period_us: 100, on_fire: [] }]\n  outputs: [INT]",
+        );
+        let err = match GenericI2cDevice::from_yaml(&mixed_timer, 0) {
+            Ok(_) => panic!("timer and data-ready event combination was accepted"),
+            Err(err) => format!("{err:#}"),
+        };
+        assert!(err.contains("cannot yet be combined"), "{err}");
     }
 
     #[test]

@@ -421,8 +421,10 @@ promotes that subscribed conversion at its deadline and fires the rule once.
 Conversions with no such listener retain the existing read-driven behavior.
 The event only reports conversion completion; a device descriptor must still
 model the documented output routing, polarity, masking, clearing and reset.
-Review event ordering against other timed device actions and conversion
-cancellation before using it for the selected sensor. Wire P0.25 only after those contracts
+A disabled in-flight conversion is cancelled, while an already-ready result
+continues to follow its declared clear rules. Combining these events with device
+timers is rejected until cross-clock ordering is implemented and qualified.
+Review selected sensor cancellation and clear semantics before using the event. Wire P0.25 only after those contracts
 are implemented and prove sensor assertion/deassertion and mask/reset through
 real GPIO/GPIOTE guest observations in both scheduler profiles. Subsequently
 qualify RUNMIC bias/control,
