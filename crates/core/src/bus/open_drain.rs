@@ -59,6 +59,60 @@ impl PulledUpOpenDrain {
     }
 }
 
+/// Explicitly pulled-up nets indexed by the sampled GPIO register and bit.
+///
+/// Registration is separate from ordinary push-pull routing. Callers must
+/// reject a legacy output already assigned to a pad before registering it.
+#[derive(Debug, Default)]
+pub struct OpenDrainNets {
+    nets: BTreeMap<(u64, u8), PulledUpOpenDrain>,
+}
+
+impl OpenDrainNets {
+    /// Register one driver on a pulled-up pad. A legacy driver on the same
+    /// pad is an error; this resolver does not model mixed-mode contention.
+    pub fn register(
+        &mut self,
+        pad: (u64, u8),
+        driver: OpenDrainDriver,
+        has_legacy_driver: bool,
+    ) -> Result<(), &'static str> {
+        if has_legacy_driver {
+            return Err("open-drain pad also has a legacy driver");
+        }
+        self.nets.entry(pad).or_default().register(driver)
+    }
+
+    /// Whether this pad has been explicitly configured as a pulled-up net.
+    pub fn contains_pad(&self, pad: (u64, u8)) -> bool {
+        self.nets.contains_key(&pad)
+    }
+
+    /// Update one registered driver; unknown pads and drivers are rejected.
+    pub fn drive(
+        &mut self,
+        pad: (u64, u8),
+        driver: &OpenDrainDriver,
+        level: bool,
+    ) -> Result<bool, &'static str> {
+        self.nets
+            .get_mut(&pad)
+            .ok_or("unknown open-drain pad")?
+            .drive(driver, level)
+    }
+
+    /// Release every registered driver on every net and return the affected
+    /// pads, so callers can apply the pull-up to their GPIO input registers.
+    pub fn release_all(&mut self) -> impl Iterator<Item = (u64, u8)> + '_ {
+        for net in self.nets.values_mut() {
+            for released in net.drivers.values_mut() {
+                *released = true;
+            }
+        }
+        self.nets.keys().copied()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,5 +163,28 @@ mod tests {
         first.drive(&a, false).unwrap();
         assert!(!first.level());
         assert!(second.level());
+    }
+    #[test]
+    fn pad_registry_rejects_mixed_and_unknown_routes_and_releases_all() {
+        let a = driver("part-a", "irq");
+        let b = driver("part-b", "irq");
+        let mut nets = OpenDrainNets::default();
+        assert!(nets.register((10, 2), a.clone(), true).is_err());
+        assert!(!nets.contains_pad((10, 2)));
+        nets.register((10, 2), a.clone(), false).unwrap();
+        nets.register((10, 2), b.clone(), false).unwrap();
+        nets.register((11, 3), a.clone(), false).unwrap();
+        assert!(!nets.drive((10, 2), &a, false).unwrap());
+        assert!(!nets.drive((11, 3), &a, false).unwrap());
+        assert!(nets.drive((12, 3), &a, true).is_err());
+        assert!(nets
+            .drive((10, 2), &driver("unknown", "irq"), true)
+            .is_err());
+        assert_eq!(
+            nets.release_all().collect::<Vec<_>>(),
+            vec![(10, 2), (11, 3)]
+        );
+        assert!(nets.drive((10, 2), &b, true).unwrap());
+        assert!(nets.drive((11, 3), &a, true).unwrap());
     }
 }
