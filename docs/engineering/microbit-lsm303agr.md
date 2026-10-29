@@ -121,3 +121,17 @@ active-low board polarity. Core controls cover every nonempty axis subset,
 rearm/cancellation, reset idle, invalid groups and four actual-descriptor
 mutants (any-axis clear, early IRQ clear, lost route mask and lost polarity).
 These controls require hosted execution before qualification.
+
+### Completed-group consistency follow-up
+
+The separate follow-up captures the enabled result set when each conversion
+starts. An idle write retains already-completed unread results and their
+acknowledgement set, so IRQ and status cannot disagree when axis bits also
+change while entering idle. An active start write resets the group and captures
+the new axis set; a selected conversion with no enabled axes clears the old
+group and produces no new result. Focused controls check that exact transition, high-byte-first
+reads, low-after-high reads and active-low masking during a partial group.
+This is an explicit internal consistency policy. AN4825 does not establish the
+silicon transition for simultaneous power-down and axis reconfiguration here;
+that transition remains outside device qualification pending primary evidence.
+The original candidate remains preserved and unqualified.
