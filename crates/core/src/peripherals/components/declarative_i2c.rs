@@ -4290,6 +4290,37 @@ metadata:
     }
 
     #[test]
+    fn autonomous_events_follow_deadline_order_when_one_advance_spans_both() {
+        let yaml = r#"
+type: ordered_ready_probe
+behavior:
+  primitive: i2c_device
+  i2c:
+    default_address: 0x20
+    registers:
+      - { name: START, addr: 0, width: 1, endian: be, access: rw, reset: 0 }
+      - { name: STATUS, addr: 1, width: 1, endian: be, access: r, reset: 0 }
+    data_ready:
+      - { name: later, start_register: START, start_mask: 1, ready_register: STATUS, ready_mask: 1, conversion_us: 20 }
+      - { name: earlier, start_register: START, start_mask: 2, ready_register: STATUS, ready_mask: 2, conversion_us: 10 }
+  outputs: [FIRST, SECOND]
+  rules:
+    - on: { data_ready: earlier }
+      do: [ { pin: FIRST, level: 1 } ]
+    - on: { data_ready: later }
+      do: [ { pin: SECOND, level: 1 } ]
+"#;
+        let mut d = GenericI2cDevice::from_yaml(yaml, 0).unwrap();
+        d.advance_time_us(1);
+        write8(&mut d, 0, 3);
+        d.advance_time_us(20);
+        assert_eq!(
+            d.take_pin_drives(),
+            vec![("FIRST".into(), true), ("SECOND".into(), true)]
+        );
+    }
+
+    #[test]
     fn stopping_a_subscribed_conversion_cancels_its_pending_event() {
         let mut d = GenericI2cDevice::from_yaml(&autonomous_fixture(), 0).unwrap();
         d.advance_time_us(1);
