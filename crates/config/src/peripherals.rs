@@ -991,8 +991,11 @@ pub struct DataReady {
     pub clear_on_read: Vec<String>,
     /// Alternative acknowledgement: every enabled result must complete a read.
     /// Entries are independently remembered until all have been read, in any
-    /// order. Enable bits live in start_register and a start write rearms the
-    /// conversion and clears that memory. Cannot combine with clear_on_read.
+    /// order. Enable bits are captured from start_register when a conversion
+    /// starts; an active start write rearms and clears acknowledgement memory.
+    /// Idle writes retain completed results and their enabled set. This is an
+    /// explicit internal retention contract; devices must scope reconfiguration
+    /// claims separately. Cannot combine with clear_on_read.
     #[serde(default)]
     pub clear_on_read_all: Vec<DataReadyRead>,
     /// Registers whose WRITE clears the status bit — the write-1-to-clear

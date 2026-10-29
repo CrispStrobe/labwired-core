@@ -85,6 +85,9 @@ behavior:
   # bytes of ALL enabled axes have been read. H_LACTIVE selects polarity.
   outputs: [INT1]
   output_pins: { INT1: int1_pin }
+  # The existing engine keeps an unread completed group over an idle write.
+  # Keep IRQ consistent with that group. Axis changes while going idle are an
+  # internal retention policy, not qualified silicon transition behavior.
   vars: { pending: 0 }
   rules:
     - on: { data_ready: xyz }
@@ -95,11 +98,6 @@ behavior:
       when: "(reg(CTRL_REG1_A) & 0xf0) != 0"
       do:
         - { var: pending, value: 0 }
-        - { pin: INT1, level: "((var(pending) != 0) && ((reg(CTRL_REG3_A) & 0x10) != 0)) != ((reg(CTRL_REG6_A) & 2) != 0)" }
-    - on: { write: CTRL_REG1_A }
-      when: "(reg(CTRL_REG1_A) & 0xf0) == 0"
-      do:
-        - { var: pending, value: "var(pending) & reg(CTRL_REG1_A) & 7" }
         - { pin: INT1, level: "((var(pending) != 0) && ((reg(CTRL_REG3_A) & 0x10) != 0)) != ((reg(CTRL_REG6_A) & 2) != 0)" }
     - on: { write: CTRL_REG3_A }
       do: [ { pin: INT1, level: "((var(pending) != 0) && ((reg(CTRL_REG3_A) & 0x10) != 0)) != ((reg(CTRL_REG6_A) & 2) != 0)" } ]
