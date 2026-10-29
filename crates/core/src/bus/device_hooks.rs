@@ -64,10 +64,18 @@ impl SystemBus {
     /// wider path into the peripheral table.
     ///
     /// Early-outs on a bus with no such device, which is almost every bus.
+    #[inline]
     pub(crate) fn service_device_pin_drives(&mut self) {
-        if self.device_pin_pads.is_empty() {
-            return;
+        if !self.device_pin_pads.is_empty() {
+            self.service_bound_device_pin_drives();
         }
+    }
+
+    // Keep the common path for systems without device-output bindings small.
+    // Bound systems still service their outputs on every tick.
+    #[cold]
+    #[inline(never)]
+    fn service_bound_device_pin_drives(&mut self) {
         // A GPIO register may have ignored the initial attachment write while
         // its clock was gated. Reapply the retained net levels on service; this
         // is only active for explicitly opted-in nets.
