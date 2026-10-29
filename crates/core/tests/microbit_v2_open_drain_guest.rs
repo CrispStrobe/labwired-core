@@ -3,7 +3,6 @@
 use labwired_config::{ChipDescriptor, ExternalDevice, SystemManifest};
 use labwired_core::bus::SystemBus;
 use labwired_core::cpu::CortexM;
-use labwired_core::peripherals::nrf52::serial_instance::Nrf52SerialInstance;
 use labwired_core::system::cortex_m::configure_cortex_m;
 use labwired_core::{Bus, DebugControl, Machine};
 use sha2::{Digest, Sha256};
@@ -93,7 +92,7 @@ behavior:
       - { name: STATUS, addr: 1, width: 1, endian: be, access: r, reset: 0 }
       - { name: RESULT, addr: 2, width: 1, endian: be, access: r, reset: 0 }
     data_ready:
-      - { name: sample, start_register: START, start_mask: 1, ready_register: STATUS, ready_mask: 1, conversion_us: 100, clear_on_read: [RESULT] }
+      - { name: sample, start_register: START, start_mask: 1, ready_register: STATUS, ready_mask: 1, conversion_us: 1000, clear_on_read: [RESULT] }
   outputs: [INT]
   output_pins: { INT: int_pin }
   rules:
@@ -135,64 +134,92 @@ behavior:
     machine
 }
 
-fn with_probe<T>(
+/// Host-configure the actual TWIM and EasyDMA while the guest samples GPIO.
+/// A read uses the controller's repeated-START shortcut after the pointer.
+fn probe_transfer(
     machine: &mut Machine<CortexM>,
     address: u8,
-    f: impl FnOnce(&mut dyn labwired_core::peripherals::i2c::I2cDevice) -> T,
-) -> T {
-    let serial = machine
+    bytes: &[u8],
+    read: bool,
+) -> (u32, u32, u32, u32) {
+    const TWIM: u64 = 0x4000_3000;
+    const TX: u64 = 0x2000_0200;
+    const RX: u64 = 0x2000_0210;
+    for (index, byte) in bytes.iter().enumerate() {
+        machine.bus.write_u8(TX + index as u64, *byte).unwrap();
+    }
+    machine.bus.write_u32(TWIM + 0x500, 6).unwrap();
+    machine.bus.write_u32(TWIM + 0x104, 0).unwrap();
+    machine.bus.write_u32(TWIM + 0x124, 0).unwrap();
+    machine.bus.write_u32(TWIM + 0x4c4, 6).unwrap();
+    machine
         .bus
-        .peripherals
-        .iter_mut()
-        .filter_map(|entry| {
-            entry
-                .dev
-                .as_any_mut()?
-                .downcast_mut::<Nrf52SerialInstance>()
-        })
-        .find(|serial| {
-            serial
-                .attached_i2c_devices()
-                .iter()
-                .any(|cell| cell.borrow().claims_address(address))
-        })
-        .expect("probe on actual TWIM attachment");
-    let cell = serial
-        .attached_i2c_devices()
-        .iter()
-        .find(|cell| cell.borrow().claims_address(address))
+        .write_u32(
+            TWIM + 0x200,
+            if read { (1 << 7) | (1 << 12) } else { 1 << 9 },
+        )
         .unwrap();
-    let mut device = cell.borrow_mut();
-    device.select_address(address);
-    f(&mut **device)
+    machine
+        .bus
+        .write_u32(TWIM + 0x588, u32::from(address))
+        .unwrap();
+    machine.bus.write_u32(TWIM + 0x544, TX as u32).unwrap();
+    machine
+        .bus
+        .write_u32(TWIM + 0x548, bytes.len() as u32)
+        .unwrap();
+    if read {
+        machine.bus.write_u32(TWIM + 0x534, RX as u32).unwrap();
+        machine.bus.write_u32(TWIM + 0x538, 1).unwrap();
+    }
+    machine.bus.write_u32(TWIM + 0x008, 1).unwrap();
+    // Poll promptly so this test can cancel a still-pending conversion;
+    // an arbitrary long post-transfer run could pass its deadline first.
+    for _ in 0..5_000 {
+        if machine.bus.read_u32(TWIM + 0x104).unwrap() != 0 {
+            return (
+                machine.bus.read_u32(TWIM + 0x124).unwrap(),
+                machine.bus.read_u32(TWIM + 0x4c4).unwrap(),
+                machine.bus.read_u32(TWIM + 0x54c).unwrap(),
+                if read {
+                    machine.bus.read_u32(TWIM + 0x53c).unwrap()
+                } else {
+                    0
+                },
+            );
+        }
+        machine.run(Some(32)).unwrap();
+    }
+    panic!("TWIM transfer did not stop");
 }
 
 fn write_probe(machine: &mut Machine<CortexM>, address: u8, value: u8) {
-    with_probe(machine, address, |device| {
-        device.start();
-        device.write(value);
-        device.stop();
-    });
+    assert_eq!(
+        probe_transfer(machine, address, &[value], false),
+        (0, 0, 1, 0)
+    );
 }
 
 fn write_probe_register(machine: &mut Machine<CortexM>, register: u8, value: u8) {
-    with_probe(machine, 0x22, |device| {
-        device.start();
-        device.write(register);
-        device.write(value);
-        device.stop();
-    });
+    assert_eq!(
+        probe_transfer(machine, 0x22, &[register, value], false),
+        (0, 0, 2, 0)
+    );
 }
 
 fn read_probe_register(machine: &mut Machine<CortexM>, register: u8) -> u8 {
-    with_probe(machine, 0x22, |device| {
-        device.start();
-        device.write(register);
-        device.start();
-        let value = device.read();
-        device.stop();
-        value
-    })
+    assert_eq!(
+        probe_transfer(machine, 0x22, &[register], true),
+        (0, 0, 1, 1)
+    );
+    machine.bus.read_u8(0x2000_0210).unwrap()
+}
+
+#[test]
+fn twim_probe_rejects_an_absent_address() {
+    let mut machine = machine(false, false, false);
+    let (error, source, tx, rx) = probe_transfer(&mut machine, 0x26, &[0xff], false);
+    assert_eq!((error, source & 2, tx, rx), (1, 2, 0, 0));
 }
 
 #[test]
@@ -233,7 +260,7 @@ fn guest_sees_autonomous_data_ready_without_polling() {
     m.run(Some(100)).unwrap();
     assert_eq!(m.bus.read_u32(0x20000100).unwrap(), 1, "no early assertion");
     write_probe_register(&mut m, 0, 0);
-    m.run(Some(30_000)).unwrap();
+    m.run(Some(200_000)).unwrap();
     assert_eq!(
         m.bus.read_u32(0x20000100).unwrap(),
         1,
@@ -242,7 +269,7 @@ fn guest_sees_autonomous_data_ready_without_polling() {
     write_probe_register(&mut m, 0, 1);
     m.run(Some(100)).unwrap();
     assert_eq!(m.bus.read_u32(0x20000100).unwrap(), 1, "no early assertion");
-    m.run(Some(30_000)).unwrap();
+    m.run(Some(200_000)).unwrap();
     assert_eq!(
         m.bus.read_u32(0x20000100).unwrap(),
         0,
@@ -255,7 +282,7 @@ fn guest_sees_autonomous_data_ready_without_polling() {
         1,
         "result read releases the line"
     );
-    m.run(Some(30_000)).unwrap();
+    m.run(Some(200_000)).unwrap();
     assert_eq!(
         m.bus.read_u32(0x20000100).unwrap(),
         0,
