@@ -151,12 +151,14 @@ the actual simulated tests; assembly-flow controls do not replace those runs.
 
 The shared GPIOTE change also affects the nRF52840 DK and XIAO configurations.
 `nrf52840_gpiote_guest` loads each unchanged system manifest, adds an explicitly
-synthetic PCF8574 pad source on otherwise unbound P0.17, and runs the original
+synthetic PCF8574 pad source on otherwise unbound P0.17 (TWIM SCL=P0.08,
+SDA=P0.07, also unbound), and runs the original
 shared GPIOTE observer with opt-in guest-owned TWIM commands. It requires the
 first falling event, no event for a repeated low, a masked rising transition,
 and a second falling event. A rising-only guest variant must fail the same
 first-falling criterion. RAM receipts require actual one-byte EasyDMA completion
-and a fresh guest sample. The existing micro:bit pin25 observer retains its
+and a fresh guest sample; PSEL readback verifies the guest-selected bus pins.
+All three fixture pads are checked against existing board/device bindings. The existing micro:bit pin25 observer retains its
 default source behavior.
 
 The board workflow includes scheduler-on intervals1/512 and true feature-off
