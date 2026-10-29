@@ -20,12 +20,12 @@ const SDA_PIN: u8 = 7;
 fn machine(board: &str, interval: u32, polarity: u32) -> Machine<CortexM> {
     if std::env::var("LABWIRED_REQUIRE_GPIOTE_FEATURE_OFF").as_deref() == Ok("1") {
         assert!(
-            !cfg!(feature = "event-scheduler"),
+            !labwired_core::cycle_clock::event_scheduler_enabled(),
             "GPIOTE feature-off must disable event-scheduler"
         );
         assert_eq!(interval, 1, "GPIOTE feature-off must use per-cycle ticking");
     }
-    println!("NRF52840_GPIOTE_GUEST_PROFILE board={board} event_scheduler={} interval={interval} polarity={polarity}", cfg!(feature = "event-scheduler"));
+    println!("NRF52840_GPIOTE_GUEST_PROFILE board={board} event_scheduler={} interval={interval} polarity={polarity}", labwired_core::cycle_clock::event_scheduler_enabled());
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -62,7 +62,7 @@ fn machine(board: &str, interval: u32, polarity: u32) -> Machine<CortexM> {
         std::fs::write(
             PathBuf::from(dir).join(format!(
                 "gpiote-{board}-event{}-tick{interval}-polarity{polarity}-{hash}.elf",
-                u8::from(cfg!(feature = "event-scheduler"))
+                u8::from(labwired_core::cycle_clock::event_scheduler_enabled())
             )),
             bytes,
         )
@@ -174,35 +174,25 @@ fn proof(board: &str, interval: u32, polarity: u32) {
     command(&mut m, 1);
     observed(&mut m, 0, 2); // second falling edge still works
 }
-#[test]
-#[cfg(feature = "event-scheduler")]
-fn dk_first_falling_edge_scheduler_tick1() {
-    proof("nrf52840-dk", 1, 2);
+fn board_profiles(board: &str) {
+    let intervals: &[u32] = if labwired_core::cycle_clock::event_scheduler_enabled() {
+        &[1, 512]
+    } else {
+        &[1]
+    };
+    for &interval in intervals {
+        proof(board, interval, 2);
+    }
 }
+
 #[test]
-#[cfg(feature = "event-scheduler")]
-fn dk_first_falling_edge_scheduler_tick512() {
-    proof("nrf52840-dk", 512, 2);
+fn dk_first_falling_edge_profiles() {
+    board_profiles("nrf52840-dk");
 }
+
 #[test]
-#[cfg(feature = "event-scheduler")]
-fn xiao_first_falling_edge_scheduler_tick1() {
-    proof("seeed-xiao-nrf52840-sense", 1, 2);
-}
-#[test]
-#[cfg(feature = "event-scheduler")]
-fn xiao_first_falling_edge_scheduler_tick512() {
-    proof("seeed-xiao-nrf52840-sense", 512, 2);
-}
-#[test]
-#[cfg(not(feature = "event-scheduler"))]
-fn dk_first_falling_edge_feature_off_tick1() {
-    proof("nrf52840-dk", 1, 2);
-}
-#[test]
-#[cfg(not(feature = "event-scheduler"))]
-fn xiao_first_falling_edge_feature_off_tick1() {
-    proof("seeed-xiao-nrf52840-sense", 1, 2);
+fn xiao_first_falling_edge_profiles() {
+    board_profiles("seeed-xiao-nrf52840-sense");
 }
 #[test]
 fn first_falling_control_rejects_rising_only_guest() {

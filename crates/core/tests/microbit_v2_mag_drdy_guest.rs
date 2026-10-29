@@ -12,7 +12,7 @@ const RAM: u64 = 0x20000100;
 fn machine(interval: u32) -> Machine<CortexM> {
     if std::env::var("LABWIRED_REQUIRE_SENSOR_FEATURE_OFF").as_deref() == Ok("1") {
         assert!(
-            !cfg!(feature = "event-scheduler"),
+            !labwired_core::cycle_clock::event_scheduler_enabled(),
             "feature-off guest must not enable event-scheduler"
         );
         assert_eq!(
@@ -22,7 +22,7 @@ fn machine(interval: u32) -> Machine<CortexM> {
     }
     println!(
         "MICROBIT_MAG_GUEST_PROFILE event_scheduler={} interval={interval}",
-        cfg!(feature = "event-scheduler")
+        labwired_core::cycle_clock::event_scheduler_enabled()
     );
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let elf = std::env::temp_dir().join(format!("mag-drdy-{}-{interval}.elf", std::process::id()));
@@ -120,18 +120,13 @@ fn proof(interval: u32) {
     observed(&mut m, 1, 3);
 }
 #[test]
-#[cfg(feature = "event-scheduler")]
-fn guest_observes_mag_drdy_precise_scheduler() {
-    proof(1);
-}
-#[test]
-#[cfg(feature = "event-scheduler")]
-fn guest_observes_mag_drdy_tick512_scheduler() {
-    proof(512);
-}
-
-#[test]
-#[cfg(not(feature = "event-scheduler"))]
-fn guest_observes_mag_drdy_feature_off_tick1() {
-    proof(1);
+fn guest_observes_mag_drdy_profiles() {
+    let intervals: &[u32] = if labwired_core::cycle_clock::event_scheduler_enabled() {
+        &[1, 512]
+    } else {
+        &[1]
+    };
+    for &interval in intervals {
+        proof(interval);
+    }
 }
