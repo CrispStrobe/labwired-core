@@ -89,6 +89,11 @@ observes P0.25 plus falling GPIOTE events. The host sends only RAM commands.
 It covers masked completion, enable-after-ready, read-clear, remasking,
 recurrence and idle cancellation in scheduler intervals 1 and 512. Hosted
 execution is required before qualification; source presence alone is not proof.
+The board workflow also runs both sensor guest programs with `event-scheduler`
+disabled and tick interval 1. The separate opt-in feature keeps these guest
+targets out of default builds that do not provide ARM GCC. The feature-off
+step records the selected profile and separately retains its guest ELFs; it
+must pass before that profile is qualified.
 
 ## Acceleration DRDY successor
 

@@ -77,8 +77,10 @@ default = []
 # Experimental embedded Cortex-A7 CPU. See docs/qemu-arm-core.md for scope.
 qemu-arm = ["dep:unicorn-engine"]
 qemu-arm-system = ["dep:labwired-arm-system", "labwired-arm-system/native"]
-# Source-built executable micro:bit board qualification; requires ARM GCC.
-microbit-board-io-test = ["event-scheduler"]
+# Source-built sensor guest qualification; requires ARM GCC, but does not
+# select an engine scheduler. The board suite retains its scheduler profile.
+microbit-sensor-guest-test = []
+microbit-board-io-test = ["event-scheduler", "microbit-sensor-guest-test"]
 # Silent-path census (`crates/core/src/census.rs`) — MEASUREMENT ONLY.
 #
 # Counts three paths on which the simulator can be wrong and still report
@@ -505,8 +507,8 @@ required-features = ["qemu-arm-system", "event-scheduler"]
 
 [[test]]
 name = "microbit_v2_mag_drdy_guest"
-required-features = ["microbit-board-io-test"]
+required-features = ["microbit-sensor-guest-test"]
 
 [[test]]
 name = "microbit_v2_sensor_drdy_guest"
-required-features = ["microbit-board-io-test"]
+required-features = ["microbit-sensor-guest-test"]

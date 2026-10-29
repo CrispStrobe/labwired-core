@@ -77,6 +77,15 @@ jobs:
             cargo test --release -p labwired-core --features microbit-board-io-test \
               --lib "$suite"
           done
+      - name: Prove sensor guests without event scheduler
+        env:
+          LABWIRED_REQUIRE_SENSOR_FEATURE_OFF: '1'
+          LABWIRED_GUEST_ARTIFACT_DIR: ${{ github.workspace }}/feature-off-sensor-guests
+        run: |
+          cargo test --release -p labwired-core --no-default-features \
+            --features microbit-sensor-guest-test \
+            --test microbit_v2_mag_drdy_guest --test microbit_v2_sensor_drdy_guest \
+            -- --nocapture
       - name: Prove native WASM analog input routing
         run: cargo test --release -p labwired-wasm --lib adc_routing_tests
       - name: Measure active board throughput
@@ -121,3 +130,4 @@ jobs:
             microbit-motion-throughput.json
             motion-guest-artifacts/*.elf
             adc-guest-artifacts/*.elf
+            feature-off-sensor-guests/*.elf

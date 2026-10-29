@@ -10,6 +10,20 @@ use std::{path::PathBuf, process::Command};
 const RAM: u64 = 0x20000100;
 
 fn machine(interval: u32) -> Machine<CortexM> {
+    if std::env::var("LABWIRED_REQUIRE_SENSOR_FEATURE_OFF").as_deref() == Ok("1") {
+        assert!(
+            !cfg!(feature = "event-scheduler"),
+            "feature-off guest must not enable event-scheduler"
+        );
+        assert_eq!(
+            interval, 1,
+            "feature-off guest must use the per-cycle profile"
+        );
+    }
+    println!(
+        "MICROBIT_MAG_GUEST_PROFILE event_scheduler={} interval={interval}",
+        cfg!(feature = "event-scheduler")
+    );
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let elf = std::env::temp_dir().join(format!("mag-drdy-{}-{interval}.elf", std::process::id()));
     assert!(Command::new("arm-none-eabi-gcc")
@@ -106,10 +120,18 @@ fn proof(interval: u32) {
     observed(&mut m, 1, 3);
 }
 #[test]
+#[cfg(feature = "event-scheduler")]
 fn guest_observes_mag_drdy_precise_scheduler() {
     proof(1);
 }
 #[test]
+#[cfg(feature = "event-scheduler")]
 fn guest_observes_mag_drdy_tick512_scheduler() {
     proof(512);
+}
+
+#[test]
+#[cfg(not(feature = "event-scheduler"))]
+fn guest_observes_mag_drdy_feature_off_tick1() {
+    proof(1);
 }
