@@ -415,7 +415,14 @@ pin, routing, masking, clearing and clock ownership from its published source.
 TWIM advances attached-device time, but `declarative_i2c.rs` currently promotes
 data-ready state before I2C reads. An IRQ requires autonomous state promotion
 and output delivery while the I2C caller is idle, not host-forced data-ready or
-an extra read that manufactures an edge. Wire P0.25 only after those contracts
+an extra read that manufactures an edge. A declarative rule can subscribe with
+`on: { data_ready: NAME }` to a uniquely named I2C conversion; the device clock
+promotes that subscribed conversion at its deadline and fires the rule once.
+Conversions with no such listener retain the existing read-driven behavior.
+The event only reports conversion completion; a device descriptor must still
+model the documented output routing, polarity, masking, clearing and reset.
+Review event ordering against other timed device actions and conversion
+cancellation before using it for the selected sensor. Wire P0.25 only after those contracts
 are implemented and prove sensor assertion/deassertion and mask/reset through
 real GPIO/GPIOTE guest observations in both scheduler profiles. Subsequently
 qualify RUNMIC bias/control,
