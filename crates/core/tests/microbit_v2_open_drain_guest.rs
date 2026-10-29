@@ -13,7 +13,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-fn machine(autonomous: bool, invert_a: bool) -> Machine<CortexM> {
+fn machine(autonomous: bool, invert_a: bool, gpiote_guest: bool) -> Machine<CortexM> {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -31,7 +31,11 @@ fn machine(autonomous: bool, invert_a: bool) -> Machine<CortexM> {
             "-o"
         ])
         .arg(&elf)
-        .arg("shared-open-drain.S")
+        .arg(if gpiote_guest {
+            "shared-gpiote.S"
+        } else {
+            "shared-open-drain.S"
+        })
         .status()
         .unwrap()
         .success());
@@ -193,7 +197,7 @@ fn read_probe_register(machine: &mut Machine<CortexM>, register: u8) -> u8 {
 
 #[test]
 fn guest_observes_two_independent_retained_drivers() {
-    let mut machine = machine(false, false);
+    let mut machine = machine(false, false, false);
     let mut last_count = 0;
     for (address, value, expected) in [
         (0x20, 0xff, 1),
@@ -222,7 +226,7 @@ fn guest_observes_two_independent_retained_drivers() {
 /// status-register read. This is a timing/event fixture, not a sensor model.
 #[test]
 fn guest_sees_autonomous_data_ready_without_polling() {
-    let mut m = machine(true, false);
+    let mut m = machine(true, false, false);
     m.run(Some(1_000)).unwrap();
     assert_eq!(m.bus.read_u32(0x20000100).unwrap(), 1, "initial pull-up");
     write_probe_register(&mut m, 0, 1);
@@ -263,7 +267,7 @@ fn guest_sees_autonomous_data_ready_without_polling() {
 /// guest reading the resolved pin. This fixture is not an LSM303AGR model.
 #[test]
 fn guest_observes_inverting_collector_and_direct_shared_driver() {
-    let mut m = machine(false, true);
+    let mut m = machine(false, true, false);
     for (address, value, expected) in [
         (0x20, 0xfe, 1),
         (0x21, 0xff, 1),
@@ -284,4 +288,38 @@ fn guest_observes_inverting_collector_and_direct_shared_driver() {
             "after {address:#04x}={value:#04x}"
         );
     }
+}
+
+/// Configure a falling-edge GPIOTE channel in the source-built guest after
+/// the shared line is already high. Its first assertion must be observable.
+#[test]
+fn guest_observes_first_gpiote_falling_edge_after_channel_enable() {
+    let mut m = machine(false, true, true);
+    m.run(Some(10_000)).unwrap();
+    assert_eq!(
+        m.bus.read_u32(0x20000100).unwrap(),
+        1,
+        "initial pulled-up input"
+    );
+    assert_eq!(m.bus.read_u32(0x20000108).unwrap(), 0, "no startup event");
+    write_probe(&mut m, 0x20, 0xff); // high source asserts through transistor
+    m.run(Some(10_000)).unwrap();
+    assert_eq!(m.bus.read_u32(0x20000100).unwrap(), 0);
+    assert_eq!(
+        m.bus.read_u32(0x20000108).unwrap(),
+        1,
+        "first falling event"
+    );
+    write_probe(&mut m, 0x20, 0xfe); // low source releases
+    m.run(Some(10_000)).unwrap();
+    assert_eq!(m.bus.read_u32(0x20000100).unwrap(), 1);
+    assert_eq!(m.bus.read_u32(0x20000108).unwrap(), 1, "rising edge masked");
+    write_probe(&mut m, 0x21, 0xfe); // direct driver pulls low
+    m.run(Some(10_000)).unwrap();
+    assert_eq!(m.bus.read_u32(0x20000100).unwrap(), 0);
+    assert_eq!(
+        m.bus.read_u32(0x20000108).unwrap(),
+        2,
+        "second falling event"
+    );
 }
