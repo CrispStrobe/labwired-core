@@ -169,6 +169,35 @@ impl<'a> AttachCtx<'a> {
                 result
             }
         };
+        // A listed role feeds an inverting open-collector stage on this
+        // board. It must also be a declared pulled-up open-drain binding.
+        let inverted_roles = match self.ext.config.get("inverting_collectors") {
+            None => Vec::new(),
+            Some(value) => {
+                let roles = value.as_sequence().ok_or_else(|| {
+                    anyhow!(
+                        "device '{}' inverting_collectors must be a list of output roles",
+                        self.ext.id
+                    )
+                })?;
+                let mut result = Vec::new();
+                for value in roles {
+                    let role = value.as_str().ok_or_else(|| {
+                        anyhow!(
+                            "device '{}' inverting_collectors contains a non-string role",
+                            self.ext.id
+                        )
+                    })?;
+                    if !open_drain_roles.contains(&role) || result.contains(&role) {
+                        return Err(anyhow!(
+                            "device '{}' inverting collector role '{}' must be unique and declared in open_drain_pullups", self.ext.id, role
+                        ));
+                    }
+                    result.push(role);
+                }
+                result
+            }
+        };
         for role in &desc.behavior.outputs {
             let key = desc
                 .behavior
@@ -214,19 +243,22 @@ impl<'a> AttachCtx<'a> {
                     .iter()
                     .any(|p| (p.addr, p.bit) == pad)
                     && !self.bus.device_open_drain_nets.contains_pad(pad);
-                self.bus
-                    .device_open_drain_nets
-                    .register(
-                        pad,
-                        crate::bus::open_drain::OpenDrainDriver {
-                            device_id: self.ext.id.clone(),
-                            role: role.clone(),
-                        },
-                        has_legacy,
-                    )
-                    .map_err(|err| {
-                        anyhow!("device '{}' output role '{}': {}", self.ext.id, role, err)
-                    })?;
+                let driver = crate::bus::open_drain::OpenDrainDriver {
+                    device_id: self.ext.id.clone(),
+                    role: role.clone(),
+                };
+                let result = if inverted_roles.contains(&role.as_str()) {
+                    self.bus
+                        .device_open_drain_nets
+                        .register_inverted(pad, driver, has_legacy)
+                } else {
+                    self.bus
+                        .device_open_drain_nets
+                        .register(pad, driver, has_legacy)
+                };
+                result.map_err(|err| {
+                    anyhow!("device '{}' output role '{}': {}", self.ext.id, role, err)
+                })?;
                 let level = self
                     .bus
                     .device_open_drain_nets
