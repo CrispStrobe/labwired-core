@@ -515,6 +515,17 @@ mod tests {
         assert!(!g.observe_gpio_change(&[(0, 7, 1)]));
     }
 
+    #[test]
+    fn toggle_channel_latches_each_reported_transition() {
+        let mut g = Nrf52Gpiote::default();
+        g.write_u32(OFF_CONFIG_0, 1 | (25 << 8) | (POLARITY_TOGGLE << 16))
+            .unwrap();
+        assert!(g.observe_gpio_change(&[(0, 25, 0)]));
+        assert!(g.observe_gpio_change(&[(0, 25, 1)]));
+        assert_eq!(g.pending_in_events.len(), 2);
+        assert!(!g.observe_gpio_change(&[(1, 25, 1)]), "other port ignored");
+    }
+
     fn port_cfg(id: &str, base: u64) -> PeripheralConfig {
         PeripheralConfig {
             id: id.to_string(),
