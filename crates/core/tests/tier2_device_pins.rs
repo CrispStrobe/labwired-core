@@ -330,6 +330,11 @@ fn pulled_up_open_drain_roles_share_the_real_gpio_pad() {
         ),
         None,
     );
+    run(&mut m, 10);
+    assert!(
+        pad(&mut m, "PC0"),
+        "the declared pull-up is visible before a device write"
+    );
     for (value, shared, independent) in [
         (0b1111_1111, true, true),
         (0b1111_1110, false, true),

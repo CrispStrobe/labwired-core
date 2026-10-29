@@ -68,6 +68,14 @@ impl SystemBus {
         if self.device_pin_pads.is_empty() {
             return;
         }
+        // A GPIO register may have ignored the initial attachment write while
+        // its clock was gated. Reapply the retained net levels on service; this
+        // is only active for explicitly opted-in nets.
+        let net_levels: Vec<_> = self.device_open_drain_nets.levels().collect();
+        for ((addr, bit), level) in net_levels {
+            let _ = crate::bus::DevicePins::drive_input_bit(self, addr, bit, level);
+            crate::bus::DevicePins::drive_idr_bit(self, addr, bit, level);
+        }
         let mut drives: Vec<(String, String, bool)> = Vec::new();
         for entry in self.peripherals.iter_mut() {
             entry.dev.drain_attached_pin_drives(&mut drives);

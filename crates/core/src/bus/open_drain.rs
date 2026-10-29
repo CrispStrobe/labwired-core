@@ -106,6 +106,12 @@ impl OpenDrainNets {
             .drive(driver, level)
     }
 
+    /// Snapshot resolved pad levels, for applying a pull-up after GPIO clocks
+    /// or reset state change without manufacturing a device transition.
+    pub fn levels(&self) -> impl Iterator<Item = ((u64, u8), bool)> + '_ {
+        self.nets.iter().map(|(&pad, net)| (pad, net.level()))
+    }
+
     /// Release every registered driver on every net and return the affected
     /// pads, so callers can apply the pull-up to their GPIO input registers.
     pub fn release_all(&mut self) -> impl Iterator<Item = (u64, u8)> + '_ {
