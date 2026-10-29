@@ -13,7 +13,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-fn machine(autonomous: bool) -> Machine<CortexM> {
+fn machine(autonomous: bool, invert_a: bool) -> Machine<CortexM> {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -69,6 +69,12 @@ fn machine(autonomous: bool) -> Machine<CortexM> {
             .into_iter()
             .collect(),
         });
+        if invert_a && id == "probe-a" {
+            manifest.external_devices.last_mut().unwrap().config.insert(
+                "inverting_collectors".into(),
+                serde_yaml::from_str("[P0]").unwrap(),
+            );
+        }
     }
     if autonomous {
         let desc = labwired_config::DeviceDescriptor::from_yaml(r#"
@@ -187,7 +193,7 @@ fn read_probe_register(machine: &mut Machine<CortexM>, register: u8) -> u8 {
 
 #[test]
 fn guest_observes_two_independent_retained_drivers() {
-    let mut machine = machine(false);
+    let mut machine = machine(false, false);
     let mut last_count = 0;
     for (address, value, expected) in [
         (0x20, 0xff, 1),
@@ -216,7 +222,7 @@ fn guest_observes_two_independent_retained_drivers() {
 /// status-register read. This is a timing/event fixture, not a sensor model.
 #[test]
 fn guest_sees_autonomous_data_ready_without_polling() {
-    let mut m = machine(true);
+    let mut m = machine(true, false);
     m.run(Some(1_000)).unwrap();
     assert_eq!(m.bus.read_u32(0x20000100).unwrap(), 1, "initial pull-up");
     write_probe_register(&mut m, 0, 1);
@@ -251,4 +257,31 @@ fn guest_sees_autonomous_data_ready_without_polling() {
         0,
         "next conversion asserts again"
     );
+}
+
+/// Test the explicit board adapter with host-driven device outputs and a
+/// guest reading the resolved pin. This fixture is not an LSM303AGR model.
+#[test]
+fn guest_observes_inverting_collector_and_direct_shared_driver() {
+    let mut m = machine(false, true);
+    for (address, value, expected) in [
+        (0x20, 0xfe, 1),
+        (0x21, 0xff, 1),
+        (0x20, 0xff, 0),
+        (0x21, 0xfe, 0),
+        (0x20, 0xfe, 0),
+        (0x21, 0xff, 1),
+        (0x21, 0xfe, 0),
+        (0x20, 0xff, 0),
+        (0x21, 0xff, 0),
+        (0x20, 0xfe, 1),
+    ] {
+        write_probe(&mut m, address, value);
+        m.run(Some(10_000)).unwrap();
+        assert_eq!(
+            m.bus.read_u32(0x20000100).unwrap(),
+            expected,
+            "after {address:#04x}={value:#04x}"
+        );
+    }
 }

@@ -405,8 +405,14 @@ alone does not implement sensor interrupts or establish hardware behavior.
 Placements opt in by listing output role names under `config.open_drain_pullups`;
 the list declares a pull-up on each connected pad. Unknown or duplicate
 roles and mixed legacy/open-drain output bindings on one pad are rejected.
-An unconnected output remains unconnected. The current resolver is digital;
-it does not model floating nets, analog behavior, delay or contention.
+An unconnected output remains unconnected. A placement may also list a subset
+of those roles in `config.inverting_collectors`: high at the device output
+then pulls the net low, and low releases it. This models only the logical
+inversion, assumes an initially low source, and leaves analog transistor
+behavior unmodeled. The [micro:bit V2.0 schematic, sheet 2](https://github.com/microbit-foundation/microbit-v2-hardware/blob/main/V2.00/MicroBit_V2.0.0_S_schematic.PDF)
+shows separate transistor stages for the LSM303AGR outputs and identifies the
+sensor outputs as not open drain. The current resolver is digital; it does not
+model floating nets, analog behavior, delay or contention.
 CPU reset does not itself reset external devices; device reset and output
 release must be qualified separately.
 

@@ -356,6 +356,74 @@ fn pulled_up_open_drain_roles_share_the_real_gpio_pad() {
 }
 
 #[test]
+fn inverting_collector_and_direct_output_share_a_gpio_pad() {
+    let mut m = machine(
+        placed(
+            "expander",
+            "pcf8574",
+            &[
+                ("p0_pin", serde_yaml::Value::from("PC0")),
+                ("p1_pin", serde_yaml::Value::from("PC0")),
+                (
+                    "open_drain_pullups",
+                    serde_yaml::from_str("[P0, P1]").unwrap(),
+                ),
+                (
+                    "inverting_collectors",
+                    serde_yaml::from_str("[P0]").unwrap(),
+                ),
+            ],
+        ),
+        None,
+    );
+    run(&mut m, 10);
+    assert!(pad(&mut m, "PC0"));
+    // P0 high asserts through the inverter; P1 low asserts directly.
+    for (value, expected) in [
+        (0xfe, true),
+        (0xff, false),
+        (0xfd, false),
+        (0xfc, false),
+        (0xfe, true),
+        (0xfc, false),
+        (0xff, false),
+        (0xfd, false),
+        (0xfe, true),
+    ] {
+        write_bytes(&mut m, &[value]);
+        run(&mut m, 10);
+        assert_eq!(pad(&mut m, "PC0"), expected, "source bits {value:#04x}");
+    }
+}
+
+#[test]
+fn collector_roles_must_be_unique_and_explicitly_open_drain() {
+    let system = repo_root().join("configs/systems/nucleo-l476rg.yaml");
+    for collector in ["[P1]", "[P0, P0]", "[42]", "true"] {
+        let mut manifest = SystemManifest::from_file(&system).unwrap();
+        let chip =
+            ChipDescriptor::from_file(system.parent().unwrap().join(&manifest.chip)).unwrap();
+        manifest.external_devices.push(placed(
+            "bad-collector",
+            "pcf8574",
+            &[
+                ("p0_pin", serde_yaml::Value::from("PC0")),
+                ("open_drain_pullups", serde_yaml::from_str("[P0]").unwrap()),
+                (
+                    "inverting_collectors",
+                    serde_yaml::from_str(collector).unwrap(),
+                ),
+            ],
+        ));
+        let error = match labwired_core::bus::SystemBus::from_config(&chip, &manifest) {
+            Ok(_) => panic!("invalid collector setting {collector} was accepted"),
+            Err(error) => format!("{error:#}"),
+        };
+        assert!(error.contains("collector"), "unexpected error: {error}");
+    }
+}
+
+#[test]
 fn open_drain_configuration_rejects_mixed_modes_in_both_role_orders() {
     let system = repo_root().join("configs/systems/nucleo-l476rg.yaml");
     for selected in ["[P0]", "[P1]"] {
