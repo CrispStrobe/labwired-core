@@ -1,0 +1,501 @@
+{
+  "contract_failures": [],
+  "matched": {
+    "atmega328p": {
+      "fixture": "atmega328p",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "atsamd21": {
+      "fixture": "nrf",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "atsamd21g18a": {
+      "fixture": "nrf",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "atsamd51": {
+      "fixture": "nrf",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "atsamd51-pybadge": {
+      "fixture": "nrf",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "efr32mg26": {
+      "fixture": "stm32",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "esp32": {
+      "fixture": "esp32",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "esp32c3": {
+      "fixture": "esp32c3",
+      "modes": [
+        "batch"
+      ]
+    },
+    "esp32c6": {
+      "fixture": "esp32c6",
+      "modes": [
+        "batch"
+      ]
+    },
+    "esp32s3": {
+      "fixture": "esp32s3",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "esp32s3-zero": {
+      "fixture": "esp32s3",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "imxrt1064": {
+      "fixture": "imxrt",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "mkw41z4": {
+      "fixture": "kinetis",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "nrf51822": {
+      "fixture": "nrf51-app",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "nrf52832": {
+      "fixture": "nrf",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "nrf52833": {
+      "fixture": "nrf",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "nrf52840": {
+      "fixture": "nrf",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "nrf5340": {
+      "fixture": "nrf",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "nrf54l15": {
+      "fixture": "nrf",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "nrf54lm20a": {
+      "fixture": "nrf",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "ra4m1": {
+      "fixture": "nrf",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "rp2040": {
+      "fixture": "rp2xxx",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "rp2350": {
+      "fixture": "rp2xxx",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "stm32f103": {
+      "fixture": "stm32",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "stm32f401": {
+      "fixture": "stm32",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "stm32f401cdu6": {
+      "fixture": "stm32",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "stm32f405": {
+      "fixture": "stm32",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "stm32f407": {
+      "fixture": "stm32",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "stm32f411ceu6": {
+      "fixture": "stm32",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "stm32f746": {
+      "fixture": "stm32",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "stm32f767": {
+      "fixture": "stm32",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "stm32g071": {
+      "fixture": "stm32",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "stm32g474re": {
+      "fixture": "stm32",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "stm32h563": {
+      "fixture": "stm32",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "stm32h735": {
+      "fixture": "stm32",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "stm32l073": {
+      "fixture": "stm32",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "stm32l476": {
+      "fixture": "stm32",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "stm32u575": {
+      "fixture": "stm32",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "stm32wb55": {
+      "fixture": "stm32",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    },
+    "stm32wba52": {
+      "fixture": "stm32",
+      "modes": [
+        "step",
+        "batch"
+      ]
+    }
+  },
+  "measured": {
+    "atmega328p": {
+      "batch": 6.4,
+      "step": 858.2
+    },
+    "atsamd21": {
+      "batch": 1.3,
+      "step": 847.8
+    },
+    "atsamd21g18a": {
+      "batch": 1.3,
+      "step": 847.8
+    },
+    "atsamd51": {
+      "batch": 1.3,
+      "step": 849.3
+    },
+    "atsamd51-pybadge": {
+      "batch": 1.3,
+      "step": 849.3
+    },
+    "efr32mg26": {
+      "batch": 2.5,
+      "step": 1912.0
+    },
+    "esp32": {
+      "batch": 1.2,
+      "step": 868.7
+    },
+    "esp32c3": {
+      "batch": 2.4
+    },
+    "esp32c6": {
+      "batch": 3.3
+    },
+    "esp32s3": {
+      "batch": 2.1,
+      "step": 909.2
+    },
+    "esp32s3-zero": {
+      "batch": 2.1,
+      "step": 909.2
+    },
+    "imxrt1064": {
+      "batch": 1.3,
+      "step": 847.8
+    },
+    "mkw41z4": {
+      "batch": 1.4,
+      "step": 879.1
+    },
+    "nrf51822": {
+      "batch": 1.9,
+      "step": 1324.0
+    },
+    "nrf52832": {
+      "batch": 1.8,
+      "step": 1322.7
+    },
+    "nrf52833": {
+      "batch": 2.0,
+      "step": 1385.0
+    },
+    "nrf52840": {
+      "batch": 1.9,
+      "step": 1384.5
+    },
+    "nrf5340": {
+      "batch": 2.0,
+      "step": 1319.8
+    },
+    "nrf54l15": {
+      "batch": 1.9,
+      "step": 1391.8
+    },
+    "nrf54lm20a": {
+      "batch": 2.0,
+      "step": 1486.2
+    },
+    "ra4m1": {
+      "batch": 1.3,
+      "step": 849.3
+    },
+    "rp2040": {
+      "batch": 1.4,
+      "step": 878.0
+    },
+    "rp2350": {
+      "batch": 1.5,
+      "step": 878.5
+    },
+    "stm32f103": {
+      "batch": 1.5,
+      "step": 914.9
+    },
+    "stm32f401": {
+      "batch": 1.5,
+      "step": 914.0
+    },
+    "stm32f401cdu6": {
+      "batch": 1.6,
+      "step": 915.5
+    },
+    "stm32f405": {
+      "batch": 1.5,
+      "step": 913.7
+    },
+    "stm32f407": {
+      "batch": 1.4,
+      "step": 914.3
+    },
+    "stm32f411ceu6": {
+      "batch": 1.8,
+      "step": 915.4
+    },
+    "stm32f746": {
+      "batch": 1.3,
+      "step": 847.7
+    },
+    "stm32f767": {
+      "batch": 1.6,
+      "step": 912.7
+    },
+    "stm32g071": {
+      "batch": 1.5,
+      "step": 913.6
+    },
+    "stm32g474re": {
+      "batch": 1.5,
+      "step": 913.6
+    },
+    "stm32h563": {
+      "batch": 1.7,
+      "step": 961.1
+    },
+    "stm32h735": {
+      "batch": 1.9,
+      "step": 911.7
+    },
+    "stm32l073": {
+      "batch": 1.5,
+      "step": 916.3
+    },
+    "stm32l476": {
+      "batch": 1.6,
+      "step": 915.7
+    },
+    "stm32u575": {
+      "batch": 1.7,
+      "step": 973.6
+    },
+    "stm32wb55": {
+      "batch": 1.6,
+      "step": 914.3
+    },
+    "stm32wba52": {
+      "batch": 1.4,
+      "step": 912.3
+    }
+  },
+  "never_measured": [],
+  "ok": false,
+  "regressions": [
+    {
+      "baseline": 1279.2,
+      "board": "nrf52832",
+      "delta": 0.034,
+      "measured": 1322.7,
+      "mode": "step"
+    },
+    {
+      "baseline": 1333.5,
+      "board": "nrf52833",
+      "delta": 0.0386,
+      "measured": 1385.0,
+      "mode": "step"
+    },
+    {
+      "baseline": 1333.2,
+      "board": "nrf52840",
+      "delta": 0.0385,
+      "measured": 1384.5,
+      "mode": "step"
+    },
+    {
+      "baseline": 1266.2,
+      "board": "nrf5340",
+      "delta": 0.0423,
+      "measured": 1319.8,
+      "mode": "step"
+    },
+    {
+      "baseline": 1330.3,
+      "board": "nrf54l15",
+      "delta": 0.0462,
+      "measured": 1391.8,
+      "mode": "step"
+    },
+    {
+      "baseline": 1417.7,
+      "board": "nrf54lm20a",
+      "delta": 0.0483,
+      "measured": 1486.2,
+      "mode": "step"
+    }
+  ],
+  "skipped": {},
+  "stale": [
+    {
+      "baseline": 1577.4,
+      "board": "nrf51822",
+      "delta": -0.1606,
+      "measured": 1324.0,
+      "mode": "step"
+    }
+  ],
+  "unmeasurable": [],
+  "waived": {}
+}
