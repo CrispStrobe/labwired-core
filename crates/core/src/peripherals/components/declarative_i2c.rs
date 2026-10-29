@@ -2280,6 +2280,40 @@ pub(crate) fn validate_descriptor(descriptor: &DeviceDescriptor) -> Result<()> {
         if !subscribed {
             continue;
         }
+        let start = spec
+            .registers
+            .iter()
+            .find(|reg| reg.name == ready.start_register)
+            .expect("validated data-ready start register");
+        if read_clears(start) {
+            bail!(
+                "subscribed data-ready start register '{}' cannot clear on read",
+                start.name
+            );
+        }
+        for update in &spec.updates {
+            let trigger = &update.trigger.read_complete;
+            if trigger.register.as_deref() == Some(start.name.as_str())
+                || trigger.pointer == Some(start.addr)
+            {
+                bail!(
+                    "read-complete update cannot modify subscribed data-ready start register '{}'",
+                    start.name
+                );
+            }
+        }
+        for table in &spec.indexed_tables {
+            if table.data_register == ready.start_register {
+                bail!(
+                    "indexed table '{}' cannot write subscribed data-ready start register '{}'",
+                    table.name,
+                    ready.start_register
+                );
+            }
+        }
+        // A self-clearing GO bit is different: it clears after the part has
+        // acted on the master's start write and is not a cancellation request.
+        // Preserve that established on-demand behavior.
         // FIFO count/watermark reflection also mutates raw register storage
         // without invoking the conversion lifecycle, including on a FIFO read.
         for fifo in &descriptor.behavior.fifos {
@@ -4859,6 +4893,78 @@ metadata:
         write8(&mut d, 0x00, 1);
         assert_eq!(read8(&mut d, 0x13), 7, "legacy read-driven readiness");
         assert_eq!(d.dr_state[0], DataReadyState::Ready);
+    }
+
+    #[test]
+    fn subscribed_start_register_rejects_implicit_writers_only_on_that_register() {
+        fn with_writer(yaml: &str, kind: &str, target: &str) -> String {
+            match kind {
+                "read_clear" => yaml.replace(
+                    &format!("name: {target}, addr:"),
+                    &format!("name: {target}, on_read: clear, addr:"),
+                ),
+                "update_name" | "update_pointer" => {
+                    let trigger = if kind == "update_name" {
+                        format!("register: {target}")
+                    } else if target == "SYSRANGE_START" {
+                        "pointer: 0x00".into()
+                    } else {
+                        "pointer: 0xC0".into()
+                    };
+                    yaml.replace(
+                        "    data_ready:\n",
+                        &format!("    updates:\n      - trigger: {{ read_complete: {{ {trigger} }} }}\n        action: {{ add_wrap: {{ add: -1, max: 1, reset: 0 }} }}\n    data_ready:\n"),
+                    )
+                }
+                "indexed" => yaml
+                    .replace(
+                        "    default_address: 0x29\n",
+                        "    default_address: 0x29\n    auto_increment: true\n",
+                    )
+                    .replace(
+                        "    data_ready:\n",
+                        &format!("      - {{ name: NVM_STROBE, addr: 0x30, width: 1, endian: be, access: rw, write_mask: 0x7f, reset: 0 }}\n    indexed_tables:\n      - {{ name: nvm, index_register: MODEL_ID, strobe_register: NVM_STROBE, strobe_mask: 0x80, data_register: {target} }}\n    data_ready:\n"),
+                    ),
+                _ => unreachable!(),
+            }
+        }
+        for kind in ["read_clear", "update_name", "update_pointer", "indexed"] {
+            let original = autonomous_fixture();
+            let subscribed = with_writer(&original, kind, "SYSRANGE_START");
+            assert_ne!(subscribed, original, "fixture mutation for {kind}");
+            let error = match GenericI2cDevice::from_yaml(&subscribed, 0) {
+                Ok(_) => panic!("subscribed start register accepted {kind}"),
+                Err(error) => format!("{error:#}"),
+            };
+            assert!(
+                error.contains("subscribed data-ready start register"),
+                "{error}"
+            );
+            let legacy = with_writer(TOF_FIXTURE, kind, "SYSRANGE_START");
+            GenericI2cDevice::from_yaml(&legacy, 0)
+                .expect("unsubscribed legacy writer stays valid");
+            let unrelated = with_writer(&original, kind, "MODEL_ID");
+            GenericI2cDevice::from_yaml(&unrelated, 0).expect("unrelated writer stays valid");
+        }
+    }
+
+    #[test]
+    fn self_clearing_start_is_a_completed_command_not_cancellation() {
+        let yaml = autonomous_fixture()
+            .replace(
+                "    default_address: 0x29\n",
+                "    default_address: 0x29\n    auto_increment: true\n",
+            )
+            .replace(
+                "name: SYSRANGE_START, addr: 0x00, width: 1, endian: be, access: rw, reset: 0x00 }",
+                "name: SYSRANGE_START, addr: 0x00, width: 1, endian: be, access: rw, reset: 0x00, self_clearing: 1 }",
+            );
+        let mut d = GenericI2cDevice::from_yaml(&yaml, 0).unwrap();
+        d.advance_time_us(1);
+        write8(&mut d, 0x00, 1);
+        assert_eq!(read8(&mut d, 0x00), 0, "the GO bit cleared after starting");
+        d.advance_time_us(33_000);
+        assert_eq!(d.take_pin_drives(), vec![("INT".to_string(), false)]);
     }
 
     #[test]
