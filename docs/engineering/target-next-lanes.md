@@ -758,3 +758,16 @@ active-game native/WASM performance remain separately scoped follow-ups. Deferre
 motion needs its own scoped evidence; the successful original campaign is not
 replayed to inspect it. The historical PyBadge module/glass contract remains
 unresolved: this authored software assembly does not establish physical accuracy.
+
+### M1 magnetometer DRDY successor (stacked candidate)
+
+The magnetometer-only candidate exposes native active-high DRDY through the
+selected V2.0 collector on P0.25. It depends on the open-drain and autonomous
+conversion/GPIOTE predecessor branches; merge those and refresh exact-head
+checks before this candidate. See the [sensor contract](microbit-lsm303agr.md)
+for source-backed pin, routing and high-byte acknowledgement, and explicit
+clock/reset/timing exclusions. The authored TWIM/GPIO/GPIOTE guest covers both
+scheduler intervals, but needs hosted execution before any qualification claim.
+Acceleration IRQ remains separate: the existing any-axis clear must first become
+an all-enabled-high-byte acknowledgement. Full M1, threshold IRQ, microphone,
+physical behavior and consumer adoption remain open.

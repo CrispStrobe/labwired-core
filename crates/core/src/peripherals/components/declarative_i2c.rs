@@ -4252,6 +4252,136 @@ metadata:
         assert_eq!(read8(&mut d, 0x67), 0x00, "idle stops new samples");
     }
 
+    // AN4825 Rev1 section 3.3.3: the magnetometer's native DRDY is
+    // active high and clears on any output HIGH byte, unlike acceleration.
+    fn mag_drdy() -> GenericI2cDevice {
+        let mut d = GenericI2cDevice::from_yaml(
+            include_str!("../../../../../configs/devices/lsm303agr_mag.yaml"),
+            0,
+        )
+        .unwrap();
+        d.advance_time_us(1);
+        d
+    }
+
+    fn mag_drives(d: &mut GenericI2cDevice) -> Vec<bool> {
+        d.take_pin_drives()
+            .into_iter()
+            .map(|(pin, level)| {
+                assert_eq!(pin, "DRDY");
+                level
+            })
+            .collect()
+    }
+
+    #[test]
+    fn lsm303agr_mag_drdy_autonomous_deadline_route_and_read_clear() {
+        let mut d = mag_drdy();
+        assert_eq!(read8(&mut d, 0x62), 0);
+        assert_eq!(read8(&mut d, 0x60), 3);
+        d.advance_time_us(20_000);
+        assert!(
+            mag_drives(&mut d).is_empty(),
+            "reset idle has no completion"
+        );
+        write8(&mut d, 0x62, 1);
+        write8(&mut d, 0x60, 0x8c); // continuous 100 Hz
+        assert_eq!(mag_drives(&mut d), vec![false]);
+        d.advance_time_us(9_999);
+        assert!(mag_drives(&mut d).is_empty());
+        d.advance_time_us(1);
+        assert_eq!(
+            mag_drives(&mut d),
+            vec![true],
+            "no status poll made the edge"
+        );
+        for register in [0x67, 0x64, 0x4f, 0x68, 0x6a, 0x6c] {
+            read8(&mut d, register);
+            assert!(
+                mag_drives(&mut d).is_empty(),
+                "{register:#x} must not acknowledge"
+            );
+        }
+        assert_eq!(read8(&mut d, 0x67) & 8, 8);
+        read8(&mut d, 0x69); // high-byte-only read is sufficient
+        assert_eq!(mag_drives(&mut d), vec![false]);
+        assert_eq!(read8(&mut d, 0x67) & 8, 0);
+        d.advance_time_us(10_000);
+        assert_eq!(mag_drives(&mut d), vec![true]);
+    }
+
+    #[test]
+    fn lsm303agr_mag_drdy_enable_after_ready_and_mask_preserve_sample() {
+        let mut d = mag_drdy();
+        write8(&mut d, 0x60, 0x8c);
+        assert_eq!(mag_drives(&mut d), vec![false]);
+        d.advance_time_us(10_000);
+        assert!(mag_drives(&mut d).is_empty(), "route reset disabled");
+        write8(&mut d, 0x62, 1);
+        assert_eq!(
+            mag_drives(&mut d),
+            vec![true],
+            "enable exposes completed sample"
+        );
+        write8(&mut d, 0x62, 0);
+        assert_eq!(mag_drives(&mut d), vec![false]);
+        assert_eq!(read8(&mut d, 0x67) & 8, 8, "mask is not acknowledgement");
+        write8(&mut d, 0x62, 1);
+        assert_eq!(mag_drives(&mut d), vec![true]);
+        // IEA controls threshold INT, not DRDY polarity (AN4825 3.6.1).
+        write8(&mut d, 0x63, 0xe4);
+        assert!(mag_drives(&mut d).is_empty());
+        read8(&mut d, 0x6b);
+        assert_eq!(mag_drives(&mut d), vec![false]);
+    }
+
+    #[test]
+    fn lsm303agr_mag_drdy_all_output_high_bytes_acknowledge() {
+        for high in [0x69, 0x6b, 0x6d] {
+            let mut d = mag_drdy();
+            write8(&mut d, 0x62, 1);
+            write8(&mut d, 0x60, 0x8c);
+            mag_drives(&mut d);
+            d.advance_time_us(10_000);
+            assert_eq!(mag_drives(&mut d), vec![true]);
+            read8(&mut d, high);
+            assert_eq!(mag_drives(&mut d), vec![false], "high {high:#x}");
+            assert_eq!(read8(&mut d, 0x67) & 8, 0);
+        }
+    }
+
+    #[test]
+    fn lsm303agr_mag_drdy_idle_cancels_pending_and_retains_ready_until_read() {
+        let mut d = mag_drdy();
+        write8(&mut d, 0x62, 1);
+        write8(&mut d, 0x60, 0x8c);
+        mag_drives(&mut d);
+        d.advance_time_us(9_999);
+        write8(&mut d, 0x60, 0x8f);
+        d.advance_time_us(20_000);
+        assert!(
+            mag_drives(&mut d).is_empty(),
+            "no stale completion after idle"
+        );
+        write8(&mut d, 0x60, 0x8c);
+        mag_drives(&mut d);
+        d.advance_time_us(10_000);
+        assert_eq!(mag_drives(&mut d), vec![true]);
+        write8(&mut d, 0x60, 0x8f);
+        assert!(mag_drives(&mut d).is_empty());
+        read8(&mut d, 0x6d);
+        assert_eq!(mag_drives(&mut d), vec![false]);
+        d.advance_time_us(20_000);
+        assert!(mag_drives(&mut d).is_empty());
+        assert_eq!(read8(&mut d, 0x67) & 8, 0);
+        let mut fresh = mag_drdy();
+        assert!(
+            mag_drives(&mut fresh).is_empty(),
+            "new external device resets idle"
+        );
+        assert_eq!(read8(&mut fresh, 0x62), 0);
+    }
+
     fn autonomous_fixture() -> String {
         TOF_FIXTURE.replace(
             "metadata:\n",

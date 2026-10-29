@@ -502,3 +502,7 @@ required-features = ["qemu-arm-system"]
 [[test]]
 name = "rv1103_linux_boot"
 required-features = ["qemu-arm-system", "event-scheduler"]
+
+[[test]]
+name = "microbit_v2_mag_drdy_guest"
+required-features = ["microbit-board-io-test"]
