@@ -627,7 +627,14 @@ also completed their finite qualifications. The reset leaves peripheral models
 live and retains its original one-Bus scope. [PR81](https://github.com/CrispStrobe/codal-samd/pull/81)
 separately qualifies completed-operation backing reopen across a fresh engine
 process and startup, with a specific lost-backing control in both profiles.
-Interrupted writes, power loss and complete peripheral reset remain unqualified.
+That completed-operation receipt does not qualify interrupted writes. Subsequent
+[Codal PR94](https://github.com/CrispStrobe/codal-samd/pull/94) separately qualified
+three actual NVM boundaries with strict old/old/new recovery across fresh
+processes in both profiles. Its [interruption contract](https://github.com/CrispStrobe/codal-samd/blob/master/docs/PXT-STORAGE-INTERRUPTION.md)
+retains that finite scope. Later native cases cover separately declared modeled
+deletion, compaction, clearing and torn-operation faults; physical power loss and
+complete peripheral reset remain unqualified. Do not backdate later evidence to
+the earlier reopen or one-Bus reset receipts.
 
 [PR80](https://github.com/CrispStrobe/codal-samd/pull/80) admits the reproducible
 actual generated USB1/WebUSB1 configuration. [PR83](https://github.com/CrispStrobe/codal-samd/pull/83)
@@ -637,16 +644,29 @@ bootloader. [Core256's explicit USB banks](samd51-usb-device-banks.md) and
 have their own finite source-built USB qualification; the default stub and
 existing production consumer selections retain their prior scope.
 
-The [remaining no-ASF implementation lanes](https://github.com/CrispStrobe/codal-samd/blob/master/docs/PXT-NO-ASF-NEXT-LANES.md)
-name the complete selected compiler/header/source graph, genuine pin/EIC/PWM,
-SERCOM/DMA/timer/audio replacements, real generated PXT template/program, actual
-CF2/HF2/startup, and endpoint/deallocation lifetime findings. Required features
-remain enabled; guessed layouts and success stubs cannot close a lane. Native
-Arcade, display/input/debugger, representative active native/WASM performance
-and installed adoption each retain their source/package/consumer gates. Keep
-the original inventories, notices, failures, captures, ACKs and pins unchanged.
+The [selected no-ASF lanes A–G](https://github.com/CrispStrobe/codal-samd/blob/master/docs/PXT-NO-ASF-NEXT-LANES.md)
+now record implemented compiler/link closure, pin/EIC/PWM and SERCOM/DMA/timer/
+audio adapters, generated native PXT programs, actual authored CF2 reads,
+USB/HF2/startup and endpoint lifetime cases. Required features remain enabled;
+this is the selected software profile, not blanket admission of other sources
+or physical-board behavior. Guessed layouts and successful return stubs still
+cannot close a source/runtime lane. Do not repeat completed implementation lanes.
 
-## Explicit native simulation assembly candidate — 2026-10-27
+[Codal PR103](https://github.com/CrispStrobe/codal-samd/pull/103) separately landed
+the selected display-clock and RAFFS v2 work after all four hosted fullboard
+profile/shard jobs passed. Its [storage status](https://github.com/CrispStrobe/codal-samd/blob/master/docs/PXT-STORAGE-NEXT-STEPS.md)
+and [CRC/migration contract](https://github.com/CrispStrobe/codal-samd/blob/master/docs/RAFFS-V2-CHECKSUM.md)
+preserve modeled-fault limits, the legacy negative control and format/downgrade
+constraints. Older finite fixtures keep their own engine/source selections.
+These later results do not silently update this repository's published package
+or an installed consumer. Normal project compile/import, debugger/GUI acceptance,
+representative active native/WASM performance and physical observations remain
+separate. Keep inventories, notices, original failures, captures, ACKs and pins.
+
+
+<a id="explicit-native-simulation-assembly-candidate--2026-10-27"></a>
+
+## Explicit native simulation assembly — qualified supplier baseline, 2026-10-29
 
 The [no-ASF SAMD51 assembly](samd-native-simulation-bundle.md) gives the existing
 qualified model subset a separate descriptor and registers the controller-memory
@@ -655,12 +675,32 @@ profiles, nineteen architectural/assembly controls passed, and the initial
 reset-inactive Ir baselines and unchanged 1× gate have source-bound measurements
 in that contract. These results do not establish active-game real-time speed.
 
-Next, in order: pass every enabled final-head check and land Core; build two
-byte-identical production engine packages and pass the existing legacy suite,
-selected motion windows and actual source-built Node game before immutable
-publication; then update the exact Lite pins and qualify actual Chromium and
-installed Tauri/WebKit execution under the
-[adoption contract](https://github.com/CrispStrobe/brickwright-lite/blob/f790d72bb99d52edffec3bc14d57aa1d1e0756f3/docs/SAMD-NATIVE-GAME-ADOPTION.md).
-The normal native compile/import/GUI route remains a separate follow-up.
-The historical PyBadge module/glass contract remains unresolved; do not infer
-physical accuracy from this explicitly authored software assembly.
+The supplier stages are complete for the frozen published baseline:
+
+- [Core PR262](https://github.com/CrispStrobe/labwired-core/pull/262) merged as
+  `3b655aef4085082152129c84849d4e2ad5004a7f` after its affected source, fleet,
+  selected guest and CLI qualification.
+- [BW PR711](https://github.com/CrispStrobe/bw-board/pull/711) merged as
+  `1f92a1aa85e808827a4c28b219bf11a572f07882` after its enabled checks and
+  independent original audit. [Producer40699886470](https://github.com/CrispStrobe/bw-board/actions/runs/40699886470)
+  passed two byte-identical production builds, the existing 125-test legacy suite
+  and three source-built Node game samples.
+- The [locked release](https://github.com/CrispStrobe/bw-board/releases/tag/labwired-wasm-3b655aef-locked)
+  is API-immutable and its nine asset digests match qualified originals. Preserve
+  its component notices, Node 22 workaround and the
+  [producer's stated limits](https://github.com/CrispStrobe/bw-board/blob/master/docs/SAMD-ENGINE-RELEASE-HANDOFF.md).
+  Motion was deferred in that campaign; publication is not motion qualification.
+
+Do not repeat those completed supplier stages or republish their originals.
+Later Core/Codal source changes do not automatically enter this frozen release.
+The active consumer qualification belongs to
+[Lite PR1533](https://github.com/CrispStrobe/brickwright-lite/pull/1533); consult its
+[current handoff](https://github.com/CrispStrobe/brickwright-lite/blob/main/docs/SAMD-NATIVE-GAME-HANDOFF.md)
+and [adoption contract](https://github.com/CrispStrobe/brickwright-lite/blob/main/docs/SAMD-NATIVE-GAME-ADOPTION.md)
+before any pin, dispatch or artifact acquisition. Do not create a duplicate lane
+or infer Chromium/installed acceptance merely from native/Node supplier results.
+Normal project compile/import/debugger/GUI-route adoption and representative
+active-game native/WASM performance remain separately scoped follow-ups. Deferred
+motion needs its own scoped evidence; the successful original campaign is not
+replayed to inspect it. The historical PyBadge module/glass contract remains
+unresolved: this authored software assembly does not establish physical accuracy.
