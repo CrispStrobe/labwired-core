@@ -382,12 +382,14 @@ Nordic GPIO/GPIOTE/SAADC scheduler, authored guests and
 `.github/workflows/microbit-board-io.yml`.
 
 Start from the selected LSM303AGR variant, not a silent FXOS8700 substitute.
-This remains unimplemented: the system explicitly leaves P0.25 unconnected and
-the selected sensor descriptors exclude interrupts. Do not close it by attaching
-two Boolean outputs to one pad: `bus/device_hooks.rs` currently applies each
-queued output directly, so the last writer can incorrectly release another
-asserted source. `DevicePinPad` in `bus/resident_device.rs` retains neither
-individual driver state nor an electrical mode.
+The combined sensor candidate wires selected DRDY outputs through explicit
+V2.0 collectors to P0.25; final-head hosted qualification is still required.
+Do not implement shared interrupts by attaching two ordinary Boolean outputs to one pad: legacy
+routes apply queued outputs directly, so the last writer can incorrectly
+release another asserted source. Explicitly selected pulled-up open-drain
+routes retain state per device instance and role; ordinary routes keep their
+existing behavior. The electrical candidate requires the qualification below
+before it supports any sensor interrupt claim.
 
 **First bounded implementation:** an opt-in shared open-drain resolver for
 resident-device outputs, plus only the required attachment/configuration seam.
@@ -401,14 +403,45 @@ Qualify affected bus behavior with source-bound hosted controls and an authored
 guest before claiming a newly selected device boundary. This electrical stage
 alone does not implement sensor interrupts or establish hardware behavior.
 
+Placements opt in by listing output role names under `config.open_drain_pullups`;
+the list declares a pull-up on each connected pad. Unknown or duplicate
+roles and mixed legacy/open-drain output bindings on one pad are rejected.
+An unconnected output remains unconnected. A placement may also list a subset
+of those roles in `config.inverting_collectors`: high at the device output
+then pulls the net low, and low releases it. This models only the logical
+inversion, assumes an initially low source, and leaves analog transistor
+behavior unmodeled. The [micro:bit V2.0 schematic, sheet 2](https://github.com/microbit-foundation/microbit-v2-hardware/blob/main/V2.00/MicroBit_V2.0.0_S_schematic.PDF)
+shows separate transistor stages for the LSM303AGR outputs and identifies the
+sensor outputs as not open drain. The current resolver is digital; it does not
+model floating nets, analog behavior, delay or contention.
+CPU reset does not itself reset external devices; device reset and output
+release must be qualified separately.
+
 **Then, separately:** freeze the selected sensor's register/output polarity,
 pin, routing, masking, clearing and clock ownership from its published source.
 TWIM advances attached-device time, but `declarative_i2c.rs` currently promotes
 data-ready state before I2C reads. An IRQ requires autonomous state promotion
 and output delivery while the I2C caller is idle, not host-forced data-ready or
-an extra read that manufactures an edge. Wire P0.25 only after those contracts
+an extra read that manufactures an edge. A declarative rule can subscribe with
+`on: { data_ready: NAME }` to a uniquely named I2C conversion; the device clock
+promotes that subscribed conversion at its deadline and fires the rule once.
+Conversions with no such listener retain the existing read-driven behavior.
+The event only reports conversion completion; a device descriptor must still
+model the documented output routing, polarity, masking, clearing and reset.
+A disabled in-flight conversion is cancelled, while an already-ready result
+continues to follow its declared clear rules. Combining these events with device
+timers is rejected until cross-clock ordering is implemented and qualified.
+Rule actions that write, set or clear a subscribed conversion's start register
+are also rejected: they bypass the master-write conversion lifecycle. This
+conservatively includes unrelated bits of that register. Unsubscribed
+read-driven conversions retain their existing behavior.
+Review selected sensor cancellation and clear semantics before using the event. Wire P0.25 only after those contracts
 are implemented and prove sensor assertion/deassertion and mask/reset through
-real GPIO/GPIOTE guest observations in both scheduler profiles. Subsequently
+real GPIO/GPIOTE guest observations in both scheduler profiles. Event-mode
+GPIOTE must recognize the first reported transition even if the selected input
+was already high before the channel was enabled. The authored shared-line
+guest checks falling-event counts, rising-edge masking and a second falling
+edge; it does not by itself qualify a CPU interrupt handler or sensor IRQ. Subsequently
 qualify RUNMIC bias/control,
 timed ADC sampling and speaker path with explicit units/cadence and bounded
 observations; no host-forced data-ready flags.
@@ -730,3 +763,33 @@ active-game native/WASM performance remain separately scoped follow-ups. Deferre
 motion needs its own scoped evidence; the successful original campaign is not
 replayed to inspect it. The historical PyBadge module/glass contract remains
 unresolved: this authored software assembly does not establish physical accuracy.
+
+### M1 combined shared-line and sensor DRDY candidate
+
+[Core PR268](https://github.com/CrispStrobe/labwired-core/pull/268) combines the
+open-drain foundation, autonomous conversion events, GPIOTE first-edge repair,
+and LSM303AGR accelerometer and magnetometer DRDY routing. The earlier stacked
+PR269 and PR270 are folded into that candidate; their closure does not mean the
+combined source landed on main. Refresh the PR head and main before acting.
+
+The [board run 40860731752](https://github.com/CrispStrobe/labwired-core/actions/runs/40860731752)
+passed on an earlier candidate, including sensor guests, synthetic nRF52840 DK
+and XIAO GPIOTE guests, both scheduler profiles, and active/polled throughput.
+It does not qualify later source or test changes. The subsequent
+[feature-off job](https://github.com/CrispStrobe/labwired-core/actions/runs/40860731556/job/123411849699)
+failed a timer fixture and the conditional-compilation ratchet; the candidate
+repairs the fixture and retains both guest profiles without raising the ratchet.
+Require fresh exact-head board and Rust CI, verify named profile observations and
+source/artifact bindings, and preserve the original failure.
+
+The earlier [Core Perf run](https://github.com/CrispStrobe/labwired-core/actions/runs/40838497588)
+failed its existing AVR step threshold; a candidate fast-path repair is not yet
+qualified. Require a fresh exact-head performance result against the unchanged
+baseline. Recompute watched nRF52840 and XIAO model digests after affected guest
+qualification and obtain explicit human acknowledgement before updating either
+silicon-verified digest; retain ACK dates, expiry, captures and watch lists.
+After all enabled final-head checks succeed, review the exact merge parents and
+resulting tree, then merge by matched head. Update this handoff with the actual
+result. See the [sensor contract](microbit-lsm303agr.md) for the selected source,
+routing, acknowledgement and exclusions. Threshold IRQ, microphone/audio,
+physical behavior and consumer adoption remain separate work.

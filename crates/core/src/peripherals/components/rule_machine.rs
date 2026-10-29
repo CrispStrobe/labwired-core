@@ -869,6 +869,7 @@ impl RuleMachine {
             }
             (Event::Read { register: a }, Event::Read { register: b }) => a == b,
             (Event::Timer { name: a }, Event::Timer { name: b }) => a == b,
+            (Event::DataReady { name: a }, Event::DataReady { name: b }) => a == b,
             (Event::Input { key: a }, Event::Input { key: b }) => a == b,
             (
                 Event::Pin {

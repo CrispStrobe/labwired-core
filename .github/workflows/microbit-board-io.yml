@@ -4,8 +4,15 @@ on:
   pull_request:
     paths:
       - 'configs/chips/nrf52833.yaml'
+      - 'configs/chips/nrf52840.yaml'
+      - 'configs/peripherals/nrf52840/**'
+      - 'configs/systems/nrf52840-dk.yaml'
+      - 'configs/systems/seeed-xiao-nrf52840-sense.yaml'
+      - 'crates/core/tests/nrf52840_gpiote_guest.rs'
       - 'configs/peripherals/nrf52833/**'
       - 'configs/systems/microbit-v2.yaml'
+      - 'configs/devices/lsm303agr_mag.yaml'
+      - 'configs/devices/lsm303agr_accel.yaml'
       - 'crates/core/src/**'
       - 'crates/core/Cargo.toml'
       - 'crates/wasm/src/inputs.rs'
@@ -17,8 +24,15 @@ on:
     branches: [main]
     paths:
       - 'configs/chips/nrf52833.yaml'
+      - 'configs/chips/nrf52840.yaml'
+      - 'configs/peripherals/nrf52840/**'
+      - 'configs/systems/nrf52840-dk.yaml'
+      - 'configs/systems/seeed-xiao-nrf52840-sense.yaml'
+      - 'crates/core/tests/nrf52840_gpiote_guest.rs'
       - 'configs/peripherals/nrf52833/**'
       - 'configs/systems/microbit-v2.yaml'
+      - 'configs/devices/lsm303agr_mag.yaml'
+      - 'configs/devices/lsm303agr_accel.yaml'
       - 'crates/core/src/**'
       - 'crates/core/Cargo.toml'
       - 'crates/wasm/src/inputs.rs'
@@ -60,18 +74,29 @@ jobs:
         run: |
           python3 scripts/perf/test_microbit_active_report.py
           python3 scripts/perf/test_microbit_motion_report.py
+          python3 scripts/perf/test_microbit_sensor_guest_flow.py
           cargo test --release -p labwired-core --features microbit-board-io-test \
             --test nrf52833_config --test nrf52833_gpio_geometry \
             --test microbit_v2_led_matrix --test microbit_v2_board_io_guest \
-            --test microbit_v2_motion_io_guest --test peripheral_kit_gate
+            --test microbit_v2_motion_io_guest --test microbit_v2_open_drain_guest --test microbit_v2_mag_drdy_guest --test microbit_v2_sensor_drdy_guest --test nrf52840_gpiote_guest --test peripheral_kit_gate -- --nocapture
           cargo test --release -p labwired-core --features microbit-board-io-test \
             --test microbit_v2_adc_scan_guest
           cargo test --release -p labwired-core --features microbit-board-io-test \
             --test nrf52_easydma_tick512_fidelity
-          for suite in chip_map::tests nrf52::gpiote::tests nrf52::saadc::tests gpio::tests gpio::nrf_pull_tests gpio::nrf_pull_mask_tests gpio::routing_tests lsm303agr_halves_are_declarative_at_their_silicon_addresses cpu::cortex_m::t16_countdown_tests cpu::cortex_m; do
+          for suite in chip_map::tests nrf52::gpiote::tests nrf52::saadc::tests gpio::tests gpio::nrf_pull_tests gpio::nrf_pull_mask_tests gpio::routing_tests lsm303agr_halves_are_declarative_at_their_silicon_addresses lsm303agr_mag_drdy_ lsm303agr_accel_drdy_ cpu::cortex_m::t16_countdown_tests cpu::cortex_m; do
             cargo test --release -p labwired-core --features microbit-board-io-test \
               --lib "$suite"
           done
+      - name: Prove sensor guests without event scheduler
+        env:
+          LABWIRED_REQUIRE_GPIOTE_FEATURE_OFF: '1'
+          LABWIRED_REQUIRE_SENSOR_FEATURE_OFF: '1'
+          LABWIRED_GUEST_ARTIFACT_DIR: ${{ github.workspace }}/feature-off-sensor-guests
+        run: |
+          cargo test --release -p labwired-core --no-default-features \
+            --features microbit-sensor-guest-test,nrf52-gpiote-guest-test \
+            --test microbit_v2_mag_drdy_guest --test microbit_v2_sensor_drdy_guest --test nrf52840_gpiote_guest \
+            -- --nocapture
       - name: Prove native WASM analog input routing
         run: cargo test --release -p labwired-wasm --lib adc_routing_tests
       - name: Measure active board throughput
@@ -116,3 +141,4 @@ jobs:
             microbit-motion-throughput.json
             motion-guest-artifacts/*.elf
             adc-guest-artifacts/*.elf
+            feature-off-sensor-guests/*.elf

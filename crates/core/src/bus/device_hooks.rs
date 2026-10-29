@@ -64,9 +64,25 @@ impl SystemBus {
     /// wider path into the peripheral table.
     ///
     /// Early-outs on a bus with no such device, which is almost every bus.
+    #[inline]
     pub(crate) fn service_device_pin_drives(&mut self) {
-        if self.device_pin_pads.is_empty() {
-            return;
+        if !self.device_pin_pads.is_empty() {
+            self.service_bound_device_pin_drives();
+        }
+    }
+
+    // Keep the common path for systems without device-output bindings small.
+    // Bound systems still service their outputs on every tick.
+    #[cold]
+    #[inline(never)]
+    fn service_bound_device_pin_drives(&mut self) {
+        // A GPIO register may have ignored the initial attachment write while
+        // its clock was gated. Reapply the retained net levels on service; this
+        // is only active for explicitly opted-in nets.
+        let net_levels: Vec<_> = self.device_open_drain_nets.levels().collect();
+        for ((addr, bit), level) in net_levels {
+            let _ = crate::bus::DevicePins::drive_input_bit(self, addr, bit, level);
+            crate::bus::DevicePins::drive_idr_bit(self, addr, bit, level);
         }
         let mut drives: Vec<(String, String, bool)> = Vec::new();
         for entry in self.peripherals.iter_mut() {
@@ -86,6 +102,17 @@ impl SystemBus {
                 // placement did not connect. That is a real board, not a bug:
                 // the rule still ran, the line simply goes nowhere.
                 continue;
+            };
+            let level = if self
+                .device_open_drain_nets
+                .contains_pad((pad.addr, pad.bit))
+            {
+                let driver = crate::bus::open_drain::OpenDrainDriver { device_id, role };
+                self.device_open_drain_nets
+                    .drive((pad.addr, pad.bit), &driver, level)
+                    .expect("open-drain pad bindings register every driver")
+            } else {
+                level
             };
             // ⚠️ BOTH SEAMS — see `rotary_encoder.rs`. `drive_idr_bit` lands
             // only where a store to the input register lands (STM32);

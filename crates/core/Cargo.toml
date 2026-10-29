@@ -77,8 +77,11 @@ default = []
 # Experimental embedded Cortex-A7 CPU. See docs/qemu-arm-core.md for scope.
 qemu-arm = ["dep:unicorn-engine"]
 qemu-arm-system = ["dep:labwired-arm-system", "labwired-arm-system/native"]
-# Source-built executable micro:bit board qualification; requires ARM GCC.
-microbit-board-io-test = ["event-scheduler"]
+# Source-built sensor guest qualification; requires ARM GCC, but does not
+# select an engine scheduler. The board suite retains its scheduler profile.
+microbit-sensor-guest-test = []
+nrf52-gpiote-guest-test = []
+microbit-board-io-test = ["event-scheduler", "microbit-sensor-guest-test", "nrf52-gpiote-guest-test"]
 # Silent-path census (`crates/core/src/census.rs`) — MEASUREMENT ONLY.
 #
 # Counts three paths on which the simulator can be wrong and still report
@@ -478,6 +481,10 @@ name = "world_esp32c3_ble_gatt"
 required-features = ["event-scheduler"]
 
 [[test]]
+name = "microbit_v2_open_drain_guest"
+required-features = ["microbit-board-io-test"]
+
+[[test]]
 name = "microbit_v2_board_io_guest"
 required-features = ["microbit-board-io-test"]
 
@@ -498,3 +505,15 @@ required-features = ["qemu-arm-system"]
 [[test]]
 name = "rv1103_linux_boot"
 required-features = ["qemu-arm-system", "event-scheduler"]
+
+[[test]]
+name = "microbit_v2_mag_drdy_guest"
+required-features = ["microbit-sensor-guest-test"]
+
+[[test]]
+name = "microbit_v2_sensor_drdy_guest"
+required-features = ["microbit-sensor-guest-test"]
+
+[[test]]
+name = "nrf52840_gpiote_guest"
+required-features = ["nrf52-gpiote-guest-test"]

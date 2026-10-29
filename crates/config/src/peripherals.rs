@@ -989,6 +989,15 @@ pub struct DataReady {
     /// once the conversion completes.
     #[serde(default)]
     pub clear_on_read: Vec<String>,
+    /// Alternative acknowledgement: every enabled result must complete a read.
+    /// Entries are independently remembered until all have been read, in any
+    /// order. Enable bits are captured from start_register when a conversion
+    /// starts; an active start write rearms and clears acknowledgement memory.
+    /// Idle writes retain completed results and their enabled set. This is an
+    /// explicit internal retention contract; devices must scope reconfiguration
+    /// claims separately. Cannot combine with clear_on_read.
+    #[serde(default)]
+    pub clear_on_read_all: Vec<DataReadyRead>,
     /// Registers whose WRITE clears the status bit — the write-1-to-clear
     /// interrupt idiom.
     ///
@@ -1005,6 +1014,19 @@ pub struct DataReady {
     /// would be a guess about which encoding a given part uses.
     #[serde(default)]
     pub clear_on_write: Vec<String>,
+}
+
+/// One result in an all-enabled-result acknowledgement group.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DataReadyRead {
+    pub register: String,
+    /// ANY matching bit enables this result; zero means always enabled.
+    #[serde(default)]
+    pub enable_mask: u32,
+    /// Optional per-result ready bit, cleared when this result is read.
+    /// The parent ready_mask remains until the final enabled result is read.
+    #[serde(default)]
+    pub ready_mask: u32,
 }
 
 /// **Byte-addressable register file** for the `register_file` I²C mode: `size`
