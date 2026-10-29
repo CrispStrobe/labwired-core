@@ -36,6 +36,7 @@ mod mmio_activity;
 mod mmio_words;
 mod motors;
 mod observed_device;
+pub mod open_drain;
 pub(crate) mod part_pack;
 mod pms;
 mod policy;
