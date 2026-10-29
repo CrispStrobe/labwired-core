@@ -2280,6 +2280,26 @@ pub(crate) fn validate_descriptor(descriptor: &DeviceDescriptor) -> Result<()> {
         if !subscribed {
             continue;
         }
+        // FIFO count/watermark reflection also mutates raw register storage
+        // without invoking the conversion lifecycle, including on a FIFO read.
+        for fifo in &descriptor.behavior.fifos {
+            let count_targets_start = fifo
+                .count
+                .as_ref()
+                .is_some_and(|count| count.register == ready.start_register);
+            let watermark_targets_start = fifo
+                .watermark
+                .as_ref()
+                .is_some_and(|watermark| watermark.set.register == ready.start_register);
+            if count_targets_start || watermark_targets_start {
+                bail!(
+                    "FIFO '{}' cannot reflect into start register '{}' of subscribed data-ready conversion '{}'",
+                    fifo.name,
+                    ready.start_register,
+                    ready.name
+                );
+            }
+        }
         for rule in &descriptor.behavior.rules {
             for action in &rule.actions {
                 let register = match action {
@@ -4839,6 +4859,48 @@ metadata:
         write8(&mut d, 0x00, 1);
         assert_eq!(read8(&mut d, 0x13), 7, "legacy read-driven readiness");
         assert_eq!(d.dr_state[0], DataReadyState::Ready);
+    }
+
+    #[test]
+    fn subscribed_start_register_rejects_fifo_reflection_without_changing_legacy() {
+        fn add_fifo(yaml: &str, field: &str, watermark: bool) -> String {
+            let yaml = yaml
+                .replace(
+                    "name: SYSRANGE_START, addr: 0x00, width: 1, endian: be, access: rw, reset: 0x00 }",
+                    "name: SYSRANGE_START, addr: 0x00, width: 1, endian: be, access: rw, reset: 0x00, bits: [{ name: GO, shift: 0 }] }",
+                )
+                .replace(
+                    "name: MODEL_ID, addr: 0xC0, width: 1, endian: be, access: r, reset: 0xEE }",
+                    "name: MODEL_ID, addr: 0xC0, width: 1, endian: be, access: r, reset: 0xEE, bits: [{ name: GO, shift: 0 }] }",
+                );
+            let reflection = if watermark {
+                format!("watermark: {{ entries: 1, set: {field} }}")
+            } else {
+                format!("count: {field}")
+            };
+            yaml.replace(
+                "metadata:\n",
+                &format!(
+                    "  fifos:\n    - {{ name: samples, depth: 4, {reflection} }}\nmetadata:\n"
+                ),
+            )
+        }
+        for watermark in [false, true] {
+            let subscribed = add_fifo(&autonomous_fixture(), "SYSRANGE_START.GO", watermark);
+            let error = match GenericI2cDevice::from_yaml(&subscribed, 0) {
+                Ok(_) => panic!("subscribed start register accepted FIFO reflection"),
+                Err(error) => format!("{error:#}"),
+            };
+            assert!(
+                error.contains("cannot reflect into start register"),
+                "{error}"
+            );
+            let legacy = add_fifo(TOF_FIXTURE, "SYSRANGE_START.GO", watermark);
+            GenericI2cDevice::from_yaml(&legacy, 0).expect("unsubscribed legacy FIFO stays valid");
+            let unrelated = add_fifo(&autonomous_fixture(), "MODEL_ID.GO", watermark);
+            GenericI2cDevice::from_yaml(&unrelated, 0)
+                .expect("reflection into an unrelated register stays valid");
+        }
     }
 
     #[test]
