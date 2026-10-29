@@ -205,12 +205,23 @@ impl<'a> AttachCtx<'a> {
                 .get(role)
                 .cloned()
                 .unwrap_or_else(|| role.clone());
-            let Some(label) = self.ext.config.get(&key).and_then(|v| {
+            let configured = self.ext.config.get(&key);
+            let label = configured.and_then(|v| {
                 v.as_str()
                     .map(|s| s.to_string())
                     .or_else(|| v.as_i64().map(|n| n.to_string()))
                     .or_else(|| v.as_u64().map(|n| n.to_string()))
-            }) else {
+            });
+            if configured.is_some() && label.is_none() && open_drain_roles.contains(&role.as_str())
+            {
+                return Err(anyhow!(
+                    "device '{}' open-drain output role '{}' has invalid pad value for '{}'",
+                    self.ext.id,
+                    role,
+                    key
+                ));
+            }
+            let Some(label) = label else {
                 continue;
             };
             let (addr, bit) =
@@ -597,5 +608,42 @@ mod tests {
         let ext = ext_with_moisture(serde_yaml::Value::from(25));
         let ctx = AttachCtx::new(&mut bus, &ext);
         assert_eq!(ctx.config_f64("moisture"), Some(25.0));
+    }
+
+    #[test]
+    fn opted_in_output_rejects_invalid_present_pad_but_preserves_unwired_and_legacy() {
+        let descriptor = labwired_config::DeviceDescriptor::from_yaml(
+            "type: output_probe\nbehavior:\n  primitive: i2c_device\n  outputs: [INT]\n  output_pins: { INT: int_pin }\n",
+        )
+        .unwrap();
+        for yaml in ["true", "null", "1.5", "[P0.25]", "{ pin: P0.25 }"] {
+            let value: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
+            let mut ext = ext_with_moisture(value.clone());
+            ext.config.insert("int_pin".into(), value);
+            ext.config.insert(
+                "open_drain_pullups".into(),
+                serde_yaml::from_str("[INT]").unwrap(),
+            );
+            let mut bus = SystemBus::new();
+            let error = AttachCtx::new(&mut bus, &ext)
+                .bind_output_pins(&descriptor)
+                .unwrap_err();
+            assert!(error.to_string().contains("invalid pad value"), "{error}");
+
+            ext.config.remove("open_drain_pullups");
+            let mut bus = SystemBus::new();
+            AttachCtx::new(&mut bus, &ext)
+                .bind_output_pins(&descriptor)
+                .expect("legacy malformed value keeps its existing unbound behavior");
+        }
+        let mut ext = ext_with_moisture(serde_yaml::Value::Null);
+        ext.config.insert(
+            "open_drain_pullups".into(),
+            serde_yaml::from_str("[INT]").unwrap(),
+        );
+        let mut bus = SystemBus::new();
+        AttachCtx::new(&mut bus, &ext)
+            .bind_output_pins(&descriptor)
+            .expect("an absent pad binding remains valid and unconnected");
     }
 }
