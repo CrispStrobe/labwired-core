@@ -40,7 +40,7 @@ magnetic field in µT. They default to zero; no gravity or heading is invented.
 The configured ODR value (every rate paces at 100 Hz), a fixed sampling grid
 (the period restarts from each output read), single-shot drop to idle,
 overrun bits, block-data-update latching, resolution truncation of the low
-bits, FIFO, acceleration and threshold interrupts,
+bits, FIFO, threshold interrupts,
 click/orientation detection, filters, self-test, temperature and hard-iron
 offset subtraction. Each descriptor header lists these.
 
@@ -71,7 +71,7 @@ bit 0 from the threshold route at bit 6.
 The selected board routes this native output through the explicit inverting
 collector to pulled-up P0.25. It follows the
 [Foundation V2.0 schematic, sheet 2, U6 pin 7 and T7](https://github.com/microbit-foundation/microbit-v2-hardware/blob/main/V2.00/MicroBit_V2.0.0_S_schematic.PDF).
-Acceleration and KL27 participants are still absent. The native sensor output
+Acceleration uses its own collector as described below; KL27 remains absent. The native sensor output
 is not open drain. Digital inversion does not model analog transistor behavior.
 
 This candidate is bounded to continuous 100 Hz, threshold routing off, and a
@@ -90,7 +90,34 @@ It covers masked completion, enable-after-ready, read-clear, remasking,
 recurrence and idle cancellation in scheduler intervals 1 and 512. Hosted
 execution is required before qualification; source presence alone is not proof.
 
-Acceleration requires a separate acknowledgement prerequisite: AN4825 section
-4.2.1, page 26 requires the high bytes of **all enabled axes** before clearing
-DRDY. The current acceleration descriptor's any-axis status clear is an
-approximation and must not be reused for its IRQ.
+## Acceleration DRDY successor
+
+[ST AN4825 Rev 1, section 4.2.1, page 26](https://www.st.com/resource/en/application_note/an4825-ultracompact-highperformance-ecompass-module-based-on-the-lsm303agr-stmicroelectronics.pdf)
+requires high-byte reads of every enabled acceleration channel to acknowledge
+DRDY. The opt-in `clear_on_read_all` group remembers each enabled result,
+clears its per-axis ready flag, and clears aggregate ZYXDA after the final
+required high byte. Disabled axes and duplicate reads cannot acknowledge another
+axis. Reads before completion cannot acknowledge or postpone a future sample.
+A new active CTRL_REG1_A write resets the acknowledgement group. Existing
+any-result devices retain their earlier lifecycle. Unknown/duplicate group
+members, overlapping or oversized status masks, impossible enable bits, groups
+above 32 entries and combining any/all read acknowledgements are rejected.
+
+`CTRL_REG3_A.I1_DRDY1` routes data-ready to native INT1 (U6 pin 12, T5).
+`CTRL_REG6_A.H_LACTIVE` selects polarity, default active high, per the
+[datasheet Rev 11, sections 8.8 and 8.11](https://www.st.com/resource/en/datasheet/lsm303agr.pdf).
+Active-low inactive high therefore pulls the board collector low; tests must
+observe the board inversion instead of assuming a falling data-ready edge in
+both polarities. Route changes expose completed data and do not acknowledge it.
+The same fixed 10 ms, read-restarted timing and live output limitations apply;
+other interrupt generators, software reboot, FIFO and arbitrary ODR accuracy
+remain outside the candidate boundary.
+
+`microbit_v2_sensor_drdy_guest` configures both actual selected sensor
+models via TWIM0/EasyDMA, then observes the shared pad and GPIOTE events.
+Its intervals 1/512 controls cover two asserted participants, partial/repeated
+high-byte reads, low-byte reads, masking, recurrence, X/Y-only conversion and
+active-low board polarity. Core controls cover every nonempty axis subset,
+rearm/cancellation, reset idle, invalid groups and four actual-descriptor
+mutants (any-axis clear, early IRQ clear, lost route mask and lost polarity).
+These controls require hosted execution before qualification.

@@ -7,6 +7,7 @@ on:
       - 'configs/peripherals/nrf52833/**'
       - 'configs/systems/microbit-v2.yaml'
       - 'configs/devices/lsm303agr_mag.yaml'
+      - 'configs/devices/lsm303agr_accel.yaml'
       - 'crates/core/src/**'
       - 'crates/core/Cargo.toml'
       - 'crates/wasm/src/inputs.rs'
@@ -21,6 +22,7 @@ on:
       - 'configs/peripherals/nrf52833/**'
       - 'configs/systems/microbit-v2.yaml'
       - 'configs/devices/lsm303agr_mag.yaml'
+      - 'configs/devices/lsm303agr_accel.yaml'
       - 'crates/core/src/**'
       - 'crates/core/Cargo.toml'
       - 'crates/wasm/src/inputs.rs'
@@ -65,12 +67,12 @@ jobs:
           cargo test --release -p labwired-core --features microbit-board-io-test \
             --test nrf52833_config --test nrf52833_gpio_geometry \
             --test microbit_v2_led_matrix --test microbit_v2_board_io_guest \
-            --test microbit_v2_motion_io_guest --test microbit_v2_open_drain_guest --test microbit_v2_mag_drdy_guest --test peripheral_kit_gate
+            --test microbit_v2_motion_io_guest --test microbit_v2_open_drain_guest --test microbit_v2_mag_drdy_guest --test microbit_v2_sensor_drdy_guest --test peripheral_kit_gate
           cargo test --release -p labwired-core --features microbit-board-io-test \
             --test microbit_v2_adc_scan_guest
           cargo test --release -p labwired-core --features microbit-board-io-test \
             --test nrf52_easydma_tick512_fidelity
-          for suite in chip_map::tests nrf52::gpiote::tests nrf52::saadc::tests gpio::tests gpio::nrf_pull_tests gpio::nrf_pull_mask_tests gpio::routing_tests lsm303agr_halves_are_declarative_at_their_silicon_addresses lsm303agr_mag_drdy_ cpu::cortex_m::t16_countdown_tests cpu::cortex_m; do
+          for suite in chip_map::tests nrf52::gpiote::tests nrf52::saadc::tests gpio::tests gpio::nrf_pull_tests gpio::nrf_pull_mask_tests gpio::routing_tests lsm303agr_halves_are_declarative_at_their_silicon_addresses lsm303agr_mag_drdy_ lsm303agr_accel_drdy_ cpu::cortex_m::t16_countdown_tests cpu::cortex_m; do
             cargo test --release -p labwired-core --features microbit-board-io-test \
               --lib "$suite"
           done

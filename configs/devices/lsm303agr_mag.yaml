@@ -115,7 +115,7 @@ metadata:
       ty: int
       doc: "7-bit slave address. Defaults to 0x1E."
     - name: drdy_pin
-      ty: string
+      ty: str
       doc: "Optional native active-high INT_MAG/DRDY output pad; board inversion is separate."
   inputs:
     - { key: x, label: "X", unit: "µT", min: -4915.2, max: 4915.2, default: 0.0 }

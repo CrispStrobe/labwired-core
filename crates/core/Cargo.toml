@@ -506,3 +506,7 @@ required-features = ["qemu-arm-system", "event-scheduler"]
 [[test]]
 name = "microbit_v2_mag_drdy_guest"
 required-features = ["microbit-board-io-test"]
+
+[[test]]
+name = "microbit_v2_sensor_drdy_guest"
+required-features = ["microbit-board-io-test"]

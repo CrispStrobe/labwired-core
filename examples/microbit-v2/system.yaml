@@ -14,10 +14,14 @@ chip: "../../configs/chips/nrf52833.yaml"
 external_devices:
   # Selected LSM303AGR variant: 0x19 accelerometer / 0x1e magnetometer.
   # Live x/y/z inputs default to zero. Magnetometer DRDY uses the V2.0
-  # inverting collector on P0.25; acceleration IRQ remains unmodelled.
+  # inverting collectors on P0.25; the KL27 participant remains absent.
   - id: "accelerometer"
     type: "lsm303agr_accel"
     connection: "i2c0"
+    config:
+      int1_pin: "P0.25"
+      open_drain_pullups: [INT1]
+      inverting_collectors: [INT1]
   - id: "magnetometer"
     type: "lsm303agr_mag"
     connection: "i2c0"
