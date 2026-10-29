@@ -382,8 +382,34 @@ Nordic GPIO/GPIOTE/SAADC scheduler, authored guests and
 `.github/workflows/microbit-board-io.yml`.
 
 Start from the selected LSM303AGR variant, not a silent FXOS8700 substitute.
-Wire shared open-drain P0.25 IRQ and prove sensor assertion/deassertion,
-mask/reset behavior through the guest. Subsequently qualify RUNMIC bias/control,
+This remains unimplemented: the system explicitly leaves P0.25 unconnected and
+the selected sensor descriptors exclude interrupts. Do not close it by attaching
+two Boolean outputs to one pad: `bus/device_hooks.rs` currently applies each
+queued output directly, so the last writer can incorrectly release another
+asserted source. `DevicePinPad` in `bus/resident_device.rs` retains neither
+individual driver state nor an electrical mode.
+
+**First bounded implementation:** an opt-in shared open-drain resolver for
+resident-device outputs, plus only the required attachment/configuration seam.
+Retain state by device instance and output role; either asserted driver holds
+the line low, releasing one cannot override the other, and both released yield
+the explicitly declared pulled-high level. Preserve existing output behavior
+for every unselected route. Require reversed-device-order, release/reset,
+unwired-output and unrelated-pin controls, reject an unsupported/undeclared
+new-mode configuration, and detect a meaningful last-writer-wins mutation.
+Qualify affected bus behavior with source-bound hosted controls and an authored
+guest before claiming a newly selected device boundary. This electrical stage
+alone does not implement sensor interrupts or establish hardware behavior.
+
+**Then, separately:** freeze the selected sensor's register/output polarity,
+pin, routing, masking, clearing and clock ownership from its published source.
+TWIM advances attached-device time, but `declarative_i2c.rs` currently promotes
+data-ready state before I2C reads. An IRQ requires autonomous state promotion
+and output delivery while the I2C caller is idle, not host-forced data-ready or
+an extra read that manufactures an edge. Wire P0.25 only after those contracts
+are implemented and prove sensor assertion/deassertion and mask/reset through
+real GPIO/GPIOTE guest observations in both scheduler profiles. Subsequently
+qualify RUNMIC bias/control,
 timed ADC sampling and speaker path with explicit units/cadence and bounded
 observations; no host-forced data-ready flags.
 
