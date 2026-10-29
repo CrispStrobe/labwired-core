@@ -64,6 +64,7 @@ jobs:
         run: |
           python3 scripts/perf/test_microbit_active_report.py
           python3 scripts/perf/test_microbit_motion_report.py
+          python3 scripts/perf/test_microbit_sensor_guest_flow.py
           cargo test --release -p labwired-core --features microbit-board-io-test \
             --test nrf52833_config --test nrf52833_gpio_geometry \
             --test microbit_v2_led_matrix --test microbit_v2_board_io_guest \

@@ -135,3 +135,9 @@ This is an explicit internal consistency policy. AN4825 does not establish the
 silicon transition for simultaneous power-down and axis reconfiguration here;
 that transition remains outside device qualification pending primary evidence.
 The original candidate remains preserved and unqualified.
+
+The board workflow first assembles `motion-drdy.S` and checks that the shared
+write-transaction return branches directly to command completion. Its negative
+control removes that branch and must reject the assembled fall-through into
+acceleration dispatch. Guest command-completion receipts remain mandatory in
+the actual simulated tests; assembly-flow controls do not replace those runs.

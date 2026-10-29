@@ -106,6 +106,7 @@ enable_route:
     movs r2, #1
 write_byte:
     bl motion_write
+    b complete
 accel_command:
     movs r0, #0x19
     cmp r7, #9
