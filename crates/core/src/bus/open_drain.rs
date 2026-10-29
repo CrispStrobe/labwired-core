@@ -88,6 +88,11 @@ impl OpenDrainNets {
         self.nets.contains_key(&pad)
     }
 
+    /// Return the current resolved level of an explicitly registered pad.
+    pub fn level(&self, pad: (u64, u8)) -> Option<bool> {
+        self.nets.get(&pad).map(PulledUpOpenDrain::level)
+    }
+
     /// Update one registered driver; unknown pads and drivers are rejected.
     pub fn drive(
         &mut self,

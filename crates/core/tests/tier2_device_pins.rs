@@ -312,6 +312,44 @@ fn a_pcf8574_write_moves_the_pads_the_cpu_reads() {
     );
 }
 
+/// Two roles on one opted-in pad must retain their individual drive states.
+/// The legacy third output is an independent control on another pad.
+#[test]
+fn pulled_up_open_drain_roles_share_the_real_gpio_pad() {
+    let roles: serde_yaml::Value = serde_yaml::from_str("[P0, P1]").unwrap();
+    let mut m = machine(
+        placed(
+            "expander",
+            "pcf8574",
+            &[
+                ("p0_pin", serde_yaml::Value::from("PC0")),
+                ("p1_pin", serde_yaml::Value::from("PC0")),
+                ("p2_pin", serde_yaml::Value::from("PC1")),
+                ("open_drain_pullups", roles),
+            ],
+        ),
+        None,
+    );
+    for (value, shared, independent) in [
+        (0b1111_1111, true, true),
+        (0b1111_1110, false, true),
+        (0b1111_1101, false, true),
+        (0b1111_1100, false, true),
+        (0b1111_1110, false, true),
+        (0b1111_1111, true, true),
+        (0b1111_1011, true, false),
+    ] {
+        write_bytes(&mut m, &[value]);
+        run(&mut m, 10);
+        assert_eq!(pad(&mut m, "PC0"), shared, "shared pad after {value:#04x}");
+        assert_eq!(
+            pad(&mut m, "PC1"),
+            independent,
+            "legacy control after {value:#04x}"
+        );
+    }
+}
+
 /// An `outputs:` role whose `config:` key the placement does not set is not an
 /// error — an expander wired for two LEDs is an ordinary board. The part must
 /// still work over the wire, and the unbound pads must simply go nowhere.

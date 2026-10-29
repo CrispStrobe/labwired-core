@@ -136,6 +136,39 @@ impl<'a> AttachCtx<'a> {
     /// work over the bus. An unresolvable pad label IS an error — that is a
     /// wiring mistake, not a choice.
     pub fn bind_output_pins(&mut self, desc: &labwired_config::DeviceDescriptor) -> Result<()> {
+        // The placement must name each output role explicitly; the name also
+        // declares a pull-up. No implicit electrical mode is inferred.
+        let open_drain_roles = match self.ext.config.get("open_drain_pullups") {
+            None => Vec::new(),
+            Some(value) => {
+                let roles = value.as_sequence().ok_or_else(|| {
+                    anyhow!(
+                        "device '{}' open_drain_pullups must be a list of output roles",
+                        self.ext.id
+                    )
+                })?;
+                let mut result = Vec::new();
+                for value in roles {
+                    let role = value.as_str().ok_or_else(|| {
+                        anyhow!(
+                            "device '{}' open_drain_pullups contains a non-string role",
+                            self.ext.id
+                        )
+                    })?;
+                    if !desc.behavior.outputs.iter().any(|known| known == role)
+                        || result.contains(&role)
+                    {
+                        return Err(anyhow!(
+                            "device '{}' has an unknown or duplicate open-drain role '{}'",
+                            self.ext.id,
+                            role
+                        ));
+                    }
+                    result.push(role);
+                }
+                result
+            }
+        };
         for role in &desc.behavior.outputs {
             let key = desc
                 .behavior
@@ -161,6 +194,53 @@ impl<'a> AttachCtx<'a> {
                     label
                 )
                 })?;
+            let pad = (addr, bit);
+            if self
+                .bus
+                .device_pin_pads
+                .iter()
+                .any(|p| p.device_id == self.ext.id && p.role == *role)
+            {
+                return Err(anyhow!(
+                    "device '{}' output role '{}' is already bound",
+                    self.ext.id,
+                    role
+                ));
+            }
+            if open_drain_roles.contains(&role.as_str()) {
+                let has_legacy = self
+                    .bus
+                    .device_pin_pads
+                    .iter()
+                    .any(|p| (p.addr, p.bit) == pad)
+                    && !self.bus.device_open_drain_nets.contains_pad(pad);
+                self.bus
+                    .device_open_drain_nets
+                    .register(
+                        pad,
+                        crate::bus::open_drain::OpenDrainDriver {
+                            device_id: self.ext.id.clone(),
+                            role: role.clone(),
+                        },
+                        has_legacy,
+                    )
+                    .map_err(|err| {
+                        anyhow!("device '{}' output role '{}': {}", self.ext.id, role, err)
+                    })?;
+                let level = self
+                    .bus
+                    .device_open_drain_nets
+                    .level(pad)
+                    .expect("registered pad");
+                let _ = crate::bus::DevicePins::drive_input_bit(self.bus, addr, bit, level);
+                crate::bus::DevicePins::drive_idr_bit(self.bus, addr, bit, level);
+            } else if self.bus.device_open_drain_nets.contains_pad(pad) {
+                return Err(anyhow!(
+                    "device '{}' output role '{}' mixes a legacy driver with an open-drain pad",
+                    self.ext.id,
+                    role
+                ));
+            }
             self.bus.device_pin_pads.push(crate::bus::DevicePinPad {
                 device_id: self.ext.id.clone(),
                 role: role.clone(),
