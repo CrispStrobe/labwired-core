@@ -87,6 +87,17 @@ impl SystemBus {
                 // the rule still ran, the line simply goes nowhere.
                 continue;
             };
+            let level = if self
+                .device_open_drain_nets
+                .contains_pad((pad.addr, pad.bit))
+            {
+                let driver = crate::bus::open_drain::OpenDrainDriver { device_id, role };
+                self.device_open_drain_nets
+                    .drive((pad.addr, pad.bit), &driver, level)
+                    .expect("open-drain pad bindings register every driver")
+            } else {
+                level
+            };
             // ⚠️ BOTH SEAMS — see `rotary_encoder.rs`. `drive_idr_bit` lands
             // only where a store to the input register lands (STM32);
             // `drive_input_bit` is the external-world seam the read-only-IN
