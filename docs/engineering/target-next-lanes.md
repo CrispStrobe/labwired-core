@@ -382,8 +382,9 @@ Nordic GPIO/GPIOTE/SAADC scheduler, authored guests and
 `.github/workflows/microbit-board-io.yml`.
 
 Start from the selected LSM303AGR variant, not a silent FXOS8700 substitute.
-This remains unimplemented: the system explicitly leaves P0.25 unconnected and
-the selected sensor descriptors exclude interrupts. Do not close it by attaching two ordinary Boolean outputs to one pad: legacy
+The stacked sensor candidate now wires selected DRDY outputs through explicit
+V2.0 collectors to P0.25; affected hosted qualification is still required.
+Do not implement shared interrupts by attaching two ordinary Boolean outputs to one pad: legacy
 routes apply queued outputs directly, so the last writer can incorrectly
 release another asserted source. Explicitly selected pulled-up open-drain
 routes retain state per device instance and role; ordinary routes keep their
