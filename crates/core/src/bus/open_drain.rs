@@ -3,8 +3,9 @@
 
 //! Retained drivers for an explicitly pulled-up, open-drain software net.
 //!
-//! This resolver is not connected to device pads yet. It does not model a
-//! floating net, analog voltages, propagation delay, or push-pull contention.
+//! Opted-in declarative device outputs use this resolver when routed to pads.
+//! It does not model a floating net, analog voltages, propagation delay, or
+//! push-pull contention.
 
 use std::collections::BTreeMap;
 
