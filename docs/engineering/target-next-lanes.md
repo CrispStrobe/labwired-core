@@ -382,8 +382,8 @@ Nordic GPIO/GPIOTE/SAADC scheduler, authored guests and
 `.github/workflows/microbit-board-io.yml`.
 
 Start from the selected LSM303AGR variant, not a silent FXOS8700 substitute.
-The stacked sensor candidate now wires selected DRDY outputs through explicit
-V2.0 collectors to P0.25; affected hosted qualification is still required.
+The combined sensor candidate wires selected DRDY outputs through explicit
+V2.0 collectors to P0.25; final-head hosted qualification is still required.
 Do not implement shared interrupts by attaching two ordinary Boolean outputs to one pad: legacy
 routes apply queued outputs directly, so the last writer can incorrectly
 release another asserted source. Explicitly selected pulled-up open-drain
@@ -764,16 +764,32 @@ motion needs its own scoped evidence; the successful original campaign is not
 replayed to inspect it. The historical PyBadge module/glass contract remains
 unresolved: this authored software assembly does not establish physical accuracy.
 
-### M1 sensor DRDY successor (stacked candidate)
+### M1 combined shared-line and sensor DRDY candidate
 
-The sensor candidate exposes magnetometer DRDY and acceleration INT1 through
-the separate V2.0 collectors on P0.25. It depends on the open-drain and autonomous
-conversion/GPIOTE predecessor branches; merge those and refresh exact-head
-checks before this candidate. See the [sensor contract](microbit-lsm303agr.md)
-for source-backed pin, routing and high-byte acknowledgement, and explicit
-clock/reset/timing exclusions. The authored TWIM/GPIO/GPIOTE guest covers both
-scheduler intervals, but needs hosted execution before any qualification claim.
-The acceleration prerequisite is opt-in all-enabled-high-byte acknowledgement
-with per-axis ready flags and descriptor controls; all other devices retain
-the any-result lifecycle. Full M1, threshold IRQ, microphone,
-physical behavior and consumer adoption remain open.
+[Core PR268](https://github.com/CrispStrobe/labwired-core/pull/268) combines the
+open-drain foundation, autonomous conversion events, GPIOTE first-edge repair,
+and LSM303AGR accelerometer and magnetometer DRDY routing. The earlier stacked
+PR269 and PR270 are folded into that candidate; their closure does not mean the
+combined source landed on main. Refresh the PR head and main before acting.
+
+The [board run 40860731752](https://github.com/CrispStrobe/labwired-core/actions/runs/40860731752)
+passed on an earlier candidate, including sensor guests, synthetic nRF52840 DK
+and XIAO GPIOTE guests, both scheduler profiles, and active/polled throughput.
+It does not qualify later source or test changes. The subsequent
+[feature-off job](https://github.com/CrispStrobe/labwired-core/actions/runs/40860731556/job/123411849699)
+failed a timer fixture and the conditional-compilation ratchet; the candidate
+repairs the fixture and retains both guest profiles without raising the ratchet.
+Require fresh exact-head board and Rust CI, verify named profile observations and
+source/artifact bindings, and preserve the original failure.
+
+The earlier [Core Perf run](https://github.com/CrispStrobe/labwired-core/actions/runs/40838497588)
+failed its existing AVR step threshold; a candidate fast-path repair is not yet
+qualified. Require a fresh exact-head performance result against the unchanged
+baseline. Recompute watched nRF52840 and XIAO model digests after affected guest
+qualification and obtain explicit human acknowledgement before updating either
+silicon-verified digest; retain ACK dates, expiry, captures and watch lists.
+After all enabled final-head checks succeed, review the exact merge parents and
+resulting tree, then merge by matched head. Update this handoff with the actual
+result. See the [sensor contract](microbit-lsm303agr.md) for the selected source,
+routing, acknowledgement and exclusions. Threshold IRQ, microphone/audio,
+physical behavior and consumer adoption remain separate work.
