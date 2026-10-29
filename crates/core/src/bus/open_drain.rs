@@ -7,7 +7,7 @@
 //! It does not model a floating net, analog voltages, propagation delay, or
 //! push-pull contention.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Identity of one output on one resident device instance.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -67,6 +67,7 @@ impl PulledUpOpenDrain {
 #[derive(Debug, Default)]
 pub struct OpenDrainNets {
     nets: BTreeMap<(u64, u8), PulledUpOpenDrain>,
+    inverted: BTreeMap<(u64, u8), BTreeSet<OpenDrainDriver>>,
 }
 
 impl OpenDrainNets {
@@ -82,6 +83,21 @@ impl OpenDrainNets {
             return Err("open-drain pad also has a legacy driver");
         }
         self.nets.entry(pad).or_default().register(driver)
+    }
+
+    /// Register a driver through an explicit digital inverting open-collector
+    /// stage: a high source pulls the shared net low, and low releases it.
+    /// The source is initially assumed low. No analog transistor behavior is
+    /// modeled. Registration failures leave the net and adapter unchanged.
+    pub fn register_inverted(
+        &mut self,
+        pad: (u64, u8),
+        driver: OpenDrainDriver,
+        has_legacy_driver: bool,
+    ) -> Result<(), &'static str> {
+        self.register(pad, driver.clone(), has_legacy_driver)?;
+        self.inverted.entry(pad).or_default().insert(driver);
+        Ok(())
     }
 
     /// Whether this pad has been explicitly configured as a pulled-up net.
@@ -101,10 +117,14 @@ impl OpenDrainNets {
         driver: &OpenDrainDriver,
         level: bool,
     ) -> Result<bool, &'static str> {
+        let inverted = self
+            .inverted
+            .get(&pad)
+            .is_some_and(|drivers| drivers.contains(driver));
         self.nets
             .get_mut(&pad)
             .ok_or("unknown open-drain pad")?
-            .drive(driver, level)
+            .drive(driver, if inverted { !level } else { level })
     }
 
     /// Snapshot resolved pad levels, for applying a pull-up after GPIO clocks
@@ -198,5 +218,27 @@ mod tests {
         );
         assert!(nets.drive((10, 2), &b, true).unwrap());
         assert!(nets.drive((11, 3), &a, true).unwrap());
+    }
+    #[test]
+    fn inverting_collector_and_direct_driver_share_one_retained_net() {
+        let transistor = driver("sensor", "irq");
+        let direct = driver("interface", "irq");
+        let mut nets = OpenDrainNets::default();
+        nets.register_inverted((10, 2), transistor.clone(), false)
+            .unwrap();
+        nets.register((10, 2), direct.clone(), false).unwrap();
+        assert_eq!(nets.level((10, 2)), Some(true));
+        assert!(!nets.drive((10, 2), &transistor, true).unwrap());
+        assert!(!nets.drive((10, 2), &direct, false).unwrap());
+        assert!(!nets.drive((10, 2), &transistor, false).unwrap());
+        assert!(nets.drive((10, 2), &direct, true).unwrap());
+        assert!(!nets.drive((10, 2), &direct, false).unwrap());
+        assert!(!nets.drive((10, 2), &transistor, true).unwrap());
+        assert!(!nets.drive((10, 2), &direct, true).unwrap());
+        assert!(nets.drive((10, 2), &transistor, false).unwrap());
+        assert!(nets
+            .register_inverted((10, 2), transistor.clone(), false)
+            .is_err());
+        assert!(nets.drive((10, 2), &transistor, false).unwrap());
     }
 }
