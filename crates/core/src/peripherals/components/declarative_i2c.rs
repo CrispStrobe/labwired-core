@@ -2255,6 +2255,16 @@ pub(crate) fn validate_descriptor(descriptor: &DeviceDescriptor) -> Result<()> {
                     name
                 );
             }
+            if spec
+                .data_ready
+                .iter()
+                .any(|ready| &ready.name == name && ready.conversion_us == 0)
+            {
+                bail!(
+                    "data-ready event '{}' cannot subscribe to a zero-duration conversion",
+                    name
+                );
+            }
         }
     }
     // Rule actions write register storage directly, without the I2C write
@@ -4810,6 +4820,25 @@ metadata:
 metadata:
 "#,
         )
+    }
+
+    #[test]
+    fn zero_duration_is_rejected_only_for_subscribed_conversions() {
+        let subscribed = autonomous_fixture().replace("conversion_us: 33000", "conversion_us: 0");
+        assert_ne!(subscribed, autonomous_fixture());
+        let error = match GenericI2cDevice::from_yaml(&subscribed, 0) {
+            Ok(_) => panic!("zero-duration subscribed conversion was accepted"),
+            Err(error) => format!("{error:#}"),
+        };
+        assert!(error.contains("zero-duration conversion"), "{error}");
+
+        let legacy = TOF_FIXTURE.replace("conversion_us: 33000", "conversion_us: 0");
+        assert_ne!(legacy, TOF_FIXTURE);
+        let mut d = GenericI2cDevice::from_yaml(&legacy, 0).unwrap();
+        d.advance_time_us(1);
+        write8(&mut d, 0x00, 1);
+        assert_eq!(read8(&mut d, 0x13), 7, "legacy read-driven readiness");
+        assert_eq!(d.dr_state[0], DataReadyState::Ready);
     }
 
     #[test]
