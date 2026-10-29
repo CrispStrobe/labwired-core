@@ -63,7 +63,7 @@ jobs:
           cargo test --release -p labwired-core --features microbit-board-io-test \
             --test nrf52833_config --test nrf52833_gpio_geometry \
             --test microbit_v2_led_matrix --test microbit_v2_board_io_guest \
-            --test microbit_v2_motion_io_guest --test peripheral_kit_gate
+            --test microbit_v2_motion_io_guest --test microbit_v2_open_drain_guest --test peripheral_kit_gate
           cargo test --release -p labwired-core --features microbit-board-io-test \
             --test microbit_v2_adc_scan_guest
           cargo test --release -p labwired-core --features microbit-board-io-test \

@@ -478,6 +478,10 @@ name = "world_esp32c3_ble_gatt"
 required-features = ["event-scheduler"]
 
 [[test]]
+name = "microbit_v2_open_drain_guest"
+required-features = ["microbit-board-io-test"]
+
+[[test]]
 name = "microbit_v2_board_io_guest"
 required-features = ["microbit-board-io-test"]
 
