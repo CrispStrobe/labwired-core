@@ -5129,10 +5129,20 @@ behavior:
         .is_err());
         let duplicate = yaml.replace("      - name: range\n", "      - name: range\n        start_register: SYSRANGE_START\n        start_mask: 0x01\n        ready_register: RESULT_INTERRUPT_STATUS\n        ready_mask: 0x07\n        conversion_us: 33000\n      - name: range\n");
         assert!(GenericI2cDevice::from_yaml(&duplicate, 0).is_err());
-        let mixed_timer = yaml.replace(
-            "  outputs: [INT]",
-            "  timers: [{ name: clock, period_us: 100, on_fire: [] }]\n  outputs: [INT]",
-        );
+        let mixed_timer = yaml
+            .replace(
+                "  outputs: [INT]",
+                "  timers: [{ name: clock, period_us: 100, on_fire: [] }]\n  outputs: [INT]",
+            )
+            .replace(
+                "  rules:\n",
+                "  rules:\n    - on: { timer: clock }\n      do: [ { pin: INT, level: 1 } ]\n",
+            );
+        let timer_without_subscription =
+            mixed_timer.replace("on: { data_ready: range }", "on: { write: SYSRANGE_START }");
+        assert_ne!(timer_without_subscription, mixed_timer);
+        GenericI2cDevice::from_yaml(&timer_without_subscription, 0)
+            .expect("timer with a listener and no data-ready subscription is valid");
         let err = match GenericI2cDevice::from_yaml(&mixed_timer, 0) {
             Ok(_) => panic!("timer and data-ready event combination was accepted"),
             Err(err) => format!("{err:#}"),
