@@ -125,7 +125,11 @@ behavior:
     machine
 }
 
-fn write_probe(machine: &mut Machine<CortexM>, address: u8, value: u8) {
+fn with_probe<T>(
+    machine: &mut Machine<CortexM>,
+    address: u8,
+    f: impl FnOnce(&mut dyn labwired_core::peripherals::i2c::I2cDevice) -> T,
+) -> T {
     let serial = machine
         .bus
         .peripherals
@@ -150,9 +154,35 @@ fn write_probe(machine: &mut Machine<CortexM>, address: u8, value: u8) {
         .unwrap();
     let mut device = cell.borrow_mut();
     device.select_address(address);
-    device.start();
-    device.write(value);
-    device.stop();
+    f(&mut **device)
+}
+
+fn write_probe(machine: &mut Machine<CortexM>, address: u8, value: u8) {
+    with_probe(machine, address, |device| {
+        device.start();
+        device.write(value);
+        device.stop();
+    });
+}
+
+fn write_probe_register(machine: &mut Machine<CortexM>, register: u8, value: u8) {
+    with_probe(machine, 0x22, |device| {
+        device.start();
+        device.write(register);
+        device.write(value);
+        device.stop();
+    });
+}
+
+fn read_probe_register(machine: &mut Machine<CortexM>, register: u8) -> u8 {
+    with_probe(machine, 0x22, |device| {
+        device.start();
+        device.write(register);
+        device.start();
+        let value = device.read();
+        device.stop();
+        value
+    })
 }
 
 #[test]
@@ -189,38 +219,17 @@ fn guest_sees_autonomous_data_ready_without_polling() {
     let mut m = machine(true);
     m.run(Some(1_000)).unwrap();
     assert_eq!(m.bus.read_u32(0x20000100).unwrap(), 1, "initial pull-up");
-    // Register devices use the first byte as pointer; start a conversion by
-    // writing START's pointer and value in the same I2C transaction.
-    {
-        let serial = m
-            .bus
-            .peripherals
-            .iter_mut()
-            .filter_map(|entry| {
-                entry
-                    .dev
-                    .as_any_mut()?
-                    .downcast_mut::<Nrf52SerialInstance>()
-            })
-            .find(|serial| {
-                serial
-                    .attached_i2c_devices()
-                    .iter()
-                    .any(|cell| cell.borrow().claims_address(0x22))
-            })
-            .unwrap();
-        let cell = serial
-            .attached_i2c_devices()
-            .iter()
-            .find(|cell| cell.borrow().claims_address(0x22))
-            .unwrap();
-        let mut device = cell.borrow_mut();
-        device.select_address(0x22);
-        device.start();
-        device.write(0);
-        device.write(1);
-        device.stop();
-    }
+    write_probe_register(&mut m, 0, 1);
+    m.run(Some(100)).unwrap();
+    assert_eq!(m.bus.read_u32(0x20000100).unwrap(), 1, "no early assertion");
+    write_probe_register(&mut m, 0, 0);
+    m.run(Some(30_000)).unwrap();
+    assert_eq!(
+        m.bus.read_u32(0x20000100).unwrap(),
+        1,
+        "cancelled conversion stays released"
+    );
+    write_probe_register(&mut m, 0, 1);
     m.run(Some(100)).unwrap();
     assert_eq!(m.bus.read_u32(0x20000100).unwrap(), 1, "no early assertion");
     m.run(Some(30_000)).unwrap();
@@ -229,37 +238,7 @@ fn guest_sees_autonomous_data_ready_without_polling() {
         0,
         "guest saw completion without polling status"
     );
-    {
-        let serial = m
-            .bus
-            .peripherals
-            .iter_mut()
-            .filter_map(|entry| {
-                entry
-                    .dev
-                    .as_any_mut()?
-                    .downcast_mut::<Nrf52SerialInstance>()
-            })
-            .find(|serial| {
-                serial
-                    .attached_i2c_devices()
-                    .iter()
-                    .any(|cell| cell.borrow().claims_address(0x22))
-            })
-            .unwrap();
-        let cell = serial
-            .attached_i2c_devices()
-            .iter()
-            .find(|cell| cell.borrow().claims_address(0x22))
-            .unwrap();
-        let mut device = cell.borrow_mut();
-        device.select_address(0x22);
-        device.start();
-        device.write(2);
-        device.start();
-        let _result = device.read();
-        device.stop();
-    }
+    read_probe_register(&mut m, 2);
     m.run(Some(100)).unwrap();
     assert_eq!(
         m.bus.read_u32(0x20000100).unwrap(),
