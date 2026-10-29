@@ -430,6 +430,10 @@ model the documented output routing, polarity, masking, clearing and reset.
 A disabled in-flight conversion is cancelled, while an already-ready result
 continues to follow its declared clear rules. Combining these events with device
 timers is rejected until cross-clock ordering is implemented and qualified.
+Rule actions that write, set or clear a subscribed conversion's start register
+are also rejected: they bypass the master-write conversion lifecycle. This
+conservatively includes unrelated bits of that register. Unsubscribed
+read-driven conversions retain their existing behavior.
 Review selected sensor cancellation and clear semantics before using the event. Wire P0.25 only after those contracts
 are implemented and prove sensor assertion/deassertion and mask/reset through
 real GPIO/GPIOTE guest observations in both scheduler profiles. Event-mode
