@@ -13,6 +13,9 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 const RAM: u64 = 0x20000100;
+const GPIOTE_PIN: u8 = 17;
+const SCL_PIN: u8 = 8;
+const SDA_PIN: u8 = 7;
 
 fn machine(board: &str, interval: u32, polarity: u32) -> Machine<CortexM> {
     if std::env::var("LABWIRED_REQUIRE_GPIOTE_FEATURE_OFF").as_deref() == Ok("1") {
@@ -38,8 +41,10 @@ fn machine(board: &str, interval: u32, polarity: u32) -> Machine<CortexM> {
             "-nostdlib",
             "-Wl,-T,board-io.ld",
             "-DGPIOTE_DRIVE_PCF",
-            "-DGPIOTE_TEST_PIN=17"
         ])
+        .arg(format!("-DGPIOTE_TEST_PIN={GPIOTE_PIN}"))
+        .arg(format!("-DGPIOTE_PCF_SCL_PIN={SCL_PIN}"))
+        .arg(format!("-DGPIOTE_PCF_SDA_PIN={SDA_PIN}"))
         .arg(format!("-DGPIOTE_TEST_POLARITY={polarity}"))
         .arg("-o")
         .arg(&elf)
@@ -70,13 +75,15 @@ fn machine(board: &str, interval: u32, polarity: u32) -> Machine<CortexM> {
         manifest.external_devices.is_empty(),
         "review fixture ownership if a real device is added to either manifest"
     );
-    assert!(
-        !manifest
-            .board_io
-            .iter()
-            .any(|b| b.peripheral == "gpio0" && b.pin == 17),
-        "fixture must not override a board I/O binding"
-    );
+    for pin in [GPIOTE_PIN, SCL_PIN, SDA_PIN] {
+        assert!(
+            !manifest
+                .board_io
+                .iter()
+                .any(|b| b.peripheral == "gpio0" && b.pin == pin),
+            "synthetic pin P0.{pin} must not override a board I/O binding"
+        );
+    }
     let chip_path = system.parent().unwrap().join(&manifest.chip);
     let chip = ChipDescriptor::from_file(&chip_path).unwrap();
     assert_eq!(chip.name, "nrf52840");
@@ -89,7 +96,10 @@ fn machine(board: &str, interval: u32, polarity: u32) -> Machine<CortexM> {
         route: Default::default(),
         config: [
             ("i2c_address".into(), serde_yaml::Value::from(0x20)),
-            ("p0_pin".into(), serde_yaml::Value::from("P0.17")),
+            (
+                "p0_pin".into(),
+                serde_yaml::Value::from(format!("P0.{GPIOTE_PIN}")),
+            ),
             (
                 "open_drain_pullups".into(),
                 serde_yaml::from_str("[P0]").unwrap(),
@@ -138,10 +148,23 @@ fn command(m: &mut Machine<CortexM>, code: u32) {
         "fresh guest sample"
     );
 }
+fn start_guest(m: &mut Machine<CortexM>) {
+    m.run(Some(10_000)).unwrap();
+    assert_eq!(
+        m.bus.read_u32(0x40003508).unwrap(),
+        u32::from(SCL_PIN),
+        "guest SCL selection"
+    );
+    assert_eq!(
+        m.bus.read_u32(0x4000350c).unwrap(),
+        u32::from(SDA_PIN),
+        "guest SDA selection"
+    );
+    observed(m, 1, 0);
+}
 fn proof(board: &str, interval: u32, polarity: u32) {
     let mut m = machine(board, interval, polarity);
-    m.run(Some(10_000)).unwrap();
-    observed(&mut m, 1, 0); // input high before GPIOTE is configured
+    start_guest(&mut m); // input high before GPIOTE is configured
     command(&mut m, 1);
     observed(&mut m, 0, 1); // first falling edge must not be discarded
     command(&mut m, 1);
@@ -184,8 +207,7 @@ fn xiao_first_falling_edge_feature_off_tick1() {
 #[test]
 fn first_falling_control_rejects_rising_only_guest() {
     let mut m = machine("nrf52840-dk", 1, 1);
-    m.run(Some(10_000)).unwrap();
-    observed(&mut m, 1, 0);
+    start_guest(&mut m);
     command(&mut m, 1);
     observed(&mut m, 0, 0); // the bus/guest ran, but rising-only missed the fall
     assert!(

@@ -9,6 +9,12 @@
 #ifndef GPIOTE_TEST_POLARITY
 #define GPIOTE_TEST_POLARITY 2
 #endif
+#ifndef GPIOTE_PCF_SCL_PIN
+#define GPIOTE_PCF_SCL_PIN 8
+#endif
+#ifndef GPIOTE_PCF_SDA_PIN
+#define GPIOTE_PCF_SDA_PIN 7
+#endif
 .syntax unified
 .cpu cortex-m4
 .thumb
@@ -55,7 +61,7 @@ no_event:
 #ifdef GPIOTE_DRIVE_PCF
 /* Explicit synthetic PCF8574 at 0x20 on logical TWIM0, not onboard hardware.
  * RAM +0c errors, +10 intent(1=low,2=release), +14 completed, +1c TX amount.
- * The guest owns every TWIM register access; host changes RAM intent only.
+ * The guest owns TWIM configuration/transfers; host changes RAM intent only.
  */
 .thumb_func
 fixture_init:
@@ -63,9 +69,9 @@ fixture_init:
     ldr r8, =0x40003000
     ldr r9, =0x20000200
     ldr r10, =0x20000100
-    movs r2, #8
+    movs r2, #GPIOTE_PCF_SCL_PIN
     str r2, [r8, #0x508]
-    movs r2, #16
+    movs r2, #GPIOTE_PCF_SDA_PIN
     str r2, [r8, #0x50c]
     ldr r2, =0x06400000
     str r2, [r8, #0x524]
