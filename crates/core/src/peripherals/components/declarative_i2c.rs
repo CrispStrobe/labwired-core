@@ -2188,6 +2188,38 @@ pub(crate) fn validate_descriptor(descriptor: &DeviceDescriptor) -> Result<()> {
             }
         }
     }
+    // Rule actions write register storage directly, without the I2C write
+    // path's conversion start/cancellation side effects. Refuse this ambiguous
+    // combination rather than let a subscribed conversion outlive a rule that
+    // disables it. Unsubscribed, read-driven descriptors retain their behavior.
+    for ready in &spec.data_ready {
+        let subscribed = descriptor
+            .behavior
+            .rules
+            .iter()
+            .any(|rule| matches!(&rule.on, Event::DataReady { name } if name == &ready.name));
+        if !subscribed {
+            continue;
+        }
+        for rule in &descriptor.behavior.rules {
+            for action in &rule.actions {
+                let register = match action {
+                    labwired_config::Action::Set(bits) | labwired_config::Action::Clear(bits) => {
+                        Some(&bits.register)
+                    }
+                    labwired_config::Action::Write { register, .. } => Some(register),
+                    _ => None,
+                };
+                if register == Some(&ready.start_register) {
+                    bail!(
+                        "rule actions cannot modify start register '{}' of subscribed data-ready conversion '{}'",
+                        ready.start_register,
+                        ready.name
+                    );
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -4264,6 +4296,36 @@ metadata:
 metadata:
 "#,
         )
+    }
+
+    #[test]
+    fn subscribed_start_register_rule_writes_are_rejected_without_changing_legacy() {
+        for action in [
+            "{ write: { register: SYSRANGE_START, value: 0 } }",
+            "{ set: { register: SYSRANGE_START, mask: 1 } }",
+            "{ clear: { register: SYSRANGE_START, mask: 1 } }",
+        ] {
+            // An unrelated event may modify the start register just as an
+            // event from a different conversion could; inspect every rule.
+            let extra_rule = format!("  rules:\n    - on: start\n      do: [ {action} ]\n");
+            let subscribed = autonomous_fixture().replace(
+                "  rules:\n",
+                &format!("  rules:\n    - on: start\n      do: [ {action} ]\n"),
+            );
+            let err = match GenericI2cDevice::from_yaml(&subscribed, 0) {
+                Ok(_) => panic!("subscribed conversion accepted {action}"),
+                Err(err) => format!("{err:#}"),
+            };
+            assert!(err.contains("cannot modify start register"), "{err}");
+
+            let legacy = TOF_FIXTURE.replace("metadata:\n", &format!("{extra_rule}metadata:\n"));
+            GenericI2cDevice::from_yaml(&legacy, 0).expect("unsubscribed legacy rule stays valid");
+        }
+        let unrelated = autonomous_fixture().replace(
+            "  rules:\n",
+            "  rules:\n    - on: start\n      do: [ { write: { register: MODEL_ID, value: 0 } } ]\n",
+        );
+        GenericI2cDevice::from_yaml(&unrelated, 0).expect("unrelated register remains valid");
     }
 
     #[test]
