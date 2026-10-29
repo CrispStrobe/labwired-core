@@ -7,11 +7,20 @@ use labwired_core::peripherals::nrf52::serial_instance::Nrf52SerialInstance;
 use labwired_core::system::cortex_m::configure_cortex_m;
 use labwired_core::{Bus, DebugControl, Machine};
 use sha2::{Digest, Sha256};
-use std::{path::PathBuf, process::Command};
+use std::{
+    path::PathBuf,
+    process::Command,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
-fn machine() -> Machine<CortexM> {
+fn machine(autonomous: bool) -> Machine<CortexM> {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let elf = std::env::temp_dir().join(format!("microbit-open-drain-{}.elf", std::process::id()));
+    let elf = std::env::temp_dir().join(format!(
+        "microbit-open-drain-{}-{sequence}.elf",
+        std::process::id()
+    ));
     assert!(Command::new("arm-none-eabi-gcc")
         .current_dir(root.join("examples/microbit-v2"))
         .args([
@@ -32,7 +41,7 @@ fn machine() -> Machine<CortexM> {
     if let Ok(dir) = std::env::var("LABWIRED_GUEST_ARTIFACT_DIR") {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
-            PathBuf::from(dir).join(format!("open-drain-{hash}.elf")),
+            PathBuf::from(dir).join(format!("open-drain-{hash}-{sequence}.elf")),
             &payload,
         )
         .unwrap();
@@ -55,6 +64,48 @@ fn machine() -> Machine<CortexM> {
                 (
                     "open_drain_pullups".into(),
                     serde_yaml::from_str("[P0]").unwrap(),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        });
+    }
+    if autonomous {
+        let desc = labwired_config::DeviceDescriptor::from_yaml(r#"
+schema: labwired.part/v1
+type: autonomous_ready_probe
+behavior:
+  primitive: i2c_device
+  i2c:
+    default_address: 0x22
+    registers:
+      - { name: START, addr: 0, width: 1, endian: be, access: rw, reset: 0 }
+      - { name: STATUS, addr: 1, width: 1, endian: be, access: r, reset: 0 }
+      - { name: RESULT, addr: 2, width: 1, endian: be, access: r, reset: 0 }
+    data_ready:
+      - { name: sample, start_register: START, start_mask: 1, ready_register: STATUS, ready_mask: 1, conversion_us: 100, clear_on_read: [RESULT] }
+  outputs: [INT]
+  output_pins: { INT: int_pin }
+  rules:
+    - on: { data_ready: sample }
+      do: [ { pin: INT, level: 0 } ]
+    - on: { read: RESULT }
+      do: [ { pin: INT, level: 1 } ]
+"#).unwrap();
+        manifest
+            .parts
+            .push(labwired_config::PartPack::Inline(Box::new(desc)));
+        manifest.external_devices.push(ExternalDevice {
+            id: "autonomous-probe".into(),
+            r#type: "autonomous_ready_probe".into(),
+            connection: "i2c0".into(),
+            channel: None,
+            route: Default::default(),
+            config: [
+                ("int_pin".into(), serde_yaml::Value::from("P0.25")),
+                (
+                    "open_drain_pullups".into(),
+                    serde_yaml::from_str("[INT]").unwrap(),
                 ),
             ]
             .into_iter()
@@ -106,7 +157,7 @@ fn write_probe(machine: &mut Machine<CortexM>, address: u8, value: u8) {
 
 #[test]
 fn guest_observes_two_independent_retained_drivers() {
-    let mut machine = machine();
+    let mut machine = machine(false);
     let mut last_count = 0;
     for (address, value, expected) in [
         (0x20, 0xff, 1),
@@ -129,4 +180,96 @@ fn guest_observes_two_independent_retained_drivers() {
         );
         last_count = count;
     }
+}
+
+/// The host starts a fixture conversion; the guest samples P0.25 without a
+/// status-register read. This is a timing/event fixture, not a sensor model.
+#[test]
+fn guest_sees_autonomous_data_ready_without_polling() {
+    let mut m = machine(true);
+    m.run(Some(1_000)).unwrap();
+    assert_eq!(m.bus.read_u32(0x20000100).unwrap(), 1, "initial pull-up");
+    // Register devices use the first byte as pointer; start a conversion by
+    // writing START's pointer and value in the same I2C transaction.
+    {
+        let serial = m
+            .bus
+            .peripherals
+            .iter_mut()
+            .filter_map(|entry| {
+                entry
+                    .dev
+                    .as_any_mut()?
+                    .downcast_mut::<Nrf52SerialInstance>()
+            })
+            .find(|serial| {
+                serial
+                    .attached_i2c_devices()
+                    .iter()
+                    .any(|cell| cell.borrow().claims_address(0x22))
+            })
+            .unwrap();
+        let cell = serial
+            .attached_i2c_devices()
+            .iter()
+            .find(|cell| cell.borrow().claims_address(0x22))
+            .unwrap();
+        let mut device = cell.borrow_mut();
+        device.select_address(0x22);
+        device.start();
+        device.write(0);
+        device.write(1);
+        device.stop();
+    }
+    m.run(Some(100)).unwrap();
+    assert_eq!(m.bus.read_u32(0x20000100).unwrap(), 1, "no early assertion");
+    m.run(Some(30_000)).unwrap();
+    assert_eq!(
+        m.bus.read_u32(0x20000100).unwrap(),
+        0,
+        "guest saw completion without polling status"
+    );
+    {
+        let serial = m
+            .bus
+            .peripherals
+            .iter_mut()
+            .filter_map(|entry| {
+                entry
+                    .dev
+                    .as_any_mut()?
+                    .downcast_mut::<Nrf52SerialInstance>()
+            })
+            .find(|serial| {
+                serial
+                    .attached_i2c_devices()
+                    .iter()
+                    .any(|cell| cell.borrow().claims_address(0x22))
+            })
+            .unwrap();
+        let cell = serial
+            .attached_i2c_devices()
+            .iter()
+            .find(|cell| cell.borrow().claims_address(0x22))
+            .unwrap();
+        let mut device = cell.borrow_mut();
+        device.select_address(0x22);
+        device.start();
+        device.write(2);
+        device.start();
+        let _result = device.read();
+        device.stop();
+    }
+    m.run(Some(100)).unwrap();
+    assert_eq!(
+        m.bus.read_u32(0x20000100).unwrap(),
+        1,
+        "result read releases the line"
+    );
+    m.run(Some(30_000)).unwrap();
+    assert_eq!(
+        m.bus.read_u32(0x20000100).unwrap(),
+        0,
+        "next conversion asserts again"
+    );
 }
