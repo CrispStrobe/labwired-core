@@ -22,11 +22,11 @@ The models column is a content digest over everything that board's `models` list
 | `stm32f401` | 🟡 smoke-manual | — | `8c558b7a32ec55cc` | no silicon capture |
 | `stm32wba52` | 🟡 smoke-manual | — | `e816b3c4c9a67c5d` | no silicon capture |
 | `nrf52832` | ⚪ structural | — | `2640a72317a5e835` | no silicon capture |
-| `microbit-v1` | 🟡 smoke-manual | — | `68c431c135eddfdc` | no silicon capture |
-| `microbit-v2` | 🟡 smoke-manual | — | `1e4d0ffd6109bdce` | no silicon capture |
+| `microbit-v1` | 🟡 smoke-manual | — | `1b0993c561f9fb2b` | no silicon capture |
+| `microbit-v2` | 🟡 smoke-manual | — | `afa391d05d5d2396` | no silicon capture |
 | `rp2040` | ⚪ structural | — | `1891f0f2ee5968b5` | no silicon capture |
 | `rp2350` | 🟡 smoke-manual | — | `9b7745d760da6842` | no silicon capture |
-| `nrf5340` | 🔵 sim-validated (deep model, no HW diff) | — | `e3db1b373506d812` | no silicon capture |
+| `nrf5340` | 🔵 sim-validated (deep model, no HW diff) | — | `f11c86e698d0f6ea` | no silicon capture |
 | `stm32h735` | 🔵 sim-validated (deep model, no HW diff) | — | `7f9c3c5a9770b6dd` | no silicon capture |
 | `stm32u575` | 🔵 sim-validated (deep model, no HW diff) | — | `564c5f5c00bea16b` | no silicon capture |
 | `nucleo-u545re` | 🔵 sim-validated (deep model, no HW diff) | — | `3959a30d603275fe` | no silicon capture |
@@ -38,7 +38,7 @@ The models column is a content digest over everything that board's `models` list
 | `stm32f767` | 🔵 sim-validated (deep model, no HW diff) | — | `4d0026c3e7528cf3` | no silicon capture |
 | `stm32f401cdu6` | 🔵 sim-validated (deep model, no HW diff) | — | `aec999de8932996d` | no silicon capture |
 | `atsamd21g18a` | 🔵 sim-validated (deep model, no HW diff) | — | `062a98d6d7acac01` | no silicon capture |
-| `nrf54l15` | 🔵 sim-validated (deep model, no HW diff) | — | `7c97c125e026d588` | no silicon capture |
+| `nrf54l15` | 🔵 sim-validated (deep model, no HW diff) | — | `91c0dc6c905a9edf` | no silicon capture |
 | `stm32g474re` | 🔵 sim-validated (deep model, no HW diff) | — | `be85e0439699abdb` | no silicon capture |
 | `stm32wb55` | 🔵 sim-validated (deep model, no HW diff) | — | `0df8103e8bcbd697` | no silicon capture |
 | `ci-fixture-riscv` | ⚪ structural | — | `e519faf4d2cb48f0` | no silicon capture |
