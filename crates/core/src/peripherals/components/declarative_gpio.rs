@@ -945,6 +945,11 @@ pub(crate) fn validate_rule_names(desc: &DeviceDescriptor) -> Result<()> {
     let vars: Vec<String> = b.vars.keys().cloned().collect();
     let fifos: Vec<String> = b.fifos.iter().map(|f| f.name.clone()).collect();
     let timers: Vec<String> = b.timers.iter().map(|t| t.name.clone()).collect();
+    let data_ready: Vec<String> = b
+        .i2c
+        .iter()
+        .flat_map(|spec| spec.data_ready.iter().map(|rule| rule.name.clone()))
+        .collect();
     let pins: Vec<String> = b.pin_names();
     let inputs: Vec<String> = desc
         .metadata
@@ -973,6 +978,7 @@ pub(crate) fn validate_rule_names(desc: &DeviceDescriptor) -> Result<()> {
             vars: &vars,
             fifos: &fifos,
             timers: &timers,
+            data_ready: &data_ready,
             outputs: &b.outputs,
             inputs: &inputs,
             pins: &pins,

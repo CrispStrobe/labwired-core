@@ -156,6 +156,9 @@ pub struct GenericI2cDevice {
     /// so devices that declare none are untouched.
     data_ready: Vec<DataReady>,
     dr_state: Vec<DataReadyState>,
+    /// Only conversions explicitly referenced by a data-ready event are
+    /// promoted autonomously. Existing read-driven rules remain unchanged.
+    dr_event_subscribed: Vec<bool>,
 
     /// Currently selected register bank, and the pointer whose write selects it.
     /// `page_register: None` ⇒ a flat map and `page` stays 0 forever, so every
@@ -360,6 +363,17 @@ impl GenericI2cDevice {
             ready_at_us: 0,
             time_source_seen: false,
             dr_state: vec![DataReadyState::Idle; spec.data_ready.len()],
+            dr_event_subscribed: spec
+                .data_ready
+                .iter()
+                .map(|conversion| {
+                    descriptor.behavior.rules.iter().any(|rule| {
+                        matches!(
+                            &rule.on, Event::DataReady { name } if name == &conversion.name
+                        )
+                    })
+                })
+                .collect(),
             data_ready: spec.data_ready.clone(),
             page: 0,
             page_register: spec.page_register,
@@ -1974,6 +1988,27 @@ impl I2cDevice for GenericI2cDevice {
             self.time_source_seen = true;
         }
         self.advance_rule_time(us);
+        // Only explicitly subscribed conversions advance here. This preserves
+        // the existing read-driven behavior of descriptors with no listener.
+        let mut completed: Vec<(u64, usize)> = self
+            .dr_state
+            .iter()
+            .enumerate()
+            .filter_map(|(index, state)| match *state {
+                DataReadyState::Converting(deadline)
+                    if self.dr_event_subscribed[index] && self.elapsed_us >= deadline =>
+                {
+                    Some((deadline, index))
+                }
+                _ => None,
+            })
+            .collect();
+        completed.sort_unstable();
+        for (_, index) in completed {
+            self.dr_state[index] = DataReadyState::Ready;
+            let name = self.data_ready[index].name.clone();
+            self.raise_and_settle(Event::DataReady { name }, 0);
+        }
         // The part's own clock: every timer due at the new time fires, in
         // deadline order (see `TimerBank::due_by_timer`), before anything reads
         // a register. A device with no timers pays one `is_empty` check.
@@ -2124,7 +2159,24 @@ pub(crate) fn validate_descriptor(descriptor: &DeviceDescriptor) -> Result<()> {
     // deliberately total and validation deliberately is not).
     labwired_config::compile_rules(&descriptor.behavior.rules)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-    super::declarative_gpio::validate_rule_names(descriptor)
+    super::declarative_gpio::validate_rule_names(descriptor)?;
+    for rule in &descriptor.behavior.rules {
+        if let Event::DataReady { name } = &rule.on {
+            if spec
+                .data_ready
+                .iter()
+                .filter(|ready| &ready.name == name)
+                .count()
+                != 1
+            {
+                bail!(
+                    "data-ready event '{}' must name exactly one conversion",
+                    name
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 /// A descriptor is exactly one shape (registers XOR commands XOR register_file),
@@ -4186,6 +4238,66 @@ metadata:
         read8(&mut d, 0x68);
         d.advance_time_us(20_000);
         assert_eq!(read8(&mut d, 0x67), 0x00, "idle stops new samples");
+    }
+
+    fn autonomous_fixture() -> String {
+        TOF_FIXTURE.replace(
+            "metadata:\n",
+            r#"  outputs: [INT]
+  rules:
+    - on: { data_ready: range }
+      do: [ { pin: INT, level: 0 } ]
+    - on: { read: RESULT_RANGE_VAL }
+      do: [ { pin: INT, level: 1 } ]
+metadata:
+"#,
+        )
+    }
+
+    #[test]
+    fn subscribed_data_ready_fires_once_on_clock_without_a_register_read() {
+        let mut d = GenericI2cDevice::from_yaml(&autonomous_fixture(), 0).unwrap();
+        d.advance_time_us(1);
+        write8(&mut d, 0x00, 1);
+        d.advance_time_us(32_999);
+        assert_eq!(d.dr_state[0], DataReadyState::Converting(33_001));
+        assert!(d.take_pin_drives().is_empty());
+        d.advance_time_us(1);
+        assert_eq!(d.dr_state[0], DataReadyState::Ready);
+        assert_eq!(d.take_pin_drives(), vec![("INT".to_string(), false)]);
+        d.advance_time_us(10);
+        assert!(
+            d.take_pin_drives().is_empty(),
+            "ready is an edge, not a repeated event"
+        );
+        assert_eq!(read8(&mut d, 0x13), 7);
+        read8(&mut d, 0x1e);
+        assert_eq!(d.take_pin_drives(), vec![("INT".to_string(), true)]);
+        d.advance_time_us(33_000);
+        assert_eq!(d.take_pin_drives(), vec![("INT".to_string(), false)]);
+    }
+
+    #[test]
+    fn unsubscribed_data_ready_preserves_read_driven_promotion() {
+        let mut d = GenericI2cDevice::from_yaml(TOF_FIXTURE, 0).unwrap();
+        d.advance_time_us(1);
+        write8(&mut d, 0x00, 1);
+        d.advance_time_us(33_000);
+        assert_eq!(d.dr_state[0], DataReadyState::Converting(33_001));
+        assert_eq!(read8(&mut d, 0x13), 7);
+        assert_eq!(d.dr_state[0], DataReadyState::Ready);
+    }
+
+    #[test]
+    fn data_ready_event_must_identify_one_declared_conversion() {
+        let yaml = autonomous_fixture();
+        assert!(GenericI2cDevice::from_yaml(
+            &yaml.replace("data_ready: range", "data_ready: missing"),
+            0
+        )
+        .is_err());
+        let duplicate = yaml.replace("      - name: range\n", "      - name: range\n        start_register: SYSRANGE_START\n        start_mask: 0x01\n        ready_register: RESULT_INTERRUPT_STATUS\n        ready_mask: 0x07\n        conversion_us: 33000\n      - name: range\n");
+        assert!(GenericI2cDevice::from_yaml(&duplicate, 0).is_err());
     }
 
     #[test]
