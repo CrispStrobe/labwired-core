@@ -146,3 +146,23 @@ write-transaction return branches directly to command completion. Its negative
 control removes that branch and must reject the assembled fall-through into
 acceleration dispatch. Guest command-completion receipts remain mandatory in
 the actual simulated tests; assembly-flow controls do not replace those runs.
+
+## Affected nRF52840 GPIOTE guest boundary
+
+The shared GPIOTE change also affects the nRF52840 DK and XIAO configurations.
+`nrf52840_gpiote_guest` loads each unchanged system manifest, adds an explicitly
+synthetic PCF8574 pad source on otherwise unbound P0.17, and runs the original
+shared GPIOTE observer with opt-in guest-owned TWIM commands. It requires the
+first falling event, no event for a repeated low, a masked rising transition,
+and a second falling event. A rising-only guest variant must fail the same
+first-falling criterion. RAM receipts require actual one-byte EasyDMA completion
+and a fresh guest sample. The existing micro:bit pin25 observer retains its
+default source behavior.
+
+The board workflow includes scheduler-on intervals1/512 and true feature-off
+interval1 cases on both systems, retaining separate ELF/profile identities.
+These cases need fresh hosted execution before qualification. The fixture is
+not an onboard XIAO/DK sensor or a physical pad wiring claim; it qualifies
+simulated GPIOTE event behavior only, not an NVIC handler, hardware timing or
+blanket silicon accuracy. Existing source/guest tests do not replace the exact
+human model-digest ACK after affected guest qualification.
