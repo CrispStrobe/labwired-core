@@ -3,15 +3,23 @@
 use labwired_config::{ChipDescriptor, ExternalDevice, SystemManifest};
 use labwired_core::bus::SystemBus;
 use labwired_core::cpu::CortexM;
-use labwired_core::peripherals::nrf52::serial_instance::Nrf52SerialInstance;
 use labwired_core::system::cortex_m::configure_cortex_m;
 use labwired_core::{Bus, DebugControl, Machine};
 use sha2::{Digest, Sha256};
-use std::{path::PathBuf, process::Command};
+use std::{
+    path::PathBuf,
+    process::Command,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 fn machine() -> Machine<CortexM> {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let elf = std::env::temp_dir().join(format!("microbit-open-drain-{}.elf", std::process::id()));
+    let elf = std::env::temp_dir().join(format!(
+        "microbit-open-drain-{}-{sequence}.elf",
+        std::process::id()
+    ));
     assert!(Command::new("arm-none-eabi-gcc")
         .current_dir(root.join("examples/microbit-v2"))
         .args([
@@ -32,7 +40,7 @@ fn machine() -> Machine<CortexM> {
     if let Ok(dir) = std::env::var("LABWIRED_GUEST_ARTIFACT_DIR") {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
-            PathBuf::from(dir).join(format!("open-drain-{hash}.elf")),
+            PathBuf::from(dir).join(format!("open-drain-{hash}-{sequence}.elf")),
             &payload,
         )
         .unwrap();
@@ -74,34 +82,54 @@ fn machine() -> Machine<CortexM> {
     machine
 }
 
-fn write_probe(machine: &mut Machine<CortexM>, address: u8, value: u8) {
-    let serial = machine
+/// Host-configure the actual TWIM and EasyDMA; the source-built guest keeps
+/// sampling GPIO while the controller sends a byte to the attached device.
+fn probe_transfer(machine: &mut Machine<CortexM>, address: u8, value: u8) -> (u32, u32, u32) {
+    const TWIM: u64 = 0x4000_3000;
+    const BUFFER: u64 = 0x2000_0200;
+    machine.bus.write_u8(BUFFER, value).unwrap();
+    machine.bus.write_u32(TWIM + 0x500, 6).unwrap(); // ENABLE = TWIM
+    machine.bus.write_u32(TWIM + 0x104, 0).unwrap(); // EVENTS_STOPPED
+    machine.bus.write_u32(TWIM + 0x124, 0).unwrap(); // EVENTS_ERROR
+    machine.bus.write_u32(TWIM + 0x4c4, 6).unwrap(); // clear ERRORSRC
+    machine.bus.write_u32(TWIM + 0x200, 1 << 9).unwrap(); // LASTTX_STOP
+    machine
         .bus
-        .peripherals
-        .iter_mut()
-        .filter_map(|entry| {
-            entry
-                .dev
-                .as_any_mut()?
-                .downcast_mut::<Nrf52SerialInstance>()
-        })
-        .find(|serial| {
-            serial
-                .attached_i2c_devices()
-                .iter()
-                .any(|cell| cell.borrow().claims_address(address))
-        })
-        .expect("probe on actual TWIM attachment");
-    let cell = serial
-        .attached_i2c_devices()
-        .iter()
-        .find(|cell| cell.borrow().claims_address(address))
+        .write_u32(TWIM + 0x588, u32::from(address))
         .unwrap();
-    let mut device = cell.borrow_mut();
-    device.select_address(address);
-    device.start();
-    device.write(value);
-    device.stop();
+    machine.bus.write_u32(TWIM + 0x544, BUFFER as u32).unwrap();
+    machine.bus.write_u32(TWIM + 0x548, 1).unwrap();
+    machine.bus.write_u32(TWIM + 0x008, 1).unwrap(); // TASKS_STARTTX
+    machine.run(Some(100_000)).unwrap();
+    assert_eq!(
+        machine.bus.read_u32(TWIM + 0x104).unwrap(),
+        1,
+        "transfer stopped"
+    );
+    (
+        machine.bus.read_u32(TWIM + 0x124).unwrap(),
+        machine.bus.read_u32(TWIM + 0x4c4).unwrap(),
+        machine.bus.read_u32(TWIM + 0x54c).unwrap(),
+    )
+}
+
+fn write_probe(machine: &mut Machine<CortexM>, address: u8, value: u8) {
+    assert_eq!(
+        probe_transfer(machine, address, value),
+        (0, 0, 1),
+        "probe must ACK and receive one byte"
+    );
+}
+
+#[test]
+fn twim_probe_rejects_an_absent_address() {
+    let mut machine = machine();
+    let (error, source, amount) = probe_transfer(&mut machine, 0x26, 0xff);
+    assert_eq!(
+        (error, source & 2, amount),
+        (1, 2, 0),
+        "missing probe must NACK"
+    );
 }
 
 #[test]
