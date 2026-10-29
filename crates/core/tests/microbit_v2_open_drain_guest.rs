@@ -254,12 +254,20 @@ fn guest_observes_two_independent_retained_drivers() {
 #[test]
 fn guest_sees_autonomous_data_ready_without_polling() {
     let mut m = machine(true, false, false);
+    assert_eq!(m.bus.cpu_hz, 64_000_000, "fixture timing assumes 64 MHz");
     m.run(Some(1_000)).unwrap();
     assert_eq!(m.bus.read_u32(0x20000100).unwrap(), 1, "initial pull-up");
     write_probe_register(&mut m, 0, 1);
+    let cancel_started = m.total_cycles;
     m.run(Some(100)).unwrap();
     assert_eq!(m.bus.read_u32(0x20000100).unwrap(), 1, "no early assertion");
     write_probe_register(&mut m, 0, 0);
+    let cancel_cycles = m.total_cycles - cancel_started;
+    assert!(
+        cancel_cycles < 32_000,
+        "cancellation must precede the 1,000-us deadline: {cancel_cycles} cycles"
+    );
+    println!("MICROBIT_READY_CANCEL_CYCLES={cancel_cycles}");
     m.run(Some(200_000)).unwrap();
     assert_eq!(
         m.bus.read_u32(0x20000100).unwrap(),
@@ -275,12 +283,31 @@ fn guest_sees_autonomous_data_ready_without_polling() {
         0,
         "guest saw completion without polling status"
     );
+    // The read rearms the next 1,000-us conversion. Require a fresh guest
+    // sample of the released line within 500 us of starting that read; a
+    // stale RAM value or a late sample after reassertion cannot satisfy it.
+    let before_read = m.total_cycles;
+    let before_sample = m.bus.read_u32(0x20000104).unwrap();
     read_probe_register(&mut m, 2);
-    m.run(Some(100)).unwrap();
+    let mut released = false;
+    for _ in 0..1_000 {
+        let elapsed = m.total_cycles - before_read;
+        assert!(
+            elapsed < 32_000,
+            "release must be sampled before the next conversion: {elapsed} cycles"
+        );
+        let samples = m.bus.read_u32(0x20000104).unwrap();
+        let level = m.bus.read_u32(0x20000100).unwrap();
+        if samples > before_sample && level == 1 {
+            println!("MICROBIT_READY_RELEASE_CYCLES={elapsed};SAMPLES_BEFORE={before_sample};SAMPLES_AFTER={samples}");
+            released = true;
+            break;
+        }
+        m.run(Some(32)).unwrap();
+    }
     assert_eq!(
-        m.bus.read_u32(0x20000100).unwrap(),
-        1,
-        "result read releases the line"
+        released, true,
+        "result read releases the line and the guest observes it"
     );
     m.run(Some(200_000)).unwrap();
     assert_eq!(
