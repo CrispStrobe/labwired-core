@@ -1,0 +1,13 @@
+{
+  "baselineCommit": "ede33fb4a4778f35cc3398190aaa3d2cf9beb4db",
+  "baselineSourceBundleSha256": "e6b8c239dc7ee1aca736671350cda8101f4bf8d6c89d91e2a9e787c85b553939",
+  "candidateCommit": "464bd0edcb6b65f7d57db8ec0971d465c7cd9105",
+  "candidateSourceBundleSha256": "e6b8c239dc7ee1aca736671350cda8101f4bf8d6c89d91e2a9e787c85b553939",
+  "identicalWorkloadSha256": {
+    "crates/core/tests/microbit_v2_motion_io_guest.rs": "3afd0f4ffb476ccdecd7204a3503bcaba15c2c539d24c66a4c2179bb17b0765f",
+    "examples/microbit-v2/board-io.S": "5615e27e480262672eccaec3747676a8a27160729956f12404fed801cc427cb8",
+    "examples/microbit-v2/board-io.ld": "a701c40b9718e311a1f3e26a541cd6f5860e35532f850413f60a39015a467073",
+    "examples/microbit-v2/motion-polled.inc": "3291a77258dd3141cb09a2a942754330fece9fd2855ec8a93eccb35abcb0d8f9"
+  },
+  "runnerFingerprintSha256": "98a8918f194f6d5b1f948415c231129b9abdcdfd21d5b9a5a0f90ca53c618118"
+}

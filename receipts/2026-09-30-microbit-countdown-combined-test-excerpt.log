@@ -1,0 +1,44 @@
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:18:12.8954193Z test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.12s
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:18:13.7805333Z test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.88s
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:18:13.9023100Z test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.12s
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:18:13.9681409Z test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:18:15.2656816Z test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.29s
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:18:15.3071307Z test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:19:37.7558782Z [1m[92m     Running[0m tests/microbit_v2_adc_scan_guest.rs (target/release/deps/microbit_v2_adc_scan_guest-e55753a3570fe5c6)
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:19:37.8193605Z test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:20:47.2970625Z [1m[92m     Running[0m tests/nrf52_easydma_tick512_fidelity.rs (target/release/deps/nrf52_easydma_tick512_fidelity-c24a3e24c2150f36)
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:20:47.3817293Z test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:26:29.8508891Z test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 4222 filtered out; finished in 0.00s
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:26:30.0441304Z test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 4219 filtered out; finished in 0.00s
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:26:30.2415620Z test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 4201 filtered out; finished in 0.00s
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:26:30.5715881Z test result: ok. 75 passed; 0 failed; 0 ignored; 0 measured; 4152 filtered out; finished in 0.14s
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:26:30.7656238Z test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 4224 filtered out; finished in 0.00s
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:26:30.9586804Z test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 4220 filtered out; finished in 0.00s
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:26:31.1496665Z test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 4214 filtered out; finished in 0.00s
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:26:31.3445203Z test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 4226 filtered out; finished in 0.00s
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:26:31.5394804Z test cpu::cortex_m::t16_countdown_tests::code_patch_invalidation_cannot_reuse_a_cached_countdown ... ok
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:26:31.5436036Z test cpu::cortex_m::t16_countdown_tests::countdown_pc_wrap_matches_thumb_branch_target_and_odd_retirement ... ok
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:26:31.5456380Z test cpu::cortex_m::t16_countdown_tests::branch_rotated_cold_wrong_opcode_tag_and_width_entries_are_side_effect_free ... ok
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:26:31.5469845Z test cpu::cortex_m::t16_countdown_tests::maximum_budget_and_initial_zero_do_not_overflow_retirement_math ... ok
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:26:31.5471345Z test cpu::cortex_m::t16_countdown_tests::machine_scheduler_budgets_preserve_retirement_and_cycle_accounting ... ok
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:26:31.5472892Z test cpu::cortex_m::t16_countdown_tests::observers_receive_every_instruction_and_batched_clock_matches_ordinary_steps ... ok
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:26:31.5474424Z test cpu::cortex_m::t16_countdown_tests::pending_interrupt_takes_priority_over_the_countdown_fast_path ... ok
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:26:31.5476163Z test cpu::cortex_m::t16_countdown_tests::zero_wrap_signed_overflow_carry_and_odd_exit_keep_last_subs_flags ... ok
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:26:32.0963767Z test cpu::cortex_m::t16_countdown_tests::countdown_matches_real_decoder_and_interpreter_for_registers_flags_and_budgets ... ok
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:26:32.0965429Z test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 4218 filtered out; finished in 0.56s
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:26:32.2972688Z test cpu::cortex_m::t16_countdown_tests::branch_rotated_cold_wrong_opcode_tag_and_width_entries_are_side_effect_free ... ok
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:26:32.2989207Z test cpu::cortex_m::t16_countdown_tests::countdown_pc_wrap_matches_thumb_branch_target_and_odd_retirement ... ok
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:26:32.2996740Z test cpu::cortex_m::t16_countdown_tests::code_patch_invalidation_cannot_reuse_a_cached_countdown ... ok
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:26:32.3010435Z test cpu::cortex_m::t16_countdown_tests::machine_scheduler_budgets_preserve_retirement_and_cycle_accounting ... ok
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:26:32.3020070Z test cpu::cortex_m::t16_countdown_tests::maximum_budget_and_initial_zero_do_not_overflow_retirement_math ... ok
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:26:32.3029352Z test cpu::cortex_m::t16_countdown_tests::pending_interrupt_takes_priority_over_the_countdown_fast_path ... ok
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:26:32.3049735Z test cpu::cortex_m::t16_countdown_tests::zero_wrap_signed_overflow_carry_and_odd_exit_keep_last_subs_flags ... ok
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:26:32.3051283Z test cpu::cortex_m::t16_countdown_tests::observers_receive_every_instruction_and_batched_clock_matches_ordinary_steps ... ok
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:26:32.8653689Z test cpu::cortex_m::t16_countdown_tests::countdown_matches_real_decoder_and_interpreter_for_registers_flags_and_budgets ... ok
+board	Prove silicon GPIO mapping and guest board behavior	2026-09-30T14:26:32.8654571Z test result: ok. 153 passed; 0 failed; 0 ignored; 0 measured; 4074 filtered out; finished in 0.58s
+board	Prove native WASM analog input routing	2026-09-30T14:29:07.3797352Z test inputs::adc_routing_tests::legacy_stm32_route_keeps_injection_release_and_checks_its_channel_count ... ok
+board	Prove native WASM analog input routing	2026-09-30T14:29:07.3806375Z test inputs::adc_routing_tests::invalid_saadc_input_is_rejected_without_legacy_downcast_or_mutation ... ok
+board	Prove native WASM analog input routing	2026-09-30T14:29:07.3818447Z test inputs::adc_routing_tests::generic_saadc_route_changes_conversion_and_releases_input ... ok
+board	Prove native WASM analog input routing	2026-09-30T14:29:07.3819632Z test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 102 filtered out; finished in 0.00s
+board	Measure active board throughput	2026-09-30T14:29:08.6527153Z test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 1.07s
+board	Measure guest motion, display and button throughput	2026-09-30T14:29:13.6922298Z test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 4.79s
