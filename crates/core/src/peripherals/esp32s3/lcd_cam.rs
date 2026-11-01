@@ -61,9 +61,12 @@
 //!   until the chain drains ([`Self::dma_finish`]), so a driver polling
 //!   `LC_DMA_INT_ST` cannot rearm the descriptors under an in-flight transfer.
 //!
-//! Line/frame timing is still not modelled: there is no pixel clock, no
-//! per-cycle DOUT length and no RGB-mode sync generator. A transaction moves
-//! the whole descriptor chain and then completes.
+//! * **Functional RGB565 scanout**: RGB_MODE_EN selects a separate frame
+//!   receiver. Active width/height determine the exact DMA frame boundary;
+//!   a complete frame raises VSYNC, and NEXT_FRAME_EN keeps a cyclic stream
+//!   running. A short/absent DMA chain never manufactures a completed frame.
+//!   Pixel-clock, blanking time, RGB pin mux and analog timing are not modeled:
+//!   VSYNC is a functional DMA frame boundary, not a calibrated clock edge.
 //!
 //! ## Register map (ESP32-S3 TRM ch. "LCD and Camera Controller"; verified
 //! against `soc/esp32s3/register/soc/lcd_cam_reg.h`)
@@ -163,6 +166,8 @@ const LCD_BYTE_ORDER_BIT: u32 = 1 << 22;
 const LCD_BIT_ORDER_BIT: u32 = 1 << 21;
 /// LCD_8BITS_ORDER — swap every two data bytes; valid in 8-bit mode (bit 19).
 const LCD_8BITS_ORDER_BIT: u32 = 1 << 19;
+const LCD_RGB_MODE_BIT: u32 = 1 << 31;
+const MISC_NEXT_FRAME_BIT: u32 = 1 << 25;
 /// LCD_CMD_2_CYCLE_EN — the command phase is 2 cycles instead of 1 (bit 31).
 const LCD_CMD_2_CYCLE_BIT: u32 = 1 << 31;
 
@@ -316,6 +321,11 @@ pub struct Esp32s3LcdCam {
     /// engine has nothing to hold. The controller needs one strobe and knows
     /// nothing else about what is on the far end.
     panels: Vec<std::sync::Arc<dyn crate::peripherals::components::I80Panel>>,
+    rgb_panels: Vec<std::sync::Arc<dyn crate::peripherals::components::RgbPanel>>,
+    /// Latched active-area geometry and words for the current RGB frame.
+    rgb_size: Option<(u16, u16)>,
+    rgb_pixels: Vec<u16>,
+    rgb_frame_pending: bool,
 
     /// DVP sensor on the CAM half. Bound by a camera kit (`ov3660`); `None`
     /// keeps the no-sensor behaviour (one VSYNC per CAM_START).
@@ -408,6 +418,10 @@ impl Esp32s3LcdCam {
             dma_inflight: false,
             dma_half_word: None,
             panels: Vec::new(),
+            rgb_panels: Vec::new(),
+            rgb_size: None,
+            rgb_pixels: Vec::new(),
+            rgb_frame_pending: false,
             camera: None,
             cam: CamStream::default(),
             cam_dma_armed: false,
@@ -455,6 +469,32 @@ impl Esp32s3LcdCam {
     pub fn cam_frames(&self) -> u64 {
         self.cam.frames
     }
+
+    pub fn rgb_mode(&self) -> bool {
+        self.lcd_ctrl & LCD_RGB_MODE_BIT != 0
+    }
+
+    pub fn rgb_auto_next_frame(&self) -> bool {
+        self.lcd_misc & MISC_NEXT_FRAME_BIT != 0
+    }
+
+    /// Do not let a DMA burst cross an RGB frame boundary, including an odd
+    /// descriptor split within a 16-bit pixel. i80 keeps its existing budget.
+    pub fn dma_budget(&self, maximum: usize) -> usize {
+        if !self.rgb_mode() {
+            return maximum;
+        }
+        self.rgb_size
+            .map_or(0, |(w, h)| {
+                (usize::from(w) * usize::from(h) - self.rgb_pixels.len()) * 2
+                    - usize::from(self.dma_half_word.is_some())
+            })
+            .min(maximum)
+    }
+
+    pub fn rgb_frame_pending(&self) -> bool {
+        self.rgb_frame_pending
+    }
 }
 
 impl Default for Esp32s3LcdCam {
@@ -485,6 +525,32 @@ impl Esp32s3LcdCam {
         // the self-clearing pulse bits. Done first so the phase / bus-format
         // bits this write carries are the ones the transaction below uses.
         self.lcd_user = value & !(LCD_START_BIT | LCD_USER_PULSE_BITS);
+
+        if self.rgb_mode() {
+            // RGB START is a run bit. A read/modify/write while running must
+            // not rewind the in-flight framebuffer. Explicit stop/reset does.
+            if value & LCD_RESET_BIT != 0 || value & LCD_START_BIT == 0 {
+                self.lcd_busy = false;
+                self.lcd_pending_done = false;
+                self.dout_pending = false;
+                self.rgb_frame_pending = false;
+                self.rgb_pixels.clear();
+                self.rgb_size = None;
+                self.dma_half_word = None;
+            } else if !self.lcd_busy {
+                self.lcd_busy = true;
+                self.lcd_pending_done = false;
+                self.dout_pending = value & LCD_DOUT_BIT != 0 && self.bus_is_16bit();
+                self.rgb_size = Some((
+                    (((self.lcd_ctrl1 >> 8) & 0xfff) + 1) as u16,
+                    (((self.lcd_ctrl >> 11) & 0x3ff) + 1) as u16,
+                ));
+                self.rgb_pixels.clear();
+                self.rgb_frame_pending = false;
+                self.dma_half_word = None;
+            }
+            return;
+        }
 
         if value & LCD_START_BIT != 0 {
             // Launch a transaction. Mark busy and arm the completion latch; a
@@ -571,7 +637,7 @@ impl Esp32s3LcdCam {
     /// GDMA pump's signal to fetch the next burst. False before LCD_START (the
     /// driver arms the descriptors first) and after the chain drains.
     pub fn dma_wants_data(&self) -> bool {
-        self.lcd_busy && self.dout_pending
+        self.lcd_busy && self.dout_pending && !self.rgb_frame_pending
     }
 
     /// Push one burst of DOUT-phase payload bytes, as fetched from the GDMA
@@ -583,6 +649,30 @@ impl Esp32s3LcdCam {
     /// stream in 8-bit mode before packing.
     pub fn dma_push_tx(&mut self, bytes: &[u8]) {
         if bytes.is_empty() {
+            return;
+        }
+        if self.rgb_mode() {
+            if !self.dma_wants_data() {
+                return;
+            }
+            for &byte in bytes {
+                if let Some(lo) = self.dma_half_word.take() {
+                    let mut word = u16::from_le_bytes([lo, byte]);
+                    if self.lcd_user & LCD_BYTE_ORDER_BIT != 0 {
+                        word = word.swap_bytes();
+                    }
+                    if self.lcd_user & LCD_BIT_ORDER_BIT != 0 {
+                        word = word.reverse_bits();
+                    }
+                    self.rgb_pixels.push(word);
+                } else {
+                    self.dma_half_word = Some(byte);
+                }
+            }
+            if let Some((w, h)) = self.rgb_size {
+                self.rgb_frame_pending = self.rgb_pixels.len() == usize::from(w) * usize::from(h)
+                    && self.dma_half_word.is_none();
+            }
             return;
         }
         let dc = self.dc_level(MISC_CD_DATA_SET_BIT);
@@ -826,6 +916,14 @@ impl Esp32s3LcdCam {
 }
 
 impl Peripheral for Esp32s3LcdCam {
+    fn attach_rgb_panel(
+        &mut self,
+        panel: std::sync::Arc<dyn crate::peripherals::components::RgbPanel>,
+    ) -> bool {
+        self.rgb_panels.push(panel);
+        true
+    }
+
     fn read(&self, _offset: u64) -> SimResult<u8> {
         // The esp-hal / ESP-IDF LCD_CAM drivers use 32-bit accesses
         // exclusively; stray byte reads return 0 harmlessly.
@@ -894,6 +992,21 @@ impl Peripheral for Esp32s3LcdCam {
     }
 
     fn tick(&mut self) -> PeripheralTickResult {
+        if self.rgb_frame_pending {
+            if let Some((w, h)) = self.rgb_size {
+                for panel in &self.rgb_panels {
+                    panel.rgb_frame(w, h, &self.rgb_pixels);
+                }
+            }
+            self.rgb_frame_pending = false;
+            self.rgb_pixels.clear();
+            self.int_raw |= INT_LCD_VSYNC;
+            if !self.rgb_auto_next_frame() {
+                self.lcd_busy = false;
+                self.dout_pending = false;
+                self.int_raw |= INT_LCD_TRANS_DONE;
+            }
+        }
         // Complete any launched LCD transaction: latch TRANS_DONE and clear the
         // START/busy flag so polling firmware proceeds. A single tick is enough
         // (the sim has no per-pixel timing model) — EXCEPT while the DOUT phase
@@ -973,7 +1086,9 @@ impl Peripheral for Esp32s3LcdCam {
         let mut events = Vec::new();
         // Parenthesised: without the grouping `lcd_pending_done` alone armed a
         // fresh event on every call, even when one was already scheduled.
-        if (self.lcd_pending_done || self.cam_pending_vsync) && !self.scheduled {
+        if (self.lcd_pending_done || self.cam_pending_vsync || self.rgb_frame_pending)
+            && !self.scheduled
+        {
             self.scheduled = true;
             events.push((1, DEFERRED_WAKE_TOKEN));
         }
@@ -1009,12 +1124,13 @@ impl Peripheral for Esp32s3LcdCam {
         self.scheduled = false;
         let mut explicit_irqs = Vec::new();
         self.matrix_irq_sources_into(&mut explicit_irqs);
-        let reschedule = if self.lcd_pending_done || self.cam_pending_vsync {
-            self.scheduled = true;
-            Some(1)
-        } else {
-            None
-        };
+        let reschedule =
+            if self.lcd_pending_done || self.cam_pending_vsync || self.rgb_frame_pending {
+                self.scheduled = true;
+                Some(1)
+            } else {
+                None
+            };
         crate::sched::EventResult {
             explicit_irqs,
             reschedule_delay: reschedule,

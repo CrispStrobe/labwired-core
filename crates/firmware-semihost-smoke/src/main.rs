@@ -10,6 +10,10 @@ use panic_halt as _;
 static MSG: &[u8] = b"semihost hello\n\0";
 
 fn semihost(op: u32, arg: u32) {
+    // The workspace checks this firmware on the host too. ARM register operands
+    // only exist on the bare-metal target; an unsupported execution must fail
+    // explicitly rather than silently replacing the semihosting trap.
+    #[cfg(all(target_arch = "arm", target_os = "none"))]
     unsafe {
         core::arch::asm!(
             "bkpt #0xAB",
@@ -18,6 +22,8 @@ fn semihost(op: u32, arg: u32) {
             options(preserves_flags, nostack),
         );
     }
+    #[cfg(not(all(target_arch = "arm", target_os = "none")))]
+    panic!("semihost smoke requires bare-metal ARM (op={op:#x}, arg={arg:#x})");
 }
 
 #[entry]

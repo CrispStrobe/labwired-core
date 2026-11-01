@@ -14,6 +14,66 @@ use crate::lab_tools;
 use crate::*;
 use wasm_bindgen::prelude::*;
 
+// Parse before narrowing: wasm-bindgen's u8/u32 arguments otherwise permit
+// JavaScript truncation/wrap aliases such as GPIO296 becoming GPIO40.
+fn gpio_pin_number(pin: f64) -> Result<u8, String> {
+    if !pin.is_finite() || pin.fract() != 0.0 || !(0.0..=255.0).contains(&pin) {
+        return Err("GPIO pin must be an integer in 0..255".into());
+    }
+    Ok(pin as u8)
+}
+
+fn drive_gpio_external(
+    bus: &mut SystemBus,
+    peripheral: &str,
+    pin: u8,
+    level: Option<bool>,
+) -> Result<(), String> {
+    let idx = bus
+        .find_peripheral_index_by_name(peripheral)
+        .ok_or_else(|| format!("unknown GPIO peripheral '{peripheral}'"))?;
+    let port = bus.peripherals[idx]
+        .dev
+        .pins()
+        .ok_or_else(|| format!("peripheral '{peripheral}' has no pad interface"))?;
+    // pin_count is a span, not proof that every position is bonded (the S3
+    // has holes at 22..25). The input capability must also accept this pad.
+    if pin >= port.pin_count() || port.input(pin).is_none() {
+        return Err(format!("peripheral '{peripheral}' has no input pad {pin}"));
+    }
+    let external = level.map_or(
+        labwired_core::pins::External::Released,
+        labwired_core::pins::External::Level,
+    );
+    bus.set_pad_external(idx, pin, external)
+        .ok_or_else(|| format!("peripheral '{peripheral}' refused external input on pad {pin}"))?;
+    Ok(())
+}
+
+impl WasmSimulator {
+    // Normalized replay path has no JsValue calls, so host tests can exercise
+    // the real constructor/journal/restore path as well as actual WASM.
+    pub(crate) fn set_gpio_external_s(
+        &mut self,
+        peripheral: &str,
+        pin: u8,
+        level: Option<bool>,
+    ) -> Result<(), String> {
+        let machine = self
+            .machine
+            .as_mut()
+            .ok_or_else(|| "simulator not initialized".to_owned())?;
+        drive_gpio_external(&mut machine.bus, peripheral, pin, level)?;
+        // Refused calls do not mutate the machine or enter its replay log.
+        self.record(lab_tools::Op::SetGpioExternal(
+            peripheral.into(),
+            pin,
+            level,
+        ));
+        Ok(())
+    }
+}
+
 // Keep the native routing logic independent of JsValue so invalid requests can
 // be tested on the host without calling a wasm-only exception constructor.
 fn drive_adc_input(
@@ -163,6 +223,35 @@ fn validate_motor_fault(
 
 #[wasm_bindgen]
 impl WasmSimulator {
+    /// Present an external high/low level to a named peripheral's physical
+    /// input pad, or release the external hold with `null`. Uses the shared
+    /// PadPort edge/IRQ/watch path. It creates no synthetic board_io device.
+    /// `pin` must be an exact integer, and `level` exactly true/false/null;
+    /// unknown peripherals, missing pad interfaces and unbonded pins fail.
+    /// This does not declare that an alternate-function/electrical mode is
+    /// modeled; circuit consumers must qualify routing and drive separately.
+    #[wasm_bindgen]
+    pub fn set_gpio_external(
+        &mut self,
+        peripheral: &str,
+        pin: JsValue,
+        level: JsValue,
+    ) -> Result<(), JsValue> {
+        let pin = pin
+            .as_f64()
+            .ok_or_else(|| JsValue::from_str("GPIO pin must be a number"))?;
+        let pin = gpio_pin_number(pin).map_err(|e| JsValue::from_str(&e))?;
+        let level = if level.is_null() {
+            None
+        } else {
+            Some(level.as_bool().ok_or_else(|| {
+                JsValue::from_str("GPIO external level must be true, false or null (release)")
+            })?)
+        };
+        self.set_gpio_external_s(peripheral, pin, level)
+            .map_err(|e| JsValue::from_str(&e))
+    }
+
     /// Apply one allowlisted motor-plant input in SI units.
     #[wasm_bindgen]
     pub fn set_motor_input(&mut self, id: &str, name: &str, value: f64) -> Result<(), JsValue> {
@@ -681,6 +770,103 @@ fn for_each_i2c_slave(
                 f(name, d.borrow().as_ref());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod gpio_external_tests {
+    use super::*;
+    use labwired_core::pins::External;
+
+    fn s3() -> WasmSimulator {
+        WasmSimulator::new_from_config_parts(std::rc::Rc::new(lab_tools::CtorInputs {
+            system_yaml: include_str!("../../../configs/systems/esp32-4848s040.yaml").into(),
+            chip_yaml: include_str!("../../../configs/chips/esp32s3.yaml").into(),
+            firmware: include_bytes!("../../../tests/fixtures/esp32-4848s040/probe.elf").to_vec(),
+            blobs: Default::default(),
+        }))
+        .expect("S040 constructor")
+    }
+
+    fn external(sim: &WasmSimulator, pin: u8) -> External {
+        let bus = &sim.machine.as_ref().unwrap().bus;
+        let idx = bus.find_peripheral_index_by_name("gpio").unwrap();
+        bus.peripherals[idx].dev.pins().unwrap().external(pin)
+    }
+
+    fn level(sim: &WasmSimulator, pin: u8) -> Option<bool> {
+        let bus = &sim.machine.as_ref().unwrap().bus;
+        let idx = bus.find_peripheral_index_by_name("gpio").unwrap();
+        bus.peripherals[idx].dev.read_gpio_input(pin)
+    }
+
+    #[test]
+    fn numeric_pin_requires_an_exact_bounded_integer() {
+        for pin in [
+            -1.0,
+            0.5,
+            256.0,
+            296.0,
+            4_294_967_336.0,
+            f64::NAN,
+            f64::INFINITY,
+        ] {
+            assert!(gpio_pin_number(pin).is_err(), "{pin}");
+        }
+        assert_eq!(gpio_pin_number(0.0).unwrap(), 0);
+        assert_eq!(gpio_pin_number(48.0).unwrap(), 48);
+    }
+
+    #[test]
+    fn bank_zero_and_one_support_levels_and_actual_release() {
+        let mut sim = s3();
+        for pin in [1, 2, 40, 43, 44] {
+            assert_eq!(external(&sim, pin), External::Released);
+            sim.set_gpio_external_s("gpio", pin, Some(false)).unwrap();
+            assert_eq!(level(&sim, pin), Some(false));
+            sim.set_gpio_external_s("gpio", pin, Some(true)).unwrap();
+            assert_eq!(level(&sim, pin), Some(true));
+            sim.set_gpio_external_s("gpio", pin, None).unwrap();
+            assert_eq!(external(&sim, pin), External::Released);
+            assert_eq!(
+                level(&sim, pin),
+                Some(true),
+                "existing pull-up after release"
+            );
+        }
+    }
+
+    #[test]
+    fn bad_refs_fail_without_mutating_any_pad() {
+        let mut sim = s3();
+        assert!(sim.set_gpio_external_s("missing", 40, Some(false)).is_err());
+        assert!(sim.set_gpio_external_s("uart0", 0, Some(false)).is_err());
+        for pin in [22, 23, 24, 25, 49, 53, 255] {
+            assert!(sim.set_gpio_external_s("gpio", pin, Some(false)).is_err());
+        }
+        for pin in [8, 11, 12, 40, 43, 44] {
+            assert_eq!(external(&sim, pin), External::Released);
+        }
+    }
+
+    #[test]
+    fn journal_restore_replays_both_hold_and_release() {
+        let mut sim = s3();
+        sim.set_gpio_external_s("gpio", 40, Some(false)).unwrap();
+        let held: serde_json::Value =
+            serde_json::from_str(&sim.snapshot_save_s(None).unwrap()).unwrap();
+        sim.set_gpio_external_s("gpio", 40, None).unwrap();
+        let released: serde_json::Value =
+            serde_json::from_str(&sim.snapshot_save_s(None).unwrap()).unwrap();
+        sim.set_gpio_external_s("gpio", 40, Some(true)).unwrap();
+        sim.snapshot_restore_s(held["id"].as_u64().unwrap() as u32)
+            .unwrap();
+        assert_eq!(external(&sim, 40), External::Level(false));
+        assert_eq!(level(&sim, 40), Some(false));
+        sim.snapshot_restore_s(released["id"].as_u64().unwrap() as u32)
+            .unwrap();
+        assert_eq!(external(&sim, 40), External::Released);
+        assert_eq!(level(&sim, 40), Some(true));
     }
 }
 

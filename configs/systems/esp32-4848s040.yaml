@@ -1,0 +1,23 @@
+# Functional GUITION ESP32-4848S040 C_I display/touch profile (N16R8).
+# Internal display wiring is not an exposed GPIO header. See the board guide.
+name: "esp32-4848s040"
+chip: "../chips/esp32s3.yaml"
+cpu_hz: 240000000
+external_devices:
+  - id: "display"
+    type: "st7701-rgb"
+    connection: "gpio"
+    config:
+      cs_pin: "GPIO39"
+      sck_pin: "GPIO48"
+      mosi_pin: "GPIO47"
+      backlight_pin: "GPIO38"
+  - id: "touch"
+    type: "gt911"
+    connection: "i2c0"
+    route:
+      sda: "GPIO19"
+      scl: "GPIO45"
+    config:
+      i2c_address: 0x5d
+board_io: []
