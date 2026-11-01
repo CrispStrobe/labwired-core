@@ -7271,7 +7271,6 @@ boards:
     # the generic Xtensa BB JIT emit core (#1139) — the merge of the two is one
     # digest, so it is re-stamped once here rather than twice.
     drift_ack: 2026-09-18
-    drift_ack_digest: 7fff43fcf6d9eebcec7f049ca2c43930fff1dddcf0907e2e25884c42f9ace40d
     #
     # 2026-09-18 (execute split): no execution change. The arm bodies of
     # `XtensaLx7::execute` moved verbatim into `cpu/xtensa_lx7/exec/*.rs` as
@@ -7426,6 +7425,14 @@ boards:
     # Pinned by crates/cli/tests/esp32_ledc_pad.rs (real Arduino-ESP32 2.0.17
     # image, exact duties). ACK, NOT A CAPTURE.
     drift_ack: 2026-10-12
+    # 2026-11-01: CrispStrobe explicitly acknowledged this exact model digest
+    # after reviewing the S040 RGB/LCD_CAM/GDMA and H1 bank-1 GPIO additions.
+    # Physical re-capture is committed by 2026-12-01. The 2026-08-09 capture
+    # still anchors only nine reset registers; it does not validate the new
+    # RGB, GT911 touch or H1 behavior. This is an ACK, NOT A CAPTURE.
+    drift_ack: 2026-11-01
+    drift_ack_digest: 952a2b85b15b54f120e0d63affb78c0eb9df3eca608eaa1a71aa36abf91f8b76
+    drift_ack_expires: 2026-12-01
 
   - id: esp32s3-zero
     # Board variant of esp32s3: same silicon (LX7), 4 MiB flash / 480 KiB RAM.

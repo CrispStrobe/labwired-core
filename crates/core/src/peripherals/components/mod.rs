@@ -36,6 +36,7 @@ pub mod declarative_spi;
 pub mod declarative_transceiver;
 pub mod declarative_uart;
 pub mod gpio_schedule;
+pub mod gt911;
 // Frozen pre-migration timing oracle; absent from production builds. Historical
 // hook/readback members are preserved so parity does not redefine the reference.
 #[cfg(test)]
@@ -66,12 +67,14 @@ pub(crate) mod mux_fixture;
 pub mod nau88l21;
 pub mod pca9685;
 pub mod pn532;
+pub mod rgb_panel;
 pub mod rule_machine;
 pub mod sensirion;
 pub mod servo;
 pub mod seven_seg_font;
 pub mod shm_i2c;
 pub mod sps30;
+pub mod st7701;
 pub mod st7735_color;
 pub mod step_dir_motor;
 pub mod supply;
@@ -120,6 +123,7 @@ pub use max30102::{Max30102, MAX30102_ADDR};
 pub use mlx90640::{Mlx90640, ThermalScene, MLX90640_ADDR};
 pub use nau88l21::Nau88l21;
 pub use pca9685::Pca9685;
+pub use rgb_panel::RgbPanel;
 pub use rule_machine::{RuleCtx, RuleMachine};
 pub use servo::{LedcServoDriver, McpwmServoDriver, Servo, ServoCal};
 pub use shm_i2c::ShmI2c;

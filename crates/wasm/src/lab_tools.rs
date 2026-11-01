@@ -40,6 +40,7 @@
 use crate::WasmSimulator;
 use labwired_core::pc_coverage::PcCoverageObserver;
 use labwired_core::DebugControl;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
@@ -69,6 +70,7 @@ pub(crate) enum Op {
     SetInputs(serde_json::Value),
     ListInputs,
     SetBoardIo(String, bool),
+    SetGpioExternal(String, u8, Option<bool>),
     SetAdcValue(String, u16),
     SetAdcMillivolts(String, u8, u16),
     ClearAdc(String, u8),
@@ -230,12 +232,20 @@ impl WasmSimulator {
             Op::WriteRttDown(b) => self.write_rtt_down(b).map(|_| ()),
             Op::WriteSemihosting(b) => self.write_semihosting_input(b),
             Op::SetInput(c, v) => self.set_input(c, *v),
-            Op::SetInputs(v) => match serde_wasm_bindgen::to_value(v) {
+            // InputSet is a typed struct: its WASM deserializer reads plain
+            // object fields, not entries in a JS Map. Preserve the original
+            // public set_inputs shape when replaying its JSON journal value.
+            Op::SetInputs(v) => match v
+                .serialize(&serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true))
+            {
                 Ok(v) => self.set_inputs(v),
                 Err(e) => Err(js(e)),
             },
             Op::ListInputs => self.list_inputs().map(|_| ()),
             Op::SetBoardIo(id, a) => self.set_board_io_input(id, *a),
+            Op::SetGpioExternal(p, pin, level) => {
+                self.set_gpio_external_s(p, *pin, *level).map_err(js)
+            }
             Op::SetAdcValue(p, v) => self.set_adc_value(p, *v),
             Op::SetAdcMillivolts(p, c, mv) => self.set_adc_channel_millivolts(p, *c, *mv),
             Op::ClearAdc(p, c) => self.clear_adc_channel(p, *c),

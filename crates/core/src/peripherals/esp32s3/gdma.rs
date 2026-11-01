@@ -721,7 +721,16 @@ impl Esp32s3Gdma {
                         }
                     }
                 }
-                let _ = OUT_LINK_STOP_BIT;
+                // LCD scanout can be explicitly aborted between frames or
+                // mid-frame. Preserve other coupled engines' existing stop
+                // policy; they have independent transaction/FIFO semantics.
+                if value & OUT_LINK_STOP_BIT != 0
+                    && DmaPeripheral::from_sel(c.tx.peri_sel) == DmaPeripheral::LcdCam
+                {
+                    c.tx.pending_coupled = false;
+                    c.tx.coupled_desc_ptr = 0;
+                    c.tx.coupled_buf_offset = 0;
+                }
             }
             OUT_PERI_SEL => c.tx.peri_sel = value & PERI_SEL_MASK,
             _ => {
@@ -1369,6 +1378,57 @@ impl Esp32s3Gdma {
         sys_bus.peripherals[i2s_idx].dev = i2s_dev;
     }
 
+    /// RGB's cyclic descriptor walk. Unlike the historical compatibility
+    /// pumps it must not turn a failed memory read into a fabricated pixel.
+    /// Stop with OUT_DSCR_ERR on inaccessible/malformed/CPU-owned descriptors.
+    /// EOF is reported at the descriptor that carries it, but is not a stop.
+    fn coupled_rgb_out_collect(
+        dir: &mut DmaDir,
+        bus: &mut dyn Bus,
+        budget: usize,
+    ) -> Result<Vec<u8>, ()> {
+        let mut bytes = Vec::with_capacity(budget);
+        for _ in 0..MAX_DESC_CHAIN {
+            if bytes.len() == budget || dir.coupled_desc_ptr == 0 {
+                break;
+            }
+            let addr = dir.coupled_desc_ptr;
+            if addr & 3 != 0 {
+                return Err(());
+            }
+            let dw0 = bus.read_u32(addr).map_err(|_| ())?;
+            let d = Desc {
+                dw0,
+                len: (dw0 >> 12) & 0xfff,
+                size: dw0 & 0xfff,
+                buf: u64::from(bus.read_u32(addr + 4).map_err(|_| ())?),
+                next: u64::from(bus.read_u32(addr + 8).map_err(|_| ())?),
+            };
+            if !d.dma_owned() || d.len == 0 || d.len > d.size || dir.coupled_buf_offset > d.len {
+                return Err(());
+            }
+            let count = (d.len - dir.coupled_buf_offset).min((budget - bytes.len()) as u32);
+            for offset in 0..count {
+                bytes.push(
+                    bus.read_u8(d.buf + u64::from(dir.coupled_buf_offset + offset))
+                        .map_err(|_| ())?,
+                );
+            }
+            dir.coupled_buf_offset += count;
+            if dir.coupled_buf_offset == d.len {
+                if dir.conf0 & OUT_AUTO_WRBACK_BIT != 0 {
+                    bus.write_u32(addr, dw0 & !DESC_OWNER_BIT).map_err(|_| ())?;
+                }
+                if d.suc_eof() {
+                    dir.int_raw |= OUT_EOF_BIT;
+                }
+                dir.coupled_buf_offset = 0;
+                dir.coupled_desc_ptr = d.next;
+            }
+        }
+        Ok(bytes)
+    }
+
     /// Service GDMA→LCD_CAM pixel streaming (`PERI_SEL == 5`, OUT direction).
     ///
     /// This is the path an `esp_lcd` i80 transaction takes: the driver mounts
@@ -1423,6 +1483,7 @@ impl Esp32s3Gdma {
         let placeholder: Box<dyn Peripheral> = Box::new(StubPeripheral::new(0));
         let mut lcd_dev = std::mem::replace(&mut sys_bus.peripherals[lcd_idx].dev, placeholder);
 
+        let mut rgb_wake = false;
         'work: {
             let Some(lcd) = lcd_dev
                 .as_any_mut()
@@ -1443,15 +1504,43 @@ impl Esp32s3Gdma {
                 break 'work;
             }
 
-            let bytes = Self::coupled_out_collect(
-                &mut self.channels[tx_idx].tx,
-                &mut *sys_bus,
-                LCD_BYTES_PER_TICK,
-                true,
-            );
+            let budget = lcd.dma_budget(LCD_BYTES_PER_TICK);
+            let bytes = if lcd.rgb_mode() {
+                match Self::coupled_rgb_out_collect(
+                    &mut self.channels[tx_idx].tx,
+                    &mut *sys_bus,
+                    budget,
+                ) {
+                    Ok(bytes) => bytes,
+                    Err(()) => {
+                        let tx = &mut self.channels[tx_idx].tx;
+                        tx.int_raw |= OUT_DSCR_ERR_BIT;
+                        tx.pending_coupled = false;
+                        tx.coupled_desc_ptr = 0;
+                        tx.coupled_buf_offset = 0;
+                        lcd.dma_finish();
+                        break 'work;
+                    }
+                }
+            } else {
+                Self::coupled_out_collect(
+                    &mut self.channels[tx_idx].tx,
+                    &mut *sys_bus,
+                    budget,
+                    true,
+                )
+            };
             lcd.dma_push_tx(&bytes);
 
-            if self.channels[tx_idx].tx.coupled_desc_ptr == 0 {
+            if lcd.rgb_frame_pending() {
+                rgb_wake = true;
+                // RGB may use a circular descriptor ring: suc_eof marks a
+                // DMA EOF, not termination. A complete frame wakes LCD VSYNC;
+                // the channel stays armed when LCD auto-next is enabled.
+            }
+            if self.channels[tx_idx].tx.coupled_desc_ptr == 0
+                || (lcd.rgb_frame_pending() && !lcd.rgb_auto_next_frame())
+            {
                 // Chain drained (end-of-list, suc_eof, or a CPU-owned
                 // descriptor): the DOUT phase is over.
                 lcd.dma_finish();
@@ -1460,6 +1549,13 @@ impl Esp32s3Gdma {
         }
 
         sys_bus.peripherals[lcd_idx].dev = lcd_dev;
+        // Unlike i80, RGB does not poll a completion event while it waits for
+        // data. Harvest the frame event from its actual owner after restoring
+        // the borrowed LCD. This is the existing scheduler seam, not a new
+        // bus-wide walk.
+        if rgb_wake {
+            sys_bus.collect_scheduled_events(lcd_idx);
+        }
     }
 
     /// Execute all pending descriptor walks and coupled-mode ticks.

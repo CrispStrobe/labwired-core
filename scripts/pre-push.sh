@@ -24,6 +24,8 @@ cargo clippy -p labwired-core -p labwired-cli --all-targets -- -D warnings
 echo "Walk-deletion + RP2040 vector tests (event-scheduler feature)..."
 cargo test -p labwired-core --features event-scheduler --lib \
   event_clr_deasserts_on_walk_deleted \
+  -- --quiet
+cargo test -p labwired-core --features event-scheduler --lib \
   tests::rp2040 \
   -- --quiet
 

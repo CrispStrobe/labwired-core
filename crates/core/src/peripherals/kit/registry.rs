@@ -57,6 +57,8 @@ pub static KITS: &[&'static dyn PeripheralKit] = &[
     &components::declarative_display::ST7735R_MEMORY_SIMULATION_KIT,
     &components::inmp441::INMP441_KIT,
     &components::ili9341_parallel::ILI9341_PARALLEL_KIT,
+    &components::st7701::ST7701_KIT,
+    &components::gt911::GT911_KIT,
     &components::declarative_display::SSD1680_TRICOLOR_290_KIT,
     &components::declarative_display::UC8151D_TRICOLOR_290_KIT,
     &components::declarative_spi::SN74HC165_KIT,

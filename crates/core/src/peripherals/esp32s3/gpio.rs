@@ -121,8 +121,8 @@ const REG_DATE: u64 = 0x6FC;
 
 /// Second-bank registers carry GPIO32..53 → 22 valid bits.
 const BANK1_MASK: u32 = 0x003F_FFFF;
-/// PINn writable bits per SVD: sync stages [4:0] (bits 5/6 reserved),
-/// pad_driver bit 7 + INT_TYPE [9:7] region, WAKEUP_ENABLE bit 10,
+/// PINn writable bits per SVD: sync stages [1:0]/[4:3], PAD_DRIVER bit 2
+/// (bits 5/6 reserved), INT_TYPE [9:7], WAKEUP_ENABLE bit 10,
 /// CONFIG [12:11], INT_ENA [17:13].
 const PIN_WMASK: u32 = 0x0003_FF9F;
 
@@ -131,6 +131,12 @@ const NWORDS: usize = 0x700 / 4;
 
 /// Number of GPIO pads with a `FUNCn_OUT_SEL_CFG` entry (GPIO0..53).
 const PAD_COUNT: u8 = 54;
+/// Public pad-number span, distinct from the 54 SVD register slots. The S3
+/// bonds GPIO0..21 and GPIO26..48: 45 physical pads with four holes.
+const PUBLIC_PIN_SPAN: u8 = 49;
+const fn physical_pin(pin: u8) -> bool {
+    pin <= 21 || (pin >= 26 && pin < PUBLIC_PIN_SPAN)
+}
 /// `GPIO_FUNCn_OUT_SEL_CFG.out_sel` field width: bits [8:0] pick which internal
 /// peripheral output signal drives pad `n` (ESP32-S3 TRM §5.4 GPIO matrix).
 const OUT_SEL_MASK: u32 = 0x1FF;
@@ -412,22 +418,24 @@ impl Esp32s3Gpio {
         r
     }
 
-    /// A bank-0 pad in open drain (`PAD_DRIVER`) whose output latch holds a
+    /// A pad in open drain (`PAD_DRIVER`) whose output latch holds a
     /// 1 and that the outside world holds ([`PinPort::set_external`]): its
     /// output stage is off and `GPIO_IN` reads the wire. With nothing outside
     /// the model keeps its old reading (ENABLE alone decides).
     fn released_held_pad(&self, pin: u8) -> bool {
-        if pin >= 32 {
+        if !physical_pin(pin) {
             return false;
         }
-        let mask = 1u32 << pin;
-        self.external_drive_mask[0] & mask != 0
-            && self.out & mask != 0
+        let bank = (pin / 32) as usize;
+        let mask = 1u32 << (pin % 32);
+        let out = if bank == 0 { self.out } else { self.out1 };
+        self.external_drive_mask[bank] & mask != 0
+            && out & mask != 0
             && self.reg(PIN0 + (pin as u64) * 4) & crate::peripherals::esp_gpio_net::PIN_PAD_DRIVER
                 != 0
     }
 
-    /// The pad's own output stage ([`PinPort::driver`]), bank 0. A pad the
+    /// The pad's own output stage ([`PinPort::driver`]), in either bank. A pad the
     /// matrix routes to a peripheral that publishes its wire is driven by it;
     /// one routed to a peripheral that publishes nothing has no known drive
     /// (`None`), so a world refuses it. Otherwise ENABLE drives the latch and
@@ -435,11 +443,17 @@ impl Esp32s3Gpio {
     /// `FUN_WPU` bit.
     fn pad_driver(&self, pin: u8) -> Option<crate::pins::PadDriver> {
         use crate::pins::{PadDriver, Pull};
-        if pin >= 32 {
+        if !physical_pin(pin) {
             return None;
         }
-        let mask = 1u32 << pin;
-        let pull = if self.io_mux_pullup_mask()[0] & mask != 0 {
+        let bank = (pin / 32) as usize;
+        let mask = 1u32 << (pin % 32);
+        let (enable, out) = if bank == 0 {
+            (self.enable, self.out)
+        } else {
+            (self.reg(ENABLE1), self.out1)
+        };
+        let pull = if self.io_mux_pullup_mask()[bank] & mask != 0 {
             Pull::Up
         } else {
             Pull::None
@@ -447,7 +461,7 @@ impl Esp32s3Gpio {
         if let Some(level) = self.pad_routes.level(pin, |p| self.out_sel(p)) {
             return Some(PadDriver::drive(level).with_pull(pull));
         }
-        if self.enable & mask == 0 {
+        if enable & mask == 0 {
             return Some(PadDriver::released(pull));
         }
         if self.out_sel(pin) != Some(SIG_GPIO_OUT) {
@@ -457,7 +471,7 @@ impl Esp32s3Gpio {
         }
         Some(
             PadDriver::output(
-                self.out & mask != 0,
+                out & mask != 0,
                 self.reg(PIN0 + (pin as u64) * 4)
                     & crate::peripherals::esp_gpio_net::PIN_PAD_DRIVER
                     != 0,
@@ -508,13 +522,15 @@ impl Esp32s3Gpio {
         }
     }
 
-    /// Bank-0 (level, four-state) of every pad, taken only while an observer
+    /// (Level, four-state) of each physical pad index, taken only while an observer
     /// is installed — the `--gpio-trace` path. Empty otherwise (no cost).
     fn state_snapshot(&self) -> Vec<(bool, crate::logic_capture::PadState)> {
         if self.observers.is_empty() {
             return Vec::new();
         }
-        (0..32u8).map(|pin| self.pad_state(pin)).collect()
+        (0..PUBLIC_PIN_SPAN)
+            .map(|pin| self.pad_state(pin))
+            .collect()
     }
 
     fn pad_state(&self, pin: u8) -> (bool, crate::logic_capture::PadState) {
@@ -528,7 +544,7 @@ impl Esp32s3Gpio {
         (level, state)
     }
 
-    /// Fire `on_pin_state_change` for every bank-0 pad whose four-state
+    /// Fire `on_pin_state_change` for every pad whose four-state
     /// value moved since `before` (a [`Self::state_snapshot`]).
     fn state_report(&self, before: Vec<(bool, crate::logic_capture::PadState)>) {
         if before.is_empty() {
@@ -648,20 +664,29 @@ impl Esp32s3Gpio {
             .collect()
     }
 
-    /// Set the input level on `pin` (0..=31). Used by tests, boards and
+    /// Set the input level on a physical pad (0..21, 26..48). Used by tests, boards and
     /// stimulus generators. This is an *external drive*: it takes electrical
     /// priority over the pad's weak internal pull-up, so a button holding the
     /// pin low still reads 0 with `INPUT_PULLUP` configured.
     pub fn set_pin_input(&mut self, pin: u8, level: bool) {
-        assert!(pin < 32, "set_pin_input: pin {pin} >= 32");
-        let before = self.effective_input(0);
+        assert!(
+            physical_pin(pin),
+            "set_pin_input: GPIO{pin} is not a physical S3 pad"
+        );
+        let bank = (pin / 32) as usize;
+        let mask = 1u32 << (pin % 32);
+        let before = self.effective_input(bank);
         if level {
-            self.external_levels[0] |= 1u32 << pin;
+            self.external_levels[bank] |= mask;
         } else {
-            self.external_levels[0] &= !(1u32 << pin);
+            self.external_levels[bank] &= !mask;
         }
-        self.external_drive_mask[0] |= 1u32 << pin;
-        self.latch_input_edges(before);
+        self.external_drive_mask[bank] |= mask;
+        // Bank-1 interrupt delivery is not part of the H1 pad-access subset.
+        // Preserve the existing bank-0 edge/level interrupt path unchanged.
+        if bank == 0 {
+            self.latch_input_edges(before);
+        }
     }
 
     /// Wire the S3 IO_MUX's shared per-pad controls after both peripherals
@@ -843,7 +868,7 @@ impl Esp32s3Gpio {
             ENABLE1_W1TS | ENABLE1_W1TC => self.reg(ENABLE1),
             STATUS_W1TS | STATUS_W1TC => self.reg(STATUS),
             // GPIO_PCPU_INT / GPIO_PCPU_NMI_INT: the pending pins with this
-            // CPU's INT_ENA bit set (bank 0; bank 1 has no input model).
+            // CPU's INT_ENA bit set (bank 0; bank 1 IRQ is not modeled).
             PCPU_INT => self.cpu_int(13),
             PCPU_NMI_INT => self.cpu_int(14),
             STATUS1_W1TS | STATUS1_W1TC => self.reg(STATUS1),
@@ -957,11 +982,11 @@ impl Default for Esp32s3Gpio {
     }
 }
 
-/// The pin interface covers bank 0 (GPIO0..31), the pads with input storage
-/// and a probe level in this model; GPIO32..53 stay on the register file.
+/// Public physical GPIO pads in both banks. `pin_count` is an index span;
+/// the unbonded 22..25 holes and SVD-only 49..53 slots refuse pad operations.
 impl PinPort for Esp32s3Gpio {
     fn pin_count(&self) -> u8 {
-        32
+        PUBLIC_PIN_SPAN
     }
 
     fn driver(&self, pin: u8) -> Option<crate::pins::PadDriver> {
@@ -970,8 +995,9 @@ impl PinPort for Esp32s3Gpio {
 
     fn external(&self, pin: u8) -> External {
         let mask = 1u32 << (pin & 31);
-        if pin < 32 && self.external_drive_mask[0] & mask != 0 {
-            External::Level(self.external_levels[0] & mask != 0)
+        let bank = (pin / 32) as usize;
+        if physical_pin(pin) && self.external_drive_mask[bank] & mask != 0 {
+            External::Level(self.external_levels[bank] & mask != 0)
         } else {
             External::Released
         }
@@ -982,23 +1008,26 @@ impl PinPort for Esp32s3Gpio {
     /// input change latches `GPIO_STATUS` per `INT_TYPE`, and the four-state
     /// observers see it.
     fn set_external(&mut self, pin: u8, ext: External) -> Option<InputChange> {
-        if pin >= 32 {
+        if !physical_pin(pin) {
             return None;
         }
-        let mask = 1u32 << pin;
-        let before = self.effective_input(0);
+        let bank = (pin / 32) as usize;
+        let mask = 1u32 << (pin % 32);
+        let before = self.effective_input(bank);
         let states = self.state_snapshot();
         self.mutate_pads(|g| match ext {
             External::Level(level) => g.set_pin_input(pin, level),
             External::Released => {
-                g.external_drive_mask[0] &= !mask;
-                g.latch_input_edges(before);
+                g.external_drive_mask[bank] &= !mask;
+                if bank == 0 {
+                    g.latch_input_edges(before);
+                }
             }
         });
         self.state_report(states);
         Some(InputChange {
             before: before & mask != 0,
-            after: self.effective_input(0) & mask != 0,
+            after: self.effective_input(bank) & mask != 0,
         })
     }
 
@@ -1075,17 +1104,17 @@ impl Peripheral for Esp32s3Gpio {
     }
 
     fn read_gpio_input(&self, pin: u8) -> Option<bool> {
-        if pin >= 32 {
+        if !physical_pin(pin) {
             return None;
         }
-        Some((self.effective_input(0) & (1u32 << pin)) != 0)
+        Some((self.effective_input((pin / 32) as usize) & (1u32 << (pin % 32))) != 0)
     }
 
     fn read_gpio_output(&self, pin: u8) -> Option<bool> {
-        if pin >= 32 {
+        if !physical_pin(pin) {
             return None;
         }
-        Some((self.out & (1u32 << pin)) != 0)
+        Some(((if pin < 32 { self.out } else { self.out1 }) & (1u32 << (pin % 32))) != 0)
     }
 
     fn pins(&self) -> Option<&dyn PinPort> {
@@ -1097,7 +1126,7 @@ impl Peripheral for Esp32s3Gpio {
     }
 
     fn read_gpio_pad(&self, pin: u8) -> Option<bool> {
-        if pin >= 32 {
+        if !physical_pin(pin) {
             return None;
         }
         // A pad the output matrix hands to the I²C controller is driven by
@@ -1112,10 +1141,9 @@ impl Peripheral for Esp32s3Gpio {
         // everything else shows the (externally driven) input level. A pad
         // in open drain holding a 1 that the outside holds is released and
         // shows the wire.
-        Some(
-            self.driven_level(pin)
-                .unwrap_or_else(|| (self.effective_input(0) & (1u32 << pin)) != 0),
-        )
+        Some(self.driven_level(pin).unwrap_or_else(|| {
+            (self.effective_input((pin / 32) as usize) & (1u32 << (pin % 32))) != 0
+        }))
     }
 
     /// Matrix-only outputs (the LEDC channels): one span route per pad, so
@@ -1135,7 +1163,7 @@ impl Peripheral for Esp32s3Gpio {
 
     fn gpio_routing(&self, pin: u8) -> Option<crate::peripherals::gpio::GpioRouting> {
         use crate::peripherals::gpio::{GpioMode, GpioRouting};
-        if pin >= PAD_COUNT {
+        if !physical_pin(pin) {
             return None;
         }
         // Output driver enable lives in ENABLE (bank 0) / ENABLE1 (bank 1).
@@ -1962,7 +1990,7 @@ mod tests {
         g.set_gpio_input(7, true);
         assert_eq!(g.read_gpio_pad_drive(7), Some(PadDrive::Driven), "probe");
         assert_eq!(own_drive(&g, 7), Some(PadDrive::HighZ), "own");
-        assert_eq!(g.set_external(32, External::Level(true)), None);
+        assert_eq!(g.set_external(49, External::Level(true)), None);
         write_u32(&mut g, PIN0 + 7 * 4, 1 << 2); // PAD_DRIVER
         write_u32(&mut g, OUT_W1TS, 1 << 7);
         write_u32(&mut g, ENABLE_W1TS, 1 << 7);

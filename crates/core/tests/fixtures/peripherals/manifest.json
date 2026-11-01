@@ -1353,6 +1353,90 @@
       "inputs": []
     },
     {
+      "device_type": "st7701-rgb",
+      "label": "ST7701 480x480 RGB panel",
+      "summary": "S040 16-bit RGB frame receiver and 9-bit GPIO control.",
+      "detail": "Functional LCD_CAM RGB565 frames, sleep/display commands, type9 bank selection and backlight. RGB pad timing/mux and analog panel behavior are not modeled.",
+      "transport": "gpio_group",
+      "category": "gpio",
+      "config_keys": [
+        {
+          "name": "cs_pin",
+          "ty": "str",
+          "doc": "Active-low control CS, default GPIO39."
+        },
+        {
+          "name": "sck_pin",
+          "ty": "str",
+          "doc": "Rising-edge 9-bit control clock, default GPIO48."
+        },
+        {
+          "name": "mosi_pin",
+          "ty": "str",
+          "doc": "Control data, default GPIO47."
+        },
+        {
+          "name": "backlight_pin",
+          "ty": "str",
+          "doc": "Active-high backlight, default GPIO38."
+        },
+        {
+          "name": "reset_pin",
+          "ty": "str",
+          "doc": "Optional active-low reset. S040 C_I has no MCU reset connection."
+        },
+        {
+          "name": "powered",
+          "ty": "bool",
+          "doc": "Whether the module's supply pins (VCC, GND) are connected. Omit for a powered part -- ABSENT MEANS POWERED, because curated labs state signals and leave the rails implicit. Only an explicit `false`, which the diagram compiler emits when it can see the supply pins are on no net, changes anything: the part then ignores its bus entirely and reports the dark/idle state it has on a bench."
+        }
+      ],
+      "labs": [],
+      "inputs": []
+    },
+    {
+      "device_type": "gt911",
+      "label": "GT911 touch (polling)",
+      "summary": "480x480 single-contact GT911 register and ready/ack model.",
+      "detail": "16-bit I2C pointer, product ID, configuration storage and one contact. Set x/y then pressed. No reset-address strap, IRQ, gestures or capacitive physics.",
+      "transport": "i2c",
+      "category": "i2c",
+      "config_keys": [
+        {
+          "name": "i2c_address",
+          "ty": "int",
+          "doc": "7-bit address: 0x5d (default) or 0x14."
+        }
+      ],
+      "labs": [],
+      "inputs": [
+        {
+          "key": "x",
+          "label": "Touch X",
+          "unit": "px",
+          "min": 0.0,
+          "max": 479.0,
+          "default": 0.0
+        },
+        {
+          "key": "y",
+          "label": "Touch Y",
+          "unit": "px",
+          "min": 0.0,
+          "max": 479.0,
+          "default": 0.0
+        },
+        {
+          "key": "pressed",
+          "label": "Touch pressed",
+          "unit": "",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 0.0
+        }
+      ]
+    },
+    {
       "device_type": "ssd1680_tricolor_290",
       "label": "SSD1680 Tri-Color E-Paper",
       "summary": "2.9\" tri-color (black/white/red) e-paper over SPI. Driver class GxEPD2_290_C90c -- the WeAct / Waveshare 2.9\" B/W/R module. Not interchangeable with the UC8151D part.",
