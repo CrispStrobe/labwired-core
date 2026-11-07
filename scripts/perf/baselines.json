@@ -372,5 +372,9 @@
   "stm32wba52": {
     "batch": 1.5,
     "step": 936.6
+  },
+  "samd51-no-asf-simulation": {
+    "batch": 9.1,
+    "step": 1625.2
   }
 }
