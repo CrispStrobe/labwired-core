@@ -285,11 +285,6 @@ impl Peripheral for Samd51Adc {
         // remain independently mandatory and prohibit quiescent chunks.
         false
     }
-    fn legacy_tick_active(&self) -> bool {
-        // No work lives in tick/tick_elapsed. Bus service and pending operations
-        // remain independently mandatory and prohibit quiescent chunks.
-        false
-    }
     fn as_any(&self) -> Option<&dyn Any> {
         Some(self)
     }

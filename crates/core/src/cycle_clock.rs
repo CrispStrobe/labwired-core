@@ -60,7 +60,7 @@ impl CycleClock {
     /// which can differ after workspace feature unification.
     #[inline]
     pub fn scheduler_enabled(&self) -> bool {
-        cfg!(feature = "event-scheduler")
+        event_scheduler_enabled()
     }
 
     /// The most recently published CPU cycle (the batch-start cycle during a

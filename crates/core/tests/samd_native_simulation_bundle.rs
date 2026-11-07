@@ -81,8 +81,10 @@ fn narrow_base_controls_do_not_admit_reserved_word_reads() {
         "reserved USB bytes stay refused"
     );
     assert!(bus.read_u8(0x43002400).is_ok(), "actual DAC CTRLA width");
+    // DAC 0x00..=0x03 is CTRLA, CTRLB, EVCTRL and one reserved byte that
+    // reads 0 (upstream 6ba1c29ef), so the first word is fully defined.
     assert!(
-        bus.read_u32(0x43002400).is_err(),
-        "reserved bytes stay refused"
+        bus.read_u32(0x43002400).is_ok(),
+        "DAC CTRLA..EVCTRL word is defined"
     );
 }

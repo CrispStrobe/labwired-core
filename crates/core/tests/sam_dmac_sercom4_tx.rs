@@ -147,7 +147,7 @@ impl Guest {
         for (address, value) in [
             (
                 descriptor,
-                4 << 16 | if mode == "noact" { 0x0401 } else { 0x0409 },
+                4 << 16 | if mode == "noact" { 0x0407 } else { 0x0409 }, // noact: CODAL's EVOSEL=3, NOACT
             ),
             (
                 descriptor + 4,
@@ -320,7 +320,12 @@ fn cpu_programmed_sercom4_requests_transfer_pause_reset_and_return_from_dma_irq(
                     let delivered = error
                         || matches!(
                             mode,
-                            "complete" | "pause-dma" | "pause-spi" | "pause-gclk" | "reset-restart"
+                            "complete"
+                                | "noact"
+                                | "pause-dma"
+                                | "pause-spi"
+                                | "pause-gclk"
+                                | "reset-restart"
                         );
                     assert_eq!(
                         entries,

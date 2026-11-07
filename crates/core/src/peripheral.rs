@@ -1117,6 +1117,16 @@ pub trait Peripheral: std::fmt::Debug + Send {
         None
     }
 
+    /// Attach a receiver to a functional RGB master, when this peripheral
+    /// implements one. The part kit names a bus capability, never a concrete
+    /// MCU controller. Existing peripherals decline without changing state.
+    fn attach_rgb_panel(
+        &mut self,
+        _panel: std::sync::Arc<dyn crate::peripherals::components::RgbPanel>,
+    ) -> bool {
+        false
+    }
+
     /// True if this controller hosts I²C slaves whose data-ready clocks the
     /// machine's central time drive should advance (see
     /// [`Self::advance_attached_i2c_us`]). Default `false`.

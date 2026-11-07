@@ -402,10 +402,13 @@ fn inactive_checked_chunks_match_rotated_strict_prefixes_and_really_coalesce() {
         strict.step_profile().cpu_batches,
         strict.step_profile().cpu_instructions
     );
+    // Upstream made the SAMD51 board models walk-free, so the bus may now
+    // recommend the scheduler interval. Checked chunks must not change that
+    // recommendation relative to the strict reference.
     assert_eq!(
         actual.max_safe_tick_interval(),
-        1,
-        "active-model recommendation stays conservative"
+        strict.max_safe_tick_interval(),
+        "checked chunks do not change the tick-interval recommendation"
     );
 }
 #[derive(Debug)]

@@ -173,10 +173,6 @@
     "batch": 1.6,
     "step": 937.9
   },
-  "samd51-no-asf-simulation": {
-    "batch": 9.1,
-    "step": 1625.2
-  },
   "stm32f103": {
     "batch": 1.6,
     "step": 937.3
