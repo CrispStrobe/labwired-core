@@ -54,7 +54,6 @@ members = [
     "crates/firmware-nrf51822-demo",
     "crates/firmware-nrf52-dk-demo",
     "crates/firmware-nrf52832-demo",
-    "crates/firmware-nrf51822-demo",
     "crates/firmware-nrf52833-demo",
     "crates/firmware-nrf52840-ble-collector",
     "crates/firmware-nrf52840-ble-rx",
