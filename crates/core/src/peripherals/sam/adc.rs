@@ -1,3 +1,5 @@
+// LabWired - Firmware Simulation Platform
+// Copyright (C) 2026 Andrii Shylenko
 // SPDX-License-Identifier: MIT
 //! Opt-in SAMD51 ADC slice (DS60001507F 45): single-ended software-triggered
 //! conversions of AINn against GND with the VDDANA references (REFSEL INTVCC1
@@ -223,6 +225,22 @@ impl Samd51Adc {
 }
 
 impl Peripheral for Samd51Adc {
+    fn on_system_reset(&mut self) {
+        // Registers to power-on; the analog inputs and the conversion count
+        // are the outside world and evidence, not chip state.
+        let (inputs, vddana_mv, conversions) = (self.inputs, self.vddana_mv, self.conversions);
+        *self = Self {
+            inputs,
+            vddana_mv,
+            conversions,
+            ..Self::new(self.instance)
+        };
+    }
+    /// No `tick()` work: state moves on MMIO and the bus tick only, so the
+    /// legacy walk can be deleted on a scheduler build.
+    fn needs_legacy_walk(&self) -> bool {
+        false
+    }
     fn read(&self, offset: u64) -> SimResult<u8> {
         let wide = matches!(offset, 0x00..=0x01 | 0x04..=0x07 | 0x40..=0x41 | 0x48..=0x49);
         let base = if wide { offset & !1 } else { offset };
@@ -261,15 +279,6 @@ impl Peripheral for Samd51Adc {
         if let Ok(true) = self.convert(bus) {
             self.pending = false;
         }
-    }
-    fn on_system_reset(&mut self) {
-        let (inputs, vddana_mv, conversions) = (self.inputs, self.vddana_mv, self.conversions);
-        *self = Self {
-            inputs,
-            vddana_mv,
-            conversions,
-            ..Self::new(self.instance)
-        };
     }
     fn legacy_tick_active(&self) -> bool {
         // No work lives in tick/tick_elapsed. Bus service and pending operations

@@ -57,10 +57,16 @@ struct ChipConf {
 /// Explicit declarations that have no modeled platform to measure. This is a
 /// closed shortlist, validated against the descriptor before rendering; it
 /// never contributes an estate checkmark, conformance level or ratchet record.
-const DECLARED_ONLY_CHIPS: &[(&str, &str)] = &[(
-    "rv1103",
-    "Normal descriptor is CPU/memory only. Optional native reduced Linux direct boot and joint I2C3/UART4 basket acceptance pass separately with functional timing and a persistent reduced plant; this does not establish full board L0/L1, vendor BSP/SD/ROM boot or physical qualification. The older generic Cortex-A7 CPU subset is separate.",
-)];
+const DECLARED_ONLY_CHIPS: &[(&str, &str)] = &[
+    (
+        "rv1103",
+        "Normal descriptor is CPU/memory only. Optional native reduced Linux direct boot and joint I2C3/UART4 basket acceptance pass separately with functional timing and a persistent reduced plant; this does not establish full board L0/L1, vendor BSP/SD/ROM boot or physical qualification. The older generic Cortex-A7 CPU subset is separate.",
+    ),
+    (
+        "xck26-rpu",
+        "Generic descriptor is CPU/memory only. The native Cortex-R5F (qemu-arm-system) installs the descriptor's native_rpu_peripherals (RPU GIC, Cadence UART0/1, TTC0) and runs stock Zephyr v4.1.0 kv260_r5 hello_world, synchronization and tests/kernel/common (crates/core/tests/kv260_r5_zephyr.rs, examples/kv260-r5). No APU, PMU/CSU/FSBL boot, PL or other PS peripherals; no physical qualification.",
+    ),
+];
 
 /// The modeled fleet. Every descriptor MUST appear here or in the explicitly
 /// validated declaration table (enforced below), so new chips cannot disappear.
@@ -83,6 +89,219 @@ const CHIPS: &[ChipConf] = &[
         behavior_gate: Some("firmware_survival::test_esp32c6_demo_survival"),
     },
     ChipConf {
+        // LiteX VexRiscv SoC (RV32IM — the descriptor declares `core: rv32im`,
+        // so runs select the standard RV32 profile). SIM-DERIVED: nothing here
+        // has been diffed against a silicon capture, so no reset_oracle. The
+        // modelled surface is CPU + memory + the LiteX UART and countdown
+        // timer; the SPI-flash / Ethernet / MMCM CSR windows are declared
+        // stubs — see
+        // examples/litex-vexriscv/VALIDATION.md.
+        name: "litex-vexriscv",
+        yaml: "configs/chips/litex-vexriscv.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_litex_vexriscv_smoke_survival"),
+    },
+    ChipConf {
+        // Digilent Arty A7-35T (LiteX VexRiscv SoC, RV32IM). SIM-DERIVED: no
+        // bitstream capture exists. Modelled: CPU + memory + LiteX UART, timer
+        // and the control-and-status LED/switch/button CSR; SPI/Ethernet/MMCM
+        // are declared stubs — see examples/arty-litex-vexriscv/VALIDATION.md.
+        name: "arty-litex-vexriscv",
+        yaml: "configs/chips/arty-litex-vexriscv.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_arty_litex_smoke_survival"),
+    },
+    ChipConf {
+        // Vega board (RI5CY, RV32IMC). SIM-DERIVED: no silicon capture.
+        // Modelled: CPU + memory + LPUART0/1; the SCG/PCC clock blocks, INTMUX
+        // and low-power timers are declared stubs — see
+        // examples/vegaboard-ri5cy/VALIDATION.md.
+        name: "vegaboard-ri5cy",
+        yaml: "configs/chips/vegaboard-ri5cy.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_vegaboard_ri5cy_smoke_survival"),
+    },
+    ChipConf {
+        // NUCLEO-L552ZE-Q (STM32L552ZET6Q, Cortex-M33 / Armv8-M). SIM-DERIVED:
+        // no STM32L552 bench part. The new L5 RCC profile and the v2 GPIO /
+        // LPUART / SPI / I2C / timer / DMA models carry the smoke. TrustZone/
+        // SAU/GTZC, MPU/PMSAv8 enforcement and the L5 non-secure flash
+        // controller are NOT modelled; FLASH/EXTI/ADC/FDCAN/USB are declared
+        // stubs — see examples/nucleo-l552ze-q/VALIDATION.md.
+        name: "stm32l552",
+        yaml: "configs/chips/stm32l552.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_nucleo_l552ze_q_smoke_survival"),
+    },
+    ChipConf {
+        // CC2538DK (CC2538SF53, Cortex-M3). SIM-DERIVED: no CC2538 bench part.
+        // Modelled: SYS_CTRL (cc2538_sys_ctrl), the PL061-style GPIO A-D
+        // (cc2538_pl061_gpio, address-masked GPIO_DATA) and UART0/1 on the
+        // pl011 layout, the RF core (cc2538_rfcore; on a shared 802.15.4 air,
+        // RX FIFO + AUTOACK), the sleep timer, the flash controller, the
+        // AES/SHA-256 engine and the µDMA (cc2538_udma). IOC, PKA, SSI, I2C,
+        // GPTimers, USB, WDT and ADC are declared stubs — see
+        // examples/cc2538dk/VALIDATION.md.
+        name: "cc2538sf53",
+        yaml: "configs/chips/cc2538sf53.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_cc2538dk_smoke_survival"),
+    },
+    ChipConf {
+        // PolarFire SoC MPFS095T (Discovery Kit), first RV64 part: one U54
+        // hart (RV64IMAC M-mode, CLINT in the core). SIM-DERIVED: no MPFS
+        // bench part. Modelled: MMUART0-4 as 16550s with the DLAB divisor
+        // latch. PLIC, MSS GPIO/I2C/SPI/QSPI and the system-controller mailbox
+        // are declared stubs — see examples/mpfs-disco-kit/VALIDATION.md.
+        name: "mpfs095t",
+        yaml: "configs/chips/mpfs095t.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_mpfs_disco_kit_zephyr_survival"),
+    },
+    ChipConf {
+        // TI AM6234 (SK-AM62), first AArch64 part: one Cortex-A53 with its
+        // GICv3 and generic timer in the core. SIM-DERIVED: no AM62x bench
+        // part. Modelled: MAIN_UART0-6 (16550, polled). Pad config and the
+        // mailbox are declared stubs — see examples/sk-am62/VALIDATION.md.
+        name: "am6234",
+        yaml: "configs/chips/am6234.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_sk_am62_zephyr_survival"),
+    },
+    ChipConf {
+        // Renesas R5F52618BGFP (RX261, EK-RX261), first RX part: the RXv3
+        // core with the ICU in the core. SIM-DERIVED: no RX261 bench part.
+        // Modelled: SCI6 (classic SCI, polled), CMT0-3, the SYSTEM clock
+        // handshakes and FLASH MEMWAITR. PORT/MPC, BSC, DTC and the reset
+        // status block are declared stubs — see examples/ek-rx261/VALIDATION.md.
+        name: "r5f52618bgfp",
+        yaml: "configs/chips/r5f52618bgfp.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_ek_rx261_zephyr_survival"),
+    },
+    ChipConf {
+        // Microchip PIC32MZ2048EFM144 (Curiosity PIC32MZ EF 2.0), first MIPS
+        // part: the MIPS32r2 M5150 core with the EVIC in the core.
+        // SIM-DERIVED: no PIC32MZ bench part. Modelled: UART2 (interrupt
+        // driven), Timer1. CFG, OSC, PPS, ports, flash controller, WDT, DMT
+        // and prefetch are declared stubs — see
+        // examples/curiosity-pic32mz-ef/VALIDATION.md.
+        name: "pic32mz2048efm144",
+        yaml: "configs/chips/pic32mz2048efm144.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_curiosity_pic32mz_nuttx_survival"),
+    },
+    ChipConf {
+        // EK-RA6M5 (R7FA6M5BH, Cortex-M33). SIM-DERIVED: no RA6M5 bench part.
+        // Modelled: the RA PORT (ra_port) and PmnPFS/PWPR (ra_pfs) reused
+        // from RA4M1 at the RA6M5 bases, the full R_SYSTEM register file
+        // (ra6_sysc) and SCI0 on the sci layout with the classic SCI FIFO
+        // registers. MSTP, ICU, FCACHE, the C-cache, PSCU/CPSCU and the
+        // listed timers/comms blocks are declared stubs; SCI1-9 and the rest
+        // are not mapped — see examples/ek-ra6m5/VALIDATION.md.
+        name: "r7fa6m5bh",
+        yaml: "configs/chips/r7fa6m5bh.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_ek_ra6m5_smoke_survival"),
+    },
+    ChipConf {
+        // EK-RA8M1 (R7FA8M1AH, Cortex-M85). SIM-DERIVED: no RA8M1 bench part.
+        // Modelled: the RA PORT (ra_port), the RA8 PmnPFS/PWPR/PWPRS
+        // (ra8_pfs), SYSTEM HOCOCR/OSCSF + the SCICKCR handshake (ra8_sysc)
+        // and SCI3/SCI9 on the new sci_b UART layout (RXI/TXI/TEI as ELC
+        // events), the ICU IELSR event link (ra_icu) and AGT0/AGT1 (ra_agt). MSTP, the ICU IRQCR half and
+        // the listed timers/comms blocks are declared stubs; the other SCIs
+        // and the rest are not mapped — see examples/ek-ra8m1/VALIDATION.md.
+        name: "r7fa8m1ah",
+        yaml: "configs/chips/r7fa8m1ah.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_ek_ra8m1_smoke_survival"),
+    },
+    ChipConf {
+        // Apollo4 Plus EVB (AMAP42KP-KBR, Cortex-M4F). SIM-DERIVED: no Apollo4
+        // bench part. Modelled: the 128-pin GPIO block (apollo4_gpio,
+        // PADKEY-locked PINCFG + RD/WT/WTS/WTC/EN), PWRCTRL (apollo4_pwrctrl)
+        // and UART0-3 on the pl011 layout. CLKGEN, MCUCTRL, RSTGEN, IOM,
+        // MSPI, ADC, timers, RTC, WDT, security, crypto, GPU/display, SDIO,
+        // USB and audio are declared stubs — see
+        // examples/apollo4p-evb/VALIDATION.md.
+        name: "amap42kp",
+        yaml: "configs/chips/amap42kp.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_apollo4p_evb_smoke_survival"),
+    },
+    ChipConf {
+        // FRDM-K64F (MK64FN1M0VLL12, Cortex-M4F). SIM-DERIVED: no K64F bench
+        // part. UART-only L1: classic Kinetis UART0-4, Kinetis GPIO A-E and the
+        // behavioural MCG FEI block. SIM clock gating, PORT pad mux and MCG PLL
+        // are not modelled; ENET/PHY, RNGA and FTFE are declared stubs;
+        // eDMA/PIT/FTM/I2C/SPI/ADC/DAC/USB/CAN/SDHC are not mapped — see
+        // examples/frdm-k64f/VALIDATION.md.
+        name: "mk64f12",
+        yaml: "configs/chips/mk64f12.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_frdm_k64f_smoke_survival"),
+    },
+    ChipConf {
+        // SAM E70 Xplained (ATSAME70Q21B, Cortex-M7). SIM-DERIVED: no SAM E70
+        // bench part. Modelled: PMC (sam4s_pmc) and PIOA-E (sam4s_pio), the
+        // SAM4S layouts at the SAM E70 bases, and UART0-4/USART0-2 (sam
+        // layout). EEFC, the system controller and the bus matrix are declared
+        // stubs; GMAC/TRNG/TC/SPI/TWIHS/MCAN/AFEC/USBHS and the rest are not
+        // mapped — see examples/sam-e70-xplained/VALIDATION.md.
+        name: "same70q21b",
+        yaml: "configs/chips/same70q21b.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_sam_e70_xplained_smoke_survival"),
+    },
+    ChipConf {
+        // S32K388EVB-Q289 (S32K388, CM7_0 Cortex-M7 only). SIM-DERIVED: no
+        // S32K388 bench part. Modelled: SIUL2 (s32k3_siul2) and LPUART0-15
+        // (imxrt_lpuart, the same register layout). MC_ME/MC_CGM/SWT_0/STM_0
+        // and the other clock/system blocks are declared stubs; FlexCAN,
+        // LPSPI, LPI2C, eMIOS, eDMA, GMAC and the rest are not mapped — see
+        // examples/s32k388-evb/VALIDATION.md.
+        name: "s32k388",
+        yaml: "configs/chips/s32k388.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_s32k388_evb_smoke_survival"),
+    },
+    ChipConf {
+        // MIMXRT595-EVK (MIMXRT595S, Cortex-M33; the HiFi4 DSP is not
+        // modelled). SIM-DERIVED: no MIMXRT595 bench part. Modelled: FLEXCOMM0
+        // USART (lpc_flexcomm_usart), the high-speed GPIO (lpc_gpio), CLKCTL/
+        // RSTCTL (rt5xx_ctl) and IOPCTL (rt5xx_iopctl), all storage-level for
+        // the clock/pad banks. SYSCTL0/1, PMC, CACHE64, WWDT0, INPUTMUX and the
+        // FlexSPI0 controller are declared stubs; the other FLEXCOMMs, timers,
+        // DMA, USB, display and DSP blocks are not mapped — see
+        // examples/mimxrt595-evk/VALIDATION.md.
+        name: "mimxrt595s",
+        yaml: "configs/chips/mimxrt595s.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_mimxrt595_evk_smoke_survival"),
+    },
+    ChipConf {
+        // SAM4S Xplained (ATSAM4S16C, Cortex-M4). SIM-DERIVED: no SAM4S bench
+        // part. Modelled: PMC (sam4s_pmc), the older PIO block (sam4s_pio),
+        // UART0/1 and USART0/1 (sam layout); TC/SPI/TWI/EEFC and the system
+        // controller are declared stubs — see examples/sam4s-xplained/VALIDATION.md.
+        name: "sam4s16c",
+        yaml: "configs/chips/sam4s16c.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_sam4s_xplained_smoke_survival"),
+    },
+    ChipConf {
+        // STM32F072B-DISCO (STM32F072RBT6, Cortex-M0). SIM-DERIVED: no
+        // STM32F072 bench part. Modelled: RCC (stm32f0 profile), GPIO v2,
+        // USART1-4 v2, SPI/I2C/timers, DMA/EXTI/SYSCFG, bxCAN, DAC, RTC;
+        // USB/TSC/CRS are declared stubs — see
+        // examples/stm32f072b-disco/VALIDATION.md.
+        name: "stm32f072",
+        yaml: "configs/chips/stm32f072.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_stm32f072b_disco_smoke_survival"),
+    },
+    ChipConf {
         name: "nrf54l15",
         yaml: "configs/chips/nrf54l15.yaml",
         // No silicon capture: nothing here has been diffed against a real
@@ -100,6 +319,77 @@ const CHIPS: &[ChipConf] = &[
         // silicon.
         reset_oracle: None,
         behavior_gate: Some("atsamd21_peripheral_estate::the_estate_answers_at_its_own_addresses"),
+    },
+    // Exact A-variant SAM D21 orderable geometries on the public G18A engine.
+    // They deliberately carry NO behavior gate: the engine's behavior is
+    // already measured on atsamd21g18a, and these descriptors add no new
+    // peripheral/clock fidelity. Their geometry is checked by
+    // `atsamd21_variant_geometry`. L0 is the honest level here.
+    ChipConf {
+        name: "atsamd21e15a",
+        yaml: "configs/chips/atsamd21e15a.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "atsamd21e16a",
+        yaml: "configs/chips/atsamd21e16a.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "atsamd21e17a",
+        yaml: "configs/chips/atsamd21e17a.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "atsamd21e18a",
+        yaml: "configs/chips/atsamd21e18a.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "atsamd21g15a",
+        yaml: "configs/chips/atsamd21g15a.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "atsamd21g16a",
+        yaml: "configs/chips/atsamd21g16a.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "atsamd21g17a",
+        yaml: "configs/chips/atsamd21g17a.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "atsamd21j15a",
+        yaml: "configs/chips/atsamd21j15a.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "atsamd21j16a",
+        yaml: "configs/chips/atsamd21j16a.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "atsamd21j17a",
+        yaml: "configs/chips/atsamd21j17a.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "atsamd21j18a",
+        yaml: "configs/chips/atsamd21j18a.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
     },
     ChipConf {
         name: "nrf54lm20a",
@@ -216,11 +506,155 @@ const CHIPS: &[ChipConf] = &[
         reset_oracle: None,
         behavior_gate: Some("stm32f1_exec_oracle"),
     },
+    // The exact NUCLEO-F103RB chip geometry shares the family peripheral
+    // definitions. The board UART/GPIO smoke is gated in
+    // core-coverage-matrix-smoke.yml; no exact-part silicon capture is claimed.
+    ChipConf {
+        name: "stm32f103rb",
+        yaml: "configs/chips/stm32f103rb.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    // Exact low-density F103 order codes share the F103 engine. Geometry is
+    // checked per part, but there is no per-order-code silicon capture or
+    // executing-fidelity differential, so these remain honest L0 entries.
+    ChipConf {
+        name: "stm32f103c4",
+        yaml: "configs/chips/stm32f103c4.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "stm32f103c6",
+        yaml: "configs/chips/stm32f103c6.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "stm32f103r4",
+        yaml: "configs/chips/stm32f103r4.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "stm32f103r4h",
+        yaml: "configs/chips/stm32f103r4h.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "stm32f103r6",
+        yaml: "configs/chips/stm32f103r6.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "stm32f103r6h",
+        yaml: "configs/chips/stm32f103r6h.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        // Medium-density x8 in LQFP64: same public engine as the C8 reference,
+        // different orderable geometry. No per-order-code silicon capture, so an
+        // honest L0 entry like the other exact F103 order codes.
+        name: "stm32f103r8",
+        yaml: "configs/chips/stm32f103r8.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "stm32f103t4",
+        yaml: "configs/chips/stm32f103t4.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "stm32f103t6",
+        yaml: "configs/chips/stm32f103t6.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
     ChipConf {
         name: "stm32f401",
         yaml: "configs/chips/stm32f401.yaml",
         reset_oracle: None,
         behavior_gate: Some("firmware_survival::test_stm32f401_blinky_survival"),
+    },
+    // Exact F401 order codes carry the family's same peripheral engine. Their
+    // package/memory geometry is pinned independently; no part-specific
+    // silicon or executing-fidelity receipt exists yet (L0).
+    ChipConf {
+        name: "stm32f401cb",
+        yaml: "configs/chips/stm32f401cb.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "stm32f401cc",
+        yaml: "configs/chips/stm32f401cc.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "stm32f401cd",
+        yaml: "configs/chips/stm32f401cd.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "stm32f401ce",
+        yaml: "configs/chips/stm32f401ce.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "stm32f401rb",
+        yaml: "configs/chips/stm32f401rb.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "stm32f401rc",
+        yaml: "configs/chips/stm32f401rc.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "stm32f401rd",
+        yaml: "configs/chips/stm32f401rd.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "stm32f401re",
+        yaml: "configs/chips/stm32f401re.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "stm32f401vb",
+        yaml: "configs/chips/stm32f401vb.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "stm32f401vc",
+        yaml: "configs/chips/stm32f401vc.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "stm32f401vd",
+        yaml: "configs/chips/stm32f401vd.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "stm32f401ve",
+        yaml: "configs/chips/stm32f401ve.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
     },
     ChipConf {
         name: "stm32f405",
@@ -252,6 +686,45 @@ const CHIPS: &[ChipConf] = &[
         reset_oracle: None,
         behavior_gate: Some("firmware_survival::test_nucleo_f407_smoke_survival"),
     },
+    // Exact F407 order codes share the NUCLEO-F407 engine. Geometry is pinned
+    // per part; no per-part silicon capture or executing-fidelity differential
+    // exists, so these are listed at L0.
+    ChipConf {
+        name: "stm32f407ie",
+        yaml: "configs/chips/stm32f407ie.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "stm32f407ig",
+        yaml: "configs/chips/stm32f407ig.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "stm32f407ve",
+        yaml: "configs/chips/stm32f407ve.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "stm32f407vg",
+        yaml: "configs/chips/stm32f407vg.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "stm32f407ze",
+        yaml: "configs/chips/stm32f407ze.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "stm32f407zg",
+        yaml: "configs/chips/stm32f407zg.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
     ChipConf {
         // No silicon reset capture. The external-artifact customer ELF WAKE
         // test runs explicitly in iolinki-reference.yml, but is ignored in
@@ -269,6 +742,16 @@ const CHIPS: &[ChipConf] = &[
         // Unmodified Zephyr hello_world for nucleo_g474re; asserts
         // "Hello World! nucleo_g474re" over UART (PR-run).
         behavior_gate: Some("firmware_survival::test_stm32g474_zephyr_survival"),
+    },
+    ChipConf {
+        // G431RB: same RM0440 G4 silicon family as g474re (same peripheral map,
+        // same `stm32g4` RCC profile), different memory/orderable. No silicon
+        // reset capture. Behavior gate = the TIER1 raw-register self-test
+        // firmware, which boots and reports PASS for every wired class.
+        name: "stm32g431rb",
+        yaml: "configs/chips/stm32g431rb.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
     },
     ChipConf {
         name: "stm32h563",
@@ -296,6 +779,17 @@ const CHIPS: &[ChipConf] = &[
         yaml: "configs/chips/stm32u545.yaml",
         reset_oracle: None,
         behavior_gate: Some("firmware_survival::test_stm32u545_blinky_survival"),
+    },
+    ChipConf {
+        // NUCLEO-U5A5ZJ-Q, sharing MB1549 with U575 but carrying the U5A5
+        // 4 MiB flash / 2.5 MB-class SRAM map and crypto accelerators. The
+        // register-level SHA/AES/PKA vector is the current behavior gate.
+        name: "stm32u5a5zj",
+        yaml: "configs/chips/stm32u5a5zj.yaml",
+        reset_oracle: None,
+        behavior_gate: Some(
+            "stm32u5_exec_oracle::u5a5_hash_saes_and_pka_execute_register_level_operations",
+        ),
     },
     ChipConf {
         // First Cortex-M7 chip. Sim-derived (RM0468); no silicon capture, so no
@@ -398,6 +892,46 @@ const CHIPS: &[ChipConf] = &[
         reset_oracle: None,
         behavior_gate: Some("avr_nano_golden_survival::arduino_nano_golden_prints_and_blinks"),
     },
+    // Exact ATmega328PB-AU CPU model with PB-only USART1 register routing.
+    // The firmware gate asserts USART1 output and PB5 high; no silicon capture
+    // or package-pad map exists yet, so this is L1 behavior evidence only.
+    ChipConf {
+        name: "atmega328pb",
+        yaml: "configs/chips/atmega328pb.yaml",
+        reset_oracle: None,
+        behavior_gate: Some(
+            "avr_atmega328pb_usart1::atmega328pb_firmware_uses_usart1_and_drives_pb5",
+        ),
+    },
+    // Behavior: Arduino-core Mega 2560 sketch (LED pins on ports E/G/F/B/H,
+    // A8/A9 via MUX5, millis, Serial). No silicon capture → below L2.
+    ChipConf {
+        name: "atmega2560",
+        yaml: "configs/chips/atmega2560.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("avr_mega2560_io::each_led_lands_on_its_mega_port_pin"),
+    },
+    // 64-pin ATmega2561, the same public AVR core but a narrower SKU. Behavior:
+    // the committed 3-byte-PC image boots, prints on USART0 and drives PB5;
+    // the descriptor test pins 54 GPIO, eight ADC inputs and no ports H..L.
+    // No silicon capture → below L2.
+    ChipConf {
+        name: "atmega2561",
+        yaml: "configs/chips/atmega2561.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("avr_atmega2561::atmega2561_boots_and_prints"),
+    },
+    // 64-pin ATmega1281. The committed AVR-GCC image exercises the exact
+    // two-byte-PC profile, USART0 output and PB5 package pin. No silicon
+    // capture exists, so the behavior gate supports L1 only.
+    ChipConf {
+        name: "atmega1281",
+        yaml: "configs/chips/atmega1281.yaml",
+        reset_oracle: None,
+        behavior_gate: Some(
+            "avr_atmega1281_firmware::atmega1281_compiled_firmware_prints_and_drives_pb5",
+        ),
+    },
     ChipConf {
         name: "atsamd21",
         yaml: "configs/chips/atsamd21.yaml",
@@ -456,6 +990,113 @@ const CHIPS: &[ChipConf] = &[
         yaml: "configs/chips/stm32g071.yaml",
         reset_oracle: None,
         behavior_gate: Some("firmware_survival::test_nucleo_g071rb_smoke_survival"),
+    },
+    ChipConf {
+        // First PIC24/dsPIC33F target. SIM-DERIVED: no silicon capture yet,
+        // so no reset_oracle; the behavior gate is the committed
+        // hand-assembled UART smoke. M1a added timers + interrupts, M1b the
+        // GPIO ports, PPS, input capture and output compare.
+        name: "dspic33fj32mc204",
+        yaml: "configs/chips/dspic33fj32mc204.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("pic24_m0_smoke::pic24_fixture_boots_and_writes_h_to_uart"),
+    },
+    ChipConf {
+        // 28-pin sibling of the 204, same datasheet/core/memory. The gate is
+        // a real XC16-built UART firmware, not the hand fixture.
+        name: "dspic33fj32mc202",
+        yaml: "configs/chips/dspic33fj32mc202.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("pic24_xc16_202_smoke::xc16_202_firmware_boots_and_writes_hi_to_uart"),
+    },
+    // PIC18F4520 (DS39631E), the first PIC18 part. The gate boots real SDCC
+    // 4.4.0 C firmware (software stack, TBLRD string reads, EUSART TX,
+    // PORTB latch). Timers, CCP, MSSP, ADC, EEPROM, EUSART RX and XINST are
+    // not exercised, so this is L1, not full-device parity.
+    ChipConf {
+        name: "pic18f4520",
+        yaml: "configs/chips/pic18f4520.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("pic18f4520_smoke::sdcc_firmware_boots_and_prints_the_banner"),
+    },
+    // PIC16F877A (DS39582B), the first PIC16 part. The gate boots real SDCC
+    // 4.4.0 pic14 C firmware (bank switching, shared-RAM locals, computed
+    // PCL jumps into RETLW string tables, USART TX, PORTB latch). Timers,
+    // CCP, MSSP, ADC, EEPROM and USART RX are not exercised, so this is L1,
+    // not full-device parity.
+    ChipConf {
+        name: "pic16f877a",
+        yaml: "configs/chips/pic16f877a.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("pic16f877a_smoke::sdcc_firmware_boots_and_prints_the_banner"),
+    },
+    // PIC16F1829 (DS40001440E), the first enhanced mid-range part. The gate
+    // boots real SDCC 4.4.0 C firmware: BSR/MOVLB banking, MOVLP paging,
+    // FSR/MOVIW pointers, EUSART TX, LATA, and an ISR without software
+    // context save preempted into by TMR0, so the hardware shadows carry
+    // main's state. CCP, MSSP, ADC, EEPROM and EUSART RX are not exercised,
+    // so this is L1, not full-device parity.
+    ChipConf {
+        name: "pic16f1829",
+        yaml: "configs/chips/pic16f1829.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("pic16f1829_smoke::sdcc_firmware_boots_and_prints_the_banner"),
+    },
+    // PIC24F KA family (DS30009937C / DS39927C). The modelled slice is the
+    // package GPIO masks and UART1; each gate boots that part's own real
+    // XC16 v1.70 image and checks `HI`. Data EEPROM, UART2, timers, ADC, SPI
+    // and I2C are not exercised, so this is L1, not full-device parity.
+    ChipConf {
+        name: "pic24f04ka200",
+        yaml: "configs/chips/pic24f04ka200.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("pic24_ka_smoke::pic24f04ka200_uart_smoke"),
+    },
+    ChipConf {
+        name: "pic24f04ka201",
+        yaml: "configs/chips/pic24f04ka201.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("pic24_ka_smoke::pic24f04ka201_uart_smoke"),
+    },
+    ChipConf {
+        name: "pic24f08ka101",
+        yaml: "configs/chips/pic24f08ka101.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("pic24_ka_smoke::pic24f08ka101_uart_smoke"),
+    },
+    ChipConf {
+        name: "pic24f08ka102",
+        yaml: "configs/chips/pic24f08ka102.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("pic24_ka_smoke::pic24f08ka102_uart_smoke"),
+    },
+    ChipConf {
+        name: "pic24f16ka101",
+        yaml: "configs/chips/pic24f16ka101.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("pic24_ka_smoke::pic24f16ka101_uart_smoke"),
+    },
+    ChipConf {
+        name: "pic24f16ka102",
+        yaml: "configs/chips/pic24f16ka102.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("pic24_ka_smoke::pic24f16ka102_uart_smoke"),
+    },
+    ChipConf {
+        // WCH CH32V003F4P6 (QingKe RV32EC). SIM-DERIVED: nothing here has been
+        // diffed against a real CH32V003 over SDI, so no reset_oracle. This
+        // slice models the RV32E register window, the WCH clock tree and
+        // GPIO A/C/D and polled USART1 TX (ch32v003_compiled_firmware.rs);
+        // I2C/SPI/ADC are not modelled yet (their bases are in the memory map
+        // but no peripheral descriptor consumes them). The
+        // gate is the compiled RV32E blink below, which boots a real ELF and
+        // asserts PC0 toggles — not a register-state assertion.
+        name: "ch32v003f4p6",
+        yaml: "configs/chips/ch32v003f4p6.yaml",
+        reset_oracle: None,
+        behavior_gate: Some(
+            "ch32v003_compiled_firmware::ch32v003_compiled_rv32e_firmware_toggles_pc0",
+        ),
     },
 ];
 
@@ -938,6 +1579,29 @@ fn declares_test_fn(src: &str, name: &str) -> bool {
     attr_blocks(&masked, name)
         .iter()
         .any(|block| block.iter().any(|l| is_test_attr(l)))
+        || declares_macro_generated_test_fn(&masked, name)
+}
+
+/// True when the masked source invokes `survival_gate!(<name>, …)` — the macro
+/// expands to a `#[test] fn <name>`, so the generated test is a real,
+/// cargo-filterable gate even though the literal `fn <name>(` never appears as
+/// text. The first macro argument is the generated function name by
+/// construction, so matching it here cannot admit a name that names no test.
+fn declares_macro_generated_test_fn(masked: &str, name: &str) -> bool {
+    const MACRO: &str = "survival_gate!(";
+    let mut rest = masked;
+    while let Some(pos) = rest.find(MACRO) {
+        let after = rest[pos + MACRO.len()..].trim_start();
+        let ident: String = after
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        if ident == name {
+            return true;
+        }
+        rest = after;
+    }
+    false
 }
 
 /// True when `src` declares `fn name(` whose attribute block marks it ignored —
@@ -1383,34 +2047,52 @@ fn level(r: &Record) -> u8 {
     }
 }
 
-fn is_declared_only_prototype(chip: &ChipDescriptor) -> bool {
-    chip.name == "rv1103"
-        && matches!(chip.arch, labwired_config::Arch::Arm)
-        && chip.core.as_deref() == Some("cortex-a7")
-        && chip.peripherals.is_empty()
-        && chip.flash.size == 0
+fn is_declared_only_prototype(name: &str, chip: &ChipDescriptor) -> bool {
+    match name {
+        "rv1103" => {
+            chip.name == "rv1103"
+                && matches!(chip.arch, labwired_config::Arch::Arm)
+                && chip.core.as_deref() == Some("cortex-a7")
+                && chip.peripherals.is_empty()
+                && chip.flash.size == 0
+        }
+        "xck26-rpu" => {
+            chip.name == "xck26-rpu"
+                && matches!(chip.arch, labwired_config::Arch::Arm)
+                && chip.core.as_deref() == Some("cortex-r5f")
+                && chip.peripherals.is_empty()
+                && chip.flash.size == 0
+        }
+        _ => false,
+    }
 }
 
 #[test]
 fn declared_only_classification_rejects_other_chips_or_modeled_platforms() {
-    assert_eq!(DECLARED_ONLY_CHIPS.len(), 1);
-    assert_eq!(DECLARED_ONLY_CHIPS[0].0, "rv1103");
+    assert_eq!(DECLARED_ONLY_CHIPS.len(), 2);
+    let rpu = ChipDescriptor::from_file(root("configs/chips/xck26-rpu.yaml")).unwrap();
+    assert!(is_declared_only_prototype("xck26-rpu", &rpu));
+    assert!(!is_declared_only_prototype("rv1103", &rpu));
+    let mut wrong = rpu.clone();
+    wrong.core = Some("cortex-a7".into());
+    assert!(!is_declared_only_prototype("xck26-rpu", &wrong));
+    assert!(DECLARED_ONLY_CHIPS.iter().any(|(n, _)| *n == "rv1103"));
     let chip = ChipDescriptor::from_file(root("configs/chips/rv1103.yaml")).unwrap();
-    assert!(is_declared_only_prototype(&chip));
+    assert!(is_declared_only_prototype("rv1103", &chip));
     let mut changed = chip.clone();
     changed.name = "another-prototype".into();
-    assert!(!is_declared_only_prototype(&changed));
+    assert!(!is_declared_only_prototype("rv1103", &changed));
     changed = chip.clone();
     changed.core = Some("cortex-m7".into());
-    assert!(!is_declared_only_prototype(&changed));
+    assert!(!is_declared_only_prototype("rv1103", &changed));
     changed = chip.clone();
     changed.flash.size = 1;
-    assert!(!is_declared_only_prototype(&changed));
+    assert!(!is_declared_only_prototype("rv1103", &changed));
     changed = chip;
     changed.peripherals = ChipDescriptor::from_file(root("configs/chips/stm32f103.yaml"))
         .unwrap()
         .peripherals;
-    assert!(!is_declared_only_prototype(&changed));
+    assert!(!is_declared_only_prototype("rv1103", &changed));
 }
 
 #[test]
@@ -1458,8 +2140,8 @@ fn chip_conformance_ratchet() {
         let chip = ChipDescriptor::from_file(root(&format!("configs/chips/{name}.yaml")))
             .unwrap_or_else(|error| panic!("{name}: load declared prototype: {error}"));
         assert!(
-            is_declared_only_prototype(&chip),
-            "{name}: declaration no longer matches the CPU-only unmodeled prototype; classify its platform explicitly"
+            is_declared_only_prototype(name, &chip),
+            "{name}: declaration no longer matches the declared-only prototype; classify its platform explicitly"
         );
     }
 
@@ -1470,6 +2152,8 @@ fn chip_conformance_ratchet() {
          Reg match = verifiable cold-reset registers reproduced. \"Excluded\" = registers a cold \
          model can't reproduce from a warm capture (calibration / clock-gated / boot-console / live \
          status); see `dynamic_excludes`. A mismatch outside the excluded set is a real model gap.\n\n\
+         This page covers the public models. For every chip we model — public and private — see \
+         the [chip list](chips.md).\n\n\
          | Chip | Level | Estate | Peripherals | Reg match (verifiable) | Excluded | Behavior gate |\n\
          |------|-------|--------|-------------|------------------------|----------|---------------|\n",
     );

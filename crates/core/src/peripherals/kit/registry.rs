@@ -40,7 +40,7 @@ pub static KITS: &[&'static dyn PeripheralKit] = &[
     &components::declarative_i2c::AHT20_KIT,
     &components::declarative_i2c::BMP280_KIT,
     &components::declarative_i2c::PCF8574_KIT,
-    &components::declarative_spi::RC522_KIT,
+    &components::rc522::RC522_KIT,
     &components::atecc608a::ATECC608A_KIT,
     &components::pn532::PN532_KIT,
     &components::declarative_spi::LORA_SX1278_KIT,
@@ -52,6 +52,7 @@ pub static KITS: &[&'static dyn PeripheralKit] = &[
     &components::declarative_display::SSD1306_128X32_KIT,
     &components::declarative_display::SH1107_KIT,
     &components::declarative_display::ILI9341_KIT,
+    &components::declarative_display::ILI9488_KIT,
     &components::declarative_display::RM67162_KIT,
     &components::declarative_display::ST7789_KIT,
     &components::declarative_display::ST7735R_MEMORY_SIMULATION_KIT,
@@ -59,12 +60,15 @@ pub static KITS: &[&'static dyn PeripheralKit] = &[
     &components::ili9341_parallel::ILI9341_PARALLEL_KIT,
     &components::st7701::ST7701_KIT,
     &components::gt911::GT911_KIT,
+    // OV3660 camera: SCCB on I²C plus DVP frames into the ESP32-S3 LCD_CAM.
+    &components::ov3660::OV3660_KIT,
     &components::declarative_display::SSD1680_TRICOLOR_290_KIT,
     &components::declarative_display::UC8151D_TRICOLOR_290_KIT,
     &components::declarative_spi::SN74HC165_KIT,
     &components::declarative_spi::HC595_7SEG_KIT,
     &components::declarative_display::PCD8544_KIT,
     &components::iolink_master::IOLINK_MASTER_KIT,
+    &components::tiol112::TIOL112_KIT,
     // The analog plants. Every one of these was a hand-written Rust model until
     // the `analog_source` primitive grew a `formula:` (the two that ARE
     // equations — a CdS power law and an NTC beta equation) and more than one
@@ -73,7 +77,10 @@ pub static KITS: &[&'static dyn PeripheralKit] = &[
     // `analog_plant_migration_parity` sweeps each one's full input range
     // against the arithmetic the deleted model performed.
     &components::declarative_analog::NTC_THERMISTOR_KIT,
+    &components::declarative_analog::TMP36_KIT,
     &components::declarative_analog::POTENTIOMETER_KIT,
+    &components::joystick::JOYSTICK_KIT,
+    &components::limit_switch::LIMIT_SWITCH_KIT,
     &components::declarative_analog::LIPO_CHARGER_KIT,
     &components::declarative_analog::LDR_KIT,
     &components::declarative_analog::MQ6_KIT,
@@ -234,11 +241,15 @@ const TYPE_ALIASES: &[(&str, &str)] = &[
     // Hobby servo calibrations as top-level type strings.
     ("sg90", "servo"),
     ("mg996r", "servo"),
+    ("mg995", "servo"),
+    ("mg90s", "servo"),
     // WS2812 synonym for neopixel kit.
     ("ws2812", "neopixel"),
     // STEP/DIR driver family.
     ("drv8825", "a4988"),
     ("tmc2209", "a4988"),
+    // Bipolar NEMA17 plant behind an A4988-class driver (same StepDirMotor).
+    ("nema17", "a4988"),
     // H-bridge family.
     ("tb6612", "l298n"),
     ("l293d", "l298n"),
@@ -250,6 +261,9 @@ const TYPE_ALIASES: &[(&str, &str)] = &[
     // the catalog keeps them apart for the BODY (an 88mm fader is not a 9.53mm
     // trimmer), not for the electrical model.
     ("slide-potentiometer", "potentiometer"),
+    // 240x240 glass on the same ST7789 kit as the 170x320 catalog module;
+    // crop comes from twin config (col_offset/row_offset/cols/rows).
+    ("st7789-240x240", "st7789-170x320"),
     // Unipolar stepper.
     ("stepper-28byj48", "uln2003"),
     // CAN diagnostic one-shot injector alias.

@@ -107,6 +107,49 @@ fn validate_chip(path: &PathBuf) -> anyhow::Result<()> {
                 path
             );
         }
+        Arch::Pic24 => {
+            // M0 PIC24 has no SVD-backed peripheral list on the chip yaml yet
+            // (peripherals: []). Nothing to validate beyond load.
+            println!(
+                "Skipping PIC24 register compliance for {:?} (no SVD map)",
+                path
+            );
+        }
+        Arch::Pic18 => {
+            // M0 PIC18 has no SVD-backed peripheral list yet.
+            println!(
+                "Skipping PIC18 register compliance for {:?} (no SVD map)",
+                path
+            );
+        }
+        Arch::Pic16 => {
+            // PIC16 SFRs are CPU-internal; there is no SVD-backed list.
+            println!(
+                "Skipping PIC16 register compliance for {:?} (no SVD map)",
+                path
+            );
+        }
+        Arch::Rx => {
+            // No SVD-backed register list for the RX parts yet.
+            println!(
+                "Skipping RX register compliance for {:?} (no SVD map)",
+                path
+            );
+        }
+        Arch::Mips => {
+            // No SVD-backed register list for the PIC32MZ parts yet.
+            println!(
+                "Skipping MIPS register compliance for {:?} (no SVD map)",
+                path
+            );
+        }
+        Arch::Aarch64 => {
+            // No SVD-backed register list for the AArch64 parts yet.
+            println!(
+                "Skipping AArch64 register compliance for {:?} (no SVD map)",
+                path
+            );
+        }
         Arch::Unknown => {
             println!("Skipping unknown architecture for {:?}", path);
         }

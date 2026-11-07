@@ -58,6 +58,8 @@
 //! left pending and DDRAM, the address counter and the display flags are all
 //! untouched — the sequence cannot corrupt state.
 
+use std::collections::VecDeque;
+
 use crate::peripherals::i2c::I2cDevice;
 use std::any::Any;
 
@@ -135,6 +137,15 @@ pub struct Lcd1602 {
     blink_on: bool,
     /// Function set `N`: true = 2-line mode.
     two_line: bool,
+    /// Every distinct non-blank panel text seen during the run, newest last.
+    ///
+    /// Survives a clear-display (0x01): DDRAM goes blank but prior paints stay
+    /// in this ring so a DisplayClause `contains` can still prove a mid-run
+    /// Status:ALARM after a later overwrite. Capped at 32 so a spinning sketch
+    /// cannot grow the inspect payload without bound; DisplayClause searches
+    /// this ring as well as the current `text`.
+    #[serde(skip)]
+    texts_seen: VecDeque<String>,
 }
 
 impl Default for Lcd1602 {
@@ -162,18 +173,23 @@ impl Lcd1602 {
             cursor_on: false,
             blink_on: false,
             two_line: false,
+            texts_seen: VecDeque::new(),
         }
     }
 
-    /// The visible 2×16 panel as 32 characters: row 0 first, then row 1, with no
-    /// separator — callers slice `[..16]` and `[16..]`.
+    /// The visible 2×16 panel as 32 Unicode scalars: row 0 first, then row 1,
+    /// with no separator. Prefer `chars()` (or JS/TS `.slice` on BMP text) for
+    /// row splits — Rust byte ranges like `[..16]` can panic mid-glyph when `°`
+    /// is present.
     ///
-    /// Bytes outside printable ASCII (`0x20`…`0x7E`) render as a space; the
-    /// HD44780 ROM maps them to katakana or user glyphs that have no faithful
-    /// single-`char` form. A display that is off reads as all spaces, mirroring
-    /// the way [`super::max7219::Max7219`] and the TM1637 descriptor
-    /// blank their readback — reporting DDRAM here would render a picture the
-    /// real panel is not showing.
+    /// Printable ASCII (`0x20`…`0x7E`) passes through. HD44780 ROM code `0xDF`
+    /// (A00 table degree glyph, what LiquidCrystal_I2C sketches write as
+    /// `\\xDF`) renders as `°`. Every other non-ASCII byte is a space — the
+    /// rest of the ROM is katakana / user glyphs with no faithful single-`char`
+    /// form. A display that is off reads as all spaces, mirroring the way
+    /// [`super::max7219::Max7219`] and the TM1637 descriptor blank their
+    /// readback — reporting DDRAM here would render a picture the real panel
+    /// is not showing.
     pub fn text(&self) -> String {
         let mut out = String::with_capacity(ROWS * COLS);
         for row in 0..ROWS {
@@ -183,10 +199,10 @@ impl Lcd1602 {
                     continue;
                 }
                 let byte = self.ddram[row * LINE_LEN + col];
-                out.push(if (0x20..=0x7E).contains(&byte) {
-                    byte as char
-                } else {
-                    ' '
+                out.push(match byte {
+                    0x20..=0x7E => byte as char,
+                    0xDF => '°',
+                    _ => ' ',
                 });
             }
         }
@@ -286,6 +302,7 @@ impl Lcd1602 {
                 self.display_on = cmd & 0x04 != 0;
                 self.cursor_on = cmd & 0x02 != 0;
                 self.blink_on = cmd & 0x01 != 0;
+                self.record_text_if_changed();
             }
             // Cursor/display shift. Shifting the *display* only moves which
             // DDRAM window the panel shows; the readback presents the unshifted
@@ -324,6 +341,9 @@ impl Lcd1602 {
             self.ddram[idx] = byte;
         }
         self.step_address(self.entry_increment);
+        if !self.cgram_mode {
+            self.record_text_if_changed();
+        }
     }
 
     /// Move the address counter one step, wrapping within its own address space
@@ -335,6 +355,28 @@ impl Lcd1602 {
         } else {
             (self.addr + modulus - 1) % modulus
         };
+    }
+
+    const TEXTS_SEEN_CAP: usize = 32;
+
+    /// Record the current visible text when it changes and is non-blank.
+    /// Entries accumulate for the whole run (a clear does not wipe them) and
+    /// the ring is capped at [`Self::TEXTS_SEEN_CAP`] (32).
+    fn record_text_if_changed(&mut self) {
+        if !self.display_on {
+            return;
+        }
+        let text = self.text();
+        if text.chars().all(|c| c.is_whitespace()) {
+            return;
+        }
+        if self.texts_seen.back().map(|s| s.as_str()) == Some(text.as_str()) {
+            return;
+        }
+        if self.texts_seen.len() >= Self::TEXTS_SEEN_CAP {
+            self.texts_seen.pop_front();
+        }
+        self.texts_seen.push_back(text);
     }
 }
 
@@ -358,6 +400,7 @@ impl I2cDevice for Lcd1602 {
                 "format": crate::inspect::artifact_format::HD44780_DDRAM,
                 "generation": crate::inspect::artifact_generation(&ddram),
                 "text": text,
+                "texts_seen": self.texts_seen.iter().cloned().collect::<Vec<_>>(),
                 "printable_chars": text.chars().filter(|c| !c.is_whitespace()).count(),
                 "display_on": self.display_on(),
                 "backlight": self.backlight(),
@@ -536,6 +579,36 @@ mod tests {
     }
 
     #[test]
+    fn texts_seen_records_distinct_panels() {
+        let mut dev = Lcd1602::new(0x27);
+        display_on(&mut dev);
+        data(&mut dev, b'H');
+        data(&mut dev, b'i');
+        assert!(
+            dev.texts_seen.iter().any(|s| s.starts_with("Hi")),
+            "first paint must land in texts_seen: {:?}",
+            dev.texts_seen
+        );
+        command(&mut dev, 0x02); // return home
+        data(&mut dev, b'Y');
+        data(&mut dev, b'o');
+        let seen: Vec<_> = dev.texts_seen.iter().cloned().collect();
+        assert!(
+            seen.iter().any(|s| s.starts_with("Hi")) && seen.iter().any(|s| s.starts_with("Yo")),
+            "both paints must remain: {seen:?}"
+        );
+        let art = I2cDevice::artifacts(&dev, "DS1", &Default::default());
+        let texts = art[0]
+            .meta
+            .get("texts_seen")
+            .and_then(|v| v.as_array())
+            .expect("texts_seen in artifact meta");
+        assert!(texts
+            .iter()
+            .any(|v| v.as_str().unwrap_or("").starts_with("Yo")));
+    }
+
+    #[test]
     fn set_ddram_address_0xc0_moves_to_row_one() {
         let mut dev = Lcd1602::new(0x27);
         display_on(&mut dev);
@@ -687,15 +760,21 @@ mod tests {
     }
 
     #[test]
-    fn non_printable_bytes_render_as_spaces() {
+    fn non_printable_bytes_render_as_spaces_except_degree() {
         let mut dev = Lcd1602::new(0x27);
         display_on(&mut dev);
         data(&mut dev, 0x00); // custom glyph 0
         data(&mut dev, b'X');
-        data(&mut dev, 0xDF); // katakana / degree sign in the HD44780 ROM
+        data(&mut dev, 0xDF); // HD44780 A00 degree glyph
 
         let text = dev.text();
-        assert_eq!(&text[..3], " X ", "non-ASCII code points blank out");
+        // `°` is two UTF-8 bytes — compare by chars, not a byte index that
+        // would panic mid-glyph on the degree sign.
+        assert_eq!(
+            text.chars().take(3).collect::<String>(),
+            " X°",
+            "0xDF is the degree sign; other non-ASCII blanks"
+        );
         assert_eq!(dev.ddram()[0], 0x00, "DDRAM keeps the raw byte");
         assert_eq!(dev.ddram()[2], 0xDF);
     }

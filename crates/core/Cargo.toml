@@ -23,8 +23,14 @@ wat = "1.0"
 # the `iolink-native` feature is enabled. Off by default so browser/wasm builds
 # never need a C toolchain.
 cc = "1.2"
+# Used solely by build.rs to zlib-pack the embedded peripheral descriptors
+# (src/bus/embedded_descriptors.rs); the runtime side only inflates.
+miniz_oxide = "0.8"
 
 [dependencies]
+# Inflates the build.rs-packed peripheral descriptors on first lookup. Already
+# in the wasm engine through flate2, so this adds no new crate to the browser.
+miniz_oxide = "0.8"
 thiserror = { workspace = true }
 tracing = { workspace = true }
 serde = { workspace = true }
@@ -42,6 +48,11 @@ bincode = "1.3"
 # SHA-256 compression for the ESP32-S3 SHA accelerator model (bootloader
 # image-hash verification). Used only by the esp32s3 SHA peripheral.
 sha2 = { workspace = true, features = ["compress"] }
+sha1 = "0.10"
+md-5 = "0.10"
+hmac = "0.12"
+aes = "0.8"
+num-bigint = "0.4"
 # ECDSA for the ATECC608A secure-element component model.
 p256 = { workspace = true }
 # Pure-Rust `exp`/`log`/`sin` for the analog engine's nonlinear devices. NOT a
@@ -157,6 +168,7 @@ required-features = ["mlx90640-decode-test"]
 labwired-loader = { path = "../loader" }
 svd-ingestor = { path = "../svd-ingestor" }
 svd-parser = "0.14"
+jpeg-decoder = { version = "0.3", default-features = false }
 
 [[test]]
 name = "qemu_arm_core"
@@ -184,6 +196,15 @@ required-features = ["event-scheduler"]
 # Cargo owns this gate; feature-off must not build an empty test binary.
 [[test]]
 name = "samd_native_quiescent"
+required-features = ["event-scheduler"]
+
+[[test]]
+name = "esp32_classic_irq_resettle"
+required-features = ["event-scheduler"]
+
+# #![cfg(feature = "event-scheduler")]
+[[test]]
+name = "xtensa_poll_loop_skip"
 required-features = ["event-scheduler"]
 
 # #![cfg(feature = "event-scheduler")]
@@ -264,6 +285,11 @@ required-features = ["event-scheduler"]
 # #![cfg(feature = "event-scheduler")]
 [[test]]
 name = "esp32c3_bt_event_residency_gate"
+required-features = ["event-scheduler"]
+
+# Three-node CC2538 RPL-UDP: needs idle fast-forward (no file-level cfg).
+[[test]]
+name = "cc2538_rpl_udp"
 required-features = ["event-scheduler"]
 
 # #![cfg(feature = "event-scheduler")]
@@ -368,6 +394,11 @@ required-features = ["jit", "jit-framework"]
 # #![cfg(all(feature = "jit", feature = "event-scheduler"))]
 [[test]]
 name = "cortex_m_jit_nrf_differential"
+required-features = ["event-scheduler", "jit"]
+
+# #![cfg(all(feature = "jit", feature = "event-scheduler"))]
+[[test]]
+name = "cortex_m_loop_trace_differential"
 required-features = ["event-scheduler", "jit"]
 
 # #![cfg(all(feature = "jit-framework", feature = "jit"))]
@@ -498,6 +529,12 @@ required-features = ["microbit-board-io-test"]
 
 [[test]]
 name = "qemu_arm_system"
+required-features = ["qemu-arm-system"]
+
+# Stock Zephyr on the native Cortex-R5F. The synchronization case also needs
+# event-scheduler (idle fast-forward) and asserts it rather than going vacuous.
+[[test]]
+name = "kv260_r5_zephyr"
 required-features = ["qemu-arm-system"]
 
 # Explicitly opt in with --ignored and provide the shipped native CLI/artifacts.

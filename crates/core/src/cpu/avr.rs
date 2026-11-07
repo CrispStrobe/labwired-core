@@ -28,9 +28,304 @@ enum TwiPhase {
     Mr,
 }
 
+/// ATmega328P geometry (the default model). Other AVR values live on
+/// [`AvrModel`]; a CPU built for a chip reads them from its own fields.
 pub const FLASH_SIZE: usize = 32 * 1024;
 pub const RAMEND: u16 = 0x08FF;
 pub const SRAM_START: u16 = 0x0100;
+
+/// The AVR parts this interpreter runs. The ATmega1281 and ATmega2560 family
+/// cores share mega peripheral behavior, with per-device flash and PC geometry.
+/// The ATmega2560 (Arduino Mega) has 256 KB flash and a 3-byte PC; the
+/// ATmega1281 has 128 KB flash and a 2-byte PC. Both have 8 KB SRAM at 0x0200.
+/// EIND for EIJMP/EICALL is available on the ATmega2560/2561 model, while
+/// RAMPZ for ELPM is shared. The mega peripheral map includes ports A..L
+/// (H..L in extended I/O at 0x100..0x10B), a 16-channel ADC (ADCSRB.MUX5
+/// selects ADC8..ADC15) and its own vector table. Timer0/1/2, USART0, SPI and
+/// TWI sit at the same data addresses as on the 328P, so they are shared; their
+/// vector numbers are remapped on entry ([`mega2560_vector`]).
+///
+/// The tinyAVR 0-series uses an AVRxt data map: the register file is separate,
+/// I/O occupies data addresses 0x0000..=0x0FFF, and SRAM begins at a device-
+/// specific address below 0x4000. Its common instruction execution is shared,
+/// but its peripherals and interrupt controller are not yet modelled.
+///
+/// Not modelled on the ATmega2560: INTn/PCINT (its pins differ from the
+/// 328P's; the registers are stored only), output-compare pads (PWM
+/// `analogWrite` levels; the pads follow `PORTx`), Timer3/4/5 and USART1..3
+/// (registers stored only).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AvrModel {
+    #[default]
+    Atmega328p,
+    /// ATmega328PB shares the 328P core geometry and adds a second USART.
+    Atmega328pb,
+    Atmega1281,
+    Atmega2560,
+    Attiny202,
+    Attiny204,
+    Attiny402,
+    Attiny404,
+    Attiny406,
+    Attiny804,
+    Attiny806,
+    Attiny807,
+    Attiny1604,
+    Attiny1606,
+    Attiny1607,
+    // Classic (pre-AVRxt) tinyAVR. These are NOT AVRxt and must not be given the
+    // AVRxt data map: no VPORT, no 0x3Fxx SRAM window. Their SRAM starts at
+    // 0x0060 (0x0100 for the 48/88, which have a 160-byte extended I/O file).
+    // Before these existed every one of them silently resolved to Atmega328p,
+    // so firmware ran with the wrong flash size, the wrong SRAM window and the
+    // wrong vector table.
+    Attiny13,
+    Attiny2313,
+    Attiny25,
+    Attiny45,
+    Attiny85,
+    Attiny261,
+    Attiny461,
+    Attiny861,
+    Attiny44,
+    Attiny84,
+    Attiny48,
+    Attiny88,
+}
+
+impl AvrModel {
+    /// The model a chip descriptor names. atmega1281 selects the 128 KB
+    /// two-byte-PC mega core; atmega2560/atmega2561/mega2560 select the
+    /// 256 KB three-byte-PC mega core; the listed tinyAVR 0-series parts
+    /// select the AVRxt data map and their exact flash/SRAM geometry. Other
+    /// names default to the ATmega328P. ATmega328PB is matched explicitly so
+    /// its second USART is not silently treated as the 328P's unused I/O.
+    pub fn from_chip_name(name: &str) -> Self {
+        let n = name.to_ascii_lowercase();
+        if n.contains("attiny202") || n.contains("attiny 202") {
+            AvrModel::Attiny202
+        } else if n.contains("attiny204") || n.contains("attiny 204") {
+            AvrModel::Attiny204
+        } else if n.contains("attiny402") || n.contains("attiny 402") {
+            AvrModel::Attiny402
+        } else if n.contains("attiny404") || n.contains("attiny 404") {
+            AvrModel::Attiny404
+        } else if n.contains("attiny406") || n.contains("attiny 406") {
+            AvrModel::Attiny406
+        } else if n.contains("attiny804") || n.contains("attiny 804") {
+            AvrModel::Attiny804
+        } else if n.contains("attiny806") || n.contains("attiny 806") {
+            AvrModel::Attiny806
+        } else if n.contains("attiny807") || n.contains("attiny 807") {
+            AvrModel::Attiny807
+        } else if n.contains("attiny1604") || n.contains("attiny 1604") {
+            AvrModel::Attiny1604
+        } else if n.contains("attiny1606") || n.contains("attiny 1606") {
+            AvrModel::Attiny1606
+        } else if n.contains("attiny1607") || n.contains("attiny 1607") {
+            AvrModel::Attiny1607
+        // Classic tinyAVR. ORDER MATTERS: these use contains(), and several
+        // names are prefixes of others (attiny861 contains attiny86; attiny44 is
+        // a prefix of attiny441/attiny44a; attiny25 of attiny25x). Longer,
+        // more specific names are matched first so a part never falls into a
+        // shorter part's model. Every geometry below is from the datasheet's
+        // data-memory map (SRAM start .. RAMEND), not interpolated.
+        } else if n.contains("attiny861") || n.contains("attiny 861") {
+            AvrModel::Attiny861
+        } else if n.contains("attiny461") || n.contains("attiny 461") {
+            AvrModel::Attiny461
+        } else if n.contains("attiny261") || n.contains("attiny 261") {
+            AvrModel::Attiny261
+        } else if n.contains("attiny2313") || n.contains("attiny 2313") {
+            AvrModel::Attiny2313
+        } else if n.contains("attiny88") || n.contains("attiny 88") {
+            AvrModel::Attiny88
+        } else if n.contains("attiny48") || n.contains("attiny 48") {
+            AvrModel::Attiny48
+        } else if n.contains("attiny85") || n.contains("attiny 85") {
+            AvrModel::Attiny85
+        } else if n.contains("attiny84") || n.contains("attiny 84") {
+            AvrModel::Attiny84
+        } else if n.contains("attiny45") || n.contains("attiny 45") {
+            AvrModel::Attiny45
+        } else if n.contains("attiny44") || n.contains("attiny 44") {
+            AvrModel::Attiny44
+        } else if n.contains("attiny25") || n.contains("attiny 25") {
+            AvrModel::Attiny25
+        } else if n.contains("attiny13") || n.contains("attiny 13") {
+            AvrModel::Attiny13
+        } else if n.contains("1281") {
+            AvrModel::Atmega1281
+        } else if n.contains("2560") || n.contains("2561") {
+            AvrModel::Atmega2560
+        } else if n.contains("328pb") {
+            AvrModel::Atmega328pb
+        } else {
+            AvrModel::Atmega328p
+        }
+    }
+    pub fn flash_size(self) -> usize {
+        match self {
+            AvrModel::Atmega328p | AvrModel::Atmega328pb => FLASH_SIZE,
+            AvrModel::Atmega1281 => 128 * 1024,
+            AvrModel::Atmega2560 => 256 * 1024,
+            AvrModel::Attiny202 | AvrModel::Attiny204 => 2 * 1024,
+            AvrModel::Attiny402 | AvrModel::Attiny404 | AvrModel::Attiny406 => 4 * 1024,
+            AvrModel::Attiny804 | AvrModel::Attiny806 | AvrModel::Attiny807 => 8 * 1024,
+            AvrModel::Attiny1604 | AvrModel::Attiny1606 | AvrModel::Attiny1607 => 16 * 1024,
+            // Classic tinyAVR. Datasheet flash size, per part.
+            AvrModel::Attiny13 => 1024,
+            AvrModel::Attiny25 | AvrModel::Attiny2313 | AvrModel::Attiny261 => 2 * 1024,
+            AvrModel::Attiny45 | AvrModel::Attiny44 | AvrModel::Attiny461 | AvrModel::Attiny48 => {
+                4 * 1024
+            }
+            AvrModel::Attiny85 | AvrModel::Attiny84 | AvrModel::Attiny861 | AvrModel::Attiny88 => {
+                8 * 1024
+            }
+        }
+    }
+    pub fn sram_start(self) -> u16 {
+        match self {
+            AvrModel::Atmega328p | AvrModel::Atmega328pb => SRAM_START,
+            AvrModel::Atmega1281 | AvrModel::Atmega2560 => 0x0200,
+            AvrModel::Attiny202 | AvrModel::Attiny204 => 0x3F80,
+            AvrModel::Attiny402 | AvrModel::Attiny404 | AvrModel::Attiny406 => 0x3F00,
+            AvrModel::Attiny804 | AvrModel::Attiny806 | AvrModel::Attiny807 => 0x3E00,
+            AvrModel::Attiny1604 | AvrModel::Attiny1606 | AvrModel::Attiny1607 => 0x3C00,
+            // Classic tinyAVR: SRAM follows the 64-byte I/O file at 0x0060, except
+            // the 48/88 which add a 160-byte extended I/O file and start SRAM at
+            // 0x0100 (ATtiny48/88 datasheet, Table 5-2).
+            AvrModel::Attiny48 | AvrModel::Attiny88 => 0x0100,
+            AvrModel::Attiny13
+            | AvrModel::Attiny2313
+            | AvrModel::Attiny25
+            | AvrModel::Attiny45
+            | AvrModel::Attiny85
+            | AvrModel::Attiny261
+            | AvrModel::Attiny461
+            | AvrModel::Attiny861
+            | AvrModel::Attiny44
+            | AvrModel::Attiny84 => 0x0060,
+        }
+    }
+    pub fn ramend(self) -> u16 {
+        match self {
+            AvrModel::Atmega328p | AvrModel::Atmega328pb => RAMEND,
+            AvrModel::Atmega1281 | AvrModel::Atmega2560 => 0x21FF,
+            AvrModel::Attiny202
+            | AvrModel::Attiny204
+            | AvrModel::Attiny402
+            | AvrModel::Attiny404
+            | AvrModel::Attiny406
+            | AvrModel::Attiny804
+            | AvrModel::Attiny806
+            | AvrModel::Attiny807
+            | AvrModel::Attiny1604
+            | AvrModel::Attiny1606
+            | AvrModel::Attiny1607 => 0x3FFF,
+            // Classic tinyAVR RAMEND = SRAM start + size - 1 (datasheets).
+            AvrModel::Attiny13 => 0x009F, // 0x0060 + 64B
+            AvrModel::Attiny25 | AvrModel::Attiny2313 | AvrModel::Attiny261 => 0x00DF, // + 128B
+            AvrModel::Attiny45 | AvrModel::Attiny44 | AvrModel::Attiny461 => 0x015F, // + 256B
+            AvrModel::Attiny48 => 0x01FF, // 0x0100 + 256B
+            AvrModel::Attiny85 | AvrModel::Attiny84 | AvrModel::Attiny861 => 0x025F, // 0x0060 + 512B
+            AvrModel::Attiny88 => 0x02FF, // 0x0100 + 512B
+        }
+    }
+    /// Bus base of this model's `avr_adc` input window (2 bytes per channel).
+    /// The 2560's 16 channels move it past the port mirrors (PINF..PING sit
+    /// at 0x1_002F..0x1_0034, where the 328P keeps its 8-channel window).
+    pub fn adc_input_base(self) -> u64 {
+        match self {
+            AvrModel::Atmega328p | AvrModel::Atmega328pb => AVR_ADC_INPUT_BASE,
+            AvrModel::Atmega1281 | AvrModel::Atmega2560 => AVR_MEGA_ADC_INPUT_BASE,
+            AvrModel::Attiny202
+            | AvrModel::Attiny204
+            | AvrModel::Attiny402
+            | AvrModel::Attiny404
+            | AvrModel::Attiny406
+            | AvrModel::Attiny804
+            | AvrModel::Attiny806
+            | AvrModel::Attiny807
+            | AvrModel::Attiny1604
+            | AvrModel::Attiny1606
+            | AvrModel::Attiny1607 => AVR_ADC_INPUT_BASE,
+            // Classic tinyAVR use the same ADC input window as the 328P side of
+            // the model; only the mega parts move it.
+            AvrModel::Attiny13
+            | AvrModel::Attiny2313
+            | AvrModel::Attiny25
+            | AvrModel::Attiny45
+            | AvrModel::Attiny85
+            | AvrModel::Attiny261
+            | AvrModel::Attiny461
+            | AvrModel::Attiny861
+            | AvrModel::Attiny44
+            | AvrModel::Attiny84
+            | AvrModel::Attiny48
+            | AvrModel::Attiny88 => AVR_ADC_INPUT_BASE,
+        }
+    }
+    /// `true` when the PC is pushed as 3 bytes (flash above 128 KB).
+    pub fn three_byte_pc(self) -> bool {
+        self == AvrModel::Atmega2560
+    }
+    /// Whether this model implements EIND, EIJMP and EICALL.
+    pub fn supports_eind(self) -> bool {
+        self == AvrModel::Atmega2560
+    }
+
+    /// The ATmega328PB has a second polling USART at data-space 0xC8..0xCE.
+    /// Its USART interrupts are not yet modelled.
+    pub const fn has_usart1(self) -> bool {
+        matches!(self, AvrModel::Atmega328pb)
+    }
+
+    /// Whether this part uses the AVRxt data-space map and direct I/O
+    /// addresses for IN/OUT, SBI/CBI and SBIS/SBIC.
+    #[inline]
+    pub fn uses_avrxt_data_map(self) -> bool {
+        matches!(
+            self,
+            AvrModel::Attiny202
+                | AvrModel::Attiny204
+                | AvrModel::Attiny402
+                | AvrModel::Attiny404
+                | AvrModel::Attiny406
+                | AvrModel::Attiny804
+                | AvrModel::Attiny806
+                | AvrModel::Attiny807
+                | AvrModel::Attiny1604
+                | AvrModel::Attiny1606
+                | AvrModel::Attiny1607
+        )
+    }
+}
+
+/// ATmega2560 data-space addresses of PINx for ports A..L (DDRx = +1, PORTx = +2).
+pub const MEGA2560_PIN_ADDRS: [u16; 11] = [
+    0x20, 0x23, 0x26, 0x29, 0x2C, 0x2F, 0x32, 0x100, 0x103, 0x106, 0x109,
+];
+
+/// ATmega2560 vector number (1-based, datasheet table 14-1) for a vector this
+/// core numbers the ATmega328P way. The shared peripherals raise 328P vector
+/// numbers; the 2560 jumps to its own table slot.
+pub fn mega2560_vector(vec328: u32) -> u32 {
+    match vec328 {
+        2 | 3 => vec328,       // INT0, INT1
+        4..=6 => vec328 + 6,   // PCINT0..2 -> 10..12
+        7 => 13,               // WDT
+        8..=10 => vec328 + 6,  // TIMER2 COMPA/COMPB/OVF -> 14..16
+        11..=13 => vec328 + 6, // TIMER1 CAPT/COMPA/COMPB -> 17..19
+        14..=21 => vec328 + 7, // TIMER1 OVF -> 21, TIMER0 COMPA/B/OVF -> 22..24, SPI 25, USART0 RX/UDRE/TX -> 26..28
+        22 => 30,              // ADC
+        23 => 31,              // EE READY
+        24 => 29,              // ANALOG COMP
+        25 => 40,              // TWI
+        26 => 58,              // SPM READY
+        v => v,
+    }
+}
 pub const AVR_DATA_VMA_BIAS: u64 = 0x0080_0000;
 pub const AVR_EEPROM_VMA_BIAS: u64 = 0x0081_0000;
 
@@ -64,13 +359,22 @@ pub fn classify_avr_vma(vma: u64) -> (AvrLoadSpace, u64) {
 }
 
 pub struct Avr {
+    /// Which part this is: memory geometry, PC width, ports, ADC mux, vectors.
+    pub model: AvrModel,
+    sram_start: u16,
+    ramend: u16,
     pub r: [u8; 32],
     pub pc: u32,
     pub sp: u16,
     pub sreg: u8,
     pub flash: Vec<u8>,
     pub sram: Vec<u8>,
-    pub io: [u8; 0xE0],
+    /// Data-space 0x20..0x1FF (the 328P uses 0x20..0xFF; 0x100..0x1FF is the
+    /// ATmega2560's extended I/O).
+    pub io: [u8; 0x1E0],
+    /// AVRxt I/O memory, whose data-space addresses start at zero and span
+    /// 0x0000..=0x0FFF. Used by the tinyAVR 0-series model.
+    tiny_io: Vec<u8>,
     pub pending_irq: u64,
     pub cycles: u64,
     pub tcnt0: u8,
@@ -116,11 +420,11 @@ pub struct Avr {
     pub spcr: u8,
     pub spsr: u8,
     pub spdr: u8,
-    /// SPI slaves (e.g. matrix MAX31855) attached for L4.
+    /// SPI slaves attached directly to the CPU (unit tests / legacy take).
     ///
-    /// Not `Clone`/`Debug`: trait objects. Kits land here after
-    /// [`crate::bus::SystemBus::take_spi_devices`] moves them off the bus
-    /// parking SPI controller (AVR has no MMIO SPI model).
+    /// Not `Clone`/`Debug`: trait objects. Production kits stay on the bus
+    /// parking SPI controller and are clocked from SPDR via
+    /// [`crate::bus::SystemBus::clock_parking_spi`] so inspect can see them.
     pub spi_devices: Vec<Box<dyn SpiDevice>>,
     /// TWI (I²C) — TWBR/TWSR/TWAR/TWDR/TWCR (data-space 0xB8..0xBC).
     pub twbr: u8,
@@ -183,6 +487,8 @@ impl std::fmt::Debug for Avr {
 pub const AVR_IO_MIRROR_BASE: u64 = 0x0001_0000;
 /// `MCUCR` in data space (I/O 0x35), ATmega328P datasheet §14.4.1.
 pub const ADDR_MCUCR: u16 = 0x0055;
+/// MCU Status Register in data space (I/O 0x34), reset flags are write-zero-clear.
+pub const ADDR_MCUSR: u16 = 0x0054;
 /// `MCUCR.PUD`: pull-up disable for every port.
 pub const MCUCR_PUD: u8 = 1 << 4;
 /// `PINB` data-space address; `DDRB`/`PORTB` follow it.
@@ -193,6 +499,8 @@ pub const AVR_PINC: u16 = 0x0026;
 pub const AVR_PIND: u16 = 0x0029;
 /// Bus base of the `avr_adc` input window: two bytes of millivolts per channel.
 pub const AVR_ADC_INPUT_BASE: u64 = 0x0001_0030;
+/// Bus base of the ATmega2560's 16-channel `avr_adc` input window.
+pub const AVR_MEGA_ADC_INPUT_BASE: u64 = 0x0001_0200;
 /// AVcc on the 5 V boards this part is modelled for, and the internal bandgap.
 const AVR_AVCC_MV: u32 = 5000;
 const AVR_BANDGAP_MV: u32 = 1100;
@@ -313,15 +621,30 @@ fn t2_normal_closed(tcnt: u8, ticks: u64, ocr_a: u8, ocr_b: u8) -> T2Step {
 }
 
 impl Avr {
+    /// An ATmega328P (Arduino Uno/Nano).
     pub fn new() -> Self {
+        Self::new_model(AvrModel::Atmega328p)
+    }
+
+    /// The CPU for a chip descriptor's `name` (see [`AvrModel::from_chip_name`]).
+    pub fn for_chip_name(name: &str) -> Self {
+        Self::new_model(AvrModel::from_chip_name(name))
+    }
+
+    pub fn new_model(model: AvrModel) -> Self {
+        let (sram_start, ramend) = (model.sram_start(), model.ramend());
         Self {
+            model,
+            sram_start,
+            ramend,
             r: [0; 32],
             pc: 0,
-            sp: RAMEND,
+            sp: ramend,
             sreg: 0,
-            flash: vec![0xFF; FLASH_SIZE],
-            sram: vec![0; (RAMEND as usize + 1) - SRAM_START as usize],
-            io: [0; 0xE0],
+            flash: vec![0xFF; model.flash_size()],
+            sram: vec![0; (ramend as usize + 1) - sram_start as usize],
+            io: [0; 0x1E0],
+            tiny_io: vec![0; 0x1000],
             pending_irq: 0,
             cycles: 0,
             tcnt0: 0,
@@ -397,6 +720,94 @@ impl Avr {
                 self.flash[b] = (*w & 0xFF) as u8;
                 self.flash[b + 1] = (*w >> 8) as u8;
             }
+        }
+    }
+
+    #[inline]
+    fn is_mega(&self) -> bool {
+        matches!(self.model, AvrModel::Atmega1281 | AvrModel::Atmega2560)
+    }
+
+    #[inline]
+    fn is_avrxt(&self) -> bool {
+        self.model.uses_avrxt_data_map()
+    }
+
+    /// Convert a 6-bit IN/OUT/SBI/SBIC I/O operand to a data-space address.
+    #[inline]
+    pub(in crate::cpu::avr) fn io_data_address(&self, io_addr: u8) -> u16 {
+        if self.is_avrxt() {
+            u16::from(io_addr)
+        } else {
+            0x20 + u16::from(io_addr)
+        }
+    }
+
+    /// `PINx` of a port this model has.
+    #[inline]
+    fn is_pin_reg(&self, addr: u16) -> bool {
+        match self.model {
+            AvrModel::Atmega328p | AvrModel::Atmega328pb => {
+                matches!(addr, AVR_PINB | AVR_PINC | AVR_PIND)
+            }
+            AvrModel::Atmega1281 | AvrModel::Atmega2560 => MEGA2560_PIN_ADDRS.contains(&addr),
+            AvrModel::Attiny202 | AvrModel::Attiny204 => false,
+            AvrModel::Attiny402
+            | AvrModel::Attiny404
+            | AvrModel::Attiny406
+            | AvrModel::Attiny804
+            | AvrModel::Attiny806
+            | AvrModel::Attiny807
+            | AvrModel::Attiny1604
+            | AvrModel::Attiny1606
+            | AvrModel::Attiny1607 => false,
+            AvrModel::Attiny13
+            | AvrModel::Attiny2313
+            | AvrModel::Attiny25
+            | AvrModel::Attiny45
+            | AvrModel::Attiny85
+            | AvrModel::Attiny261
+            | AvrModel::Attiny461
+            | AvrModel::Attiny861
+            | AvrModel::Attiny44
+            | AvrModel::Attiny84
+            | AvrModel::Attiny48
+            | AvrModel::Attiny88 => false,
+        }
+    }
+
+    /// `PINx`/`DDRx`/`PORTx` of a port this model has: mirrored to the bus.
+    #[inline]
+    fn is_port_reg(&self, addr: u16) -> bool {
+        match self.model {
+            AvrModel::Atmega328p | AvrModel::Atmega328pb => {
+                (AVR_PINB..=AVR_PIND + 2).contains(&addr)
+            }
+            AvrModel::Atmega1281 | AvrModel::Atmega2560 => {
+                (0x20..=0x34).contains(&addr) || (0x100..=0x10B).contains(&addr)
+            }
+            AvrModel::Attiny202 | AvrModel::Attiny204 => false,
+            AvrModel::Attiny402
+            | AvrModel::Attiny404
+            | AvrModel::Attiny406
+            | AvrModel::Attiny804
+            | AvrModel::Attiny806
+            | AvrModel::Attiny807
+            | AvrModel::Attiny1604
+            | AvrModel::Attiny1606
+            | AvrModel::Attiny1607 => false,
+            AvrModel::Attiny13
+            | AvrModel::Attiny2313
+            | AvrModel::Attiny25
+            | AvrModel::Attiny45
+            | AvrModel::Attiny85
+            | AvrModel::Attiny261
+            | AvrModel::Attiny461
+            | AvrModel::Attiny861
+            | AvrModel::Attiny44
+            | AvrModel::Attiny84
+            | AvrModel::Attiny48
+            | AvrModel::Attiny88 => false,
         }
     }
 
@@ -487,6 +898,9 @@ impl Avr {
     }
 
     fn data_read(&self, addr: u16, bus: &dyn Bus) -> SimResult<u8> {
+        if self.is_avrxt() {
+            return self.avrxt_data_read(addr, bus);
+        }
         match addr {
             0x0000..=0x001F => Ok(self.r[addr as usize]),
             // PINB/PINC/PIND — the registers on this part whose value the
@@ -511,7 +925,7 @@ impl Avr {
             // Each port is PINx/DDRx/PORTx at base, base+1, base+2 (PORTB 0x23,
             // PORTC 0x26, PORTD 0x29), mirrored to the same offsets in the
             // high window by `data_write`.
-            AVR_PINB | AVR_PINC | AVR_PIND => {
+            a if self.is_pin_reg(a) => {
                 let ddr = self.io[(addr + 1 - 0x20) as usize];
                 let port = self.io[(addr + 2 - 0x20) as usize];
                 // Propagated, not discarded: a chip yaml that maps no window
@@ -565,6 +979,29 @@ impl Avr {
                     Ok(0)
                 }
             }
+            // ATmega328PB USART1 mirrors the 328P USART0 register layout at
+            // data-space 0xC8..0xCE. Its local control registers use the I/O
+            // file; the bus-side UART owns RX buffering and peer connections.
+            0x00C8 if self.model.has_usart1() => {
+                let rxc = if Self::usart1_on_bus(bus) {
+                    bus.read_u8(AVR_IO_MIRROR_BASE + 0xC8)? & UCSRA_RXC
+                } else {
+                    0
+                };
+                let flags = self.io[(0xC8 - 0x20) as usize] & !UCSRA_RXC;
+                Ok(flags | UCSRA_UDRE | rxc)
+            }
+            0x00C9 | 0x00CA | 0x00CC | 0x00CD if self.model.has_usart1() => {
+                Ok(self.io[(addr - 0x20) as usize])
+            }
+            // UDR1 read pops one received byte from the bus-side USART.
+            0x00CE if self.model.has_usart1() => {
+                if Self::usart1_on_bus(bus) {
+                    bus.read_u8(AVR_IO_MIRROR_BASE + 0xCE)
+                } else {
+                    Ok(0)
+                }
+            }
             // SPI: SPCR/SPSR/SPDR (ATmega328P data space)
             0x004C => Ok(self.spcr),
             0x004D => Ok(self.spsr),
@@ -584,16 +1021,26 @@ impl Avr {
             | ext_int::ADDR_SMCR
             | ext_int::ADDR_PCICR
             | ext_int::ADDR_EICRA
-            | ext_int::ADDR_PCMSK0..=ext_int::ADDR_PCMSK2 => {
+            | ext_int::ADDR_PCMSK0..=ext_int::ADDR_PCMSK2
+                if !self.is_mega() || addr == ext_int::ADDR_SMCR =>
+            {
                 Ok(self.ext_read(addr).unwrap_or_default())
             }
             0x0020..=0x00FF => Ok(self.io[(addr - 0x20) as usize]),
-            a if (SRAM_START..=RAMEND).contains(&a) => Ok(self.sram[(a - SRAM_START) as usize]),
+            // ATmega2560 extended I/O (ports H..L, Timer3/4/5, USART1..3):
+            // stored registers.
+            0x0100..=0x01FF if self.is_mega() => Ok(self.io[(addr - 0x20) as usize]),
+            a if (self.sram_start..=self.ramend).contains(&a) => {
+                Ok(self.sram[(a - self.sram_start) as usize])
+            }
             _ => Err(SimulationError::MemoryViolation(addr as u64)),
         }
     }
 
     fn data_write(&mut self, addr: u16, value: u8, bus: &mut dyn Bus) -> SimResult<()> {
+        if self.is_avrxt() {
+            return self.avrxt_data_write(addr, value, bus);
+        }
         match addr {
             0x0000..=0x001F => {
                 self.r[addr as usize] = value;
@@ -738,6 +1185,42 @@ impl Avr {
                 }
                 Ok(())
             }
+            0x00C8 if self.model.has_usart1() => {
+                // U2X1/MPCM1 are writable. TXC1 is write-one-to-clear and
+                // returns once the instantaneous transmitter becomes empty;
+                // RXC1 is supplied by the bus-side USART queue.
+                let i = (0xC8 - 0x20) as usize;
+                let txc = if value & UCSRA_TXC != 0 {
+                    0
+                } else {
+                    self.io[i] & UCSRA_TXC
+                };
+                self.io[i] = txc | (value & 0x03);
+                Self::usart1_mirror_write(bus, 0xC8, value)?;
+                Ok(())
+            }
+            0x00C9 | 0x00CA | 0x00CC | 0x00CD if self.model.has_usart1() => {
+                self.io[(addr - 0x20) as usize] = value;
+                Self::usart1_mirror_write(bus, u64::from(addr), value)?;
+                Ok(())
+            }
+            0x00CE if self.model.has_usart1() => {
+                self.serial_tx.push(value);
+                let status = &mut self.io[(0xC8 - 0x20) as usize];
+                *status |= UCSRA_UDRE | UCSRA_TXC;
+                bus.write_u8(u64::from(addr), value)?;
+                Self::usart1_mirror_write(bus, 0xCE, value)?;
+                let on_bus =
+                    Self::usart1_on_bus(bus) && bus.read_u8(AVR_IO_MIRROR_BASE + 0xCF)? & 1 != 0;
+                if !on_bus {
+                    if let Some(sink) = &self.serial_sink {
+                        if let Ok(mut g) = sink.lock() {
+                            g.push(value);
+                        }
+                    }
+                }
+                Ok(())
+            }
             0x004C => {
                 self.spcr = value;
                 Ok(())
@@ -749,13 +1232,38 @@ impl Avr {
             }
             0x004E => {
                 // SPI data: master clocks one byte through attached slaves.
+                // Sample D/C for every device that declares a `dc_source`
+                // (same semantics as SystemBus::maybe_latch_dc) — generic for
+                // any SPI panel with a DC line, not device-specific.
                 let mosi = value;
                 let mut miso = 0u8;
+                {
+                    let sources: Vec<(usize, u64, u8)> = self
+                        .spi_devices
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, d)| d.dc_source().map(|(a, b)| (i, a, b)))
+                        .collect();
+                    for (i, addr, bit) in sources {
+                        let level = bus
+                            .read_u32(addr)
+                            .map(|v| (v >> bit) & 1 != 0)
+                            .unwrap_or(false);
+                        self.spi_devices[i].set_dc_level(level);
+                    }
+                }
                 for dev in &mut self.spi_devices {
                     let resp = dev.transfer(mosi);
                     if resp != 0 {
                         miso = resp;
                     }
+                }
+                // Kits left on the parking SPI controller (not taken): latch
+                // D/C and clock them so inspect / display_artifact still see
+                // the panel. Bus::clock_parking_spi — no SystemBus downcast.
+                let bus_miso = bus.clock_parking_spi(mosi);
+                if bus_miso != 0 {
+                    miso = bus_miso;
                 }
                 self.spdr = miso;
                 self.spsr |= 1 << 7; // SPIF
@@ -821,8 +1329,14 @@ impl Avr {
             | ext_int::ADDR_SMCR
             | ext_int::ADDR_PCICR
             | ext_int::ADDR_EICRA
-            | ext_int::ADDR_PCMSK0..=ext_int::ADDR_PCMSK2 => {
+            | ext_int::ADDR_PCMSK0..=ext_int::ADDR_PCMSK2
+                if !self.is_mega() || addr == ext_int::ADDR_SMCR =>
+            {
                 self.ext_write(addr, value, bus);
+                Ok(())
+            }
+            ADDR_MCUSR => {
+                self.io[usize::from(ADDR_MCUSR - 0x20)] &= value & 0x0f;
                 Ok(())
             }
             ADDR_MCUCR => {
@@ -844,7 +1358,7 @@ impl Avr {
                 // portb:N`, a board_io LED, and co-simulation's
                 // `board.gpio.<pad>` / `board.gpio_output.<pad>` read them
                 // there (flash@0 swallows low-address bus writes).
-                if (AVR_PINB..=AVR_PIND + 2).contains(&addr) {
+                if self.is_port_reg(addr) {
                     // High-window mirror is best-effort (must not fail IN/OUT).
                     // A pad an output-compare unit owns keeps its waveform level.
                     let pad = self.port_pad_value(addr, value);
@@ -854,12 +1368,83 @@ impl Avr {
                 }
                 Ok(())
             }
-            a if (SRAM_START..=RAMEND).contains(&a) => {
-                self.sram[(a - SRAM_START) as usize] = value;
+            0x0100..=0x01FF if self.is_mega() => {
+                self.io[(addr - 0x20) as usize] = value;
+                if self.is_port_reg(addr) {
+                    let _mirror = bus.write_u8(AVR_IO_MIRROR_BASE + addr as u64, value);
+                }
+                Ok(())
+            }
+            a if (self.sram_start..=self.ramend).contains(&a) => {
+                self.sram[(a - self.sram_start) as usize] = value;
                 bus.write_u8(a as u64, value)?;
                 Ok(())
             }
             _ => Err(SimulationError::MemoryViolation(addr as u64)),
+        }
+    }
+
+    /// AVRxt data-space read. The CPU register file is separate from data
+    /// memory; low addresses are I/O, SRAM starts at the selected device's
+    /// geometry, and flash is visible to LD/ST at 0x8000.
+    fn avrxt_data_read(&self, addr: u16, bus: &dyn Bus) -> SimResult<u8> {
+        match addr {
+            0x0000..=0x0FFF => match addr {
+                // CPU peripheral block starts at 0x30; SP is at 0x3D/0x3E
+                // and SREG at 0x3F (datasheet §8.6).
+                0x003D => Ok(self.sp as u8),
+                0x003E => Ok((self.sp >> 8) as u8),
+                0x003F => Ok(self.sreg),
+                _ => {
+                    let mirror = AVR_IO_MIRROR_BASE + u64::from(addr);
+                    if bus.has_mmio_window(mirror) {
+                        bus.read_u8(mirror)
+                    } else {
+                        Ok(self.tiny_io[addr as usize])
+                    }
+                }
+            },
+            a if (self.sram_start..=self.ramend).contains(&a) => {
+                Ok(self.sram[(a - self.sram_start) as usize])
+            }
+            a if a >= 0x8000 && usize::from(a - 0x8000) < self.flash.len() => {
+                Ok(self.flash[usize::from(a - 0x8000)])
+            }
+            _ => Err(SimulationError::MemoryViolation(u64::from(addr))),
+        }
+    }
+
+    /// AVRxt data-space write. I/O writes are retained locally and mirrored to
+    /// an explicitly mapped peripheral window; SRAM writes update both the
+    /// CPU's backing store and the system bus.
+    fn avrxt_data_write(&mut self, addr: u16, value: u8, bus: &mut dyn Bus) -> SimResult<()> {
+        match addr {
+            0x003D => {
+                self.sp = (self.sp & 0xFF00) | u16::from(value);
+                Ok(())
+            }
+            0x003E => {
+                self.sp = (self.sp & 0x00FF) | (u16::from(value & 0x3F) << 8);
+                Ok(())
+            }
+            0x003F => {
+                self.sreg = value;
+                Ok(())
+            }
+            0x0000..=0x0FFF => {
+                self.tiny_io[addr as usize] = value;
+                let mirror = AVR_IO_MIRROR_BASE + u64::from(addr);
+                if bus.has_mmio_window(mirror) {
+                    bus.write_u8(mirror, value)?;
+                }
+                Ok(())
+            }
+            a if (self.sram_start..=self.ramend).contains(&a) => {
+                self.sram[(a - self.sram_start) as usize] = value;
+                bus.write_u8(u64::from(a), value)?;
+                Ok(())
+            }
+            _ => Err(SimulationError::MemoryViolation(u64::from(addr))),
         }
     }
 
@@ -870,17 +1455,35 @@ impl Avr {
     /// codes (the temperature sensor at 0x08) are not modelled and read 0.
     /// REFS selects the reference: 11 is the internal 1.1 V, anything else is
     /// taken as 5 V AVcc (AREF is not a modelled pin).
+    ///
+    /// ATmega2560: MUX5 (ADCSRB bit 3) with ADMUX MUX4:0 makes a 6-bit code;
+    /// 0x00..0x07 are ADC0..7, 0x20..0x27 are ADC8..15 (Arduino A8..A15),
+    /// 0x1E is the 1.1 V bandgap. Differential/gain codes read 0.
     fn adc_convert(&self, bus: &dyn Bus) -> SimResult<u16> {
-        let mux = self.admux & 0x0F;
-        let input_mv: u32 = match mux {
-            0..=7 => {
-                let base = AVR_ADC_INPUT_BASE + u64::from(mux) * 2;
+        let channel: Option<u8> = if self.is_mega() {
+            let mux5 = self.io[(0x7B - 0x20) as usize] & (1 << 3) != 0;
+            match (self.admux & 0x1F) | if mux5 { 0x20 } else { 0 } {
+                m @ 0x00..=0x07 => Some(m),
+                m @ 0x20..=0x27 => Some(m - 0x18),
+                0x1E => None,
+                _ => Some(0xFF),
+            }
+        } else {
+            match self.admux & 0x0F {
+                m @ 0..=7 => Some(m),
+                0x0E => None,
+                _ => Some(0xFF),
+            }
+        };
+        let input_mv: u32 = match channel {
+            Some(0xFF) => 0,
+            Some(ch) => {
+                let base = self.model.adc_input_base() + u64::from(ch) * 2;
                 let lo = bus.read_u8(base)?;
                 let hi = bus.read_u8(base + 1)?;
                 u32::from(u16::from_le_bytes([lo, hi]))
             }
-            0x0E => AVR_BANDGAP_MV,
-            _ => 0,
+            None => AVR_BANDGAP_MV,
         };
         let reference_mv = if self.admux >> 6 == 0b11 {
             AVR_BANDGAP_MV
@@ -1014,9 +1617,17 @@ impl Avr {
     }
 
     fn tick_io_timers(&mut self, cpu_cycles: u32) {
-        self.tick_timer0(cpu_cycles);
-        self.tick_timer1(cpu_cycles);
-        self.tick_timer2(cpu_cycles);
+        // The spin fixture (and most sketches between timer uses) has every
+        // prescaler stopped. Skip the three outlined tick bodies then.
+        if self.t0_prescaler() != 0 {
+            self.tick_timer0(cpu_cycles);
+        }
+        if self.t1.prescaler() != 0 {
+            self.tick_timer1(cpu_cycles);
+        }
+        if self.t2_prescaler() != 0 {
+            self.tick_timer2(cpu_cycles);
+        }
     }
 
     /// CPU cycles until the next Timer2 interrupt that can wake a sleeper.
@@ -1213,16 +1824,24 @@ impl Avr {
         for seg in &image.segments {
             let addr = seg.start_addr;
             if let Some(d) = strip_avr_data_bias(addr) {
+                // EEPROM is NVMCTRL-backed on AVRxt. Do not misplace a biased
+                // EEPROM image at data-space address zero while NVMCTRL
+                // programming and reads remain unmodelled.
+                if self.is_avrxt() && addr >= AVR_EEPROM_VMA_BIAS {
+                    continue;
+                }
                 // Data / EEPROM space (biased VMA from avr-gcc).
                 for (i, b) in seg.data.iter().enumerate() {
                     let a = d as u16 + i as u16;
-                    if (SRAM_START..=RAMEND).contains(&a) {
-                        self.sram[(a - SRAM_START) as usize] = *b;
-                    } else if (0x20..=0xFF).contains(&a) {
+                    if (self.sram_start..=self.ramend).contains(&a) {
+                        self.sram[(a - self.sram_start) as usize] = *b;
+                    } else if self.is_avrxt() && a < 0x1000 {
+                        self.tiny_io[a as usize] = *b;
+                    } else if (0x20..self.sram_start).contains(&a) {
                         self.io[(a - 0x20) as usize] = *b;
                     }
                 }
-            } else if addr < 0x8000 {
+            } else if (addr as usize) < self.flash.len() {
                 // Program flash (code + data LMA).
                 self.load_flash(addr as u32, &seg.data);
             }
@@ -1245,6 +1864,20 @@ impl Avr {
         Ok(())
     }
 
+    /// Whether the bus maps the ATmega328PB USART1 host window.
+    fn usart1_on_bus(bus: &dyn Bus) -> bool {
+        bus.has_mmio_window(AVR_IO_MIRROR_BASE + 0xC8)
+    }
+
+    /// Forward a USART1 register write when the chip descriptor has a host
+    /// UART window. A refused write on a mapped window is an error.
+    fn usart1_mirror_write(bus: &mut dyn Bus, reg: u64, value: u8) -> SimResult<()> {
+        if Self::usart1_on_bus(bus) {
+            bus.write_u8(AVR_IO_MIRROR_BASE + reg, value)?;
+        }
+        Ok(())
+    }
+
     fn push_byte(&mut self, value: u8, bus: &mut dyn Bus) -> SimResult<()> {
         self.data_write(self.sp, value, bus)?;
         self.sp = self.sp.wrapping_sub(1);
@@ -1256,19 +1889,45 @@ impl Avr {
         self.data_read(self.sp, bus)
     }
 
+    /// Push the return address. On a 3-byte-PC part (ATmega2560) the word
+    /// address is 22 bits, three bytes go on the stack, and every user of this
+    /// (CALL, RCALL, ICALL, EICALL, interrupt entry) takes one cycle more.
     fn push_pc(&mut self, bus: &mut dyn Bus) -> SimResult<()> {
-        let word = (self.pc / 2) as u16;
-        self.push_byte((word >> 8) as u8, bus)?;
+        let word = self.pc / 2;
+        if self.model.three_byte_pc() {
+            self.push_byte(((word >> 16) & 0x3F) as u8, bus)?;
+            self.cycles += 1;
+        }
+        self.push_byte(((word >> 8) & 0xFF) as u8, bus)?;
         self.push_byte((word & 0xFF) as u8, bus)?;
         Ok(())
     }
 
+    /// Pop the return address (RET, RETI): 3 bytes and one cycle more on a
+    /// 3-byte-PC part.
     fn pop_pc(&mut self, bus: &dyn Bus) -> SimResult<()> {
-        let lo = self.pop_byte(bus)? as u16;
-        let hi = self.pop_byte(bus)? as u16;
-        let word = (hi << 8) | lo;
-        self.pc = (word as u32) * 2;
+        let lo = self.pop_byte(bus)? as u32;
+        let hi = self.pop_byte(bus)? as u32;
+        let mut word = (hi << 8) | lo;
+        if self.model.three_byte_pc() {
+            let top = self.pop_byte(bus)? as u32;
+            word |= (top & 0x3F) << 16;
+            self.cycles += 1;
+        }
+        self.pc = word * 2;
         Ok(())
+    }
+
+    /// `EIND` (I/O 0x3C) and `RAMPZ` (I/O 0x3B): the high byte EIJMP/EICALL
+    /// and ELPM put above Z. Stored in the I/O shadow.
+    pub(in crate::cpu::avr) fn eind(&self) -> u32 {
+        u32::from(self.io[(0x5C - 0x20) as usize])
+    }
+    pub(in crate::cpu::avr) fn rampz(&self) -> u32 {
+        u32::from(self.io[(0x5B - 0x20) as usize])
+    }
+    pub(in crate::cpu::avr) fn set_rampz(&mut self, v: u8) {
+        self.io[(0x5B - 0x20) as usize] = v;
     }
 
     fn word_size_bytes(op: u16) -> u32 {
@@ -1309,7 +1968,12 @@ impl Avr {
         // ... and the INTn / PCIFn flag of an external or pin-change vector.
         self.ext_vector_entered(vec);
         self.push_pc(bus)?;
-        self.pc = vec.saturating_sub(1) * 4;
+        let slot = if self.is_mega() {
+            mega2560_vector(vec)
+        } else {
+            vec
+        };
+        self.pc = slot.saturating_sub(1) * 4;
         Ok(true)
     }
 
@@ -1515,7 +2179,23 @@ impl Cpu for Avr {
     /// `CALL`, `RET`, `RETI` and an interrupt entry take 4 clock cycles, the
     /// longest step this core models.
     fn max_step_cycles(&self) -> u32 {
-        4
+        if self.model.three_byte_pc() {
+            5
+        } else {
+            4
+        }
+    }
+
+    fn for_each_attached_device(
+        &self,
+        f: &mut dyn FnMut(Option<&str>, crate::inspect::AttachedDeviceRef<'_>),
+    ) {
+        for device in &self.spi_devices {
+            crate::inspect::visit_spi_device(&**device, &mut |d| f(Some("spi"), d));
+        }
+        for slave in &self.i2c_slaves {
+            crate::inspect::visit_i2c_device(&**slave, &mut |d| f(Some("i2c"), d));
+        }
     }
 
     /// A core stopped by `SLEEP` may be skipped until the next thing that can
@@ -1560,6 +2240,19 @@ impl Cpu for Avr {
     }
 
     fn reset(&mut self, bus: &mut dyn Bus) -> SimResult<()> {
+        if self.is_avrxt() {
+            self.tiny_io.fill(0);
+            self.r = [0; 32];
+            self.pc = 0;
+            self.sp = self.ramend;
+            self.sreg = 0;
+            self.pending_irq = 0;
+            self.cycles = 0;
+            self.sleeping = false;
+            self.irq_shadow = false;
+            let _ = bus;
+            return Ok(());
+        }
         // MCUCR resets to 0: PUD clear, so the ports' pull-ups come back.
         let mcucr = &mut self.io[usize::from(ADDR_MCUCR - 0x20)];
         if *mcucr & MCUCR_PUD != 0 {
@@ -1568,7 +2261,7 @@ impl Cpu for Avr {
         *mcucr = 0;
         self.r = [0; 32];
         self.pc = 0;
-        self.sp = RAMEND;
+        self.sp = self.ramend;
         self.sreg = 0;
         self.pending_irq = 0;
         self.cycles = 0;
@@ -1609,6 +2302,17 @@ impl Cpu for Avr {
         self.irq_shadow = false;
         // Keep attached SPI/I2C slaves across reset (same wiring as real board).
         Ok(())
+    }
+
+    fn on_supply_reset(&mut self, cause: crate::power::SupplyResetCause) {
+        if self.is_avrxt() {
+            return;
+        }
+        let flags = &mut self.io[usize::from(ADDR_MCUSR - 0x20)];
+        match cause {
+            crate::power::SupplyResetCause::PowerOn => *flags = 1, // PORF
+            crate::power::SupplyResetCause::BrownOut => *flags |= 1 << 2, // BORF
+        }
     }
 
     /// One instruction, plus the standardized instruction trace.
@@ -1873,6 +2577,7 @@ mod tests {
 
     struct MockBus {
         mem: HashMap<u64, u8>,
+        mmio_bases: Vec<u64>,
         config: SimulationConfig,
     }
 
@@ -1880,6 +2585,7 @@ mod tests {
         fn new() -> Self {
             Self {
                 mem: HashMap::new(),
+                mmio_bases: Vec::new(),
                 config: SimulationConfig::default(),
             }
         }
@@ -1901,6 +2607,9 @@ mod tests {
         }
         fn config(&self) -> &SimulationConfig {
             &self.config
+        }
+        fn has_mmio_window(&self, addr: u64) -> bool {
+            self.mmio_bases.contains(&addr)
         }
     }
 
@@ -2711,6 +3420,86 @@ mod tests {
     }
 
     #[test]
+    fn atmega328pb_selects_shared_geometry_and_routes_usart1() {
+        use crate::bus::SystemBus;
+        use labwired_config::{ChipDescriptor, SystemManifest};
+
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let chip_path = root.join("configs/chips/atmega328pb.yaml");
+        let chip = ChipDescriptor::from_file(&chip_path).expect("atmega328pb config");
+        let manifest = SystemManifest {
+            cosim_models: Vec::new(),
+            motor_models: Vec::new(),
+            walk_deleted: Some(false),
+            schema_version: "1.0".to_string(),
+            name: "atmega328pb-usart1-smoke".to_string(),
+            chip: chip_path.to_string_lossy().to_string(),
+            cpu_hz: Some(16_000_000),
+            external_devices: Vec::new(),
+            board_io: Vec::new(),
+            debug_uart: None,
+            wifi_ap: None,
+            peripherals: Vec::new(),
+            parts: Default::default(),
+            memory_overrides: Default::default(),
+        };
+        let mut bus = SystemBus::from_config(&chip, &manifest).expect("PB bus");
+        let usart1 = AVR_IO_MIRROR_BASE + 0xC8;
+        assert!(
+            bus.has_mmio_window(usart1),
+            "USART1 host window must be mapped"
+        );
+        assert!(
+            bus.has_mmio_window(AVR_IO_MIRROR_BASE + 0xC0),
+            "USART0 remains a separate window"
+        );
+
+        let mut cpu = Avr::for_chip_name("ATmega328PB-AU");
+        assert_eq!(cpu.model, AvrModel::Atmega328pb);
+        assert_eq!(cpu.flash.len(), 32 * 1024);
+        assert_eq!(cpu.sram.len(), 2 * 1024);
+        assert_eq!(cpu.sp, 0x08FF);
+        let console = Arc::new(Mutex::new(Vec::new()));
+        cpu.set_serial_sink(Arc::clone(&console));
+
+        // Execute a small AVR firmware image: configure U2X1, USART1 TX/RX,
+        // and UBRR1, then write 'P' through UDR1. STS is the 328PB data-space
+        // access used by avr-gcc for this extended I/O window.
+        cpu.load_words(
+            0,
+            &[
+                0xE002, 0x9300, 0x00C8, // LDI r16,2; STS UCSR1A,r16
+                0xE108, 0x9300, 0x00C9, // LDI r16,0x18; STS UCSR1B,r16
+                0xE007, 0x9300, 0x00CC, // LDI r16,7; STS UBRR1L,r16
+                0xE000, 0x9300, 0x00CD, // LDI r16,0; STS UBRR1H,r16
+                0xE500, 0x9300, 0x00CE, // LDI r16,'P'; STS UDR1,r16
+            ],
+        );
+        for _ in 0..10 {
+            cpu.step(&mut bus, &[], &SimulationConfig::default())
+                .unwrap();
+        }
+
+        assert_eq!(cpu.serial_tx, b"P");
+        assert_eq!(*console.lock().unwrap(), b"P");
+        assert_ne!(cpu.data_read(0xC8, &bus).unwrap() & UCSRA_UDRE, 0);
+        assert_ne!(cpu.data_read(0xC8, &bus).unwrap() & UCSRA_TXC, 0);
+
+        // RXC1 and UDR1 come from the second bus-side USART, not USART0.
+        let mut rx_bus = MockBus::new();
+        rx_bus.mmio_bases.push(usart1);
+        rx_bus.mem.insert(usart1, UCSRA_RXC);
+        rx_bus.mem.insert(usart1 + 6, b'R');
+        assert_ne!(cpu.data_read(0xC8, &rx_bus).unwrap() & UCSRA_RXC, 0);
+        assert_eq!(cpu.data_read(0xCE, &rx_bus).unwrap(), b'R');
+
+        // The 328P does not acquire the PB-only USART1 window by fallback.
+        let mut p = Avr::for_chip_name("atmega328p");
+        p.data_write(0xCE, b'X', &mut rx_bus).unwrap();
+        assert!(p.serial_tx.is_empty());
+    }
+
+    #[test]
     fn hand_blink_toggles_portb5_and_serial() {
         let mut cpu = Avr::new();
         cpu.load_words(0, &[0x9A2D, 0x982D, 0xE508, 0x9300, 0x00C6, 0xCFFA]);
@@ -2731,5 +3520,577 @@ mod tests {
         }
         assert!(hi && lo);
         assert!(cpu.serial_tx.contains(&b'X'));
+    }
+
+    // ---- ATmega2560 (AvrModel::Atmega2560) ----
+
+    fn mega() -> Avr {
+        Avr::new_model(AvrModel::Atmega2560)
+    }
+
+    fn step_n(cpu: &mut Avr, bus: &mut MockBus, n: usize) {
+        let cfg = SimulationConfig::default();
+        for _ in 0..n {
+            cpu.step(bus, &[], &cfg).unwrap();
+        }
+    }
+
+    #[test]
+    fn chip_name_selects_the_model() {
+        assert_eq!(Avr::for_chip_name("atmega2560").model, AvrModel::Atmega2560);
+        assert_eq!(Avr::for_chip_name("atmega328p").model, AvrModel::Atmega328p);
+        let m = mega();
+        assert_eq!(m.sp, 0x21FF, "SP resets to RAMEND");
+        assert_eq!(m.flash.len(), 256 * 1024);
+    }
+
+    #[test]
+    fn mega_128k_names_use_the_128k_two_byte_pc_core() {
+        let cpu = Avr::for_chip_name("atmega1281");
+        assert_eq!(cpu.model, AvrModel::Atmega1281);
+        assert_eq!(cpu.flash.len(), 128 * 1024);
+        assert_eq!(cpu.sram.len(), 8 * 1024);
+        assert_eq!(cpu.sp, 0x21FF);
+        assert!(!cpu.model.three_byte_pc());
+    }
+
+    #[test]
+    fn attiny404_selects_avrxt_geometry_and_runs_call_stack_and_sram_firmware() {
+        let mut cpu = Avr::for_chip_name("attiny404");
+        assert_eq!(cpu.model, AvrModel::Attiny404);
+        assert_eq!(cpu.flash.len(), 4 * 1024);
+        assert_eq!(cpu.sram.len(), 256);
+        assert_eq!(cpu.sp, 0x3FFF);
+        assert!(!cpu.model.three_byte_pc());
+
+        // Exercise direct-address OUT/IN/SBI, store to data SRAM, call a
+        // subroutine (exercising the top-of-SRAM stack), and return. The
+        // ATtiny register file is separate from data memory, so a data access
+        // to 0x0000 must not overwrite r0.
+        cpu.load_words(
+            0,
+            &[
+                0xE402, // LDI r16, 0x42
+                0xB900, // OUT VPORTA.DIR(0x00), r16
+                0xB110, // IN r17, VPORTA.DIR(0x00)
+                0x9A00, // SBI VPORTA.DIR(0x00), 0
+                0x9300, 0x3F00, // STS 0x3F00, r16
+                0x9300, 0x0001, // STS VPORTA.OUT, r16 (data-space I/O)
+                0xD003, // RCALL subroutine four words ahead
+                0xB73D, // IN r19, CPU.SPL(0x3D)
+                0xB74F, // IN r20, CPU.SREG(0x3F)
+                0xCFFF, // loop forever after return
+                0xE021, // subroutine: LDI r18, 1
+                0x9508, // RET
+            ],
+        );
+        let mut bus = MockBus::new();
+        step_n(&mut cpu, &mut bus, 11);
+
+        assert_eq!(cpu.sram[0], 0x42, "STS writes to ATtiny404 SRAM");
+        assert_eq!(cpu.tiny_io[0], 0x43, "data address zero is I/O");
+        assert_eq!(cpu.tiny_io[1], 0x42, "STS writes data-space I/O");
+        assert_eq!(cpu.r[0], 0, "data address zero is not R0");
+        assert_eq!(cpu.r[17], 0x42, "IN reads direct-address AVRxt I/O");
+        assert_eq!(cpu.r[18], 0x01, "subroutine executes after the direct IN");
+        assert_eq!(cpu.r[19], 0xFF, "CPU.SPL is at I/O address 0x3D");
+        assert_eq!(cpu.r[20], 0, "CPU.SREG is at I/O address 0x3F");
+        assert_eq!(cpu.sp, 0x3FFF, "RET restores the AVRxt stack pointer");
+        assert_eq!(cpu.sram[0xFF], 0, "return PC high byte was pushed");
+        assert_eq!(cpu.sram[0xFE], 9, "return PC low byte was pushed");
+    }
+
+    /// Classic (pre-AVRxt) tinyAVR must select their OWN model.
+    ///
+    /// Regression guard. Before these arms existed every one of these parts hit
+    /// the `else` branch and became an ATmega328p: 32 KB flash, SRAM at 0x0100
+    /// and the 328P vector table. Firmware then ran against geometry the part
+    /// does not have, and nothing failed loudly - which is exactly how
+    /// labwired-ip came to claim 13 parts as onboarded when they were not.
+    ///
+    /// Geometry is from each datasheet's data-memory map (SRAM start .. RAMEND).
+    #[test]
+    fn classic_tinyavr_selects_its_own_geometry_and_not_the_atmega328p() {
+        // (name, model, flash, sram_start, ramend, sram_len)
+        let cases = [
+            ("attiny13", AvrModel::Attiny13, 1024, 0x0060, 0x009F, 64),
+            (
+                "attiny25",
+                AvrModel::Attiny25,
+                2 * 1024,
+                0x0060,
+                0x00DF,
+                128,
+            ),
+            (
+                "attiny45",
+                AvrModel::Attiny45,
+                4 * 1024,
+                0x0060,
+                0x015F,
+                256,
+            ),
+            (
+                "attiny85",
+                AvrModel::Attiny85,
+                8 * 1024,
+                0x0060,
+                0x025F,
+                512,
+            ),
+            (
+                "attiny2313",
+                AvrModel::Attiny2313,
+                2 * 1024,
+                0x0060,
+                0x00DF,
+                128,
+            ),
+            (
+                "attiny261",
+                AvrModel::Attiny261,
+                2 * 1024,
+                0x0060,
+                0x00DF,
+                128,
+            ),
+            (
+                "attiny461",
+                AvrModel::Attiny461,
+                4 * 1024,
+                0x0060,
+                0x015F,
+                256,
+            ),
+            (
+                "attiny861",
+                AvrModel::Attiny861,
+                8 * 1024,
+                0x0060,
+                0x025F,
+                512,
+            ),
+            (
+                "attiny44",
+                AvrModel::Attiny44,
+                4 * 1024,
+                0x0060,
+                0x015F,
+                256,
+            ),
+            (
+                "attiny84",
+                AvrModel::Attiny84,
+                8 * 1024,
+                0x0060,
+                0x025F,
+                512,
+            ),
+            // The 48/88 have a 160-byte extended I/O file, so SRAM starts at
+            // 0x0100 rather than 0x0060 (ATtiny48/88 datasheet Table 5-2).
+            (
+                "attiny48",
+                AvrModel::Attiny48,
+                4 * 1024,
+                0x0100,
+                0x01FF,
+                256,
+            ),
+            (
+                "attiny88",
+                AvrModel::Attiny88,
+                8 * 1024,
+                0x0100,
+                0x02FF,
+                512,
+            ),
+        ];
+        for (name, model, flash, sram_start, ramend, sram_len) in cases {
+            assert_eq!(
+                AvrModel::from_chip_name(name),
+                model,
+                "{name} must not fall through to the default model"
+            );
+            let cpu = Avr::for_chip_name(name);
+            assert_eq!(cpu.model, model, "{name} selects its exact model");
+            assert_eq!(cpu.flash.len(), flash, "{name} flash size");
+            assert_eq!(cpu.sram_start, sram_start, "{name} SRAM start");
+            assert_eq!(cpu.sram.len(), sram_len, "{name} SRAM size");
+            assert_eq!(cpu.ramend, ramend, "{name} RAMEND");
+            // These are classic AVR, so they must NOT get the AVRxt data map.
+            // Giving them 0x3Fxx SRAM would be as wrong as the 328P fallback.
+            assert!(
+                !cpu.model.uses_avrxt_data_map(),
+                "{name} is classic AVR, not AVRxt"
+            );
+        }
+    }
+
+    #[test]
+    fn tinyavr_0_series_selects_exact_avrxt_flash_and_sram_geometry() {
+        for (name, model, flash_size, sram_start, sram_len) in [
+            ("attiny202", AvrModel::Attiny202, 2 * 1024, 0x3F80, 128),
+            ("attiny204", AvrModel::Attiny204, 2 * 1024, 0x3F80, 128),
+            ("attiny402", AvrModel::Attiny402, 4 * 1024, 0x3F00, 256),
+            ("attiny404", AvrModel::Attiny404, 4 * 1024, 0x3F00, 256),
+            ("attiny406", AvrModel::Attiny406, 4 * 1024, 0x3F00, 256),
+            ("attiny804", AvrModel::Attiny804, 8 * 1024, 0x3E00, 512),
+            ("attiny806", AvrModel::Attiny806, 8 * 1024, 0x3E00, 512),
+            ("attiny807", AvrModel::Attiny807, 8 * 1024, 0x3E00, 512),
+            ("attiny1604", AvrModel::Attiny1604, 16 * 1024, 0x3C00, 1024),
+            ("attiny1606", AvrModel::Attiny1606, 16 * 1024, 0x3C00, 1024),
+            ("attiny1607", AvrModel::Attiny1607, 16 * 1024, 0x3C00, 1024),
+        ] {
+            let mut cpu = Avr::for_chip_name(name);
+            assert_eq!(cpu.model, model, "{name} selects its exact model");
+            assert_eq!(cpu.flash.len(), flash_size, "{name} flash size");
+            assert_eq!(cpu.sram_start, sram_start, "{name} SRAM start");
+            assert_eq!(cpu.sram.len(), sram_len, "{name} SRAM size");
+            assert_eq!(cpu.ramend, 0x3FFF, "{name} RAMEND");
+            assert!(cpu.model.uses_avrxt_data_map(), "{name} uses AVRxt");
+            cpu.flash[flash_size - 1] = 0xA5;
+            let mut bus = MockBus::new();
+            let last_flash_byte = 0x8000 + (flash_size - 1) as u16;
+            assert_eq!(
+                cpu.avrxt_data_read(last_flash_byte, &bus).unwrap(),
+                0xA5,
+                "{name} final flash byte is mapped"
+            );
+            assert!(
+                matches!(
+                    cpu.avrxt_data_read(last_flash_byte + 1, &bus),
+                    Err(SimulationError::MemoryViolation(_))
+                ),
+                "{name} address after flash is outside the mapped window"
+            );
+
+            // LDI r16,0x5A; STS first SRAM byte,r16; STS last SRAM byte,r16.
+            cpu.load_words(0, &[0xE50A, 0x9300, sram_start, 0x9300, 0x3FFF]);
+            step_n(&mut cpu, &mut bus, 3);
+            assert_eq!(cpu.sram[0], 0x5A, "{name} first SRAM byte");
+            assert_eq!(cpu.sram[sram_len - 1], 0x5A, "{name} last SRAM byte");
+        }
+    }
+
+    #[test]
+    fn atmega1281_does_not_decode_eind_control_flow_opcodes() {
+        for opcode in [0x9419, 0x9519] {
+            let mut cpu = Avr::for_chip_name("atmega1281");
+            let mut bus = MockBus::new();
+            cpu.load_words(0, &[opcode]);
+            let err = cpu.step(&mut bus, &[], &SimulationConfig::default());
+            assert!(
+                matches!(err, Err(SimulationError::DecodeError(0))),
+                "opcode {opcode:#06x}"
+            );
+        }
+    }
+
+    #[test]
+    fn atmega1281_call_and_ret_use_a_two_byte_return_address() {
+        let mut cpu = Avr::for_chip_name("atmega1281");
+        let mut bus = MockBus::new();
+        cpu.load_words(0, &[0x940E, 0x0080]);
+        cpu.load_words(0x100, &[0x9508]);
+        let initial_sp = cpu.sp;
+
+        step_n(&mut cpu, &mut bus, 1);
+        assert_eq!(cpu.pc, 0x100);
+        assert_eq!(initial_sp - cpu.sp, 2, "128 KB part pushes 2 PC bytes");
+
+        step_n(&mut cpu, &mut bus, 1);
+        assert_eq!(cpu.pc, 4);
+        assert_eq!(cpu.sp, initial_sp);
+    }
+
+    #[test]
+    fn mega_call_and_ret_move_a_three_byte_pc() {
+        // CALL 0x000100 (word 0x80); at 0x100: RET.
+        let prog = [0x940E, 0x0080];
+        let run = |mut cpu: Avr| {
+            let mut bus = MockBus::new();
+            cpu.load_words(0, &prog);
+            cpu.load_words(0x100, &[0x9508]);
+            cpu.set_pc(0);
+            let (sp0, c0) = (cpu.sp, cpu.cycles);
+            step_n(&mut cpu, &mut bus, 1);
+            assert_eq!(cpu.pc, 0x100);
+            let (pushed, call_cycles) = (sp0 - cpu.sp, cpu.cycles - c0);
+            let c1 = cpu.cycles;
+            step_n(&mut cpu, &mut bus, 1);
+            assert_eq!(cpu.pc, 4, "RET comes back after the 2-word CALL");
+            assert_eq!(cpu.sp, sp0);
+            (pushed, call_cycles, cpu.cycles - c1)
+        };
+        let (p328, call328, ret328) = run(Avr::new());
+        let (p2560, call2560, ret2560) = run(mega());
+        assert_eq!(p328, 2);
+        assert_eq!(p2560, 3, "the 2560 pushes a 3-byte return address");
+        assert_eq!(call2560, call328 + 1, "CALL takes one more cycle");
+        assert_eq!(ret2560, ret328 + 1, "RET takes one more cycle");
+    }
+
+    #[test]
+    fn mega_eicall_and_eijmp_use_eind() {
+        let mut bus = MockBus::new();
+        let mut cpu = mega();
+        // LDI R16,1; OUT EIND(0x3C),R16; LDI R30,0x10; LDI R31,0; EICALL
+        cpu.load_words(0, &[0xE001, 0xBF0C, 0xE1E0, 0xE0F0, 0x9519]);
+        cpu.set_pc(0);
+        step_n(&mut cpu, &mut bus, 5);
+        assert_eq!(cpu.eind(), 1);
+        assert_eq!(cpu.pc, 0x2_0020, "EIND:Z = word 0x1_0010");
+        assert_eq!(cpu.sp, 0x21FF - 3);
+
+        let mut cpu = mega();
+        // Same, with EIJMP: no push.
+        cpu.load_words(0, &[0xE001, 0xBF0C, 0xE1E0, 0xE0F0, 0x9419]);
+        cpu.set_pc(0);
+        step_n(&mut cpu, &mut bus, 5);
+        assert_eq!(cpu.pc, 0x2_0020);
+        assert_eq!(cpu.sp, 0x21FF);
+    }
+
+    #[test]
+    fn mega_elpm_reads_rampz_z_and_carries_into_rampz() {
+        let mut bus = MockBus::new();
+        let mut cpu = mega();
+        cpu.load_words(0x1_0004, &[0x1234]);
+        // LDI R16,1; OUT RAMPZ(0x3B),R16; LDI R30,4; LDI R31,0; ELPM R5,Z+; ELPM R6,Z
+        cpu.load_words(0, &[0xE001, 0xBF0B, 0xE0E4, 0xE0F0, 0x9057, 0x9066]);
+        cpu.set_pc(0);
+        step_n(&mut cpu, &mut bus, 6);
+        assert_eq!(cpu.r[5], 0x34);
+        assert_eq!(cpu.r[6], 0x12);
+        assert_eq!((cpu.rampz(), cpu.r[31], cpu.r[30]), (1, 0, 5));
+
+        // Z+ from 0xFFFF carries into RAMPZ.
+        let mut cpu = mega();
+        cpu.load_words(0xFFFE, &[0xAB00]);
+        // LDI R30,0xFF; LDI R31,0xFF; ELPM R5,Z+
+        cpu.load_words(0, &[0xEFEF, 0xEFFF, 0x9057]);
+        cpu.set_pc(0);
+        step_n(&mut cpu, &mut bus, 3);
+        assert_eq!(cpu.r[5], 0xAB);
+        assert_eq!((cpu.rampz(), cpu.r[31], cpu.r[30]), (1, 0, 0));
+    }
+
+    #[test]
+    fn mega_extended_io_port_h_is_mirrored_and_readable() {
+        let mut bus = MockBus::new();
+        let mut cpu = mega();
+        cpu.data_write(0x101, 0x38, &mut bus).unwrap(); // DDRH: PH3..PH5 out
+        cpu.data_write(0x102, 0x20, &mut bus).unwrap(); // PORTH: PH5 (D8) high
+        assert_eq!(bus.read_u8(AVR_IO_MIRROR_BASE + 0x101).unwrap(), 0x38);
+        assert_eq!(bus.read_u8(AVR_IO_MIRROR_BASE + 0x102).unwrap(), 0x20);
+        assert_eq!(cpu.data_read(0x100, &bus).unwrap() & 0x38, 0x20, "PINH");
+        // PORTK (0x108) too; on the 328P that address is plain SRAM.
+        cpu.data_write(0x108, 0x03, &mut bus).unwrap();
+        assert_eq!(bus.read_u8(AVR_IO_MIRROR_BASE + 0x108).unwrap(), 0x03);
+        let mut uno = Avr::new();
+        let mut uno_bus = MockBus::new();
+        uno.data_write(0x108, 0x03, &mut uno_bus).unwrap();
+        assert_eq!(uno_bus.read_u8(AVR_IO_MIRROR_BASE + 0x108).unwrap(), 0);
+    }
+
+    #[test]
+    fn mega_adc_mux5_selects_adc8_to_adc15() {
+        let mut bus = MockBus::new();
+        let mut cpu = mega();
+        let put = |bus: &mut MockBus, ch: u64, mv: u16| {
+            let base = AVR_MEGA_ADC_INPUT_BASE + ch * 2;
+            bus.write_u8(base, (mv & 0xFF) as u8).unwrap();
+            bus.write_u8(base + 1, (mv >> 8) as u8).unwrap();
+        };
+        put(&mut bus, 0, 1000);
+        put(&mut bus, 1, 1500);
+        put(&mut bus, 8, 5000);
+        put(&mut bus, 9, 2000);
+        put(&mut bus, 15, 250);
+        let convert = |cpu: &mut Avr, bus: &mut MockBus, mux5: bool, mux: u8| {
+            cpu.data_write(0x7B, if mux5 { 0x08 } else { 0 }, bus)
+                .unwrap();
+            cpu.data_write(0x7C, 0x40 | mux, bus).unwrap();
+            cpu.data_write(0x7A, 0xC0, bus).unwrap();
+            u16::from(cpu.adch) << 8 | u16::from(cpu.adcl)
+        };
+        assert_eq!(convert(&mut cpu, &mut bus, false, 0), 204, "A0 = ADC0");
+        assert_eq!(convert(&mut cpu, &mut bus, false, 1), 307, "A1 = ADC1");
+        assert_eq!(convert(&mut cpu, &mut bus, true, 0), 1023, "A8 = ADC8");
+        assert_eq!(convert(&mut cpu, &mut bus, true, 1), 409, "A9 = ADC9");
+        assert_eq!(convert(&mut cpu, &mut bus, true, 7), 51, "A15 = ADC15");
+        assert_eq!(convert(&mut cpu, &mut bus, false, 0x1F), 0, "GND");
+    }
+
+    #[test]
+    fn mega_vectors_follow_the_2560_table() {
+        // Internal (328P, 1-based) numbering -> ATmega2560 slot (DS2549 §14).
+        let table = [
+            (2, 2),   // INT0
+            (4, 10),  // PCINT0
+            (7, 13),  // WDT
+            (10, 16), // TIMER2_OVF
+            (14, 21), // TIMER1_OVF
+            (17, 24), // TIMER0_OVF
+            (18, 25), // SPI_STC
+            (19, 26), // USART0_RX
+            (20, 27), // USART0_UDRE
+            (21, 28), // USART0_TX
+            (22, 30), // ADC
+            (25, 40), // TWI
+        ];
+        for (v328, v2560) in table {
+            assert_eq!(mega2560_vector(v328), v2560, "328P vector {v328}");
+        }
+    }
+
+    /// Recording SPI slave: captures (dc_level, mosi) at each transfer so the
+    /// SPDR path's D/C sample can be asserted without a full panel model.
+    struct DcProbe {
+        src: Option<(u64, u8)>,
+        level: bool,
+        frames: std::sync::Arc<std::sync::Mutex<Vec<(bool, u8)>>>,
+    }
+
+    impl SpiDevice for DcProbe {
+        fn transfer(&mut self, mosi_byte: u8) -> u8 {
+            self.frames.lock().unwrap().push((self.level, mosi_byte));
+            0
+        }
+        fn cs_pin(&self) -> &str {
+            "PB2"
+        }
+        fn set_dc_level(&mut self, level: bool) {
+            self.level = level;
+        }
+        fn dc_source(&self) -> Option<(u64, u8)> {
+            self.src
+        }
+        fn set_dc_source(&mut self, odr_addr: u64, bit: u8) {
+            self.src = Some((odr_addr, bit));
+        }
+        fn as_any(&self) -> Option<&dyn std::any::Any> {
+            Some(self)
+        }
+    }
+
+    #[test]
+    fn spdr_write_samples_dc_pin_per_byte() {
+        let mut cpu = Avr::new();
+        let frames = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut probe = DcProbe {
+            src: None,
+            level: false,
+            frames: frames.clone(),
+        };
+        // Fake PORT latch at 0x1000 bit 3 — whatever the kit's dc_source is.
+        const ODR: u64 = 0x1000;
+        const BIT: u8 = 3;
+        probe.set_dc_source(ODR, BIT);
+        cpu.push_spi_device(Box::new(probe));
+
+        let mut bus = MockBus::new();
+        // Assert the sampled D/C level rides with the GPIO latch per byte.
+        bus.write_u8(ODR, 1 << BIT).unwrap();
+        cpu.data_write(0x4E, 0xAA, &mut bus).unwrap();
+        bus.write_u8(ODR, 0).unwrap();
+        cpu.data_write(0x4E, 0x55, &mut bus).unwrap();
+        bus.write_u8(ODR, 1 << BIT).unwrap();
+        cpu.data_write(0x4E, 0xFF, &mut bus).unwrap();
+
+        let got = frames.lock().unwrap().clone();
+        assert_eq!(
+            got,
+            vec![(true, 0xAA), (false, 0x55), (true, 0xFF)],
+            "SPDR must sample D/C per byte, in order"
+        );
+    }
+
+    /// End to end: SPDR writes from the CPU clock a parking (not taken)
+    /// ST7789 on a real SystemBus, with D/C from PORTB.1, and the panel paints.
+    #[test]
+    fn spdr_writes_paint_parking_st7789() {
+        use crate::bus::SystemBus;
+        use labwired_config::{ChipDescriptor, ExternalDevice, SystemManifest};
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let chip_path = root.join("configs/chips/atmega328p.yaml");
+        let chip = ChipDescriptor::from_file(&chip_path).expect("atmega328p");
+        let mut cfg = std::collections::HashMap::new();
+        cfg.insert("cs_pin".into(), serde_yaml::Value::String("PB2".into()));
+        cfg.insert("dc_pin".into(), serde_yaml::Value::String("PB1".into()));
+        let manifest = SystemManifest {
+            cosim_models: Vec::new(),
+            motor_models: Vec::new(),
+            walk_deleted: Some(false),
+            schema_version: "1.0".to_string(),
+            name: "spdr-e2e".to_string(),
+            chip: chip_path.to_string_lossy().to_string(),
+            cpu_hz: Some(16_000_000),
+            external_devices: vec![ExternalDevice {
+                id: "DS1".to_string(),
+                r#type: "st7789-170x320".to_string(),
+                connection: "spi".to_string(),
+                channel: None,
+                route: Default::default(),
+                config: cfg,
+            }],
+            board_io: vec![],
+            debug_uart: None,
+            wifi_ap: None,
+            peripherals: vec![],
+            parts: Default::default(),
+            memory_overrides: Default::default(),
+        };
+        let mut bus = SystemBus::from_config(&chip, &manifest).expect("bus");
+        if let Some(idx) = bus.find_peripheral_index_by_name("spi") {
+            if let Some(devs) = bus.peripherals[idx].dev.spi_attached_devices_mut() {
+                for d in devs.iter_mut() {
+                    d.cs_select();
+                }
+            }
+        }
+        let mut cpu = Avr::for_chip_name("atmega328p");
+        let portb = 0x0001_0023u64;
+        bus.write_u8(portb + 1, 1 << 1).unwrap(); // DDRB.1 output
+        let frames: &[(bool, u8)] = &[
+            (false, 0x01),
+            (false, 0x11),
+            (false, 0x3A),
+            (true, 0x55),
+            (false, 0x29),
+            (false, 0x2A),
+            (true, 0),
+            (true, 0),
+            (true, 0),
+            (true, 1),
+            (false, 0x2B),
+            (true, 0),
+            (true, 0),
+            (true, 0),
+            (true, 1),
+            (false, 0x2C),
+            (true, 0xFF),
+            (true, 0xFF),
+            (true, 0xFF),
+            (true, 0xFF),
+            (true, 0xFF),
+            (true, 0xFF),
+            (true, 0xFF),
+            (true, 0xFF),
+        ];
+        for &(dc, b) in frames {
+            bus.write_u8(portb + 2, if dc { 1 << 1 } else { 0 })
+                .unwrap();
+            cpu.data_write(0x4E, b, &mut bus).unwrap();
+        }
+        let art = bus
+            .display_artifact("DS1", &crate::inspect::InspectOpts::default())
+            .expect("DS1 artifact");
+        let painted = art.meta["painted_bytes"].as_u64().unwrap_or(0);
+        assert!(
+            painted > 0,
+            "SPDR-driven parking ST7789 must paint; meta={:?}",
+            art.meta
+        );
     }
 }

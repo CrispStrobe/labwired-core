@@ -58,6 +58,13 @@ jobs:
             profile_dir: release
             script: examples/demo-blinky/io-smoke.yaml
             system: examples/demo-blinky/system.yaml
+          - id: nucleo-f103rb
+            target: thumbv7m-none-eabi
+            crate: firmware-nucleo-f103rb-smoke
+            profile: release
+            profile_dir: release
+            script: examples/nucleo-f103rb/io-smoke.yaml
+            system: examples/nucleo-f103rb/system.yaml
           # NTC lab: its io-smoke asserts the ADC CONVERSION (boot reading =
           # divider midpoint, later reading rises after the 80 C stimulus). It
           # ran in no workflow, so the firmware's F2/F4 SWSTART (bit 30) on an
@@ -281,6 +288,13 @@ jobs:
           - id: esp32s3-zero
             script: examples/esp32s3-zero/tier1-smoke.yaml
             system: examples/esp32s3-zero/system.yaml
+          # STM32G431RB (demand-ordered onboarding; JetBrains 2025 "other STM32"
+          # 13%). The descriptor and the TIER1 fixture existed but no `labwired
+          # test` cell ran the part, so chip_coverage.py counted it as a shipped
+          # chip with no executing gate. Committed blob, no toolchain, 0.06s.
+          - id: stm32g431rb
+            script: examples/stm32g431rb/tier1-smoke.yaml
+            system: examples/stm32g431rb/system.yaml
           # nRF5340: real upstream Zephyr v3.7 hello_world on the application
           # core. The ELF already booted in firmware_survival.rs, but IN
           # PROCESS — no CLI ran it, which is why the chip sat in the coverage
@@ -334,6 +348,161 @@ jobs:
             profile_dir: release
             script: examples/samd21-smoke/io-smoke.yaml
             system: examples/samd21-smoke/system.yaml
+          # dsPIC33FJ32MC204 — first 16-bit PIC/dsPIC cell. The firmware is a
+          # committed hand-assembled ELF (generator in the example), so this
+          # cell needs no cross toolchain; M0 scope is boot + UART1 TX on the
+          # CPU, judged by the UART bytes and the max-steps stop reason.
+          - id: dspic33fj32mc204-uart
+            script: examples/dspic33fj32mc204/io-smoke.yaml
+            system: examples/dspic33fj32mc204/system.yaml
+          # dsPIC33FJ32MC202 — 28-pin sibling of the 204 with the same M0
+          # scope: boot + UART1 TX, asserted by the committed XC16 ELF.
+          - id: dspic33fj32mc202-uart
+            script: examples/dspic33fj32mc202/io-smoke.yaml
+            system: examples/dspic33fj32mc202/system.yaml
+          # PIC24F KA parts use checked-in XC16 ELFs, so these exact-chip CLI
+          # smokes need no cross compiler. They keep the per-part UART contract
+          # in the coverage matrix as well as in the core integration tests.
+          - id: pic24f04ka200-uart
+            script: examples/pic24f04ka200/io-smoke.yaml
+            system: examples/pic24f04ka200/system.yaml
+          - id: pic24f04ka201-uart
+            script: examples/pic24f04ka201/io-smoke.yaml
+            system: examples/pic24f04ka201/system.yaml
+          - id: pic24f08ka101-uart
+            script: examples/pic24f08ka101/io-smoke.yaml
+            system: examples/pic24f08ka101/system.yaml
+          - id: pic24f08ka102-uart
+            script: examples/pic24f08ka102/io-smoke.yaml
+            system: examples/pic24f08ka102/system.yaml
+          - id: pic24f16ka101-uart
+            script: examples/pic24f16ka101/io-smoke.yaml
+            system: examples/pic24f16ka101/system.yaml
+          - id: pic24f16ka102-uart
+            script: examples/pic24f16ka102/io-smoke.yaml
+            system: examples/pic24f16ka102/system.yaml
+          # LiteX VexRiscv SoC — first RISC-V soft-core cell. The smoke links
+          # into the SoC's integrated SRAM (0x10000000) and prints over the
+          # LiteX UART; one assertion reads back a declared-stub CSR window
+          # (zeros), so the "declared, not modelled" boundary is pinned on the
+          # wire. No build_dir needed: this crate's link args come from its
+          # build.rs, which cargo reads from the package regardless of the
+          # working directory.
+          # Arduino Nano 33 BLE: nRF52840 UARTE console + the active-low RGB
+          # OUT readback; the LSM9DS1 IMU and USB CDC are not modelled.
+          - id: arduino-nano-33-ble-smoke
+            target: thumbv7em-none-eabihf
+            crate: firmware-arduino-nano-33-ble-smoke
+            profile: release
+            profile_dir: release
+            script: examples/arduino-nano-33-ble/io-smoke.yaml
+            system: examples/arduino-nano-33-ble/system.yaml
+          # SAM4S Xplained: Cortex-M4, UART0 console + the SAM4S PIO LED/button
+          # path; TC/SPI/TWI/EEFC and the system controller stay stubs.
+          - id: sam4s-xplained-smoke
+            target: thumbv7em-none-eabi
+            crate: firmware-sam4s-xplained-smoke
+            profile: release
+            profile_dir: release
+            script: examples/sam4s-xplained/io-smoke.yaml
+            system: examples/sam4s-xplained/system.yaml
+          # STM32F072B-DISCO: Cortex-M0, USART1 console + the four-LED ODR
+          # walk; USB/TSC/CRS stay declared stubs.
+          - id: stm32f072b-disco-smoke
+            target: thumbv6m-none-eabi
+            crate: firmware-stm32f072b-disco-smoke
+            profile: release
+            profile_dir: release
+            script: examples/stm32f072b-disco/io-smoke.yaml
+            system: examples/stm32f072b-disco/system.yaml
+          - id: litex-vexriscv-smoke
+            target: riscv32im-unknown-none-elf
+            crate: firmware-litex-vexriscv-smoke
+            profile: release
+            profile_dir: release
+            script: examples/litex-vexriscv/io-smoke.yaml
+            system: examples/litex-vexriscv/system.yaml
+          # Digilent Arty A7-35T on the same LiteX VexRiscv SoC, plus the
+          # board's Control-and-Status block: the smoke walks the LEDs with CSR
+          # readback, reports the switch/button levels and the pending/enable
+          # registers, and runs the timer one-shot.
+          - id: arty-litex-smoke
+            target: riscv32im-unknown-none-elf
+            crate: firmware-arty-litex-smoke
+            profile: release
+            profile_dir: release
+            script: examples/arty-litex-vexriscv/io-smoke.yaml
+            system: examples/arty-litex-vexriscv/system.yaml
+          # Vega board (RI5CY): LPUART0 console + a real multiply; SCG/PCC,
+          # INTMUX and the low-power timers stay declared stubs.
+          #
+          # entry_zero_ok: the Vega SoC maps 1 MiB of flash at 0x0, so this
+          # firmware genuinely boots from 0x0 - its memory.x says so and so does
+          # examples/vegaboard-ri5cy/io-smoke.yaml ("boots from flash at 0x0").
+          # The generic guard exists to catch a linker script that failed to
+          # apply; here 0x0 is correct, so the cell declares it.
+          - id: vegaboard-ri5cy-smoke
+            target: riscv32imc-unknown-none-elf
+            crate: firmware-vegaboard-ri5cy-smoke
+            profile: release
+            profile_dir: release
+            entry_zero_ok: true
+            script: examples/vegaboard-ri5cy/io-smoke.yaml
+            system: examples/vegaboard-ri5cy/system.yaml
+          # One shared ARMv6-M spin image boots against every exact STM32
+          # Exact chip descriptor. The system override selects each part's own
+          # flash/RAM geometry; the smoke claims execution only, not peripheral
+          # behavior. Grouping the variants keeps this to one build/job.
+          - id: stm32-exact-catalog
+            target: thumbv6m-none-eabi
+            crate: firmware-perf-spin
+            profile: release
+            profile_dir: release
+            script: examples/ci/arm-spin-smoke.yaml
+            exact_systems:
+              - configs/systems/stm32-catalog/stm32f103c4.yaml
+              - configs/systems/stm32-catalog/stm32f103c6.yaml
+              - configs/systems/stm32-catalog/stm32f103r4.yaml
+              - configs/systems/stm32-catalog/stm32f103r4h.yaml
+              - configs/systems/stm32-catalog/stm32f103r6.yaml
+              - configs/systems/stm32-catalog/stm32f103r6h.yaml
+              - configs/systems/stm32-catalog/stm32f103r8.yaml
+              - configs/systems/stm32-catalog/stm32f103t4.yaml
+              - configs/systems/stm32-catalog/stm32f103t6.yaml
+              - configs/systems/stm32-catalog/stm32f401cb.yaml
+              - configs/systems/stm32-catalog/stm32f401cc.yaml
+              - configs/systems/stm32-catalog/stm32f401cd.yaml
+              - configs/systems/stm32-catalog/stm32f401ce.yaml
+              - configs/systems/stm32-catalog/stm32f401rb.yaml
+              - configs/systems/stm32-catalog/stm32f401rc.yaml
+              - configs/systems/stm32-catalog/stm32f401rd.yaml
+              - configs/systems/stm32-catalog/stm32f401re.yaml
+              - configs/systems/stm32-catalog/stm32f401vb.yaml
+              - configs/systems/stm32-catalog/stm32f401vc.yaml
+              - configs/systems/stm32-catalog/stm32f401vd.yaml
+              - configs/systems/stm32-catalog/stm32f401ve.yaml
+              - configs/systems/stm32-catalog/stm32f407ie.yaml
+              - configs/systems/stm32-catalog/stm32f407ig.yaml
+              - configs/systems/stm32-catalog/stm32f407ve.yaml
+              - configs/systems/stm32-catalog/stm32f407vg.yaml
+              - configs/systems/stm32-catalog/stm32f407ze.yaml
+              - configs/systems/stm32-catalog/stm32f407zg.yaml
+          # WCH CH32V003F4P6 — the first WCH cell, and the only one here that
+          # executes RV32E code. The firmware is a committed ELF built from
+          # examples/ch32v003f4p6 (start.S/main.c, -march=rv32e -mabi=ilp32e),
+          # so the cell needs no cross toolchain on the runner.
+          #
+          # Its assertion is `gpio_edges: gpioc:0, min_edges: 2` — the compiled
+          # blink must actually toggle a pad. That is the point of the cell:
+          # a descriptor that silently fell back to the standard 32-register
+          # RV32 profile would still boot this ELF (RV32E is a subset), so a
+          # register-state check would not catch it. What distinguishes the
+          # profiles is the RV32E guard in riscv.rs, pinned separately by
+          # crates/core/src/cpu/riscv_ch32v003_tests.rs. This cell proves the
+          # chip boots real firmware end to end and drives a real peripheral.
+          - id: ch32v003f4p6-blink
+            script: examples/ch32v003f4p6/io-smoke.yaml
+            system: examples/ch32v003f4p6/system.yaml
 
     steps:
       - uses: actions/checkout@v4
@@ -341,7 +510,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.95.0
         with:
-          targets: thumbv6m-none-eabi,thumbv7m-none-eabi,thumbv7em-none-eabi,thumbv8m.main-none-eabi,riscv32i-unknown-none-elf,riscv32imc-unknown-none-elf
+          targets: thumbv6m-none-eabi,thumbv7m-none-eabi,thumbv7em-none-eabi,thumbv7em-none-eabihf,thumbv8m.main-none-eabi,riscv32i-unknown-none-elf,riscv32imc-unknown-none-elf,riscv32im-unknown-none-elf
 
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
@@ -355,9 +524,10 @@ jobs:
 
       - name: Install C cross toolchain
         if: matrix.make != ''
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y gcc-arm-none-eabi
+        timeout-minutes: 10
+        uses: ./.github/actions/apt-install-cached
+        with:
+          packages: gcc-arm-none-eabi libnewlib-arm-none-eabi
 
       - name: Build C firmware
         if: matrix.make != ''
@@ -380,7 +550,7 @@ jobs:
       # A firmware that linked with entry 0x0 boots nowhere and prints nothing,
       # so the smoke below fails with an empty UART and no clue why. Say it here.
       - name: Firmware must not have linked with entry 0x0
-        if: matrix.crate != ''
+        if: matrix.crate != '' && matrix.entry_zero_ok != true
         run: |
           set -euo pipefail
           elf="target/${{ matrix.target }}/${{ matrix.profile_dir }}/${{ matrix.crate }}"
@@ -389,11 +559,26 @@ jobs:
             echo "::error::$elf linked with entry 0x0 — its linker script was not applied."
             echo "::error::Cargo reads .cargo/config.toml from the working directory, not the package."
             echo "::error::Set build_dir on this matrix cell to the crate's own directory."
+            echo "::error::If this board really boots at 0x0 (its memory map puts FLASH there), set entry_zero_ok: true on the cell instead."
             exit 1
           fi
           printf 'entry point 0x%08x\n' "$entry"
 
+      - name: Firmware boots at 0x0 by design (declared)
+        if: matrix.crate != '' && matrix.entry_zero_ok == true
+        run: |
+          set -euo pipefail
+          elf="target/${{ matrix.target }}/${{ matrix.profile_dir }}/${{ matrix.crate }}"
+          entry=$(python3 -c "import struct,sys;print(struct.unpack_from('<I',open(sys.argv[1],'rb').read(),0x18)[0])" "$elf")
+          if [ "$entry" -ne 0 ]; then
+            echo "::error::$elf declares entry_zero_ok but entry is 0x$(printf '%08x' "$entry")."
+            echo "::error::Its memory map moved, or the linker script now applies - drop entry_zero_ok from this cell."
+            exit 1
+          fi
+          printf 'entry point 0x00000000 (declared)\n'
+
       - name: Run matrix smoke
+        if: matrix.id != 'stm32-exact-catalog'
         run: |
           mkdir -p "out/coverage-matrix/${{ matrix.id }}"
           # nRF5340 Zephyr hello parks in arch_cpu_idle after the banner.
@@ -410,6 +595,24 @@ jobs:
             --script "${{ matrix.script }}" \
             --output-dir "out/coverage-matrix/${{ matrix.id }}" \
             --no-uart-stdout
+
+      - name: Run exact STM32 catalog variants
+        if: matrix.id == 'stm32-exact-catalog'
+        env:
+          EXACT_SYSTEMS: "${{ join(matrix.exact_systems, ' ') }}"
+        run: |
+          set -euo pipefail
+          for system in $EXACT_SYSTEMS; do
+            model=${system##*/}
+            model=${model%.yaml}
+            out="out/coverage-matrix/stm32-catalog-$model"
+            mkdir -p "$out"
+            ./target/release/labwired test \
+              --script "${{ matrix.script }}" \
+              --system "$system" \
+              --output-dir "$out" \
+              --no-uart-stdout
+          done
 
       # The dual-UE pub/sub story, gated on its own marker.
       #

@@ -19,7 +19,47 @@ pub enum Arch {
     /// AVR8 (ATmega328P / classic Arduino Nano).
     #[serde(alias = "avr8", alias = "atmega328p")]
     Avr,
+    /// PIC24 / dsPIC33 16-bit MCU & DSC family (24-bit instruction words).
+    #[serde(alias = "dspic33", alias = "pic24f", alias = "dspic33f")]
+    Pic24,
+    /// PIC18 8-bit MCU family (16-bit instruction words, byte-addressed PC).
+    #[serde(alias = "pic18f")]
+    Pic18,
+    /// PIC16 classic mid-range 8-bit MCU (14-bit instruction words).
+    #[serde(alias = "pic16f")]
+    Pic16,
+    /// AArch64 application cores (Armv8-A, Cortex-A53 class).
+    #[serde(alias = "arm64", alias = "armv8-a")]
+    Aarch64,
+    /// Renesas RX 32-bit MCU family (RXv1/v2/v3 CISC, variable-length).
+    #[serde(alias = "rxv3", alias = "renesas-rx")]
+    Rx,
+    /// MIPS32 release 2 (Microchip PIC32MZ, M5150 class).
+    #[serde(alias = "mips32", alias = "mips32r2", alias = "pic32")]
+    Mips,
     Unknown,
+}
+
+/// What the bus does with a CPU-initiated store into this memory region.
+///
+/// `Allow` (the default, and what every config got before this existed) does
+/// exactly what the bus always did. `Warn` commits the store and records one
+/// deduplicated warning per region. `Fault` refuses the store and raises a
+/// precise data fault the CPU turns into a BusFault — the way to model a ROM
+/// the processor must not write (renode/renode#787).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CpuWritePolicy {
+    #[default]
+    Allow,
+    Warn,
+    Fault,
+}
+
+impl CpuWritePolicy {
+    pub fn is_allow(&self) -> bool {
+        matches!(self, CpuWritePolicy::Allow)
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -32,6 +72,10 @@ pub struct MemoryRange {
         serialize_with = "serialize_size"
     )]
     pub size: u64,
+    /// CPU-initiated store policy. Host/loader writes (ELF load, fixtures,
+    /// snapshots) never pass through this.
+    #[serde(default, skip_serializing_if = "CpuWritePolicy::is_allow")]
+    pub cpu_writes: CpuWritePolicy,
 }
 
 /// An additional named RAM/ROM-backed memory window beyond the primary
@@ -65,6 +109,22 @@ pub struct NamedMemoryRange {
     /// is the first question any persistence routine asks.
     #[serde(default)]
     pub erased: bool,
+    /// Make this range a MIRROR of the window starting at `alias_of`: it holds
+    /// no bytes of its own, and an access at `base + off` (`off < size`) is the
+    /// access at `alias_of + off` — same backing, same peripheral, same side
+    /// effects. For address-decoder aliases of one physical resource, e.g. the
+    /// i.MX RT500 IDAU secure views (`0x1800_0000` FlexSPI, `0x3000_0000`
+    /// SRAM, `0x5000_0000` peripherals = the non-secure address + bit 28).
+    /// The translation is unconditional inside the window (unlike
+    /// [`ChipDescriptor::ns_alias_offset`], which is a fallback), so a mirror
+    /// must not overlap a window the chip maps for real. `image_env` and
+    /// `erased` do not apply to a mirror.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_opt_u64_lax",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub alias_of: Option<u64>,
 }
 
 /// One clock-enable bit a peripheral's clock depends on.
@@ -612,6 +672,18 @@ impl ChipInclude {
 ///
 /// or `include: [a.yaml, b.yaml]`. Includes load first; local keys win.
 /// `peripherals` union by `id`.
+/// A vendor coprocessor on the Cortex-M coprocessor interface.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CortexMCoprocessor {
+    /// RP2350 double-precision coprocessor, p4 (current security state) and
+    /// p5 (Non-secure) — RP2350 datasheet 3.6.2.
+    Rp2350Dcp,
+    /// RP2350 GPIO coprocessor, p0: single-cycle access to the SIO GPIO
+    /// registers (RP2350 datasheet 3.6.1, pico-sdk `gpio_coproc.h`).
+    Rp2350Gpioc,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ChipDescriptor {
     #[serde(default = "default_schema_version")]
@@ -665,6 +737,11 @@ pub struct ChipDescriptor {
     /// with the alias on a store there would be written into flash.
     #[serde(default = "default_true")]
     pub flash_boot_alias: bool,
+    /// Non-Arm coprocessors attached to the Cortex-M core's coprocessor
+    /// interface (p0..p7). Default none: every coprocessor instruction outside
+    /// the FPU's p10/p11 is UNDEFINED, which is correct for most parts.
+    #[serde(default)]
+    pub coprocessors: Vec<CortexMCoprocessor>,
     /// Atomic register aliases: the 0x1000-strided aliases of every peripheral
     /// register that a family's HAL uses for read-modify-write without a
     /// critical section. Two families do this with the SAME stride and
@@ -1340,8 +1417,13 @@ impl From<labwired_ir::IrDevice> for ChipDescriptor {
                 // "<n>B" purely so this field could hold a String, then parsed
                 // straight back at every read. That round-trip is gone.
                 size: r.size,
+                cpu_writes: CpuWritePolicy::Allow,
             })
-            .unwrap_or(MemoryRange { base: 0, size: 0 });
+            .unwrap_or(MemoryRange {
+                base: 0,
+                size: 0,
+                cpu_writes: CpuWritePolicy::Allow,
+            });
 
         let ram = ir
             .memory_regions
@@ -1352,8 +1434,13 @@ impl From<labwired_ir::IrDevice> for ChipDescriptor {
                 // "<n>B" purely so this field could hold a String, then parsed
                 // straight back at every read. That round-trip is gone.
                 size: r.size,
+                cpu_writes: CpuWritePolicy::Allow,
             })
-            .unwrap_or(MemoryRange { base: 0, size: 0 });
+            .unwrap_or(MemoryRange {
+                base: 0,
+                size: 0,
+                cpu_writes: CpuWritePolicy::Allow,
+            });
 
         Self {
             schema_version: default_schema_version(),
@@ -1369,6 +1456,7 @@ impl From<labwired_ir::IrDevice> for ChipDescriptor {
             ram,
             reset_vector_offset: 0,
             flash_boot_alias: true,
+            coprocessors: Vec::new(),
             atomic_register_aliases: AtomicAliasFlavour::None,
             ns_alias_offset: None,
             memory_regions: Vec::new(),
@@ -1413,4 +1501,43 @@ mod builtin_chip_tests;
 
 fn default_true() -> bool {
     true
+}
+
+#[cfg(test)]
+mod cpu_writes_tests {
+    use super::*;
+
+    #[test]
+    fn memory_range_defaults_to_allow() {
+        let r: MemoryRange = serde_yaml::from_str("base: 0x08000000\nsize: \"1MB\"\n").unwrap();
+        assert_eq!(r.cpu_writes, CpuWritePolicy::Allow);
+    }
+
+    #[test]
+    fn memory_range_parses_fault_and_warn() {
+        let r: MemoryRange =
+            serde_yaml::from_str("base: 0x08000000\nsize: \"1MB\"\ncpu_writes: fault\n").unwrap();
+        assert_eq!(r.cpu_writes, CpuWritePolicy::Fault);
+        let w: MemoryRange =
+            serde_yaml::from_str("base: 0x20000000\nsize: \"96KB\"\ncpu_writes: warn\n").unwrap();
+        assert_eq!(w.cpu_writes, CpuWritePolicy::Warn);
+    }
+
+    #[test]
+    fn allow_is_not_serialized() {
+        let r = MemoryRange {
+            base: 0x0800_0000,
+            size: 1024,
+            cpu_writes: CpuWritePolicy::Allow,
+        };
+        let s = serde_yaml::to_string(&r).unwrap();
+        assert!(!s.contains("cpu_writes"), "{s}");
+        let f = MemoryRange {
+            base: 0x0800_0000,
+            size: 1024,
+            cpu_writes: CpuWritePolicy::Fault,
+        };
+        let s = serde_yaml::to_string(&f).unwrap();
+        assert!(s.contains("cpu_writes: fault"), "{s}");
+    }
 }

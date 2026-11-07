@@ -1,10 +1,11 @@
 # SAMD51 board models
 
-Opt-in models for running a complete SAMD51 board (the no-ASF MakeCode Arcade
-base in `CrispStrobe/codal-samd`). Each is selected only by its own type name in
-a consumer's descriptor overlay; existing types, chip descriptors and qualified
-fixtures are unchanged. Construction goes through one cold builder with fixed
-instance addresses and no config overrides.
+Models for running a complete SAMD51 board, ported from
+`CrispStrobe/labwired-core` (MIT). `configs/chips/atsamd51.yaml` and
+`configs/chips/atsamd51-pybadge.yaml` declare them. Construction goes through
+one cold builder with fixed instance addresses and IRQs; the DAC's board
+reference levels and the I2C master's SCL rise time are its only config
+options.
 
 | Type | Register slice | Not modelled |
 | --- | --- | --- |
@@ -21,6 +22,8 @@ instance addresses and no config overrides.
 | `samd51_pac` | The access-error flags drivers clear before use (no access errors are modelled: flags read 0). | Write protection, events, the PAC interrupt (refused). |
 | `samd51_tcc` | TCC0..TCC4 counters (24-bit TCC0/1, 16-bit TCC2..4) at the prescaled generic clock, PER top, CC0..CCn matches, CTRLB commands, and the SAMD51 lines: line 0 for OVF/TRG/CNT/ERR/faults, line 1 + x for MCx. | Waveforms, CCBUF/PERBUF, dithering, faults, capture, patterns, events, DMA. |
 | `samd51_adc` | ADC0/ADC1 single-ended software-triggered conversions of AINn against GND with the VDDANA references (INTVCC1, INTVCC0), 8/10/12-bit, `floor(V * 2^n / Vref)`. A conversion completes on the next bus tick only while the ADC is enabled and clocked and the input's pad is on PMUX B. Input voltages are set by the host (`set_input_millivolts`). | Analog front end, averaging, correction, windowing, differential mode, events, DMA. |
+| `sam_sercom_spi` (timing) | With `gclk_id` resolving on the live clock tree, a byte takes 16 * (BAUD + 1) core clocks at `f_CPU / f_GCLK`, the fraction carried across back-to-back bytes; otherwise nominal core-clock cycles. The pad configuration is unchanged. | Pad and edge timing, slave mode. |
+| `samd51_usb_device_banks` | Opt-in USB device endpoint banks at the fixed USB instance (`0x41000000`, IRQ 80) with the MCLK AHBMASK/APBBMASK clocks. Endpoint descriptor banks and the CTRLA.RUNSTDBY bit. | Host mode, full transfer engine, interrupts beyond the bank window. |
 
 `sam/clock_tree.rs` resolves nominal generator, peripheral-channel and CPU
 frequencies from GCLK/OSCCTRL/MCLK registers on the bus. A source that is not
@@ -37,8 +40,6 @@ running resolves to `None`, never to a guessed frequency.
 - **SAM PORT AF routing.** `selected_function` decodes `PINCFG.PMUXEN`/`PMUX`,
   and `bind_timer_output_pad` binds SAM pads on function E; only pads with a
   bound route consult it.
-- **`Bus::take_dma_trigger`** consumes one pending request of a DMAC trigger
-  source id (a TC answers for its own `TCn_DMAC_ID_OVF`; default: refused).
 - **`Peripheral::timer_output_family`** names a timer's output family, so the
   SAMD51 TC pad wiring needs no downcast.
 - **`Peripheral::on_system_reset`**, called for every peripheral when the core
@@ -54,6 +55,11 @@ running resolves to `None`, never to a guessed frequency.
   shows the erase or program waiting to commit, from which a host can derive
   its own fault inside one operation. A USB device reset drops the host's
   queued transactions (the device leaves the bus).
+- **`I2cDevice::clock_stretch_ns`** (default 0) lets a slave declare how long
+  it holds SCL low per byte; only a controller that models bus timing adds it.
+- **No bit-band on the SAMD51.** `chip_has_bit_band` returns false for
+  `atsamd51*` parts: their APB-C/D bridges map TC4/TC5, SERCOM4..7, the DAC and
+  QSPI inside the would-be alias window. Every other chip is unchanged.
 - **`Bus::dma_rx_request` / `Bus::dma_triggers_at`** (RX readiness of a DMA
   endpoint; the trigger sources it declares), both refusing by default.
 

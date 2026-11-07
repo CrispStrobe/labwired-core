@@ -23,6 +23,11 @@ on:
       - "scripts/tests/test_basket_ci.py"
       - "scripts/ci/validate-basket-ci-inputs.py"
       - "tests/fixtures/cortex-a7-core-smoke.elf"
+      - "tests/fixtures/kv260-r5-zephyr-*.elf"
+      - "crates/firmware-kv260-r5-zephyr/**"
+      - "configs/chips/xck26-rpu.yaml"
+      - "configs/systems/kv260-r5.yaml"
+      - "examples/kv260-r5/**"
       - "tools/cosim/**"
       - "examples/smart-basket-power/**"
       - ".github/workflows/core-qemu-arm.yml"
@@ -49,6 +54,11 @@ on:
       - "scripts/tests/test_basket_ci.py"
       - "scripts/ci/validate-basket-ci-inputs.py"
       - "tests/fixtures/cortex-a7-core-smoke.elf"
+      - "tests/fixtures/kv260-r5-zephyr-*.elf"
+      - "crates/firmware-kv260-r5-zephyr/**"
+      - "configs/chips/xck26-rpu.yaml"
+      - "configs/systems/kv260-r5.yaml"
+      - "examples/kv260-r5/**"
       - "tools/cosim/**"
       - "examples/smart-basket-power/**"
       - ".github/workflows/core-qemu-arm.yml"
@@ -146,23 +156,25 @@ jobs:
         with:
           shared-key: native-arm-system
       - name: Install native and compiled-DTB build tools
-        # The reviewed helper is freestanding C (-nostdlib); keep its compiler
-        # pin while avoiding optional ARM C++ runtime downloads during setup.
-        # A stalled mirror download once held this step for the job's whole
-        # 45 minutes: time out each request and retry instead.
-        run: sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update && sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y --no-install-recommends cmake ninja-build clang device-tree-compiler busybox gcc-arm-none-eabi=15:13.2.rel1-2
+        timeout-minutes: 10
+        run: sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update && sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y cmake ninja-build clang device-tree-compiler busybox
+      - name: Install pinned ARM C compiler
+        timeout-minutes: 10
+        uses: ./.github/actions/apt-install-cached
+        with:
+          packages: gcc-arm-none-eabi=15:13.2.rel1-2 libnewlib-arm-none-eabi
       - name: Check strict joint preparation, historical modules and CI input contracts
         run: |
           python3 -m unittest discover -s scripts/tests -p test_prepare_rv1103_basket.py
           python3 -m unittest discover -s scripts/tests -p test_basket_ci.py
       - name: Check native architectural backend and compiled binary identity
         run: scripts/ci/cargo-test-nonvacuous.sh --locked -p labwired-arm-system --features native --lib --test architecture
-      - name: Check real SystemBus backend, MMU, devices, retirement and snapshot refusal
+      - name: Check real SystemBus backend, MMU, devices, retirement, snapshot refusal and Cortex-R5F Zephyr
         run: >
           scripts/ci/cargo-test-nonvacuous.sh --locked -p labwired-core --features qemu-arm-system,event-scheduler
           --test qemu_arm_system --test rv1103_devices --test rv1103_linux_loader
           --test cpu_runtime_snapshot_honesty --test event_scheduler
-          --test rv1103_basket_loader --test rv1103_rk3x_i2c --test dw_uart_timeout --test rv1103_uart4_esp_at --test cosim_canonical_basket --test ordered_debug_metadata
+          --test rv1103_basket_loader --test rv1103_rk3x_i2c --test dw_uart_timeout --test rv1103_uart4_esp_at --test cosim_canonical_basket --test ordered_debug_metadata --test kv260_r5_zephyr
       - name: Check exact interrupt metadata ordering and duplicate-value goldens
         run: scripts/ci/cargo-test-nonvacuous.sh --locked -p labwired-config --test ordered_interrupt_metadata
       - name: Check native basket parser and evidence unit contracts
@@ -172,6 +184,15 @@ jobs:
           grep -Eq '^test result: ok\. [1-9][0-9]* passed;' "$RUNNER_TEMP/native-basket-units.log"
       - name: Check explicit native CLI surface
         run: cargo test --locked -p labwired-cli --features qemu-arm-system,event-scheduler --test rv1103_linux_cli
+      # Same commands as examples/kv260-r5/ci/test.sh, written out so the chip
+      # coverage ledger (scripts/ci/chip_coverage.py) sees each --script.
+      - name: KV260 RPU (Cortex-R5F) stock Zephyr through the native CLI
+        timeout-minutes: 30
+        run: |
+          cargo build --locked --profile native-system -p labwired-cli --features qemu-arm-system,event-scheduler
+          target/native-system/labwired test --script examples/kv260-r5/zephyr-hello.yaml --output-dir out/boards/kv260-r5/zephyr-hello --no-uart-stdout
+          target/native-system/labwired test --script examples/kv260-r5/zephyr-sync.yaml --output-dir out/boards/kv260-r5/zephyr-sync --no-uart-stdout
+          target/native-system/labwired test --script examples/kv260-r5/zephyr-kernel-common.yaml --output-dir out/boards/kv260-r5/zephyr-kernel-common --no-uart-stdout
 
   linux-acceptance:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.linux_acceptance }}
@@ -260,10 +281,16 @@ jobs:
         with:
           node-version: "22.22.0"
       - uses: dtolnay/rust-toolchain@1.95.0
-      - name: Install exact reviewed helper compiler and native tools
+      - name: Install exact reviewed helper compiler
+        timeout-minutes: 10
+        uses: ./.github/actions/apt-install-cached
+        with:
+          packages: gcc-arm-none-eabi=15:13.2.rel1-2 libnewlib-arm-none-eabi
+      - name: Install exact reviewed native tools
+        timeout-minutes: 10
         run: >
-          sudo apt-get update && sudo apt-get install -y
-          gcc-arm-none-eabi=15:13.2.rel1-2 device-tree-compiler=1.7.0-2build1
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update && sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y
+          device-tree-compiler=1.7.0-2build1
           cmake ninja-build clang busybox python3
       - name: Record pinned inputs and tools
         run: |

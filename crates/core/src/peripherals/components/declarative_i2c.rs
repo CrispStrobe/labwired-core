@@ -155,6 +155,9 @@ pub struct GenericI2cDevice {
     write_buf: Vec<u8>,
     /// Bytes queued for the master to read; drained by `read`.
     read_buf: Vec<u8>,
+    /// The last dispatched command, when it is `continuous`: each new read
+    /// phase rebuilds `read_buf` from the current inputs.
+    continuous_cmd: Option<u16>,
     read_idx: usize,
     /// Register mode: whether `read_buf` has been latched for this read phase.
     latched: bool,
@@ -394,6 +397,7 @@ impl GenericI2cDevice {
             pointer: (spec.pointer_bytes == 0).then_some(0),
             write_buf: Vec::with_capacity(8),
             read_buf: Vec::new(),
+            continuous_cmd: None,
             read_idx: 0,
             latched: false,
             response_failed: false,
@@ -1268,12 +1272,14 @@ impl GenericI2cDevice {
         self.read_buf.clear();
         self.read_idx = 0;
         self.pending = None;
+        self.continuous_cmd = None;
         let Some(cmd) = self.find_command(code) else {
             // Unknown command: no response queued (reads return 0xFF), matching
             // the Sensirion reference (scd41).
             return;
         };
         let cmd = cmd.clone();
+        self.continuous_cmd = cmd.continuous.then_some(code);
         // One observation per dispatched command: the whole response frame
         // (every word + CRC) is computed from a single noise-applied slot view.
         let Ok(slots) = self.observed_slots() else {
@@ -1737,10 +1743,72 @@ impl I2cDevice for GenericI2cDevice {
             .iter()
             .map(|channel| (channel.key.as_ref(), self.input_value(&channel.key)))
             .collect();
+
+        // Register-file parts (PCA9685) have no named `registers:` map — the
+        // live evidence is the byte image + derived observables. Without them
+        // in meta, PRE_SCALE / LEDn_OFF / servo_angle never reach the inspect
+        // wall or the prove oracle.
+        let mut meta = serde_json::json!({"registers": registers, "inputs": inputs});
+        if let Some(file) = self.file.as_ref() {
+            // Sparse byte image — only non-zero offsets — so inspect stays
+            // small while PRE_SCALE / LEDn_* still show up by address.
+            let file_obj = serde_json::Map::from_iter(
+                file.iter()
+                    .enumerate()
+                    .filter(|(_, b)| **b != 0)
+                    .map(|(off, b)| (format!("{off}"), serde_json::json!(*b))),
+            );
+            meta["file"] = serde_json::Value::Object(file_obj);
+
+            // PCA9685-shaped parts declare a `servo_angle` observable over the
+            // LEDn block. Only then do we publish PRE_SCALE-derived period and
+            // per-channel OFF counts — other register-file devices must not
+            // inherit a PWM layout they do not have.
+            let is_pca_pwm = self.observables.iter().any(|o| o.name == "servo_angle");
+            if is_pca_pwm {
+                // PRE_SCALE @ 0xFE: update period from the internal 25 MHz
+                // oscillator (datasheet Rev. 4 §7.3.1):
+                //   period_ms = 4096 * (prescale + 1) / 25e3
+                if let Some(&prescale) = file.get(0xFE) {
+                    let period_ms = 4096.0_f64 * (f64::from(prescale) + 1.0) / 25_000.0;
+                    meta["pwm_period_ms"] = serde_json::json!(period_ms);
+                    meta["prescale"] = serde_json::json!(prescale);
+                }
+
+                let mut off_counts = serde_json::Map::new();
+                for ch in 0u8..16 {
+                    let base = 0x06u16 + u16::from(ch) * 4;
+                    let lo = file.get((base as usize) + 2).copied();
+                    let hi = file.get((base as usize) + 3).copied();
+                    if let (Some(lo), Some(hi)) = (lo, hi) {
+                        let off = u16::from(lo) | (u16::from(hi & 0x0F) << 8);
+                        off_counts.insert(format!("{ch}"), serde_json::json!(off));
+                    }
+                }
+                if !off_counts.is_empty() {
+                    meta["off_counts"] = serde_json::Value::Object(off_counts);
+                }
+            }
+
+            let mut observables = serde_json::Map::new();
+            for obs in &self.observables {
+                let mut channels = serde_json::Map::new();
+                for ch in 0..obs.channels {
+                    if let Some(v) = self.observable(&obs.name, ch) {
+                        channels.insert(format!("{ch}"), serde_json::json!(v));
+                    }
+                }
+                observables.insert(obs.name.clone(), serde_json::Value::Object(channels));
+            }
+            if !observables.is_empty() {
+                meta["observables"] = serde_json::Value::Object(observables);
+            }
+        }
+
         vec![crate::inspect::Artifact {
             kind: "i2c_registers".into(),
             id: id.into(),
-            meta: serde_json::json!({"registers":registers,"inputs":inputs}),
+            meta,
             bytes: None,
         }]
     }
@@ -1850,6 +1918,16 @@ impl I2cDevice for GenericI2cDevice {
             if self.pending.is_some() && self.elapsed_us >= self.ready_at_us {
                 self.read_buf = self.pending.take().unwrap();
                 self.read_idx = 0;
+            }
+            // Continuous mode: the first byte of a read phase samples afresh.
+            if self.read_idx == 0 && self.pending.is_none() {
+                if let Some(code) = self.continuous_cmd {
+                    if let Some(cmd) = self.find_command(code).cloned() {
+                        if let Ok(slots) = self.observed_slots() {
+                            self.read_buf = self.build_response(&cmd, code, &slots);
+                        }
+                    }
+                }
             }
             // `not_ready_byte` — the byte the part answers while a delayed
             // response is still cooking. Absent ⇒ 0xFF (open bus), which is what

@@ -50,6 +50,8 @@ fn datasheet_transcriptions() {
     for (chip, volts, vil, vih) in [
         // DS40002061B Table 30-1, VCC 2.4-5.5 V.
         ("atmega328p", 5.0, 0.3, 0.6),
+        // Espressif ESP32 Series Datasheet v5.3, Tables 5-2 and 5-3.
+        ("esp32", 3.3, 0.25, 0.75),
         // DS5319 Table 36, "All I/Os except BOOT0".
         ("stm32f103", 3.3, 0.35, 0.65),
         // DS10086 Table 54.
@@ -60,6 +62,8 @@ fn datasheet_transcriptions() {
         ("stm32f407", 3.3, 0.3, 0.7),
         // DS10314 Table 53.
         ("stm32f411ceu6", 3.3, 0.3, 0.7),
+        // DS10198 Table 70, 1.62 V < VDDIOx < 3.6 V, all I/Os except BOOT0.
+        ("stm32l476", 3.3, 0.3, 0.7),
     ] {
         let desc = load(chip);
         assert_eq!(desc.io_voltage_v, Some(volts), "{chip}");

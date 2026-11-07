@@ -17,6 +17,7 @@ pub mod cortex_m_fault_escalation;
 pub mod cortex_m_jit_batch_gates;
 #[cfg(test)]
 pub mod cortex_m_memory_contract;
+pub mod cortex_m_mpu_enforcement;
 #[cfg(test)]
 pub mod device_identity_one_home;
 #[cfg(test)]
@@ -34,6 +35,8 @@ pub mod esp32;
 pub mod esp32c3_i2c_waveform;
 #[cfg(test)]
 pub mod esp32c3_rtc_delay_loop;
+#[cfg(test)]
+pub mod esp32c6_i2c_waveform;
 
 /// The `event-scheduler` conditional-compilation surface may not grow.
 #[cfg(test)]
@@ -58,9 +61,15 @@ pub mod riscv_cycle_counter_pulse_in;
 #[cfg(test)]
 pub mod bench_spi_engine;
 pub mod esp32_i2c_waveform;
+pub mod esp32_ledc_waveform;
+pub mod esp32c3_s3_ledc_waveform;
 #[cfg(test)]
 pub mod esp32s3_i2c_waveform;
 pub mod esp_spi_uart_waveform;
+#[cfg(test)]
+pub mod i2c_waveform_common;
+#[cfg(test)]
+pub mod loader_host_bypass;
 #[cfg(test)]
 pub mod machine_advance;
 #[cfg(test)]
@@ -77,6 +86,8 @@ pub mod out_of_line_test_modules;
 #[cfg(test)]
 pub mod peripheral_reachability;
 #[cfg(test)]
+pub mod peripheral_reset_request;
+#[cfg(test)]
 pub mod pre_merge_lane_covers_browser;
 #[cfg(test)]
 pub mod rp2040;
@@ -88,6 +99,7 @@ pub mod rp2040_spi_carries_a_byte;
 pub mod rp2040_spi_waveform;
 #[cfg(test)]
 pub mod rp2040_uart_waveform;
+pub mod samd51_board_models;
 #[cfg(test)]
 pub mod scb_reset;
 #[cfg(test)]

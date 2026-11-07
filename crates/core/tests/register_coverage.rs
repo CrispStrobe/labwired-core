@@ -135,6 +135,11 @@ const CHIPS: &[ChipEntry] = &[
         Some("tests/fixtures/real_world/stm32u575.svd"),
     ),
     (
+        "stm32u5a5zj",
+        "configs/chips/stm32u5a5zj.yaml",
+        None, // U5A5 CMSIS header is available; no independent public SVD fixture is vendored yet.
+    ),
+    (
         "stm32wb55",
         "configs/chips/stm32wb55.yaml",
         Some("tests/fixtures/real_world/stm32wb55.svd"),
@@ -319,12 +324,21 @@ fn measure_chip(name: &str, yaml: &str, svd: &str) -> (usize, usize, usize, usiz
         // the chip would sit in the table looking covered and gating nothing.
         // AVR P0 has no SVD/register-map probe yet — such a chip belongs out of
         // CHIPS (estate-only, tracked by chip_conformance) until one lands.
-        arch @ (Arch::Avr | Arch::Unknown) => panic!(
-            "{name}: arch {arch:?} has no register probe path, so its coverage would \
+        arch @ (Arch::Avr
+        | Arch::Pic24
+        | Arch::Pic18
+        | Arch::Pic16
+        | Arch::Rx
+        | Arch::Mips
+        | Arch::Aarch64
+        | Arch::Unknown) => {
+            panic!(
+                "{name}: arch {arch:?} has no register probe path, so its coverage would \
              measure 0 and ratchet against 0 — a gate that can never fail. Remove it \
              from CHIPS (and from docs/coverage/register-modeling.json) until a probe \
              exists, or add one here."
-        ),
+            )
+        }
     };
     (total, mapped, reset_ok, modeled)
 }

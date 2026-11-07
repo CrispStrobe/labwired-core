@@ -1,3 +1,5 @@
+// LabWired - Firmware Simulation Platform
+// Copyright (C) 2026 Andrii Shylenko
 // SPDX-License-Identifier: MIT
 //! Opt-in SAMD51 PAC slice (DS60001507F 27): the peripheral access error flags,
 //! which drivers clear before using a peripheral (codal's SAMDDAC clears
@@ -22,6 +24,11 @@ impl Samd51Pac {
 }
 
 impl Peripheral for Samd51Pac {
+    /// No `tick()` work: state moves on MMIO and the bus tick only, so the
+    /// legacy walk can be deleted on a scheduler build.
+    fn needs_legacy_walk(&self) -> bool {
+        false
+    }
     fn read(&self, offset: u64) -> SimResult<u8> {
         match offset {
             // WRCTRL, EVCTRL, INTENCLR/SET, INTFLAGAHB, INTFLAGA..D, STATUSA..D

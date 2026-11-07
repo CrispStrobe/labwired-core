@@ -213,6 +213,8 @@ impl SplitPendingGpioExti {
         match offset {
             0x00 => self.rtsr,
             0x04 => self.ftsr,
+            // SWIER is write-only; reads return 0.
+            0x08 => 0,
             0x0c => self.rpr,
             0x10 => self.fpr,
             0x60..=0x6c => self.exticr[((offset - 0x60) / 4) as usize],
@@ -228,6 +230,9 @@ impl SplitPendingGpioExti {
         match offset {
             0x00 => self.rtsr = value & 0xffff,
             0x04 => self.ftsr = value & 0xffff,
+            // A 1 written to SWIER pends the matching line regardless of the
+            // edge selection (RM0456 §23.6.3).
+            0x08 => self.rpr |= value & 0xFFFF,
             0x0c => self.rpr &= !value,
             0x10 => self.fpr &= !value,
             0x60..=0x6c => self.exticr[((offset - 0x60) / 4) as usize] = value & mux_mask,
@@ -705,6 +710,19 @@ impl Peripheral for Exti {
         line_source: Option<u8>,
     ) -> bool {
         self.gpio_edge_with_source(port, pin, before, after, line_source)
+    }
+
+    /// The G0/U5 EXTI holds its own line-source mux (`EXTI_EXTICRx`): it
+    /// answers for the other consumers of an EXTI line (the G0 DMAMUX takes
+    /// EXTI lines 0..15 as synchronisation and trigger inputs).
+    fn exti_line_source(&self, line: u8) -> Option<u8> {
+        match self {
+            Self::Stm32G0(e) | Self::Stm32U5(e) if line < 16 => {
+                let mux = e.exticr[usize::from(line / 4)] >> (u32::from(line % 4) * 8);
+                Some((mux & 0xff) as u8)
+            }
+            _ => None,
+        }
     }
 
     fn as_any(&self) -> Option<&dyn Any> {

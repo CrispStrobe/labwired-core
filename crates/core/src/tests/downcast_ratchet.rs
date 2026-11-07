@@ -152,9 +152,32 @@ use std::path::{Path, PathBuf};
 /// RTT and ITM reaches above, plus two `as_any()` checks that confirm a cached
 /// pad-bracket slot is still that peripheral (`begin_*`). Measured by
 /// `the_downcast_count_only_shrinks`.
-const MAX_AS_ANY: usize = 198;
+///
+/// 198 → 197: `SystemBus::wire_esp32s3_spi_pads` binds GP-SPI3 beside GP-SPI2,
+/// and resolving both by name through one `is_spi` check retired the two
+/// separate `as_any()` type tests the SPI2-only lookup carried.
+///
+/// 194 → 195: the Cortex-M JIT gate asks the concrete `SystemBus` whether a
+/// non-default RAM `cpu_writes` policy is in force (`ram_cpu_writes_gated`).
+/// Compiled blocks write `bus.ram.data` directly, so they must refuse while
+/// the interpreter's store gate owns RAM stores — the same reach the RISC-V
+/// JIT gate already pays. It is one downcast on the per-batch gate check
+/// (`jit_gate_allows`), not a per-instruction path. A `Bus` capability method
+/// would retire both JIT-gate reaches at once; until then this ceiling records
+/// the second one rather than leaving it uncounted.
+/// 195 → 197 / 196 → 198: `g0_tiol112` and `g0_customer_timing` each
+/// read the attached UART's TIOL112 waveform/driver state once through a
+/// concrete accessor. These are independent integration-test witnesses for
+/// the actual configured attachment, not production per-cycle reaches. Adding
+/// a generic Peripheral method solely for these two tests would move the
+/// test instrumentation into the runtime interface without reducing coupling.
+const MAX_AS_ANY: usize = 197;
 // GPIO schedule migration removes four concrete sensor downcasts.
-const MAX_DOWNCAST_REF: usize = 197;
+// 195 → 196: `tests/sim_input_reachability.rs` reads the ADXL345 back out of
+// `Rp2040I2c` by downcast, the same independent-witness reach every other
+// controller row in that table already pays (the walk under test cannot be
+// its own witness). Test-only; no production path gained a reach.
+const MAX_DOWNCAST_REF: usize = 198;
 
 /// The MUTABLE half of the same reach, counted from the day it started being
 /// counted. Until then the scan matched only `as_any()` and `downcast_ref`,
@@ -206,8 +229,40 @@ const MAX_DOWNCAST_REF: usize = 197;
 // 273 → 269 / 340 → 336: the C3 IO_MUX and RP2040 IO_BANK0 pad brackets
 // reach the GPIO port through `Peripheral::pins_mut` (the pin interface,
 // `crate::pins`) instead of downcasting to `Esp32c3Gpio` / `Rp2040Sio`.
-const MAX_AS_ANY_MUT: usize = 269;
-const MAX_DOWNCAST_MUT: usize = 336;
+// 269 → 272 / 336 → 338: `wire_esp32_ledc_pads` joins the classic
+// `wire_esp32_{i2c,spi,uart}_pads` family with the same shape — one type check
+// on the GPIO port before the LEDC wire cell is created, one reach into each
+// model to hand the cell over. It resolves both by NAME, so it adds no
+// `as_any()`. Moving the whole family onto a capability trait is the fix for
+// all four at once, not for this one.
+// 338 → 337 (`downcast_mut` only): the ESP32-S3 I²C controller attaches slaves
+// through `Peripheral::i2c_slave_host` (it also hosts GPIO-matrix twins), so
+// `attach_i2c_slave_with_route` lost its `Esp32s3I2c` arm.
+// Raised 271 -> 272 and 336 -> 337 by the `Box<dyn Cpu>` forwarding gate
+// (`crates/core/tests/cpu_dyn_forwarding.rs`). The test calls `as_any_mut()`
+// and `downcast_mut::<SpyCpu>()` deliberately: that is the behaviour it pins,
+// and it is the only way to prove the boxed call reaches the concrete core
+// rather than the trait default. This is test-only verification; no production
+// bus plumbing gained a reach.
+// 337 → 338 (`downcast_mut` only): `wire_esp32_ledc_pads` became one generic
+// body (`wire_esp_ledc_pads`) shared with the ESP32-C3 and ESP32-S3 LEDC
+// passes. The GPIO type check is now a `downcast_mut` instead of `is`, because
+// the C3 GPIO model must be asked whether its layout numbers LEDC signals at
+// all (the C6 reuses it and numbers 45/46 as I²C). Three chips, one set of
+// reaches, instead of three.
+// 272 → 273 / 338 → 339: the RP2040 row of `tests/sim_input_reachability.rs`
+// reads its ADXL345 back by `as_any_mut()` + `downcast_mut`, like every other
+// row's readback (see MAX_DOWNCAST_REF). Test-only.
+// 273 → 276 / 339 → 342: two test-only reaches in
+// `tests/iolink_master_config.rs` inspect the UART and its attached master,
+// proving manifest configuration reaches the real peer. One production reach
+// in `components::tiol112::attach` obtains the STM32G0 RCC's live clock-register
+// snapshot at attachment time. The frame path reads shared atomics and never
+// downcasts. This is an explicit chip-family clock contract; a general clock
+// snapshot capability should replace the reach if another clock family needs
+// it, rather than adding an unused general trait for one binding today.
+const MAX_AS_ANY_MUT: usize = 276;
+const MAX_DOWNCAST_MUT: usize = 342;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

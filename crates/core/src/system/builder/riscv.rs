@@ -31,6 +31,7 @@ use crate::boot::esp32c3_rom::{
     build_rom_boot_machine, c3_rom_data_init_writes, inject_rom_regions, install_fast_boot_rom,
     RomBootOpts,
 };
+use crate::boot::esp32c6_rom;
 use crate::boot::esp32s3_rom::RomImages;
 use crate::bus::SystemBus;
 use crate::console::{ConsoleCapture, HostConsole};
@@ -44,14 +45,17 @@ use std::sync::{Arc, Mutex};
 const ESP_IMAGE_HEADER_LEN: usize = 24;
 const ESP_IMAGE_MAGIC: u8 = 0xE9;
 
-pub(super) fn build(req: BuildRequest<'_>) -> anyhow::Result<BuiltMachine> {
+pub(super) fn build(
+    req: BuildRequest<'_>,
+    plugins: &[&dyn crate::plugin::ChipPlugin],
+) -> anyhow::Result<BuiltMachine> {
     match (&req.firmware, req.boot) {
-        (FirmwareSource::Elf(elf), BootMode::FastBoot) => build_plain(&req, elf),
+        (FirmwareSource::Elf(elf), BootMode::FastBoot) => build_plain(&req, elf, plugins),
         (FirmwareSource::FlashImage { image, symbols }, BootMode::FastBoot) => {
-            build_flash_fastboot(&req, image, *symbols)
+            build_flash_fastboot(&req, image, *symbols, plugins)
         }
         (FirmwareSource::FlashImage { image, symbols }, BootMode::RomBoot) => {
-            build_romboot(&req, image, *symbols)
+            build_romboot(&req, image, *symbols, plugins)
         }
         (FirmwareSource::Elf(_), BootMode::RomBoot) => Err(anyhow!(
             "RISC-V ROM boot needs a flash image (bootloader + partition table + app): the \
@@ -65,9 +69,13 @@ pub(super) fn build(req: BuildRequest<'_>) -> anyhow::Result<BuiltMachine> {
 /// SP is seeded at the top of RAM because fast boot skips the ROM and 2nd-stage
 /// bootloader that would normally set it; the app's first prologue store would
 /// otherwise fault.
-fn build_plain(req: &BuildRequest<'_>, elf: &[u8]) -> anyhow::Result<BuiltMachine> {
+fn build_plain(
+    req: &BuildRequest<'_>,
+    elf: &[u8],
+    plugins: &[&dyn crate::plugin::ChipPlugin],
+) -> anyhow::Result<BuiltMachine> {
     let program_image = parse_elf_image(elf).map_err(|e| anyhow!("Loader Error: {e:#}"))?;
-    build_program_image(req, &program_image, elf.to_vec())
+    build_program_image(req, &program_image, elf.to_vec(), plugins)
 }
 
 /// `new_from_config_riscv_program_image`.
@@ -75,11 +83,12 @@ fn build_program_image(
     req: &BuildRequest<'_>,
     program_image: &ProgramImage,
     firmware_bytes: Vec<u8>,
+    plugins: &[&dyn crate::plugin::ChipPlugin],
 ) -> anyhow::Result<BuiltMachine> {
     let (chip, manifest, blobs) = (req.chip, req.system, req.blobs);
     let echo = req.options.echo_uart_stdout;
-    let mut bus =
-        SystemBus::from_config(chip, manifest).map_err(|e| anyhow!("Bus config error: {e:#}"))?;
+    let mut bus = SystemBus::from_config_with_plugins(chip, manifest, plugins)
+        .map_err(|e| anyhow!("Bus config error: {e:#}"))?;
 
     // Inject the on-demand ESP32-C3 boot ROM blobs into the chip's still
     // zero-filled `rom`/`rom_data` regions, replay the ROM's `.data` copy, and
@@ -97,6 +106,10 @@ fn build_program_image(
         ),
         None => false,
     };
+
+    // C6 Arduino Preferences/NVS: MSPI SPI_MEM + partition table @ 0x8000.
+    // No-op on non-C6 chips. See `boot::esp32c6_rom`.
+    esp32c6_rom::maybe_install_arduino_flash(&mut bus, chip);
 
     let console = ConsoleCapture::for_manifest(manifest);
     let uart_sink = console.heard_sink();
@@ -123,17 +136,34 @@ fn build_program_image(
                 .map_err(|e| anyhow!(e))?;
         }
     }
-    let uart_rx_bufs = super::uart_rx_sources(&bus, &req.options)?;
+    let uart_rx_bufs = super::wire_host_streams(&mut bus, &req.options)?;
 
-    let cpu = crate::system::riscv::configure_riscv(&mut bus);
-    let boxed: Box<dyn Cpu> = Box::new(cpu);
+    // A `core: rv64…` chip runs the 64-bit hart; everything below it (ESP ROM
+    // seeding, SP seed) is a no-op or harmless for it.
+    let boxed: Box<dyn Cpu> = if crate::cpu::riscv64::is_rv64_chip(chip) {
+        Box::new(crate::cpu::RiscV64::for_chip(chip))
+    } else {
+        Box::new(crate::system::riscv::configure_riscv(&mut bus))
+    };
     let mut machine = Machine::new(boxed, bus);
 
     machine
         .load_firmware(program_image)
         .map_err(|e| anyhow!("Simulation Error: {e}"))?;
 
-    let sp_top = (chip.ram.base + chip.ram.size) as u32;
+    // C6 fast-boot: re-seed ROM .data after ELF load/reset so a segment or
+    // reset path cannot leave interface pointers (heap_tlsf_table_ptr etc.)
+    // stale — mask-ROM unpackloop never ran.
+    if esp32c6_rom::is_esp32c6(chip) {
+        esp32c6_rom::seed_rom_data(&mut machine.bus);
+    }
+
+    // C6: stay below ROM-reserved HP SRAM (see esp32c6_rom::APP_SRAM_END).
+    let sp_top = if esp32c6_rom::is_esp32c6(chip) {
+        esp32c6_rom::app_stack_top()
+    } else {
+        (chip.ram.base + chip.ram.size) as u32
+    };
     machine.cpu.set_sp(sp_top & !0xF);
     machine.cpu.set_pc(program_image.entry_point as u32);
 
@@ -153,10 +183,11 @@ fn build_flash_fastboot(
     req: &BuildRequest<'_>,
     flash: &[u8],
     symbols: Option<&[u8]>,
+    plugins: &[&dyn crate::plugin::ChipPlugin],
 ) -> anyhow::Result<BuiltMachine> {
     let (chip, manifest, blobs) = (req.chip, req.system, req.blobs);
-    let mut bus =
-        SystemBus::from_config(chip, manifest).map_err(|e| anyhow!("Bus config error: {e:#}"))?;
+    let mut bus = SystemBus::from_config_with_plugins(chip, manifest, plugins)
+        .map_err(|e| anyhow!("Bus config error: {e:#}"))?;
 
     let (Some(irom), Some(drom)) = (blobs.get("esp32c3_irom"), blobs.get("esp32c3_drom")) else {
         return Err(anyhow!(
@@ -186,7 +217,7 @@ fn build_flash_fastboot(
 
     let (console, usb_serial_sink) = attach_c3_flash_console(&mut bus, manifest, req)?;
     let uart_sink = console.heard_sink();
-    let uart_rx_bufs = super::uart_rx_sources(&bus, &req.options)?;
+    let uart_rx_bufs = super::wire_host_streams(&mut bus, &req.options)?;
 
     let mut machine = build_rom_boot_machine(
         bus,
@@ -226,10 +257,11 @@ fn build_romboot(
     req: &BuildRequest<'_>,
     flash: &[u8],
     symbols: Option<&[u8]>,
+    plugins: &[&dyn crate::plugin::ChipPlugin],
 ) -> anyhow::Result<BuiltMachine> {
     let (chip, manifest, blobs) = (req.chip, req.system, req.blobs);
-    let mut bus =
-        SystemBus::from_config(chip, manifest).map_err(|e| anyhow!("Bus config error: {e:#}"))?;
+    let mut bus = SystemBus::from_config_with_plugins(chip, manifest, plugins)
+        .map_err(|e| anyhow!("Bus config error: {e:#}"))?;
 
     // ROM boot cannot proceed without the real ROM — the reset vector executes
     // it directly.
@@ -250,7 +282,7 @@ fn build_romboot(
 
     let (console, usb_serial_sink) = attach_c3_flash_console(&mut bus, manifest, req)?;
     let uart_sink = console.heard_sink();
-    let uart_rx_bufs = super::uart_rx_sources(&bus, &req.options)?;
+    let uart_rx_bufs = super::wire_host_streams(&mut bus, &req.options)?;
 
     let mut machine = build_rom_boot_machine(
         bus,

@@ -191,7 +191,12 @@ impl WasmSimulator {
             include_bytes,
             peripheral: None,
         };
-        if let Some(found) = machine.bus.display_artifact(device_id, &opts) {
+        if let Some(found) = machine
+            .bus
+            .display_artifact_with_extra(device_id, &opts, &mut |f| {
+                machine.cpu.for_each_attached_device(f)
+            })
+        {
             return Some(found);
         }
         let binding = self.board_io.iter().find(|b| b.id == device_id)?;
@@ -848,8 +853,10 @@ impl WasmSimulator {
 
     /// Live actuator state for canvas animation.
     ///
-    /// Returns servo states followed by configured motor-plant states.
+    /// Returns servo states, STEP/DIR steppers, then configured motor-plant states.
     /// - hobby servos (`kind: "servo"`) export shaft `angle` in degrees
+    /// - STEP/DIR steppers (`kind` = YAML type, e.g. `nema17` / `a4988`) export
+    ///   shaft `angle` in degrees plus signed `steps`
     /// - `dc-motor` exports scalar `current_a`
     /// - `bldc-motor` exports DC-bus `current_a`, `phase_currents_a`, and
     ///   `commutation_sector`
@@ -884,7 +891,38 @@ impl WasmSimulator {
                 "pulse_us": servo.pulse_us() as f64,
             }));
         }
-        states.extend(motor_states_json(machine.bus.motor_snapshots()));
+        for stepper in machine
+            .bus
+            .observed_of::<labwired_core::peripherals::components::step_dir_motor::StepDirMotor>(
+        ) {
+            let id = stepper.id();
+            if id.is_empty() {
+                continue;
+            }
+            // Capture fields before the JSON object so string keys sit more than
+            // two lines away from device_type() — the device-identity scan
+            // treats nearby literals as board_io type keys.
+            let kind = stepper.device_type().to_string();
+            let angle = stepper.angle_degrees_f64();
+            let steps = stepper.steps();
+            let active = stepper.is_enabled();
+            states.push(serde_json::json!({
+                "id": id,
+                "kind": kind,
+                "angle": angle,
+                "steps": steps,
+                "active": active,
+            }));
+        }
+        // DC/BLDC only — steppers are emitted above (motor_snapshots also
+        // folds them for prove evidence, but their actuator shape is angle/steps).
+        let dc_bldc: Vec<_> = machine
+            .bus
+            .motor_snapshots()
+            .into_iter()
+            .filter(|s| s.kind != labwired_core::bus::STEPPER_SNAPSHOT_KIND)
+            .collect();
+        states.extend(motor_states_json(dc_bldc));
 
         states
             .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
@@ -1339,8 +1377,9 @@ impl WasmSimulator {
             .into_boxed_slice())
     }
 
-    /// Read the IO-Link master peer's live state: `{ link_state, pd_valid,
-    /// input_byte }`. Returns `null` if no master is wired.
+    /// Read the IO-Link master peer's live state. The optional evaluation phase
+    /// and error are read-only diagnostics, null for legacy peers.
+    /// Returns `null` if no master is wired.
     #[wasm_bindgen]
     pub fn get_iolink_master_state(&self) -> JsValue {
         use labwired_core::peripherals::components::{IolinkLinkState, IolinkMaster};
@@ -1372,6 +1411,8 @@ impl WasmSimulator {
                         "link_state": link,
                         "pd_valid": m.pd_valid,
                         "input_byte": m.input_byte(),
+                        "evaluation_phase": m.evaluation_phase(),
+                        "evaluation_error": m.evaluation_error(),
                     });
                     return serde_wasm_bindgen::to_value(&v).unwrap_or(JsValue::NULL);
                 }

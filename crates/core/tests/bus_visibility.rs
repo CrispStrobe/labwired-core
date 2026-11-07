@@ -94,6 +94,18 @@ const PAYLOAD: [u8; 3] = [0x53, 0x1C, 0xE1];
 /// drive to decodable edges, with the reason. Adding a silent `continue` instead
 /// of a row here is the same failure as the binding-only gate this replaced.
 const EXCLUSIONS: &[(&str, BusKind, &str)] = &[
+    // CH32V003: USART1 TX is pad-routed to PD5 behind the F1-style console AF
+    // gate. Even with PD5 set to AF push-pull (CFGLR 0x44B44444) and the F1
+    // drive, no TX edges reached the analyzer in this harness. The F1 rows here
+    // never exercised a pad-gated USART either: stm32f103 passes on USART3,
+    // which has no pad route. Bytes are proven by
+    // ch32v003_compiled_firmware::ch32v003_compiled_rv32ec_firmware_prints_on_usart1.
+    (
+        "ch32v003f4p6",
+        BusKind::Uart,
+        "pad-gated F1-style USART1 (TX=PD5) produces no analyzer edges in this \
+         harness yet; bytes are proven by ch32v003_compiled_firmware",
+    ),
     // nRF51822: the bring-up drives the nRF52 EasyDMA personalities (UARTE
     // ENABLE=8, TWIM), which the nRF51 does not have; its UART0 is the legacy
     // UART (ENABLE=4, TXD + EVENTS_TXDRDY) and its TWI is the legacy TWI. No
@@ -110,12 +122,180 @@ const EXCLUSIONS: &[(&str, BusKind, &str)] = &[
         "no nRF51 legacy-UART bring-up in this harness (the nRF52 arm drives UARTE \
          EasyDMA); bytes are proven by the microbit-v1 survival smoke",
     ),
+    // LiteX VexRiscv: the LiteX UART (RXTX/TXFULL/EV_*) is its own register
+    // personality; no drive exists here for it. Bytes are proven by
+    // firmware_survival::test_litex_vexriscv_smoke_survival instead.
+    (
+        "litex-vexriscv",
+        BusKind::Uart,
+        "no LiteX UART bring-up in this harness; bytes are proven by the \
+         litex-vexriscv survival smoke",
+    ),
+    // The same SoC family on the Digilent Arty board: no LiteX UART bring-up
+    // here either; bytes are proven by the arty-litex-vexriscv survival smoke.
+    (
+        "arty-litex-vexriscv",
+        BusKind::Uart,
+        "no LiteX UART bring-up in this harness; bytes are proven by the \
+         arty-litex-vexriscv survival smoke",
+    ),
+    // Vega board (RI5CY): no LPUART bring-up in this harness; bytes are proven
+    // by the vegaboard-ri5cy survival smoke.
+    (
+        "vegaboard-ri5cy",
+        BusKind::Uart,
+        "no LPUART bring-up in this harness; bytes are proven by the \
+         vegaboard-ri5cy survival smoke",
+    ),
+    // SK-AM62: this harness has no AArch64 bring-up (the A53 is not one of
+    // its CPU families); the MAIN_UART0 bytes are proven by the
+    // sk_am62_zephyr survival gate.
+    (
+        "am6234",
+        BusKind::Uart,
+        "no AArch64 core bring-up in this harness; bytes are proven by the \
+         sk_am62_zephyr survival gate",
+    ),
+    // PolarFire SoC Discovery Kit: this harness has no 16550 bring-up; the
+    // MMUART1 bytes are proven by the mpfs_disco_kit_zephyr survival gate.
+    // EK-RX261: this harness has no RX bring-up (the RX core is not one of
+    // its CPU families); the SCI6 bytes are proven by the ek_rx261_zephyr
+    // survival gate.
+    (
+        "r5f52618bgfp",
+        BusKind::Uart,
+        "no RX core bring-up in this harness; bytes are proven by the \
+         ek_rx261_zephyr survival gate",
+    ),
+    // Curiosity PIC32MZ EF 2.0: this harness has no MIPS bring-up; the UART2
+    // bytes are proven by the curiosity_pic32mz_nuttx survival gate.
+    (
+        "pic32mz2048efm144",
+        BusKind::Uart,
+        "no MIPS core bring-up in this harness; bytes are proven by the \
+         curiosity_pic32mz_nuttx survival gate",
+    ),
+    (
+        "mpfs095t",
+        BusKind::Uart,
+        "no 16550 MMUART bring-up in this harness; bytes are proven by the \
+         mpfs_disco_kit_zephyr survival gate",
+    ),
+    // CC2538DK: no UART0 bring-up in this harness; bytes are proven by the
+    // cc2538dk survival smoke.
+    (
+        "cc2538sf53",
+        BusKind::Uart,
+        "no UART0 bring-up in this harness; bytes are proven by the \
+         cc2538dk survival smoke",
+    ),
+    // EK-RA6M5: no SCI0 bring-up in this harness; bytes are proven by the
+    // ek-ra6m5 survival smoke.
+    (
+        "r7fa6m5bh",
+        BusKind::Uart,
+        "no SCI0 bring-up in this harness; bytes are proven by the \
+         ek-ra6m5 survival smoke",
+    ),
+    // EK-RA8M1: no SCI9 (SCI_B) bring-up in this harness; bytes are proven
+    // by the ek-ra8m1 survival smoke.
+    (
+        "r7fa8m1ah",
+        BusKind::Uart,
+        "no SCI9 bring-up in this harness; bytes are proven by the \
+         ek-ra8m1 survival smoke",
+    ),
+    // SAM E70 Xplained: no USART1 bring-up in this harness; bytes are proven
+    // by the sam-e70-xplained survival smoke.
+    (
+        "same70q21b",
+        BusKind::Uart,
+        "no USART1 bring-up in this harness; bytes are proven by the \
+         sam-e70-xplained survival smoke",
+    ),
+    // Apollo4 Plus EVB: no PWRCTRL/UART0 bring-up in this harness; bytes are
+    // proven by the apollo4p-evb survival smoke.
+    (
+        "amap42kp",
+        BusKind::Uart,
+        "no PWRCTRL/UART0 bring-up in this harness; bytes are proven by the \
+         apollo4p-evb survival smoke",
+    ),
+    // S32K388EVB-Q289: no LPUART2 bring-up in this harness; bytes are proven
+    // by the s32k388-evb survival smoke.
+    (
+        "s32k388",
+        BusKind::Uart,
+        "no LPUART2 bring-up in this harness; bytes are proven by the \
+         s32k388-evb survival smoke",
+    ),
+    // MIMXRT595-EVK: no FLEXCOMM0 bring-up in this harness; bytes are proven
+    // by the mimxrt595-evk survival smoke.
+    (
+        "mimxrt595s",
+        BusKind::Uart,
+        "no FLEXCOMM0 USART bring-up in this harness; bytes are proven by the \
+         mimxrt595-evk survival smoke",
+    ),
+    // SAM4S Xplained: no UART0 bring-up in this harness; bytes are proven by
+    // the sam4s-xplained survival smoke.
+    (
+        "sam4s16c",
+        BusKind::Uart,
+        "no UART0 bring-up in this harness; bytes are proven by the \
+         sam4s-xplained survival smoke",
+    ),
+    // NUCLEO-L552ZE-Q: no LPUART1 bring-up in this harness; bytes are proven
+    // by the nucleo-l552ze-q survival smoke.
+    (
+        "stm32l552",
+        BusKind::Uart,
+        "no LPUART1 bring-up in this harness; bytes are proven by the \
+         nucleo-l552ze-q survival smoke",
+    ),
+    // FRDM-K64F: no UART0 bring-up in this harness; bytes are proven by the
+    // frdm-k64f survival smoke.
+    (
+        "mk64f12",
+        BusKind::Uart,
+        "no UART0 bring-up in this harness; bytes are proven by the \
+         frdm-k64f survival smoke",
+    ),
+    // STM32F072B-DISCO: no USART1 bring-up in this harness; bytes are proven
+    // by the stm32f072b-disco survival smoke.
+    (
+        "stm32f072",
+        BusKind::Uart,
+        "no USART1 bring-up in this harness; bytes are proven by the \
+         stm32f072b-disco survival smoke",
+    ),
     // ATmega328P: USART0 is mirrored from the AVR CPU, which owns UCSR0x/UBRR0
     // and forwards each register write and UDR0 byte to the bus-side host. The
     // harness drives bus MMIO directly, so it never programs the baud divisor the
     // CPU would forward; peers and RX are proven by the rs485_modbus tests.
     (
         "atmega328p",
+        BusKind::Uart,
+        "USART0 registers live on the AVR CPU and are forwarded to the bus-side host; \
+         this harness drives bus MMIO, not the CPU, so no bring-up exists here",
+    ),
+    // ATmega2560: same USART0 model and addresses as the 328P.
+    (
+        "atmega2560",
+        BusKind::Uart,
+        "USART0 registers live on the AVR CPU and are forwarded to the bus-side host; \
+         this harness drives bus MMIO, not the CPU, so no bring-up exists here",
+    ),
+    // ATmega2561: the 64-pin sibling uses the same CPU-owned USART0 and the
+    // same generic AVR SPI/I2C parking controllers as the 2560.
+    (
+        "atmega2561",
+        BusKind::Uart,
+        "USART0 registers live on the AVR CPU and are forwarded to the bus-side host; \
+         this harness drives bus MMIO, not the CPU, so no bring-up exists here",
+    ),
+    (
+        "atmega1281",
         BusKind::Uart,
         "USART0 registers live on the AVR CPU and are forwarded to the bus-side host; \
          this harness drives bus MMIO, not the CPU, so no bring-up exists here",
@@ -266,6 +446,51 @@ const EXCLUSIONS: &[(&str, BusKind, &str)] = &[
     ),
     (
         "atmega328p",
+        BusKind::Spi,
+        "AVR from_config SPI is generic type:spi without PadLines cell",
+    ),
+    (
+        "atmega328pb",
+        BusKind::I2c,
+        "AVR from_config I2C is generic type:i2c without PadLines cell",
+    ),
+    (
+        "atmega328pb",
+        BusKind::Spi,
+        "AVR from_config SPI is generic type:spi without PadLines cell",
+    ),
+    (
+        "atmega328pb",
+        BusKind::Uart,
+        "USART1 emits bytes in the CPU smoke, but this edge gate has no AVR UART waveform bring-up",
+    ),
+    (
+        "atmega2560",
+        BusKind::I2c,
+        "AVR from_config I2C is generic type:i2c without PadLines cell",
+    ),
+    (
+        "atmega2560",
+        BusKind::Spi,
+        "AVR from_config SPI is generic type:spi without PadLines cell",
+    ),
+    (
+        "atmega2561",
+        BusKind::I2c,
+        "AVR from_config I2C is generic type:i2c without PadLines cell",
+    ),
+    (
+        "atmega2561",
+        BusKind::Spi,
+        "AVR from_config SPI is generic type:spi without PadLines cell",
+    ),
+    (
+        "atmega1281",
+        BusKind::I2c,
+        "AVR from_config I2C is generic type:i2c without PadLines cell",
+    ),
+    (
+        "atmega1281",
         BusKind::Spi,
         "AVR from_config SPI is generic type:spi without PadLines cell",
     ),

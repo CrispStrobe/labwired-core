@@ -27,6 +27,30 @@ fn embedded_region_image(env: &str) -> Option<&'static [u8]> {
         // = 0x2100 on the W25Q080 stage 2) — and the lookup branches into
         // flash and BusFaults (PC just past that entry, e.g. 0x2106).
         "LABWIRED_RP2040_BOOTROM" => Some(include_bytes!("../../roms/rp2040/bootrom.bin")),
+        // Clean-room RP2350 boot-ROM API window (roms/rp2350/rp2350_bootrom.S).
+        // pico-sdk reads `rom_table_lookup` as the halfword at 0x16 (datasheet
+        // 5.4.1, Table 453). Without this window the flash alias serves the
+        // image's vector table there: 0x1000, the upper half of a 0x1000_xxxx
+        // vector, and the lookup branches into flash offset 0x1000.
+        "LABWIRED_RP2350_BOOTROM" => Some(include_bytes!("../../roms/rp2350/rp2350_bootrom.bin")),
+        // Clean-room CC2538 ROM (roms/cc2538/cc2538_rom.S): the SWRU333A
+        // start-up sequence (CCA -> VTOR/SP/PC) and the utility API table at
+        // 0x48 that Contiki-NG's startup calls to copy .data and zero .bss.
+        "LABWIRED_CC2538_ROM" => Some(include_bytes!("../../roms/cc2538/cc2538_rom.bin")),
+        // CC2538 flash information page head: a fixed primary IEEE address
+        // at +0x28 (roms/cc2538/build.sh), read by Contiki-NG ieee-addr.c.
+        // Clean-room i.MX RT500 boot-ROM API window (roms/rt500/rt500_rom.S):
+        // the three OTP entry points the SDK's FRO trim read calls.
+        "LABWIRED_RT500_ROM" => Some(include_bytes!("../../roms/rt500/rt500_rom.bin")),
+        "LABWIRED_CC2538_INFO_PAGE" => {
+            Some(include_bytes!("../../roms/cc2538/cc2538_info_page.bin"))
+        }
+        // Clean-room Apollo4 Plus boot-ROM helper table
+        // (roms/apollo4/apollo4_bootrom.S): the AmbiqSuite HAL's
+        // am_hal_delay_us / am_hal_load_ui32 / am_hal_store_ui32 call into it.
+        "LABWIRED_APOLLO4_BOOTROM" => {
+            Some(include_bytes!("../../roms/apollo4/apollo4_bootrom.bin"))
+        }
         _ => None,
     }
 }
@@ -59,6 +83,34 @@ fn default_region_image_path(env: &str) -> Option<PathBuf> {
         candidates.push(Path::new(&manifest).join("../core").join(rel));
     }
     candidates.into_iter().find(|p| p.is_file())
+}
+
+/// Return the chip peripherals after applying system manifest additions and
+/// overrides, using the same merge rules as bus construction.
+pub fn merged_peripheral_configs(
+    chip: &ChipDescriptor,
+    manifest: &SystemManifest,
+) -> Vec<labwired_config::PeripheralConfig> {
+    let mut merged = chip.peripherals.clone();
+    for manifest_cfg in &manifest.peripherals {
+        if let Some(existing) = merged.iter_mut().find(|p| p.id == manifest_cfg.id) {
+            for (key, value) in &manifest_cfg.config {
+                existing.config.insert(key.clone(), value.clone());
+            }
+            if manifest_cfg.base_address != 0 {
+                existing.base_address = manifest_cfg.base_address;
+            }
+            if manifest_cfg.irq.is_some() {
+                existing.irq = manifest_cfg.irq;
+            }
+            if manifest_cfg.size.is_some() {
+                existing.size = manifest_cfg.size.clone();
+            }
+        } else {
+            merged.push(manifest_cfg.clone());
+        }
+    }
+    merged
 }
 
 impl SystemBus {
@@ -136,6 +188,14 @@ impl SystemBus {
         self.debug_schemas = Self::load_debug_schemas(chip, manifest);
     }
 
+    /// Copy the GPIO supply and input thresholds from the resolved chip.
+    /// Programmatic peripheral banks call this because they bypass from_config.
+    /// Missing values stay absent so voltage routes fail instead of guessing.
+    pub fn attach_chip_io_levels(&mut self, chip: &ChipDescriptor) {
+        self.io_voltage_v = chip.io_voltage_v;
+        self.gpio_input_thresholds = chip.gpio_input_thresholds;
+    }
+
     pub fn from_config(chip: &ChipDescriptor, manifest: &SystemManifest) -> anyhow::Result<Self> {
         Self::from_config_with_plugins(chip, manifest, &[])
     }
@@ -150,6 +210,63 @@ impl SystemBus {
         plugins: &[&dyn crate::plugin::ChipPlugin],
     ) -> anyhow::Result<Self> {
         Self::from_config_with_region_images(chip, manifest, plugins, &Default::default())
+    }
+
+    /// Attach peripherals claimed by out-of-tree plugins to an already
+    /// configured bus. Specialized builders such as the ESP32 banks register
+    /// their hardwired devices first, then call this to add or replace only
+    /// descriptor entries a plugin claims.
+    pub fn attach_plugin_peripherals(
+        &mut self,
+        chip: &ChipDescriptor,
+        manifest: &SystemManifest,
+        plugins: &[&dyn crate::plugin::ChipPlugin],
+    ) -> anyhow::Result<()> {
+        if plugins.is_empty() {
+            return Ok(());
+        }
+
+        let merged = merged_peripheral_configs(chip, manifest);
+        let mut attached = Vec::new();
+        for p_cfg in &merged {
+            let canonical_type = Self::canonical_peripheral_type(&p_cfg.r#type);
+            let plugin_dev = plugins
+                .iter()
+                .find_map(|plugin| {
+                    plugin.try_build_peripheral(
+                        &crate::plugin::PeripheralBuildCtx {
+                            canonical_type: &canonical_type,
+                            manifest,
+                            bus_trace: &self.bus_trace,
+                            chip_map: crate::peripherals::chip_map::ChipMap::new(&merged),
+                        },
+                        p_cfg,
+                    )
+                })
+                .transpose()
+                .with_context(|| {
+                    format!(
+                        "chip plugin failed to build peripheral '{}' (type '{}')",
+                        p_cfg.id, p_cfg.r#type
+                    )
+                })?;
+
+            let Some(dev) = plugin_dev else {
+                continue;
+            };
+            let size = match &p_cfg.size {
+                Some(size) => parse_size(size).with_context(|| {
+                    format!("invalid size for plugin peripheral '{}'", p_cfg.id)
+                })?,
+                None => 0x1000,
+            };
+            self.replace_or_add_peripheral_at(&p_cfg.id, p_cfg.base_address, size, p_cfg.irq, dev);
+            attached.push(p_cfg.clone());
+        }
+
+        self.resolve_clock_gates(&attached)?;
+        self.refresh_peripheral_index();
+        Ok(())
     }
 
     /// [`Self::from_config_with_plugins`] with caller-supplied images for the
@@ -174,12 +291,33 @@ impl SystemBus {
         // parse with `from_yaml`. Validating at load time only would mean two
         // of our three runtimes silently accept documents the third rejects.
         super::part_pack::validate_manifest(manifest)?;
-        let flash_size = chip.flash.size;
+        // AVR is Harvard: the CPU keeps the program in its own flash (sized by
+        // `AvrModel`), and the bus-side flash window is only nominal. Data-space
+        // I/O is mirrored on the bus at 0x1_0000 (`AVR_IO_MIRROR_BASE`), so a
+        // part with more than 64 KB of flash (ATmega2560: 256 KB) must not map
+        // its whole flash there, or the window would shadow the port, USART and
+        // ADC mirrors (reads of 0x1_00C7 came back as erased 0xFF).
+        let flash_size = if chip.arch == labwired_config::Arch::Avr {
+            chip.flash.size.min(crate::cpu::avr::AVR_IO_MIRROR_BASE)
+        } else {
+            chip.flash.size
+        };
         let ram_size = chip.ram.size;
 
         let mut extra_mem = Vec::with_capacity(chip.memory_regions.len());
+        let mut mem_aliases = Vec::new();
         for region in &chip.memory_regions {
             let size = region.size;
+            // A mirror holds no bytes; the accessors translate into its target.
+            // See NamedMemoryRange::alias_of.
+            if let Some(target) = region.alias_of {
+                mem_aliases.push(super::MemAlias {
+                    start: region.base,
+                    end: region.base.saturating_add(size),
+                    target,
+                });
+                continue;
+            }
             // `erased` fills with 0xFF: a flash window's blank state is ones,
             // not zeros. See NamedMemoryRange::erased.
             let mut mem = if region.erased {
@@ -309,6 +447,11 @@ impl SystemBus {
                 }),
             flash_thunks: std::collections::HashMap::new(),
             flash: LinearMemory::new_erased(flash_size as usize, chip.flash.base),
+            memory_policy: crate::bus::memory_policy::MemoryPolicyState::for_chip(chip),
+            memory_policy_bypass: false,
+            debug_watches: Vec::new(),
+            debug_watch_hit: Cell::new(None),
+            debug_watch_host_bypass: std::cell::Cell::new(false),
             ram: LinearMemory::new(ram_size as usize, chip.ram.base),
             extra_mem,
             peripherals: Vec::new(),
@@ -323,11 +466,20 @@ impl SystemBus {
             // never configures the PLL, so it really does run its 80 MHz part
             // at the 4 MHz MSI reset rate and says so in its manifest.
             cpu_hz: manifest.cpu_hz.unwrap_or(chip.cpu_hz),
+            riscv_profile: crate::cpu::RiscVCoreProfile::for_chip(chip),
             bit_band_enabled: Self::chip_has_bit_band(chip),
             reset_vector_offset: chip.reset_vector_offset,
             flash_boot_alias: chip.flash_boot_alias,
             atomic_register_aliases: chip.atomic_register_aliases,
+            rp2350_dcp: chip
+                .coprocessors
+                .contains(&labwired_config::CortexMCoprocessor::Rp2350Dcp)
+                .then(Box::default),
+            rp2350_gpioc: chip
+                .coprocessors
+                .contains(&labwired_config::CortexMCoprocessor::Rp2350Gpioc),
             ns_alias_offset: chip.ns_alias_offset,
+            mem_aliases,
             pending_cpu_irqs: [0; 2],
             dport_idx: None,
             esp32c3_io_mux_idx: None,
@@ -335,6 +487,8 @@ impl SystemBus {
             rp2040_io_bank0_idx: None,
             rp2040_sio_idx: None,
             pad_control_links: Vec::new(),
+            rtc_io_link: None,
+            pad_claim_links: Default::default(),
             pin_port_ids: Vec::new(),
             rcc_idx: None,
             clock_gating_bypass: false,
@@ -356,17 +510,22 @@ impl SystemBus {
             pending_schedule: Vec::new(),
             freerunning_timer_poll_mmio: Cell::new(0),
             side_effecting_mmio: Cell::new(0),
+            batch_stop: Default::default(),
             memory_reads: Cell::new(0),
             memory_writes: Cell::new(0),
             peripheral_accesses: Cell::new(0),
             poll_streak: Cell::new((u32::MAX, 0, 0, 0)),
             legacy_walk_disabled: false,
+            legacy_walk_pinned_on: false,
+            legacy_tick_candidate_mask: Vec::new(),
+            legacy_tick_peer_write_indices: Vec::new(),
             resident_tick_interval_override: None,
             gpio_devices: Vec::new(),
             device_pin_pads: Vec::new(),
             device_open_drain_nets: Default::default(),
             observed: Vec::new(),
             motors: Vec::new(),
+            ina219_senses: Vec::new(),
             motor_cycle_anchor: 0,
             analog_inputs: Vec::new(),
             analog_muxes: Vec::new(),
@@ -388,6 +547,7 @@ impl SystemBus {
             flash_error_flags_idx: None,
             u5_program_gate_idx: None,
             nrf52_nvmc_idx: None,
+            flash_store_owner_idx: None,
             samd51_nvmctrl_idx: None,
             bus_trace: bus_trace::new_log(),
             logic_tap: crate::logic_capture::LogicTap::new(),
@@ -412,31 +572,10 @@ impl SystemBus {
                 (adc.peripheral.clone(), adc.channel),
             );
         }
-        bus.io_voltage_v = chip.io_voltage_v;
-        bus.gpio_input_thresholds = chip.gpio_input_thresholds;
+        bus.attach_chip_io_levels(chip);
         bus.supply = crate::power::SupplySupervisor::new(chip.supply_monitor.clone());
 
-        let mut merged_peripherals = chip.peripherals.clone();
-        for m_p in &manifest.peripherals {
-            if let Some(existing) = merged_peripherals.iter_mut().find(|p| p.id == m_p.id) {
-                // Merge config map
-                for (k, v) in &m_p.config {
-                    existing.config.insert(k.clone(), v.clone());
-                }
-                // Also override other fields if provided
-                if m_p.base_address != 0 {
-                    existing.base_address = m_p.base_address;
-                }
-                if m_p.irq.is_some() {
-                    existing.irq = m_p.irq;
-                }
-                if m_p.size.is_some() {
-                    existing.size = m_p.size.clone();
-                }
-            } else {
-                merged_peripherals.push(m_p.clone());
-            }
-        }
+        let merged_peripherals = merged_peripheral_configs(chip, manifest);
 
         // External-device ids already attached by a chip-specific I²C path
         // (the `i2c` / `esp32c3_i2c` arms below). The generic external-device
@@ -720,9 +859,222 @@ impl SystemBus {
                         .and_then(|v| v.as_u64())
                         .map(|n| n as u32)
                         .unwrap_or(0x0000_07FF);
-                    Box::new(crate::peripherals::uart::Uart::new_with_layout_cr3(
-                        layout, cr3_mask,
-                    ))
+                    let full = p_cfg
+                        .config
+                        .get("full_featured")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let stm32_lpuart = p_cfg
+                        .config
+                        .get("stm32_lpuart")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let u5_features = p_cfg
+                        .config
+                        .get("u5_features")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let mut uart =
+                        crate::peripherals::uart::Uart::new_with_layout_cr3(layout, cr3_mask)
+                            .set_full_featured(full)
+                            .set_stm32_lpuart(stm32_lpuart)
+                            .set_u5_features(u5_features);
+                    // Renesas SCI_B and classic SCI: `elc_event` is the
+                    // channel's RXI event (TXI/TEI follow); the events reach
+                    // the NVIC through the RA ICU. `clock_hz` is the rate the
+                    // guest believes its cycles run at and `baud` the line
+                    // rate, which time the TDRE/TEND edges. Without
+                    // `elc_event` the SCI is polled.
+                    // On a Renesas RX `rxi_vector` takes its place: the
+                    // RXI ICU vector (TXI/TEI follow), latched by the core's
+                    // ICU without an event link.
+                    let get = |k: &str| p_cfg.config.get(k).and_then(|v| v.as_u64());
+                    let sci_clock =
+                        get("clock_hz").unwrap_or(manifest.cpu_hz.unwrap_or(chip.cpu_hz));
+                    let sci_baud = get("baud").unwrap_or(115_200);
+                    if let Some(event) = get("elc_event") {
+                        uart = uart.set_sci_events(event as u32, sci_clock, sci_baud);
+                    } else if let Some(vector) = get("rxi_vector") {
+                        uart = uart.set_sci_vectors(vector as u32, sci_clock, sci_baud);
+                    }
+                    if matches!(layout, crate::peripherals::uart::UartRegisterLayout::Custom) {
+                        // Vendor-neutral YAML map. `tx_offset` is required;
+                        // status/rx/ready/enable keys are optional. The status
+                        // window is opt-in: omit `status_offset` for TX-only
+                        // maps (no default [0,4) window that would collide with
+                        // `tx_offset: 0`).
+                        // Custom maps do not model TX/TC IRQ enables — see
+                        // `UartRegisterLayout::Custom` docs.
+                        let peri_size = match &p_cfg.size {
+                            Some(size) => parse_size(size).with_context(|| {
+                                format!("invalid size for UART peripheral '{}'", p_cfg.id)
+                            })?,
+                            None => 0x1000,
+                        };
+                        let tx = p_cfg
+                            .config
+                            .get("tx_offset")
+                            .and_then(|v| v.as_u64())
+                            .ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "Peripheral '{}' with profile 'custom' requires config.tx_offset (TX data register offset)",
+                                    p_cfg.id
+                                )
+                            })?;
+                        let status_opt = p_cfg.config.get("status_offset").and_then(|v| v.as_u64());
+                        let rx = p_cfg
+                            .config
+                            .get("rx_offset")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(tx);
+                        let status_idle = p_cfg
+                            .config
+                            .get("status_idle")
+                            .or_else(|| p_cfg.config.get("status_ready"))
+                            .and_then(|v| v.as_u64())
+                            .map(|n| n as u32)
+                            .unwrap_or(0);
+                        // status_width only applies when status_offset is set.
+                        // With no status window, width is 0 so reads never hit it.
+                        let status_width = if status_opt.is_some() {
+                            let w = p_cfg
+                                .config
+                                .get("status_width")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(4);
+                            if w == 0 || w > 4 {
+                                anyhow::bail!(
+                                    "Peripheral '{}': config.status_width must be 1..=4 bytes (got {})",
+                                    p_cfg.id,
+                                    w
+                                );
+                            }
+                            w
+                        } else {
+                            0
+                        };
+                        let status = status_opt.unwrap_or(0);
+                        let rx_present_set = p_cfg
+                            .config
+                            .get("rx_present_set")
+                            .and_then(|v| v.as_u64())
+                            .map(|n| n as u32)
+                            .unwrap_or(0);
+                        let rx_present_clear = p_cfg
+                            .config
+                            .get("rx_present_clear")
+                            .and_then(|v| v.as_u64())
+                            .map(|n| n as u32)
+                            .unwrap_or(0);
+                        let enable = p_cfg
+                            .config
+                            .get("enable_offset")
+                            .and_then(|v| v.as_u64())
+                            .map(|en_off| {
+                                let en_mask = p_cfg
+                                    .config
+                                    .get("enable_mask")
+                                    .and_then(|v| v.as_u64())
+                                    .map(|n| n as u32)
+                                    .unwrap_or(1);
+                                (en_off, en_mask)
+                            });
+
+                        // Bounds: every accessed byte must lie in [0, peri_size).
+                        let require_in_window = |name: &str,
+                                                 off: u64,
+                                                 width: u64|
+                         -> anyhow::Result<()> {
+                            let end = off.checked_add(width).ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "Peripheral '{}': {} offset {:#x} + width {:#x} overflows",
+                                    p_cfg.id,
+                                    name,
+                                    off,
+                                    width
+                                )
+                            })?;
+                            if end > peri_size {
+                                anyhow::bail!(
+                                    "Peripheral '{}': {} range [{:#x}, {:#x}) exceeds peripheral size {:#x}",
+                                    p_cfg.id,
+                                    name,
+                                    off,
+                                    end,
+                                    peri_size
+                                );
+                            }
+                            Ok(())
+                        };
+                        if status_opt.is_some() {
+                            require_in_window("status", status, status_width)?;
+                        }
+                        require_in_window("tx", tx, 1)?;
+                        require_in_window("rx", rx, 1)?;
+                        if let Some((en_off, _)) = enable {
+                            require_in_window("enable", en_off, 4)?;
+                        }
+
+                        // Reject overlapping status / tx / rx / enable windows.
+                        // Status is only in the set when status_offset was set.
+                        let ranges: Vec<(&str, u64, u64)> = {
+                            let mut v = Vec::new();
+                            if status_opt.is_some() {
+                                v.push(("status", status, status_width));
+                            }
+                            v.push(("tx", tx, 1));
+                            v.push(("rx", rx, 1));
+                            if let Some((en_off, _)) = enable {
+                                v.push(("enable", en_off, 4));
+                            }
+                            v
+                        };
+                        for i in 0..ranges.len() {
+                            for j in (i + 1)..ranges.len() {
+                                let (na, a0, aw) = ranges[i];
+                                let (nb, b0, bw) = ranges[j];
+                                let a1 = a0 + aw;
+                                let b1 = b0 + bw;
+                                // tx and rx may share the same data register.
+                                if (na == "tx" && nb == "rx" || na == "rx" && nb == "tx")
+                                    && a0 == b0
+                                    && aw == bw
+                                {
+                                    continue;
+                                }
+                                if a0 < b1 && b0 < a1 {
+                                    anyhow::bail!(
+                                        "Peripheral '{}': custom UART {} range [{:#x}, {:#x}) overlaps {} range [{:#x}, {:#x})",
+                                        p_cfg.id,
+                                        na,
+                                        a0,
+                                        a1,
+                                        nb,
+                                        b0,
+                                        b1
+                                    );
+                                }
+                            }
+                        }
+
+                        uart = uart.with_custom_map(crate::peripherals::uart::UartRegMap {
+                            status,
+                            tx,
+                            rx,
+                            cr3: u64::MAX,
+                            cr1: None,
+                            txeie_mask: 0,
+                            tcie_mask: 0,
+                            status_width,
+                            status_idle,
+                            rx_present_set,
+                            rx_present_clear,
+                        });
+                        if let Some((en_off, en_mask)) = enable {
+                            uart = uart.with_enable_gate(en_off, en_mask);
+                        }
+                    }
+                    Box::new(uart)
                 }
                 "gpio" | "stm32_gpioport" | "stm32f4_gpio" | "efmgpioport" | "npcx_gpio"
                 | "imxrt_gpio" => {
@@ -773,15 +1125,35 @@ impl SystemBus {
                                 .map(|n| n as u32)
                                 .unwrap_or(0)
                         };
-                        crate::peripherals::gpio::GpioPort::new_stm32v2_with_resets(
+                        crate::peripherals::gpio::GpioPort::new_stm32v2_with_resets_and_seccfgr(
                             cfg_u32("reset_moder"),
                             cfg_u32("reset_ospeedr"),
                             cfg_u32("reset_pupdr"),
+                            cfg_u32("reset_seccfgr"),
                         )
                         .with_window_offset(window_offset)
                     } else {
                         crate::peripherals::gpio::GpioPort::new_with_layout(layout)
                             .with_window_offset(window_offset)
+                    };
+                    // RA4/RA6 PORT: 16-bit PCNTRn aliases with the halves
+                    // swapped (FSP R7FA6M5BH.h; see `RaPortGpio`).
+                    let port = if p_cfg
+                        .config
+                        .get("swapped_half_aliases")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                    {
+                        if layout != crate::peripherals::gpio::GpioRegisterLayout::RaPort {
+                            anyhow::bail!(
+                                "GPIO peripheral '{}': `swapped_half_aliases` applies to \
+                                 ra_port only",
+                                p_cfg.id
+                            );
+                        }
+                        port.with_ra_swapped_half_aliases()
+                    } else {
+                        port
                     };
                     // Optional `pad_control`: the id of the block that keeps
                     // this port's pulls (Kinetis PORTx, RA PFS, i.MX RT
@@ -1079,6 +1451,8 @@ impl SystemBus {
         // are deliberately unbound — nothing drives them.
         bus.wire_esp32c3_spi_pads();
         bus.wire_esp32c3_uart_pads();
+        // …and the C3's six LEDC outputs (signals 45..50; none on the C6).
+        bus.wire_esp32c3_ledc_pads();
         // Same for the S3's I²C0, whose pads reach GPIO through the S3 output
         // matrix rather than an AF nibble.
         bus.wire_esp32s3_i2c_pads();
@@ -1086,6 +1460,8 @@ impl SystemBus {
         // and 12/15/18 — neither the C3's nor the classic part's.
         bus.wire_esp32s3_spi_pads();
         bus.wire_esp32s3_uart_pads();
+        // …and its eight LEDC outputs (signals 73..80).
+        bus.wire_esp32s3_ledc_pads();
         // Same for classic ESP32 (LX6), whose matrix indices are 29/30 —
         // neither the C3's 53/54 nor the S3's 89/90.
         bus.wire_esp32_i2c_pads();
@@ -1094,10 +1470,8 @@ impl SystemBus {
         // the UART indices 14/17/198 are the classic part's alone.
         bus.wire_esp32_spi_pads();
         bus.wire_esp32_uart_pads();
-        // And every ESP matrix-only output — the LEDC channels (classic
-        // 71..86, C3 45..50, S3 73..80) — so PWM duty reaches the pad it was
-        // routed to. One capability-driven pass for all three chips.
-        bus.wire_esp_matrix_outputs();
+        // …and its LEDC outputs (signals 71..86).
+        bus.wire_esp32_ledc_pads();
         // RP2040: bind I²C wires to the pads IO_BANK0's FUNCSEL can route them to.
         bus.wire_rp2040_i2c_pads();
         // Same for the RP2040 UARTs' TX/RX, so serial output is a waveform on
@@ -1124,8 +1498,12 @@ impl SystemBus {
         // And the timers' channel OUTPUTS (F1): a PWM / output-compare channel
         // drives its AF pad, so `analogWrite` is a waveform on the pin.
         bus.wire_stm32_timer_output_pads();
-        // SAMD51 TC waveform outputs onto their PMUX-E pads (opt-in samd51_tc).
+        // SAMD51 TC waveform outputs onto their PMUX-E pads (samd51_tc only).
         bus.wire_samd51_tc_output_pads();
+        // RA GPT GTIOCnA/B onto the pads the chip YAML names (PSEL 00011).
+        bus.wire_ra_gpt_output_pads();
+        // Board wires from an analog output (a DAC pin) to an ADC input.
+        bus.wire_analog_links();
         // nRF52: bind every TWIM/SPIM/UARTE wire to every pad its PSEL can
         // name. Unlike the four above this is not a datasheet AF table — the
         // pad has no function register on this family, so the peripherals
@@ -1147,16 +1525,17 @@ impl SystemBus {
         //
         //   Some(true)  → force deleted (hand opt-in / escape hatch)
         //   Some(false) → pin the walk ON, overriding auto-derivation
-        //   None        → auto-derive: delete iff EVERY peripheral is provably
-        //                 walk-independent for all firmware states.
+        //   None        → auto-derive: delete iff EVERY walk-capable peripheral
+        //                 is currently inactive.
         //
         // The auto-derivation is deliberately conservative — see
         // `derive_walk_deletable`. It only fires when deleting the walk is
-        // byte-identical for ANY reachable firmware state, so it can never
-        // silently starve a peripheral of its per-cycle `tick()`. A hand
+        // safe for the current state; dynamic models restore the walk when
+        // later MMIO/GPIO activity makes them active. A hand
         // `walk_deleted: true` stays honored for configs whose byte-identity is
         // firmware-specific (the firmware never arms the timers/ADC/DMA the chip
         // descriptor instantiates) and thus not config-derivable.
+        bus.legacy_walk_pinned_on = manifest.walk_deleted == Some(false);
         bus.legacy_walk_disabled = match manifest.walk_deleted {
             Some(explicit) => explicit,
             None => bus.derive_walk_deletable(),
@@ -1173,6 +1552,22 @@ impl SystemBus {
                 manifest.name.as_str()
             };
             bus.attach_private_lab_air(node);
+        }
+
+        // U5: the RCC backup domain (BDCR) is write-protected until
+        // PWR_DBPR.DBP is set. The bus is the only place that knows both
+        // models, so one shared flag links them.
+        if let (Some(rcc_i), Some(pwr_i)) = (
+            bus.find_peripheral_index_by_name("rcc"),
+            bus.find_peripheral_index_by_name("pwr"),
+        ) {
+            let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            bus.peripherals[rcc_i]
+                .dev
+                .bind_backup_domain_write_enable(flag.clone());
+            bus.peripherals[pwr_i]
+                .dev
+                .bind_backup_domain_write_enable(flag);
         }
 
         Ok(bus)
@@ -1204,6 +1599,7 @@ impl SystemBus {
     /// is their manifest seam and calls this pass itself, so a canvas button is
     /// attached by ONE implementation on every chip family.
     pub(crate) fn attach_board_io_buttons(&mut self, manifest: &SystemManifest) {
+        use crate::peripherals::gpio::GpioMode;
         use labwired_config::{BoardIoKind, BoardIoSignal};
 
         for binding in &manifest.board_io {
@@ -1232,15 +1628,19 @@ impl SystemBus {
             // reset value of 0 reads as a press that is never released, so a
             // sketch waiting on the button fires immediately at boot.
             //
-            // Then PROVE the level landed. A GPIO model that does not honour an
-            // externally driven level would leave a button that discovery
-            // advertises, `set_input` accepts, and the firmware never sees move
-            // — a stimulus that reports success and proves nothing. Where we
-            // cannot demonstrate the drive, we do not claim the capability: the
-            // button is dropped and the pin is left exactly as that chip had it.
+            // Then PROVE the GPIO model accepted the outside level. An analog
+            // reset pin correctly reads zero from IDR, so keep the button
+            // attached when the model accepts its drive even though firmware
+            // must first select digital input mode to observe it. A model that
+            // cannot accept an external level still drops the button.
             let (level, _) = button.service();
-            let landed = self.drive_input_bit(anchor, binding.pin, level)
-                && self.peripherals[idx].dev.read_gpio_input(binding.pin) == Some(level);
+            let accepted = self.drive_input_bit(anchor, binding.pin, level);
+            let reads_back = self.peripherals[idx].dev.read_gpio_input(binding.pin) == Some(level);
+            let waits_for_digital_mode = self.peripherals[idx]
+                .dev
+                .gpio_routing(binding.pin)
+                .is_some_and(|route| route.mode == GpioMode::Analog);
+            let landed = accepted && (reads_back || waits_for_digital_mode);
             if !landed {
                 tracing::warn!(
                     "board_io button '{}' on '{}' pin {}: this GPIO model does not reflect an \
@@ -1453,5 +1853,100 @@ peripherals: []
         // And the plain entry point is unchanged: no image, region dropped.
         let bare = SystemBus::from_config(&chip, &manifest).expect("bare bus");
         assert!(!bare.extra_mem.iter().any(|m| m.base_addr == 0));
+    }
+}
+
+#[cfg(test)]
+mod custom_uart_map_tests {
+    use super::*;
+
+    fn chip_with_custom_uart(extra_config: &str, size: &str) -> (ChipDescriptor, SystemManifest) {
+        let chip_yaml = format!(
+            r#"
+name: "test-custom-uart"
+arch: "arm"
+flash:
+  base: 0x08000000
+  size: "1KB"
+ram:
+  base: 0x20000000
+  size: "1KB"
+peripherals:
+  - id: "uart0"
+    type: "uart"
+    base_address: 0x4000C000
+    size: "{size}"
+    config:
+      profile: custom
+{extra}
+"#,
+            size = size,
+            extra = extra_config,
+        );
+        let chip: ChipDescriptor = serde_yaml::from_str(&chip_yaml).expect("parse chip");
+        let manifest: SystemManifest =
+            serde_yaml::from_str("name: \"t\"\nchip: \"test-custom-uart\"\n").expect("manifest");
+        (chip, manifest)
+    }
+
+    #[test]
+    fn custom_uart_rejects_status_width_over_four() {
+        let (chip, manifest) = chip_with_custom_uart(
+            "      tx_offset: 0x14\n      status_offset: 0x10\n      status_width: 8\n",
+            "4KB",
+        );
+        let err = match SystemBus::from_config(&chip, &manifest) {
+            Ok(_) => panic!("expected rejection"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("status_width") && err.contains("1..=4"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn custom_uart_rejects_offset_past_peripheral_size() {
+        let (chip, manifest) =
+            chip_with_custom_uart("      tx_offset: 0x200\n      status_offset: 0x10\n", "256");
+        let err = match SystemBus::from_config(&chip, &manifest) {
+            Ok(_) => panic!("expected rejection"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("exceeds peripheral size") || err.contains("tx range"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn custom_uart_rejects_overlapping_status_and_tx() {
+        let (chip, manifest) = chip_with_custom_uart(
+            "      tx_offset: 0x11\n      status_offset: 0x10\n      status_width: 4\n",
+            "4KB",
+        );
+        let err = match SystemBus::from_config(&chip, &manifest) {
+            Ok(_) => panic!("expected rejection"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("overlaps"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn custom_uart_accepts_valid_map() {
+        let (chip, manifest) = chip_with_custom_uart(
+            "      tx_offset: 0x14\n      rx_offset: 0x18\n      status_offset: 0x10\n      status_width: 4\n      status_idle: 0x01\n",
+            "4KB",
+        );
+        SystemBus::from_config(&chip, &manifest).expect("valid custom map must build");
+    }
+
+    #[test]
+    fn custom_uart_accepts_tx_at_zero_without_status() {
+        // Status window is opt-in. A TX-only map with tx_offset: 0 must not be
+        // rejected by a default status window at [0, 4).
+        let (chip, manifest) = chip_with_custom_uart("      tx_offset: 0\n", "4KB");
+        SystemBus::from_config(&chip, &manifest)
+            .expect("tx_offset 0 with no status_offset must build");
     }
 }

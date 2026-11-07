@@ -83,6 +83,7 @@ pub(crate) enum Op {
     SetIdleFastForward(bool),
     SetTickInterval(u32),
     SetJit(bool),
+    SetJitLoopTraces(bool),
     InstallEsp32Quirks(Vec<u8>),
     ApplyRuntimeSnapshot(Vec<u8>),
     WatchLogic(serde_json::Value),
@@ -151,6 +152,10 @@ pub(crate) struct SimTools {
     /// The firmware's DWARF, parsed once for source-level debugging. Dropped
     /// when `install_arduino_esp32_quirks` hands over a different ELF.
     pub(crate) source_debug: Option<Rc<crate::source_debug::SourceDebug>>,
+    /// The inline frame the last source step stopped in, as `(pc, depth)`
+    /// (see `SourceDebug::location_at`). Any later call that changes the
+    /// machine drops it.
+    pub(crate) source_view: Option<(u32, usize)>,
 }
 
 fn js(e: impl std::fmt::Display) -> JsValue {
@@ -160,6 +165,7 @@ fn js(e: impl std::fmt::Display) -> JsValue {
 impl WasmSimulator {
     pub(crate) fn record(&self, op: Op) {
         let mut tools = self.tools.borrow_mut();
+        tools.source_view = None;
         if let Op::InstallEsp32Quirks(elf) = &op {
             tools.elf = Some(elf.clone());
             tools.source_debug = None;
@@ -267,6 +273,7 @@ impl WasmSimulator {
                 self.set_jit_enabled(*on);
                 Ok(())
             }
+            Op::SetJitLoopTraces(on) => self.set_jit_loop_traces_enabled(*on),
             Op::InstallEsp32Quirks(elf) => self.install_arduino_esp32_quirks(elf),
             Op::CanBridgeAttach(id, c, cfg) => self.can_bridge_attach(id, c, cfg),
             Op::CanBridgeOffer(id, f, t) => self.can_bridge_offer(id, f, *t).map(|_| ()),
@@ -425,6 +432,10 @@ impl WasmSimulator {
         }
         let coverage = fresh.tools.borrow().coverage.clone();
         if let Some(obs) = coverage {
+            // Counts keep accumulating across the rewind, but the step from
+            // the last instruction before it to the saved point never
+            // happened; don't let it count as a branch outcome.
+            obs.break_chain();
             fresh.jit_browser_enabled = false;
             fresh.jit_browser_cache = None;
             if let Some(m) = fresh.machine.as_mut() {
@@ -542,6 +553,7 @@ impl WasmSimulator {
             symbols
                 .as_ref()
                 .map(|s| s as &dyn labwired_core::fault_verdict::FaultSymbolizer),
+            None,
         );
         let json = verdict
             .map(|v| serde_json::to_string(&v))

@@ -18,7 +18,7 @@
 //!       substeps: 10
 //!       integration: be            # be | trap
 //!       probes:  { v_out: "v(out)" }
-//!       sources: { gpio: Vgpio }
+//!       sources: { gpio: Vgpio, temperature_c: Rntc }
 //!       trace:   ["v(in)", "i(Vgpio)"]
 //!       trace_samples: 20000
 //! ```
@@ -57,15 +57,17 @@ pub use super::mna::Integration;
 pub enum Probe {
     /// `v(node)` or a bare node name.
     NodeVoltage(NodeRef),
-    /// `i(element)` — a voltage source's or inductor's branch current.
+    /// `i(element)` — a voltage source, inductor, E or H branch current.
     BranchCurrent(usize),
+    /// `i(diode)` — anode-to-cathode current at the solved junction voltage.
+    DiodeCurrent(usize),
 }
 
 impl Probe {
     fn unit(&self) -> &'static str {
         match self {
             Self::NodeVoltage(_) => "V",
-            Self::BranchCurrent(_) => "A",
+            Self::BranchCurrent(_) | Self::DiodeCurrent(_) => "A",
         }
     }
 }
@@ -79,9 +81,9 @@ pub struct AnalogConfig {
     pub substeps: u32,
     /// Integration rule.
     pub integration: Integration,
-    /// LabWired output name → node or branch expression.
+    /// LabWired output name → node voltage or supported element-current expression.
     pub probes: BTreeMap<String, String>,
-    /// LabWired input name → circuit element (`V`, `I` or `S`).
+    /// LabWired input name → circuit element (`V`, `I`, `S` or an NTC `R`).
     pub sources: BTreeMap<String, String>,
     /// Extra trace-only expressions, beyond the routed outputs.
     pub trace: Vec<String>,
@@ -196,6 +198,7 @@ fn string_map(value: &Value, what: &str) -> Result<BTreeMap<String, String>, Ana
 enum InputTarget {
     VoltageSource(usize),
     CurrentSource(usize),
+    Thermistor(usize),
     /// Every switch sharing one control name.
     Switches(Vec<usize>),
 }
@@ -260,19 +263,26 @@ impl AnalogCosimAdapter {
                     )));
                 }
                 InputTarget::CurrentSource(index)
+            } else if let Some(index) = solver.thermistor_index(element) {
+                InputTarget::Thermistor(index)
             } else if let Some(index) = solver.switch_index(element) {
                 InputTarget::Switches(vec![index])
             } else {
                 return Err(AnalogError::Config(format!(
                     "config.sources.{input} names `{element}`, which the netlist does not declare \
-                     as a V, I or S element"
+                     as a V, I, S or NTC resistor"
                 )));
             };
             inputs.insert(input.clone(), target);
         }
         // A switch's `<ctrl>` is itself a routed input name, so it needs no
         // `sources:` entry. An explicit entry wins if a manifest declares both.
+        // Voltage-controlled switches have an empty ctrl and are driven by the
+        // MNA engine from their sense nodes, so they are not routed inputs.
         for switch in &solver.circuit().switches {
+            if switch.voltage.is_some() || switch.ctrl.is_empty() {
+                continue;
+            }
             let indices = solver.switches_controlled_by(&switch.ctrl);
             inputs
                 .entry(switch.ctrl.clone())
@@ -354,6 +364,7 @@ impl AnalogCosimAdapter {
         match probe {
             Probe::NodeVoltage(node) => self.solver.node_voltage(*node),
             Probe::BranchCurrent(index) => self.solver.branch_current(*index),
+            Probe::DiodeCurrent(index) => self.solver.diode_current(*index),
         }
     }
 
@@ -395,6 +406,20 @@ impl AnalogCosimAdapter {
                 }
                 let amps = self.numeric(name, value, "amps")?;
                 self.solver.set_current_source(index, amps);
+            }
+            InputTarget::Thermistor(index) => {
+                if matches!(value, CosimSignalValue::Bool(_)) {
+                    return Err(SimulationError::Other(format!(
+                        "analog input `{name}` drives an NTC temperature; a boolean has no \
+                         temperature to map to — route a number in degrees Celsius"
+                    )));
+                }
+                let celsius = self.numeric(name, value, "degrees Celsius")?;
+                if !self.solver.set_thermistor_temperature(index, celsius) {
+                    return Err(SimulationError::Other(format!(
+                        "analog input `{name}` is not a finite NTC temperature above absolute zero"
+                    )));
+                }
             }
             InputTarget::Switches(indices) => {
                 let closed = match value {
@@ -463,7 +488,9 @@ impl CosimAdapter for AnalogCosimAdapter {
     fn input_kind(&self, name: &str) -> Option<CosimInputKind> {
         Some(match self.inputs.get(name)? {
             InputTarget::Switches(_) => CosimInputKind::Bool,
-            InputTarget::VoltageSource(_) | InputTarget::CurrentSource(_) => CosimInputKind::Number,
+            InputTarget::VoltageSource(_)
+            | InputTarget::CurrentSource(_)
+            | InputTarget::Thermistor(_) => CosimInputKind::Number,
         })
     }
 
@@ -488,7 +515,7 @@ fn lock(trace: &AnalogTraceHandle) -> std::sync::MutexGuard<'_, AnalogTrace> {
     }
 }
 
-/// Resolve `v(out)`, `out`, `V(OUT)` or `i(Vgpio)` against a circuit.
+/// Resolve `v(out)`, `out`, `V(OUT)`, `i(Vgpio)` or `i(Dled)` against a circuit.
 ///
 /// Same spelling as the ngspice wrapper's probe map, so one manifest works with
 /// either engine. An unknown node or element is an error at build time: a probe
@@ -508,10 +535,17 @@ pub fn resolve_probe(solver: &Solver, expression: &str) -> Result<Probe, AnalogE
         return circuit
             .branch_index(inner)
             .map(Probe::BranchCurrent)
+            .or_else(|| {
+                circuit
+                    .diodes
+                    .iter()
+                    .position(|diode| diode.name.eq_ignore_ascii_case(inner.trim()))
+                    .map(Probe::DiodeCurrent)
+            })
             .ok_or_else(|| {
                 AnalogError::Config(format!(
-                    "probe `{expression}`: `{inner}` is not a voltage source, inductor, E or H \
-                     element; only those carry a branch current"
+                    "probe `{expression}`: `{inner}` is not a voltage source, inductor, E, H \
+                     or diode element; current probes support only those elements"
                 ))
             });
     }

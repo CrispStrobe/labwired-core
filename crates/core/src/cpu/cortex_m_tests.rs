@@ -1,4 +1,5 @@
 use super::*;
+use crate::bus::CpuWritePolicy;
 use crate::{DmaRequest, Machine, SimulationConfig};
 use std::collections::HashMap;
 
@@ -239,6 +240,105 @@ fn armv7m_strexb_fails_without_matching_unchanged_reservation() {
     }
 }
 
+/// LDAEXB opens the same exclusive monitor as LDREXB (Armv8-M ARM B9.2:
+/// one local monitor per PE). pico-sdk's RP2350 `hw_claim_lock` is
+///
+/// ```text
+///   ldaexb r1, [r3] ; movs r2, #1 ; cmp r1, #0 ; bne ; strexb r1, r2, [r3]
+/// ```
+///
+/// LDAEXB used to load without a reservation, so the STREXB always reported
+/// failure and arduino-pico on rp2350-zero spun in this loop before main.
+#[test]
+fn armv8m_ldaexb_reservation_serves_strexb_and_stlexb() {
+    for (store, name) in [
+        (0xE8C3_2F41u32, "strexb r1,r2,[r3]"),
+        (0xE8C3_2FC1, "stlexb r1,r2,[r3]"),
+    ] {
+        let mut cpu = CortexM::new();
+        let mut bus = MockBus::new();
+        cpu.pc = 0x2000;
+        cpu.r3 = 0x3000;
+        cpu.r2 = 1;
+        bus.write_u8(0x3000, 0).unwrap();
+        run_test_instr(&mut cpu, &mut bus, 0xE8D3_1FCF, true); // ldaexb r1, [r3]
+        assert_eq!(cpu.r1, 0, "LDAEXB loads one byte");
+        run_test_instr(&mut cpu, &mut bus, store, true);
+        assert_eq!(cpu.r1, 0, "{name} after LDAEXB must succeed");
+        assert_eq!(bus.read_u8(0x3000).unwrap(), 1, "{name} stores the byte");
+    }
+}
+
+/// Word exclusives share the one local monitor with the sub-word forms:
+/// every pairing of LDREX/LDAEX with STREX/STLEX succeeds and stores.
+#[test]
+fn armv8m_word_load_exclusive_serves_strex_and_stlex() {
+    let pairs = [
+        (0xE8D0_1FEFu32, 0xE8C0_1FE2u32, "ldaex -> stlex"),
+        (0xE8D0_1FEF, 0xE840_1200, "ldaex -> strex"),
+        (0xE850_1F00, 0xE8C0_1FE2, "ldrex -> stlex"),
+        (0xE850_1F00, 0xE840_1200, "ldrex -> strex"),
+    ];
+    for (load, store, name) in pairs {
+        let mut cpu = CortexM::new();
+        let mut bus = MockBus::new();
+        cpu.pc = 0x2000;
+        cpu.r0 = 0x3000;
+        bus.write_u32(0x3000, 0x1234_5678).unwrap();
+        run_test_instr(&mut cpu, &mut bus, load, true); // r1 = [r0]
+        assert_eq!(cpu.r1, 0x1234_5678, "{name}: load-exclusive reads the word");
+        cpu.r1 = 0xCAFE_F00D;
+        cpu.r2 = 0xFFFF_FFFF;
+        run_test_instr(&mut cpu, &mut bus, store, true); // r2 = status
+        assert_eq!(cpu.r2, 0, "{name}: store-exclusive must succeed");
+        assert_eq!(bus.read_u32(0x3000).unwrap(), 0xCAFE_F00D, "{name}: stored");
+    }
+}
+
+/// With no open reservation every store-exclusive form fails (Rd = 1) and
+/// leaves memory untouched: the monitor is in Open Access state.
+#[test]
+fn armv8m_store_exclusive_without_load_exclusive_fails_for_all_forms() {
+    let forms = [
+        (0xE840_1200u32, "strex"),
+        (0xE8C0_1F42, "strexb"),
+        (0xE8C0_1F52, "strexh"),
+        (0xE8C0_1FE2, "stlex"),
+        (0xE8C0_1FC2, "stlexb"),
+        (0xE8C0_1FD2, "stlexh"),
+    ];
+    for (store, name) in forms {
+        let mut cpu = CortexM::new();
+        let mut bus = MockBus::new();
+        cpu.pc = 0x2000;
+        cpu.r0 = 0x3000;
+        cpu.r1 = 0xA5A5_A5A5;
+        cpu.r2 = 0;
+        bus.write_u32(0x3000, 0).unwrap();
+        run_test_instr(&mut cpu, &mut bus, store, true);
+        assert_eq!(
+            cpu.r2, 1,
+            "{name} without a reservation must report failure"
+        );
+        assert_eq!(bus.read_u32(0x3000).unwrap(), 0, "{name} must not store");
+    }
+}
+
+/// STLEXB/STLEXH with no open reservation fail and store nothing, like
+/// STREXB/STREXH (the monitor is Open Access after reset).
+#[test]
+fn armv8m_stlexb_fails_without_reservation() {
+    let mut cpu = CortexM::new();
+    let mut bus = MockBus::new();
+    cpu.pc = 0x2000;
+    cpu.r3 = 0x3000;
+    cpu.r2 = 1;
+    bus.write_u8(0x3000, 0).unwrap();
+    run_test_instr(&mut cpu, &mut bus, 0xE8C3_2FC1, true); // stlexb r1, r2, [r3]
+    assert_eq!(cpu.r1, 1, "no reservation: STLEXB reports failure");
+    assert_eq!(bus.read_u8(0x3000).unwrap(), 0, "and does not store");
+}
+
 /// LDREXH/STREXH (ARMv7-M A7.7.54 / A7.7.169, T1). CODAL's reference
 /// counter (`RefCounted::incr`, micro:bit V2) is the retry loop
 ///
@@ -463,6 +563,38 @@ fn cortex_m4_qadd16_and_usat_encode_clamped_coolant_byte() {
     assert_eq!(cpu.r0 & 0xffff, 130);
     run_test_instr(&mut cpu, &mut bus, 0xF3800008, true); // usat r0,#8,r0
     assert_eq!(cpu.r0, 130);
+}
+
+#[test]
+fn cortex_m4_ssat_saturates_signed_values_and_sets_q() {
+    let mut cpu = CortexM::new();
+    let mut bus = MockBus::new();
+
+    // ssat r0, #7, r3 saturates to 7 signed bits, range -64..63.
+    cpu.pc = 0x2200;
+    cpu.r3 = 40;
+    run_test_instr(&mut cpu, &mut bus, 0xF3030006, true);
+    assert_eq!(cpu.r0, 40);
+    assert_eq!(cpu.xpsr & (1 << 27), 0, "no saturation means Q stays clear");
+
+    // 100 clamps to 63 and sets Q.
+    cpu.pc = 0x2204;
+    cpu.r3 = 100;
+    run_test_instr(&mut cpu, &mut bus, 0xF3030006, true);
+    assert_eq!(cpu.r0, 63);
+    assert_ne!(cpu.xpsr & (1 << 27), 0, "clamping sets Q");
+
+    // -200 clamps to -64.
+    cpu.pc = 0x2208;
+    cpu.r3 = (-200i32) as u32;
+    run_test_instr(&mut cpu, &mut bus, 0xF3030006, true);
+    assert_eq!(cpu.r0 as i32, -64);
+
+    // LSL #4 then saturate: 100 << 4 = 1600 -> 63 in r1 (h2 bits 14-12 = 1).
+    cpu.pc = 0x220C;
+    cpu.r3 = 100;
+    run_test_instr(&mut cpu, &mut bus, 0xF3031106, true);
+    assert_eq!(cpu.r1, 63);
 }
 
 #[test]
@@ -3203,6 +3335,98 @@ fn t16_ram_fast_path_does_not_cache_an_unsupported_thumb32_prefix() {
     assert_eq!(bus.access_counts(), (0, 0, 0));
 }
 
+#[test]
+fn str_fast_path_obeys_ram_policy() {
+    let mut cpu = CortexM::new();
+    let mut bus = crate::bus::SystemBus::new();
+    assert!(
+        !bus.ram.data.is_empty(),
+        "SystemBus::new() must provide RAM for this test"
+    );
+    let ram_addr = bus.ram.base_addr as u32;
+    bus.memory_policy.ram = CpuWritePolicy::Fault;
+    // str r0, [r1]  (Thumb-16 0x6008)
+    assert!(bus.flash.write_u16(0x100, 0x6008));
+    cpu.r0 = 0xAB;
+    cpu.r1 = ram_addr;
+    cpu.pc = 0x100;
+
+    // The single-instruction fast decoder is only reached from the batch
+    // runner, so drive it directly: it must refuse rather than commit.
+    assert!(
+        !cpu.try_step_t16_ram_fast(&mut bus, true),
+        "the fast decoder must defer a policy-blocked store"
+    );
+    assert_eq!(
+        bus.ram.read_u32(u64::from(ram_addr)),
+        Some(0),
+        "the deferred fast path must not commit"
+    );
+
+    // The refusal defers to the slow interpreted path, which is gated: it
+    // records the violation and raises a precise data fault without committing.
+    let config = bus.config.clone();
+    let err = cpu
+        .step_internal(&mut bus, &[], &config)
+        .expect_err("the gated slow path must raise a memory violation");
+    assert!(matches!(
+        err,
+        SimulationError::MemoryViolation(a) if a == u64::from(ram_addr)
+    ));
+    assert_eq!(
+        bus.memory_policy.violations_ram, 1,
+        "the RAM policy gate must see the store (fast path must defer to the slow path)"
+    );
+    assert_eq!(
+        bus.ram.read_u32(u64::from(ram_addr)),
+        Some(0),
+        "the store must not commit"
+    );
+}
+
+/// Every T16 store shape in the per-op fast decoder must defer to the gated
+/// slow path when the RAM policy blocks CPU stores. A committed store here
+/// would bypass `memory_policy.violations_ram` entirely.
+#[test]
+fn t16_fast_decoder_defers_every_store_shape_under_ram_policy() {
+    let mut bus = crate::bus::SystemBus::new();
+    assert!(!bus.ram.data.is_empty());
+    let ram_addr = bus.ram.base_addr as u32;
+    // str r0,[r1]; strb r0,[r1]; strh r0,[r1]; str r0,[sp];
+    // str r0,[r1,r0]; strb r0,[r1,r0]; strh r0,[r1,r0]
+    // The register forms encode Rm = 0, and r0 = 0xAB, so their target is
+    // ram_addr + 0xAB; the immediate forms target ram_addr.
+    let cases: [(u16, u32); 7] = [
+        (0x6008, 0),
+        (0x7008, 0),
+        (0x8008, 0),
+        (0x9000, 0),
+        (0x5008, 0xAB),
+        (0x5408, 0xAB),
+        (0x5208, 0xAB),
+    ];
+    for (op, target) in cases {
+        let mut cpu = CortexM::new();
+        bus.memory_policy.ram = CpuWritePolicy::Fault;
+        cpu.r0 = 0xAB;
+        cpu.r1 = ram_addr;
+        cpu.sp = ram_addr;
+        let pc = cpu.pc;
+        let fast = cpu.execute_t16_fast_op(&mut bus, decode_thumb_16(op));
+        assert!(!fast, "op {op:#06x} must defer, not commit");
+        assert_eq!(cpu.pc, pc, "op {op:#06x} must not retire");
+        assert_eq!(
+            bus.ram.read_u32(u64::from(ram_addr.wrapping_add(target))),
+            Some(0),
+            "op {op:#06x} committed to RAM"
+        );
+        assert_eq!(
+            bus.memory_policy.violations_ram, 0,
+            "op {op:#06x}: the refusal itself must not record (the slow path does)"
+        );
+    }
+}
+
 /// `vldr s0, [pc, #0]` reads Align(PC+4, 4). The address of the instruction
 /// itself is 4 bytes too low and lands on the opcode, not the literal.
 #[test]
@@ -3395,6 +3619,111 @@ fn coalesced_t16_store_spin_matches_compiler_loop_from_every_phase_and_budget() 
         .opcode = 0x4668;
     assert_eq!(alias.run_t16_store_spin(&mut alias_bus, 40), 0);
     assert_eq!(alias_bus.access_counts(), (0, 0, 0));
+}
+
+/// The coalesced store-spin fold writes RAM through its closed-form
+/// recurrence, not through the bus, so it must refuse entirely when the CPU
+/// write policy makes the store illegal. The caller then falls back to
+/// per-instruction stepping, where the gated slow path records the fault.
+#[test]
+fn store_spin_refuses_under_ram_policy() {
+    const BASE: u64 = 0x100;
+    // str r0,[sp]; mov r1,sp; adds r0,r0,#1; b BASE
+    const PROGRAM: [u16; 4] = [0x9000, 0x4669, 0x1c40, 0xe7fb];
+
+    fn fixture() -> (CortexM, crate::bus::SystemBus) {
+        let mut cpu = CortexM::new();
+        cpu.pc = BASE as u32;
+        cpu.sp = 0x2000_0100;
+        cpu.r0 = 1;
+        let mut bus = crate::bus::SystemBus::new();
+        for (i, op) in PROGRAM.iter().enumerate() {
+            let pc = BASE as u32 + (i as u32 * 2);
+            assert!(bus.flash.write_u16(u64::from(pc), *op));
+            cpu.decode_cache[((pc >> 1) & 0x0fff) as usize] = Some(DecodeCacheEntry {
+                tag: pc,
+                instruction: decode_thumb_16(*op),
+                opcode: u32::from(*op),
+                pc_increment: 2,
+                cycles: 1,
+            });
+        }
+        (cpu, bus)
+    }
+
+    let (mut cpu, mut bus) = fixture();
+    bus.memory_policy.ram = CpuWritePolicy::Fault;
+    assert_eq!(
+        cpu.run_t16_store_spin(&mut bus, 40),
+        0,
+        "the fold must refuse rather than commit a policy-blocked store"
+    );
+    assert_eq!(
+        bus.ram.read_u32(0x2000_0100),
+        Some(0),
+        "the refused fold must not write RAM"
+    );
+    assert_eq!(bus.access_counts(), (0, 0, 0));
+
+    // The fallback per-instruction step goes through the gated slow path and
+    // must record the violation without committing the store.
+    let config = bus.config.clone();
+    let err = cpu
+        .step_internal(&mut bus, &[], &config)
+        .expect_err("the gated slow path must raise a memory violation");
+    assert!(matches!(err, SimulationError::MemoryViolation(0x2000_0100)));
+    assert_eq!(bus.memory_policy.violations_ram, 1);
+    assert_eq!(bus.ram.read_u32(0x2000_0100), Some(0));
+}
+
+/// The coalesced ADDS/STR/LDR/B fold commits its word store through a
+/// closed-form recurrence, not through the bus, so it must refuse entirely
+/// under a non-Allow RAM policy, exactly like the store-spin fold.
+#[test]
+fn ram_fast_coalescer_refuses_under_ram_policy() {
+    const BASE: u64 = 0x100;
+    const RAM: u64 = 0x2000_0000;
+    // adds r0,#1; str r0,[r1]; ldr r2,[r1]; b BASE
+    const PROGRAM: [u16; 4] = [0x3001, 0x6008, 0x680a, 0xe7fb];
+
+    fn fixture() -> (CortexM, crate::bus::SystemBus) {
+        let mut cpu = CortexM::new();
+        cpu.pc = BASE as u32;
+        cpu.r0 = 0;
+        cpu.r1 = RAM as u32;
+        let mut bus = crate::bus::SystemBus::new();
+        for (i, op) in PROGRAM.iter().enumerate() {
+            let pc = BASE as u32 + (i as u32 * 2);
+            assert!(bus.flash.write_u16(u64::from(pc), *op));
+            cpu.decode_cache[((pc >> 1) & 0x0fff) as usize] = Some(DecodeCacheEntry {
+                tag: pc,
+                instruction: decode_thumb_16(*op),
+                opcode: u32::from(*op),
+                pc_increment: 2,
+                cycles: 1,
+            });
+        }
+        (cpu, bus)
+    }
+
+    // Default policy: the fold coalesces the whole budget into one store.
+    let (mut cpu, mut bus) = fixture();
+    assert_eq!(cpu.run_t16_ram_fast(&mut bus, 40, true), 40);
+    assert_eq!(bus.ram.read_u32(RAM), Some(10));
+
+    let (mut cpu, mut bus) = fixture();
+    bus.memory_policy.ram = CpuWritePolicy::Fault;
+    assert_eq!(
+        cpu.run_t16_ram_fast(&mut bus, 40, true),
+        0,
+        "the fold must refuse rather than commit a policy-blocked store"
+    );
+    assert_eq!(
+        bus.ram.read_u32(RAM),
+        Some(0),
+        "the refused fold must not write RAM"
+    );
+    assert_eq!(bus.access_counts(), (0, 0, 0));
 }
 
 #[test]
@@ -3594,4 +3923,407 @@ fn vmov_two_core_registers_moves_and_stores_nothing() {
     assert_eq!((cpu.fpu_s[4], cpu.fpu_s[5]), (0x1111_2222, 0x3333_4444));
     run_test_instr(&mut cpu, &mut bus, 0xEC532A12, true);
     assert_eq!((cpu.r2, cpu.r3), (0x1111_2222, 0x3333_4444));
+}
+
+#[cfg(feature = "jit")]
+#[test]
+fn jit_gate_refuses_non_default_ram_policy() {
+    let cpu = CortexM::new();
+    let mut bus = crate::bus::SystemBus::new();
+    assert!(cpu.jit_gate_allows(&bus, &[]));
+    bus.memory_policy.ram = CpuWritePolicy::Warn;
+    assert!(!cpu.jit_gate_allows(&bus, &[]));
+    bus.memory_policy.ram = CpuWritePolicy::Fault;
+    assert!(!cpu.jit_gate_allows(&bus, &[]));
+}
+
+#[cfg(feature = "jit")]
+#[test]
+fn jit_gate_refuses_an_armed_debug_watch() {
+    let cpu = CortexM::new();
+    let mut bus = crate::bus::SystemBus::new();
+    assert!(cpu.jit_gate_allows(&bus, &[]));
+    assert!(bus.add_debug_watch(0x2000_0100, 4, false, true));
+    assert!(
+        !cpu.jit_gate_allows(&bus, &[]),
+        "a compiled block writes raw RAM and must not bypass a watch"
+    );
+}
+
+#[test]
+fn test_exec_wide_strh_strb_imm() {
+    let mut cpu = CortexM::new();
+    let mut bus = MockBus::new();
+    cpu.pc = 0x2000;
+    cpu.r12 = 0x3000;
+    cpu.r3 = 0x0000_1234;
+    run_test_instr(&mut cpu, &mut bus, 0xF8AC_306A, true); // strh.w r3,[r12,#106]
+    assert_eq!(bus.read_u16(0x3000 + 106).unwrap(), 0x1234);
+    cpu.r2 = 0x3000;
+    cpu.r3 = 0x0000_00AB;
+    run_test_instr(&mut cpu, &mut bus, 0xF882_3020, true); // strb.w r3,[r2,#32]
+    assert_eq!(bus.read_u8(0x3000 + 32).unwrap(), 0xAB);
+}
+
+#[test]
+fn test_exec_wide_ldrh_ldrb_imm() {
+    let mut cpu = CortexM::new();
+    let mut bus = MockBus::new();
+    cpu.pc = 0x2000;
+    bus.write_u16(0x3050, 0xBEEF).unwrap();
+    cpu.r2 = 0x3000;
+    run_test_instr(&mut cpu, &mut bus, 0xF8B2_3050, true); // ldrh.w r3,[r2,#80]
+    assert_eq!(cpu.r3, 0xBEEF);
+    bus.write_u8(0x3070, 0x5A).unwrap();
+    run_test_instr(&mut cpu, &mut bus, 0xF892_3070, true); // ldrb.w r3,[r2,#112]
+    assert_eq!(cpu.r3, 0x5A);
+}
+
+/// Load Thumb halfwords at `base` and point the PC at them.
+fn load_thumb(cpu: &mut CortexM, bus: &mut MockBus, base: u32, code: &[u16]) {
+    for (i, hw) in code.iter().enumerate() {
+        bus.write_u16(base as u64 + 2 * i as u64, *hw).unwrap();
+    }
+    cpu.pc = base;
+}
+
+fn step(cpu: &mut CortexM, bus: &mut MockBus) {
+    cpu.step_internal(bus, &[], &bus.config.clone()).unwrap();
+}
+
+/// Armv8.1-M low-overhead loop, as GCC 13 emits it for `-mcpu=cortex-m85`
+/// (Zephyr's `z_arm_interrupt_init`). Encodings from GNU as
+/// `-march=armv8.1-m.main`:
+///
+/// ```text
+///   0: 2000       movs r0, #0
+///   2: 2105       movs r1, #5
+///   4: f041 e001  dls  lr, r1
+///   8: 3001       adds r0, #1
+///   a: f00f c803  le   lr, 8
+///   e: ...
+/// ```
+///
+/// Before LOB was decoded, DLS/LE fell into the legacy branch/hint fallback
+/// and were skipped, so the body ran once (r0 == 1).
+#[test]
+fn armv81m_dls_le_loop_runs_the_body_lr_times() {
+    let mut cpu = CortexM::new();
+    let mut bus = MockBus::new();
+    load_thumb(
+        &mut cpu,
+        &mut bus,
+        0x1000,
+        &[
+            0x2000, 0x2105, 0xF041, 0xE001, 0x3001, 0xF00F, 0xC803, 0xBF00,
+        ],
+    );
+    for _ in 0..3 {
+        step(&mut cpu, &mut bus);
+    }
+    assert_eq!(cpu.lr, 5, "DLS loads the loop count");
+    assert_eq!(cpu.pc, 0x1008);
+    // Five iterations of ADDS + LE.
+    for _ in 0..10 {
+        step(&mut cpu, &mut bus);
+    }
+    assert_eq!(cpu.read_reg(0), 5, "body ran LR times");
+    assert_eq!(cpu.pc, 0x100E, "fell through after the last LE");
+    assert_eq!(cpu.lr, 1, "LE leaves LR at 1 on exit");
+}
+
+/// WLS skips the loop when the count is zero, else loads LR and falls in.
+///   e: f042 c801  wls lr, r2, 14
+///  12: 3007       adds r0, #7
+///  14: bf00       nop
+#[test]
+fn armv81m_wls_skips_a_zero_trip_loop() {
+    for (count, pc_after, lr) in [(0u32, 0x1014u32, 0xAAAAu32), (3, 0x1012, 3)] {
+        let mut cpu = CortexM::new();
+        let mut bus = MockBus::new();
+        load_thumb(
+            &mut cpu,
+            &mut bus,
+            0x100E,
+            &[0xF042, 0xC801, 0x3007, 0xBF00],
+        );
+        cpu.write_reg(2, count);
+        cpu.lr = 0xAAAA;
+        step(&mut cpu, &mut bus);
+        assert_eq!(cpu.pc, pc_after, "count {count}");
+        assert_eq!(cpu.lr, lr, "count {count}");
+    }
+}
+
+/// `LE <label>` (no LR, F=1) branches back unconditionally and leaves LR.
+///  32: f02f c817  le 8
+#[test]
+fn armv81m_le_without_lr_always_branches() {
+    let mut cpu = CortexM::new();
+    let mut bus = MockBus::new();
+    load_thumb(&mut cpu, &mut bus, 0x1032, &[0xF02F, 0xC817]);
+    cpu.lr = 1;
+    step(&mut cpu, &mut bus);
+    assert_eq!(cpu.pc, 0x1008);
+    assert_eq!(cpu.lr, 1);
+}
+
+/// CSEL family (Armv8.1-M), GNU as encodings. Register 15 in Rn/Rm is the
+/// zero register, which is how CSET/CSETM/CINC are encoded. Zephyr's
+/// `z_cbvprintf_impl` uses `csinc r3, r3, r3, eq` (ea53 9303).
+#[test]
+fn armv81m_csel_family_selects_and_transforms() {
+    use crate::decoder::arm::{decode_thumb_32, Instruction};
+    // (h1, h2, Z flag, N/V for lt/ge/mi, expected rd value, rd)
+    let cases: [(u16, u16, bool, bool, u32, u8); 11] = [
+        (0xEA54, 0x8305, true, false, 40, 3), // csel  r3, r4, r5, eq (Z=1 -> r4)
+        (0xEA54, 0x8305, false, false, 50, 3), // csel  r3, r4, r5, eq (Z=0 -> r5)
+        (0xEA54, 0x9315, true, false, 51, 3), // csinc r3, r4, r5, ne (Z=1 -> r5+1)
+        (0xEA54, 0xA3B5, false, false, !50u32, 3), // csinv r3, r4, r5, lt (N=V -> ~r5)
+        (0xEA54, 0xB3A5, false, true, 50u32.wrapping_neg(), 3), // csneg r3, r4, r5, ge (N!=V -> -r5)
+        (0xEA54, 0xB3A5, false, false, 40, 3),                  // csneg ge true -> r4
+        (0xEA5F, 0x961F, true, false, 1, 6),                    // cset  r6, eq (Z=1 -> 1)
+        (0xEA5F, 0x961F, false, false, 0, 6),                   // cset  r6, eq (Z=0 -> 0)
+        (0xEA5F, 0xA60F, false, false, 0xFFFF_FFFF, 6),         // csetm r6, ne (Z=0 -> -1)
+        (0xEA58, 0x9758, false, false, 80, 7), // cinc  r7, r8, mi = csinc pl (N=0: mi false -> r8)
+        (0xEA58, 0x9758, false, true, 81, 7),  // cinc  r7, r8, mi (N=1: mi true -> r8+1)
+    ];
+    for (i, (h1, h2, z, nv, want, rd)) in cases.into_iter().enumerate() {
+        assert!(
+            matches!(decode_thumb_32(h1, h2), Instruction::Csel { .. }),
+            "{h1:04x} {h2:04x}"
+        );
+        let mut cpu = CortexM::new();
+        let mut bus = MockBus::new();
+        cpu.write_reg(4, 40);
+        cpu.write_reg(5, 50);
+        cpu.write_reg(8, 80);
+        // Z at bit 30; N (bit 31) set and V (bit 28) clear when `nv`.
+        cpu.xpsr = 0x0100_0000 | (if z { 1 << 30 } else { 0 }) | (if nv { 1 << 31 } else { 0 });
+        load_thumb(&mut cpu, &mut bus, 0x2000 + 0x10 * i as u32, &[h1, h2]);
+        step(&mut cpu, &mut bus);
+        assert_eq!(cpu.read_reg(rd), want, "case {i}: {h1:04x} {h2:04x}");
+        assert_eq!(cpu.pc, 0x2004 + 0x10 * i as u32, "case {i}");
+    }
+}
+
+/// ORRS.W (shifted register) shares H1 with CSEL and keeps decoding as a
+/// data-processing op when H2[15] is 0.
+#[test]
+fn armv81m_csel_decode_leaves_orrs_w_alone() {
+    use crate::decoder::arm::{decode_thumb_32, Instruction};
+    // orrs.w r3, r3, r3, lsl #4 = ea53 1303
+    assert!(!matches!(
+        decode_thumb_32(0xEA53, 0x1303),
+        Instruction::Csel { .. }
+    ));
+}
+
+use crate::Peripheral as _;
+
+fn fp_core() -> (
+    CortexM,
+    MockBus,
+    Arc<crate::peripherals::cortex_m_fpu::FpContextState>,
+) {
+    let mut cpu = CortexM::new();
+    let fp = Arc::new(crate::peripherals::cortex_m_fpu::FpContextState::default());
+    cpu.set_shared_fp_context(fp.clone());
+    (cpu, MockBus::new(), fp)
+}
+
+/// `ExecuteFPCheck`: with FPCCR.ASPEN (reset value) the first FP instruction
+/// sets CONTROL.FPCA and starts FPSCR's mode bits from FPDSCR; a core without
+/// the FP extension block never sets FPCA.
+#[test]
+fn fp_instruction_sets_control_fpca_with_aspen() {
+    let (mut cpu, mut bus, _fp) = fp_core();
+    cpu.pc = 0x1000;
+    cpu.fpscr = 0x8000_0000; // N flag, kept
+                             // MOV r0 is not an FP instruction: FPCA stays clear.
+    run_test_instr(&mut cpu, &mut bus, 0x0000_2000, false); // movs r0, #0
+    assert_eq!(cpu.control & 0x4, 0);
+    // VMOV.F32 s0, s1 = EEB0 0A60.
+    run_test_instr(&mut cpu, &mut bus, 0xEEB0_0A60, true);
+    assert_eq!(cpu.control & 0x4, 0x4, "first FP instruction sets FPCA");
+    assert_eq!(cpu.fpscr, 0x8000_0000, "FPDSCR (0) mode bits, flags kept");
+
+    // MRS r2, CONTROL (F3EF 8214) shows FPCA; MSR CONTROL, r0 (F380 8814)
+    // clears it.
+    run_test_instr(&mut cpu, &mut bus, 0xF3EF_8214, true);
+    assert_eq!(cpu.r2 & 0x4, 0x4);
+    cpu.r0 = 0;
+    run_test_instr(&mut cpu, &mut bus, 0xF380_8814, true);
+    assert_eq!(cpu.control & 0x4, 0, "MSR CONTROL writes FPCA");
+
+    // Without the FP extension block FPCA is never set nor visible.
+    let mut plain = CortexM::new();
+    let mut bus2 = MockBus::new();
+    plain.pc = 0x1000;
+    run_test_instr(&mut plain, &mut bus2, 0xEEB0_0A60, true);
+    assert_eq!(plain.control & 0x4, 0);
+    plain.r0 = 0x4;
+    run_test_instr(&mut plain, &mut bus2, 0xF380_8814, true);
+    assert_eq!(plain.control & 0x4, 0, "no FP extension: FPCA not writable");
+}
+
+/// ASPEN clear: FP instructions leave FPCA alone (software manages it).
+#[test]
+fn fp_instruction_without_aspen_leaves_fpca_clear() {
+    let (mut cpu, mut bus, _fp) = fp_core();
+    let mut dev = crate::peripherals::cortex_m_fpu::CortexMFpu::default();
+    // Share the device's state with the core, then clear ASPEN through MMIO.
+    cpu.set_shared_fp_context(dev.fp_context_state().unwrap());
+    dev.write_u32(0x04, 0).unwrap();
+    cpu.pc = 0x1000;
+    run_test_instr(&mut cpu, &mut bus, 0xEEB0_0A60, true);
+    assert_eq!(cpu.control & 0x4, 0);
+}
+
+/// The first FP instruction of a context takes FPSCR[26:22] from FPDSCR.
+#[test]
+fn new_fp_context_starts_from_fpdscr() {
+    let (mut cpu, mut bus, _fp) = fp_core();
+    let mut dev = crate::peripherals::cortex_m_fpu::CortexMFpu::default();
+    cpu.set_shared_fp_context(dev.fp_context_state().unwrap());
+    dev.write_u32(0x0C, 1 << 24).unwrap(); // FPDSCR.FZ
+    cpu.pc = 0x1000;
+    cpu.fpscr = 1 << 25; // DN, replaced
+    run_test_instr(&mut cpu, &mut bus, 0xEEB0_0A60, true);
+    assert_eq!(cpu.fpscr, 1 << 24);
+    // FPCA now set: a second FP instruction does not reload it.
+    cpu.fpscr = 1 << 25;
+    run_test_instr(&mut cpu, &mut bus, 0xEEB0_0A60, true);
+    assert_eq!(cpu.fpscr, 1 << 25);
+}
+
+/// With CONTROL.FPCA set, exception entry stacks the extended 0x68-byte frame
+/// (S0-S15 at +0x20, FPSCR at +0x60), returns EXC_RETURN with bit 4 clear,
+/// records FPCAR and clears FPCA; `bx lr` with that value unstacks S0-S15 and
+/// FPSCR and sets FPCA again.
+#[test]
+fn fp_context_extended_frame_round_trip() {
+    let (mut cpu, mut bus, fp) = fp_core();
+    cpu.pc = 0x1000;
+    cpu.sp = 0x8000; // Thread/MSP
+    cpu.control = 0x4; // FPCA
+    cpu.r0 = 0x1111_1111;
+    for i in 0..32 {
+        cpu.fpu_s[i] = 0x3F80_0000 + i as u32;
+    }
+    cpu.fpscr = 0x0100_0000;
+
+    take_exception(&mut cpu, &mut bus, 16, 0x2000);
+
+    assert_eq!(cpu.lr, 0xFFFF_FFE9, "Thread/MSP, extended frame");
+    assert_eq!(cpu.sp, 0x8000 - 0x68);
+    assert_eq!(cpu.control & 0x4, 0, "handler starts without FP context");
+    assert_eq!(bus.read_u32(0x8000 - 0x68).unwrap(), 0x1111_1111, "r0");
+    for i in 0..16u64 {
+        assert_eq!(
+            bus.read_u32(0x8000 - 0x68 + 0x20 + 4 * i).unwrap(),
+            0x3F80_0000 + i as u32,
+            "S{i} slot"
+        );
+    }
+    assert_eq!(bus.read_u32(0x8000 - 0x68 + 0x60).unwrap(), 0x0100_0000);
+    assert_eq!(fp.fpcar(), 0x8000 - 0x68 + 0x20);
+
+    // The handler clobbers caller-saved S0-S15 and FPSCR.
+    for i in 0..16 {
+        cpu.fpu_s[i] = 0;
+    }
+    cpu.fpu_s[20] = 0xAAAA_AAAA; // callee-saved: not part of the frame
+    cpu.fpscr = 0;
+
+    // bx lr (4770) with LR = 0xFFFFFFE9.
+    run_test_instr(&mut cpu, &mut bus, 0x0000_4770, false);
+    assert_eq!(cpu.active_exception, 0, "returned to Thread mode");
+    assert_eq!(cpu.pc, 0x1000);
+    assert_eq!(cpu.sp, 0x8000, "SP advanced by 0x68");
+    assert_eq!(cpu.r0, 0x1111_1111);
+    for i in 0..16 {
+        assert_eq!(cpu.fpu_s[i], 0x3F80_0000 + i as u32, "S{i} restored");
+    }
+    assert_eq!(cpu.fpu_s[20], 0xAAAA_AAAA);
+    assert_eq!(cpu.fpscr, 0x0100_0000);
+    assert_eq!(cpu.control & 0x4, 0x4, "FPCA = NOT EXC_RETURN[4]");
+}
+
+/// FPCA clear on an FP-extension core: basic frame, EXC_RETURN bit 4 set, and
+/// returning with it leaves FPCA clear.
+#[test]
+fn fp_core_without_fp_context_stacks_basic_frame() {
+    let (mut cpu, mut bus, _fp) = fp_core();
+    cpu.pc = 0x1000;
+    cpu.sp = 0x8000;
+    take_exception(&mut cpu, &mut bus, 16, 0x2000);
+    assert_eq!(cpu.lr, 0xFFFF_FFF9);
+    assert_eq!(cpu.sp, 0x8000 - 32);
+    // An FP instruction in the handler gives it an FP context...
+    cpu.pc = 0x2000;
+    run_test_instr(&mut cpu, &mut bus, 0xEEB0_0A60, true);
+    assert_eq!(cpu.control & 0x4, 0x4);
+    // ...which the return to a basic-frame context drops.
+    run_test_instr(&mut cpu, &mut bus, 0x0000_4770, false);
+    assert_eq!(cpu.sp, 0x8000);
+    assert_eq!(cpu.control & 0x4, 0);
+}
+
+/// TT (Armv8-M) decodes out of STREX's space and reports the MPU region of
+/// the address: MREGION[7:0] + MRVALID[16], R[18], RW[19].
+#[test]
+fn tt_reports_the_mpu_region() {
+    use crate::peripherals::armv8m_mpu::Armv8mMpu;
+    assert_eq!(
+        crate::decoder::decode_thumb_32(0xE840, 0xF300),
+        crate::decoder::arm::Instruction::Tt {
+            rd: 3,
+            rn: 0,
+            t: false,
+            a: false
+        }
+    );
+    assert_eq!(
+        crate::decoder::decode_thumb_32(0xE841, 0xF2C0),
+        crate::decoder::arm::Instruction::Tt {
+            rd: 2,
+            rn: 1,
+            t: true,
+            a: true
+        }
+    );
+
+    let mut mpu = Armv8mMpu::new(8);
+    let mut cpu = CortexM::new();
+    let mut bus = MockBus::new();
+    cpu.set_shared_mpu_v8(mpu.armv8m_mpu_state().unwrap());
+    cpu.pc = 0x1000;
+    cpu.r0 = 0x2000_0100;
+
+    // tt r3, r0 with the MPU off: no region, default map R/RW.
+    run_test_instr(&mut cpu, &mut bus, 0xE840_F300, true);
+    assert_eq!(cpu.r3, (1 << 18) | (1 << 19));
+
+    // Region 5 = 0x2000_0000..0x2000_FFFF, AP = RW any; MPU on.
+    mpu.write_u32(0x08, 5).unwrap(); // RNR
+    mpu.write_u32(0x0C, 0x2000_0002).unwrap(); // RBAR
+    mpu.write_u32(0x10, 0x2000_FFE1).unwrap(); // RLAR, EN
+                                               // CTRL.ENABLE + PRIVDEFENA: the enforcing MPU must still let the
+                                               // privileged test code at 0x1000 be fetched.
+    mpu.write_u32(0x04, 5).unwrap();
+    run_test_instr(&mut cpu, &mut bus, 0xE840_F300, true);
+    assert_eq!(cpu.r3, 5 | (1 << 16) | (1 << 18) | (1 << 19));
+
+    // Outside every region: MRVALID clear.
+    cpu.r0 = 0x3000_0000;
+    run_test_instr(&mut cpu, &mut bus, 0xE840_F300, true);
+    assert_eq!(cpu.r3 & ((1 << 16) | 0xFF), 0);
+
+    // No region file at all: TT never reports a region.
+    let mut plain = CortexM::new();
+    plain.pc = 0x1000;
+    plain.r0 = 0x2000_0100;
+    run_test_instr(&mut plain, &mut bus, 0xE840_F300, true);
+    assert_eq!(plain.r3 & (1 << 16), 0);
 }

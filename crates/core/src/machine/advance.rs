@@ -151,10 +151,27 @@ impl<C: Cpu> Machine<C> {
         }
         // The checked SAMD profile is fixed at bus construction. Every other
         // machine enters the loop monomorphised without its hooks.
-        if self.bus.samd_native_quiescent_chunks {
-            return self.advance_checked(request);
+        let report = if self.bus.samd_native_quiescent_chunks {
+            self.advance_checked(request)
+        } else {
+            self.advance_inner::<Ordinary>(request, None)
+        };
+        // Flush the derived device clock at the run boundary; the per-step
+        // throttle otherwise stops one µs short when the last call lands just
+        // before `total_cycles` reaches the boundary.
+        if !request.is_single() {
+            self.advance_central_i2c_time();
         }
-        self.advance_inner::<Ordinary>(request, None)
+        if report.is_err() {
+            // A faulted access must not leave its attempt-latch behind to
+            // stop some later run at a stale address. See `bus/debug_watch.rs`
+            // for the attempt-latch contract.
+            let _ = self.bus.take_debug_watch_hit();
+        }
+        // A deferred secondary never outlives the call: whoever looks at the
+        // machine next sees the core where lockstep would have left it.
+        self.end_secondary_defer(self.total_cycles);
+        report
     }
 
     #[inline(never)]
@@ -199,17 +216,25 @@ impl<C: Cpu> Machine<C> {
         if let Some(report) = self.supply_gate(&request)? {
             return Ok(report);
         }
-        if !self.bus.samd_native_quiescent_chunks {
-            return self.advance_inner::<Ordinary>(request, Some(&mut run_window));
+        let report = if !self.bus.samd_native_quiescent_chunks {
+            self.advance_inner::<Ordinary>(request, Some(&mut run_window))
+        } else {
+            // External backends do not implement the checked-chunk/elapsed-tick
+            // contract. Preserve their original window and service grid, then
+            // restore the default for the ordinary in-tree entry.
+            self.quiescent_chunk_planned = false;
+            self.quiescent_chunk_retired = false;
+            self.quiescent_chunk_enabled = false;
+            let report = self.advance_inner::<CheckedChunks>(request, Some(&mut run_window));
+            self.quiescent_chunk_enabled = true;
+            report
+        };
+        if report.is_err() {
+            // Same rule as [`Self::advance`]: a faulted access discards its
+            // attempt-latch so it cannot stop a later run at a stale address.
+            let _ = self.bus.take_debug_watch_hit();
         }
-        // External backends do not implement the checked-chunk/elapsed-tick
-        // contract. Preserve their original window and service grid, then
-        // restore the default for the ordinary in-tree entry.
-        self.quiescent_chunk_planned = false;
-        self.quiescent_chunk_retired = false;
-        self.quiescent_chunk_enabled = false;
-        let report = self.advance_inner::<CheckedChunks>(request, Some(&mut run_window));
-        self.quiescent_chunk_enabled = true;
+        self.end_secondary_defer(self.total_cycles);
         report
     }
 
@@ -265,6 +290,22 @@ impl<C: Cpu> Machine<C> {
                 }
             }
 
+            // A debug watch that latched during the previous window stops the
+            // run BEFORE anything else this iteration would report. The
+            // watched access already committed (the boundary commit above is
+            // what made it real), so the event wins over the fuel and cycle
+            // limits checked below and over a breakpoint at the new pc.
+            // `plan_cpu_window` pins the window to one instruction while any
+            // watch is armed, so at most the access's own instruction retired
+            // between the latch and here. With no watch armed, a latch a
+            // removed watch left behind is dropped instead of reported — a
+            // stale stop must never end a later run.
+            if let Some(addr) = self.bus.take_debug_watch_hit() {
+                if !self.bus.debug_watches.is_empty() {
+                    return Ok(state.report(AdvanceStop::Watchpoint(addr), elapsed));
+                }
+            }
+
             if request.breakpoint_policy() == BreakpointPolicy::Honor {
                 let pc = self.cpu.get_pc();
                 let aligned = pc & !1;
@@ -309,6 +350,7 @@ impl<C: Cpu> Machine<C> {
                 return Ok(state.report(AdvanceStop::CycleLimit, elapsed));
             }
 
+            self.check_secondary_defer();
             if request.idle_policy() == IdlePolicy::Configured {
                 let fuel_remaining = request
                     .limits()
@@ -341,6 +383,11 @@ impl<C: Cpu> Machine<C> {
                     }
                     continue;
                 }
+                // The primary is busy: run it alone beside a secondary whose
+                // proven poll loop is deferred, rather than in lockstep.
+                if !request.is_single() {
+                    self.try_defer_secondary(skip_limit.unwrap_or(1 << 30));
+                }
             }
 
             self.bus.reset_mmio_activity_counters();
@@ -352,9 +399,8 @@ impl<C: Cpu> Machine<C> {
             let mode = if request.is_single() {
                 ExecutionMode::SingleDirect
             } else {
-                let secondary_active = self.cpu_secondary.as_ref().is_some_and(|sec| {
-                    sec.secondary_execution_state() == crate::SecondaryExecutionState::Active
-                });
+                let secondary_active =
+                    self.secondary_plan_state() == Some(crate::SecondaryExecutionState::Active);
                 if secondary_active {
                     ExecutionMode::RunDual
                 } else {

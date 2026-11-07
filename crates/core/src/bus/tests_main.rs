@@ -60,6 +60,81 @@ fn esp32s3_spi_latches_display_dc_from_gpio_output() {
 }
 
 #[test]
+fn gpio_edge_snapshot_skips_generic_gpio_without_edge_observers() {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    #[derive(Debug)]
+    struct EdgeObserver;
+
+    impl crate::Peripheral for EdgeObserver {
+        fn read(&self, _offset: u64) -> crate::SimResult<u8> {
+            Ok(0)
+        }
+
+        fn write(&mut self, _offset: u64, _value: u8) -> crate::SimResult<()> {
+            Ok(())
+        }
+
+        fn observes_gpio_edges(&self) -> bool {
+            true
+        }
+    }
+
+    #[derive(Debug)]
+    struct CountedGpio(Arc<AtomicUsize>);
+
+    impl crate::Peripheral for CountedGpio {
+        fn read(&self, _offset: u64) -> crate::SimResult<u8> {
+            Ok(0)
+        }
+
+        fn write(&mut self, _offset: u64, _value: u8) -> crate::SimResult<()> {
+            Ok(())
+        }
+
+        fn read_gpio_input_word(&self) -> u32 {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            0
+        }
+    }
+
+    fn bus_with_observer(include_observer: bool) -> (SystemBus, Arc<AtomicUsize>) {
+        let mut bus = SystemBus::empty();
+        let gpio_reads = Arc::new(AtomicUsize::new(0));
+        bus.add_peripheral(
+            "gpio",
+            0x6000_4000,
+            0x1000,
+            None,
+            Box::new(CountedGpio(gpio_reads.clone())),
+        );
+        if include_observer {
+            bus.add_peripheral("edge-observer", 0x1000, 0x100, None, Box::new(EdgeObserver));
+        }
+        (bus, gpio_reads)
+    }
+
+    let (mut without_observer, gpio_reads_without_observer) = bus_with_observer(false);
+    without_observer.tick_peripherals_fully();
+    assert_eq!(
+        gpio_reads_without_observer.load(Ordering::SeqCst),
+        0,
+        "a generic GPIO name alone must not trigger per-tick input polling"
+    );
+
+    let (mut with_observer, gpio_reads_with_observer) = bus_with_observer(true);
+    with_observer.tick_peripherals_fully();
+    assert_eq!(
+        gpio_reads_with_observer.load(Ordering::SeqCst),
+        1,
+        "GPIO edge observers still need the input snapshot"
+    );
+}
+
+#[test]
 fn timer_poll_coalesce_uses_peripheral_access_class_not_chip_names() {
     let mut bus = SystemBus::new();
     // Systimer model owns ESP register map; bus only sees MmioAccessClass.
@@ -395,9 +470,105 @@ fn declarative_peripherals_enter_legacy_tick_set_only_while_events_are_pending()
     );
 }
 
-#[cfg(feature = "event-scheduler")]
 #[test]
-fn scheduler_peripherals_do_not_enter_legacy_tick_index() {
+fn an_inactive_walk_model_is_deleted_and_restored_when_enabled() {
+    #[derive(Debug)]
+    struct ToggleWalk {
+        active: bool,
+    }
+    impl crate::Peripheral for ToggleWalk {
+        fn read(&self, _offset: u64) -> SimResult<u8> {
+            Ok(0)
+        }
+        fn write(&mut self, _offset: u64, value: u8) -> SimResult<()> {
+            self.active = value != 0;
+            Ok(())
+        }
+        fn legacy_tick_active(&self) -> bool {
+            self.active
+        }
+        fn legacy_tick_dynamic(&self) -> bool {
+            true
+        }
+    }
+
+    let mut bus = SystemBus::empty();
+    bus.add_peripheral(
+        "toggle-walk",
+        0x1000,
+        0x100,
+        None,
+        Box::new(ToggleWalk { active: false }),
+    );
+    bus.legacy_walk_disabled = bus.derive_walk_deletable();
+    assert!(
+        bus.legacy_walk_disabled,
+        "an inactive walk-capable model must not keep the walk alive"
+    );
+    assert!(bus.legacy_tick_indices.is_empty());
+
+    bus.write_u8(0x1000, 1).unwrap();
+    assert!(
+        !bus.legacy_walk_disabled,
+        "enabling the model must bring the walk back"
+    );
+    assert_eq!(bus.legacy_tick_indices, vec![0]);
+
+    bus.write_u8(0x1000, 0).unwrap();
+    assert!(
+        bus.legacy_walk_disabled,
+        "disabling the last walk-capable model must delete the walk again"
+    );
+    assert!(bus.legacy_tick_indices.is_empty());
+
+    bus.add_peripheral(
+        "new-toggle-walk",
+        0x2000,
+        0x100,
+        None,
+        Box::new(ToggleWalk { active: true }),
+    );
+    assert!(
+        !bus.legacy_walk_disabled,
+        "adding an active walk-capable model must restore the walk"
+    );
+    assert_eq!(bus.legacy_tick_indices, vec![1]);
+}
+
+#[test]
+fn structurally_walk_free_models_do_not_enter_the_legacy_tick_index() {
+    #[derive(Debug)]
+    struct WalkFree;
+    impl crate::Peripheral for WalkFree {
+        fn read(&self, _offset: u64) -> SimResult<u8> {
+            Ok(0)
+        }
+        fn write(&mut self, _offset: u64, _value: u8) -> SimResult<()> {
+            Ok(())
+        }
+        fn needs_legacy_walk(&self) -> bool {
+            false
+        }
+    }
+
+    let mut bus = SystemBus::empty();
+    bus.add_peripheral("walk-free", 0x1000, 0x100, None, Box::new(WalkFree));
+
+    assert!(bus.legacy_tick_indices.is_empty());
+    assert_eq!(bus.legacy_tick_candidate_mask, vec![false]);
+    bus.legacy_walk_disabled = true;
+    assert!(!bus.refresh_legacy_tick_index(0));
+    assert!(bus.legacy_tick_indices.is_empty());
+    assert!(bus.legacy_walk_disabled);
+    assert!(bus.derive_walk_deletable());
+}
+
+fn event_scheduler_feature_enabled() -> bool {
+    cfg!(feature = "event-scheduler")
+}
+
+#[test]
+fn scheduler_peripherals_follow_build_mode_legacy_tick_index() {
     #[derive(Debug)]
     struct SchedulerPeripheral;
     impl crate::Peripheral for SchedulerPeripheral {
@@ -407,6 +578,10 @@ fn scheduler_peripherals_do_not_enter_legacy_tick_index() {
 
         fn write(&mut self, _offset: u64, _value: u8) -> SimResult<()> {
             Ok(())
+        }
+
+        fn needs_legacy_walk(&self) -> bool {
+            false
         }
 
         fn legacy_tick_active(&self) -> bool {
@@ -421,14 +596,94 @@ fn scheduler_peripherals_do_not_enter_legacy_tick_index() {
     let mut bus = SystemBus::empty();
     bus.add_peripheral("sched", 0x1000, 0x100, None, Box::new(SchedulerPeripheral));
 
+    let scheduler_enabled = event_scheduler_feature_enabled();
+    let expected_indices = if scheduler_enabled {
+        Vec::new()
+    } else {
+        vec![0]
+    };
+    assert_eq!(bus.legacy_tick_candidate_mask, vec![!scheduler_enabled]);
     assert!(
-        bus.legacy_tick_indices.is_empty(),
-        "scheduler-owned peripherals are advanced by the event scheduler, not the legacy tick walk"
+        bus.legacy_tick_indices == expected_indices,
+        "scheduler-owned peripherals use the event scheduler when enabled and their active legacy fallback otherwise"
     );
-    assert!(!bus.refresh_legacy_tick_index(0));
+    bus.legacy_walk_disabled = true;
+    bus.legacy_tick_indices.clear();
+    assert_eq!(bus.refresh_legacy_tick_index(0), !scheduler_enabled);
+    assert_eq!(bus.legacy_walk_disabled, scheduler_enabled);
     assert!(
-        bus.legacy_tick_indices.is_empty(),
-        "refresh must not reinsert scheduler-owned peripherals into the legacy tick walk"
+        bus.legacy_tick_indices == expected_indices,
+        "refresh must preserve the build-specific scheduler or legacy fallback path"
+    );
+}
+
+#[test]
+fn dynamic_scheduler_mode_transition_respects_build_mode() {
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+
+    #[derive(Debug)]
+    struct DynamicScheduler(Arc<AtomicBool>, Arc<AtomicBool>);
+    impl crate::Peripheral for DynamicScheduler {
+        fn read(&self, _offset: u64) -> SimResult<u8> {
+            Ok(0)
+        }
+
+        fn write(&mut self, _offset: u64, _value: u8) -> SimResult<()> {
+            Ok(())
+        }
+
+        fn needs_legacy_walk(&self) -> bool {
+            true
+        }
+
+        fn legacy_tick_active(&self) -> bool {
+            self.1.load(Ordering::Relaxed)
+        }
+
+        fn legacy_tick_dynamic(&self) -> bool {
+            true
+        }
+
+        fn uses_scheduler(&self) -> bool {
+            self.0.load(Ordering::Relaxed)
+        }
+    }
+
+    let scheduler_enabled = event_scheduler_feature_enabled();
+    let scheduler_mode = Arc::new(AtomicBool::new(false));
+    let tick_active = Arc::new(AtomicBool::new(false));
+    let mut bus = SystemBus::empty();
+    bus.add_peripheral(
+        "dynamic-scheduler",
+        0x1000,
+        0x100,
+        None,
+        Box::new(DynamicScheduler(
+            Arc::clone(&scheduler_mode),
+            Arc::clone(&tick_active),
+        )),
+    );
+    bus.legacy_walk_disabled = bus.derive_walk_deletable();
+    assert!(bus.legacy_walk_disabled);
+    assert!(bus.legacy_tick_indices.is_empty());
+    assert_eq!(bus.legacy_tick_candidate_mask, vec![true]);
+
+    // Mirrors SysTick switching to scheduler mode when its cycle clock
+    // attaches, while a stale legacy activity predicate still reports work.
+    scheduler_mode.store(true, Ordering::Relaxed);
+    tick_active.store(true, Ordering::Relaxed);
+    assert_eq!(bus.refresh_legacy_tick_index(0), !scheduler_enabled);
+    assert_eq!(bus.legacy_walk_disabled, scheduler_enabled);
+    assert_eq!(
+        bus.legacy_tick_indices,
+        if scheduler_enabled {
+            Vec::new()
+        } else {
+            vec![0]
+        }
     );
 }
 
@@ -767,6 +1022,7 @@ fn test_from_config_attaches_adxl345_external_device_to_i2c() {
         schema_version: "1.0".to_string(),
         reset_vector_offset: 0,
         flash_boot_alias: true,
+        coprocessors: Vec::new(),
         atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
         ns_alias_offset: None,
         memory_regions: Vec::new(),
@@ -777,10 +1033,12 @@ fn test_from_config_attaches_adxl345_external_device_to_i2c() {
         flash: MemoryRange {
             base: 0x0800_0000,
             size: 64000,
+            cpu_writes: labwired_config::CpuWritePolicy::Allow,
         },
         ram: MemoryRange {
             base: 0x2000_0000,
             size: 20000,
+            cpu_writes: labwired_config::CpuWritePolicy::Allow,
         },
         peripherals: vec![PeripheralConfig {
             id: "i2c1".to_string(),
@@ -834,6 +1092,38 @@ fn test_from_config_attaches_adxl345_external_device_to_i2c() {
     let any = bus.peripherals[i2c_idx].dev.as_any_mut().unwrap();
     let i2c = any.downcast_mut::<crate::peripherals::i2c::I2c>().unwrap();
     assert_eq!(i2c.attached_devices().len(), 1);
+
+    #[derive(Debug)]
+    struct ToggleWalk(bool);
+    impl crate::Peripheral for ToggleWalk {
+        fn read(&self, _offset: u64) -> SimResult<u8> {
+            Ok(0)
+        }
+        fn write(&mut self, _offset: u64, value: u8) -> SimResult<()> {
+            self.0 = value != 0;
+            Ok(())
+        }
+        fn legacy_tick_active(&self) -> bool {
+            self.0
+        }
+        fn legacy_tick_dynamic(&self) -> bool {
+            true
+        }
+    }
+
+    bus.add_peripheral(
+        "toggle-walk",
+        0x5000,
+        0x100,
+        None,
+        Box::new(ToggleWalk(false)),
+    );
+    bus.write_u8(0x5000, 1).unwrap();
+    bus.write_u8(0x5000, 0).unwrap();
+    assert!(
+        !bus.legacy_walk_disabled,
+        "manifest walk_deleted: false must pin the legacy walk on after dynamic activity drains"
+    );
 }
 
 #[test]
@@ -1550,36 +1840,33 @@ external_devices:
     );
 }
 
-/// Wiring guard for the ESP32-C3 behavioral I²C: a chip yaml declaring
-/// `i2c0` as `esp32c3_i2c` plus a system manifest declaring a BMP280 on
-/// `connection: "i2c0"` must attach that slave to the behavioral controller
-/// AND let a register-driven write-then-read transaction reach it. This is
-/// the path the MLX90640 will use (different device type, same wiring).
-#[test]
-fn test_from_config_attaches_bmp280_to_esp32c3_i2c0() {
-    use labwired_config::{
-        Arch, ChipDescriptor, ExternalDevice, MemoryRange, PeripheralConfig, SystemManifest,
-    };
-    use std::collections::{BTreeMap, HashMap};
+/// The ESP32-C3 wiring both external-I²C attach tests share: an `esp32c3_i2c`
+/// i2c0 at 0x6001_3000 plus the GPIO matrix block, on a minimal RISC-V chip.
+fn esp32c3_i2c0_chip(name: &str) -> ChipDescriptor {
+    use labwired_config::{Arch, MemoryRange, PeripheralConfig};
+    use std::collections::HashMap;
 
-    let chip = ChipDescriptor {
+    ChipDescriptor {
         schema_version: "1.0".to_string(),
         reset_vector_offset: 0,
         flash_boot_alias: true,
+        coprocessors: Vec::new(),
         atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
         ns_alias_offset: None,
         memory_regions: Vec::new(),
-        name: "esp32c3-i2c-test".to_string(),
+        name: name.to_string(),
         cpu_hz: 0,
         arch: Arch::RiscV,
         core: None,
         flash: MemoryRange {
             base: 0x4200_0000,
             size: 4000000,
+            cpu_writes: labwired_config::CpuWritePolicy::Allow,
         },
         ram: MemoryRange {
             base: 0x3FC8_0000,
             size: 400000,
+            cpu_writes: labwired_config::CpuWritePolicy::Allow,
         },
         peripherals: vec![
             PeripheralConfig {
@@ -1609,26 +1896,33 @@ fn test_from_config_attaches_bmp280_to_esp32c3_i2c0() {
         gpio_input_thresholds: None,
         supply_monitor: None,
         include: None,
-    };
+    }
+}
 
-    let mut config = HashMap::new();
-    config.insert(
-        "i2c_address".to_string(),
-        serde_yaml::Value::Number(0x76.into()),
-    );
-    let manifest = SystemManifest {
+/// The attach manifest both external-I²C tests share: an external device on
+/// `connection: "i2c0"` and the arduino-style SDA=GPIO4 / SCL=GPIO5 route.
+/// (Named apart from the `manifest_with_external_device` error-path helper.)
+fn esp32c3_i2c0_manifest(
+    id: &str,
+    ty: &str,
+    config: std::collections::HashMap<String, serde_yaml::Value>,
+) -> SystemManifest {
+    use labwired_config::ExternalDevice;
+    use std::collections::{BTreeMap, HashMap};
+
+    SystemManifest {
         parts: Vec::new(),
         cosim_models: Vec::new(),
         motor_models: Vec::new(),
         walk_deleted: Some(false),
         schema_version: "1.0".to_string(),
-        name: "esp32c3-bmp280-test".to_string(),
+        name: format!("esp32c3-{ty}-test"),
         chip: "../chips/esp32c3.yaml".to_string(),
         cpu_hz: None,
         memory_overrides: HashMap::new(),
         external_devices: vec![ExternalDevice {
-            id: "bmp280".to_string(),
-            r#type: "bmp280".to_string(),
+            id: id.to_string(),
+            r#type: ty.to_string(),
             connection: "i2c0".to_string(),
             channel: None,
             route: BTreeMap::from([
@@ -1641,12 +1935,13 @@ fn test_from_config_attaches_bmp280_to_esp32c3_i2c0() {
         debug_uart: None,
         wifi_ap: None,
         peripherals: Vec::new(),
-    };
+    }
+}
 
-    let mut bus = SystemBus::from_config(&chip, &manifest).unwrap();
-    // `Wire.begin(4, 5)`-equivalent GPIO-matrix setup: both output and
-    // input paths must select the manifest's physical pads before the
-    // attached BMP280 can answer.
+/// `Wire.begin(4, 5)`-equivalent GPIO-matrix setup: both output and input
+/// paths must select the manifest's physical pads before an attached device
+/// can answer.
+fn gpio_matrix_wire_begin(bus: &mut SystemBus) {
     bus.write_u32(0x6000_4000 + 0x24, (1 << 4) | (1 << 5))
         .unwrap();
     bus.write_u32(0x6000_4000 + 0x554 + 4 * 4, 54).unwrap();
@@ -1655,6 +1950,15 @@ fn test_from_config_attaches_bmp280_to_esp32c3_i2c0() {
         .unwrap();
     bus.write_u32(0x6000_4000 + 0x154 + 53 * 4, (1 << 6) | 5)
         .unwrap();
+}
+
+/// Wire the pads, downcast the registered `i2c0` to the behavioral C3
+/// controller and pin it off the scheduler. These tests drive the bit engine
+/// directly via `tick_elapsed` (the legacy walk path) with no Machine event
+/// loop, so the direct drive must advance the engine (byte-identical to the
+/// scheduler path, which a Machine drives via `drain_scheduler_events`).
+fn drive_c3_i2c(bus: &mut SystemBus) -> &mut crate::peripherals::esp32c3::i2c::Esp32c3I2c {
+    gpio_matrix_wire_begin(bus);
     let i2c_idx = bus
         .find_peripheral_index_by_name("i2c0")
         .expect("i2c0 must be registered");
@@ -1662,11 +1966,40 @@ fn test_from_config_attaches_bmp280_to_esp32c3_i2c0() {
     let i2c = any
         .downcast_mut::<crate::peripherals::esp32c3::i2c::Esp32c3I2c>()
         .expect("i2c0 must be the behavioral Esp32c3I2c controller");
-    // This test drives the bit engine directly via `tick_elapsed` (the
-    // legacy walk path) with no Machine event loop; pin it off the scheduler
-    // so the direct drive advances the engine (byte-identical to the
-    // scheduler path, which a Machine drives via `drain_scheduler_events`).
     i2c.force_legacy_walk();
+    i2c
+}
+
+/// Clock the command list bit-by-bit over simulated cycles to completion.
+fn run_c3_i2c_to_completion(i2c: &mut crate::peripherals::esp32c3::i2c::Esp32c3I2c) {
+    for _ in 0..1_000_000 {
+        if !i2c.engine_active() {
+            break;
+        }
+        i2c.tick_elapsed(64);
+    }
+    assert!(!i2c.engine_active(), "C3 I2C bit engine must complete");
+}
+
+/// Wiring guard for the ESP32-C3 behavioral I²C: a chip yaml declaring
+/// `i2c0` as `esp32c3_i2c` plus a system manifest declaring a BMP280 on
+/// `connection: "i2c0"` must attach that slave to the behavioral controller
+/// AND let a register-driven write-then-read transaction reach it. This is
+/// the path the MLX90640 will use (different device type, same wiring).
+#[test]
+fn test_from_config_attaches_bmp280_to_esp32c3_i2c0() {
+    use std::collections::HashMap;
+
+    let chip = esp32c3_i2c0_chip("esp32c3-i2c-test");
+    let mut config = HashMap::new();
+    config.insert(
+        "i2c_address".to_string(),
+        serde_yaml::Value::Number(0x76.into()),
+    );
+    let manifest = esp32c3_i2c0_manifest("bmp280", "bmp280", config);
+
+    let mut bus = SystemBus::from_config(&chip, &manifest).unwrap();
+    let i2c = drive_c3_i2c(&mut bus);
 
     // Drive the canonical register-pointer read of the BMP280 chip-id
     // (0xD0 → 0x58), exactly as C3 firmware would, through the controller's
@@ -1683,15 +2016,7 @@ fn test_from_config_attaches_bmp280_to_esp32c3_i2c0() {
     i2c.write_u32(0x1C, 0xED).unwrap(); // addr+R
     i2c.write_u32(0x04, 1 << 5).unwrap(); // TRANS_START
 
-    // The C3 controller now clocks the command list bit-by-bit over
-    // simulated cycles; run the engine to completion.
-    for _ in 0..1_000_000 {
-        if !i2c.engine_active() {
-            break;
-        }
-        i2c.tick_elapsed(64);
-    }
-    assert!(!i2c.engine_active(), "C3 I2C bit engine must complete");
+    run_c3_i2c_to_completion(i2c);
 
     // Address must have matched (no NACK at bit 10) and the chip-id byte
     // must round-trip out of the RX FIFO.
@@ -1717,60 +2042,9 @@ fn test_from_config_attaches_bmp280_to_esp32c3_i2c0() {
 /// real bus-attached controller.
 #[test]
 fn test_from_config_attaches_mlx90640_to_esp32c3_i2c0_and_reads_eeprom() {
-    use labwired_config::{
-        Arch, ChipDescriptor, ExternalDevice, MemoryRange, PeripheralConfig, SystemManifest,
-    };
-    use std::collections::{BTreeMap, HashMap};
+    use std::collections::HashMap;
 
-    let chip = ChipDescriptor {
-        schema_version: "1.0".to_string(),
-        reset_vector_offset: 0,
-        flash_boot_alias: true,
-        atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
-        ns_alias_offset: None,
-        memory_regions: Vec::new(),
-        name: "esp32c3-mlx-test".to_string(),
-        cpu_hz: 0,
-        arch: Arch::RiscV,
-        core: None,
-        flash: MemoryRange {
-            base: 0x4200_0000,
-            size: 4000000,
-        },
-        ram: MemoryRange {
-            base: 0x3FC8_0000,
-            size: 400000,
-        },
-        peripherals: vec![
-            PeripheralConfig {
-                id: "i2c0".to_string(),
-                r#type: "esp32c3_i2c".to_string(),
-                base_address: 0x6001_3000,
-                size: Some("4KB".to_string()),
-                irq: None,
-                irq_controller: None,
-                config: HashMap::new(),
-                clock: None,
-            },
-            PeripheralConfig {
-                id: "gpio".to_string(),
-                r#type: "esp32c3_gpio".to_string(),
-                base_address: 0x6000_4000,
-                size: Some("4KB".to_string()),
-                irq: None,
-                irq_controller: None,
-                config: HashMap::new(),
-                clock: None,
-            },
-        ],
-        pins: Default::default(),
-        analog_pins: Default::default(),
-        io_voltage_v: None,
-        gpio_input_thresholds: None,
-        supply_monitor: None,
-        include: None,
-    };
-
+    let chip = esp32c3_i2c0_chip("esp32c3-mlx-test");
     let mut config = HashMap::new();
     config.insert(
         "i2c_address".to_string(),
@@ -1780,52 +2054,10 @@ fn test_from_config_attaches_mlx90640_to_esp32c3_i2c0_and_reads_eeprom() {
         "ambient_c".to_string(),
         serde_yaml::Value::Number(25.0.into()),
     );
-    let manifest = SystemManifest {
-        parts: Vec::new(),
-        cosim_models: Vec::new(),
-        motor_models: Vec::new(),
-        walk_deleted: Some(false),
-        schema_version: "1.0".to_string(),
-        name: "esp32c3-mlx90640-test".to_string(),
-        chip: "../chips/esp32c3.yaml".to_string(),
-        cpu_hz: None,
-        memory_overrides: HashMap::new(),
-        external_devices: vec![ExternalDevice {
-            id: "thermal_cam".to_string(),
-            r#type: "mlx90640".to_string(),
-            connection: "i2c0".to_string(),
-            channel: None,
-            route: BTreeMap::from([
-                ("sda".to_string(), "GPIO4".to_string()),
-                ("scl".to_string(), "GPIO5".to_string()),
-            ]),
-            config,
-        }],
-        board_io: Vec::new(),
-        debug_uart: None,
-        wifi_ap: None,
-        peripherals: Vec::new(),
-    };
+    let manifest = esp32c3_i2c0_manifest("thermal_cam", "mlx90640", config);
 
     let mut bus = SystemBus::from_config(&chip, &manifest).unwrap();
-    bus.write_u32(0x6000_4000 + 0x24, (1 << 4) | (1 << 5))
-        .unwrap();
-    bus.write_u32(0x6000_4000 + 0x554 + 4 * 4, 54).unwrap();
-    bus.write_u32(0x6000_4000 + 0x554 + 5 * 4, 53).unwrap();
-    bus.write_u32(0x6000_4000 + 0x154 + 54 * 4, (1 << 6) | 4)
-        .unwrap();
-    bus.write_u32(0x6000_4000 + 0x154 + 53 * 4, (1 << 6) | 5)
-        .unwrap();
-    let i2c_idx = bus
-        .find_peripheral_index_by_name("i2c0")
-        .expect("i2c0 must be registered");
-    let any = bus.peripherals[i2c_idx].dev.as_any_mut().unwrap();
-    let i2c = any
-        .downcast_mut::<crate::peripherals::esp32c3::i2c::Esp32c3I2c>()
-        .expect("i2c0 must be the behavioral Esp32c3I2c controller");
-    // Direct `tick_elapsed` drive (legacy walk path), no Machine event loop:
-    // pin off the scheduler so the direct drive advances the engine.
-    i2c.force_legacy_walk();
+    let i2c = drive_c3_i2c(&mut bus);
 
     // 16-bit-addressed read of EEPROM word 0x2430: write the 2-byte big-
     // endian register address (0x24, 0x30), repeated-start, read 2 bytes
@@ -1842,15 +2074,7 @@ fn test_from_config_attaches_mlx90640_to_esp32c3_i2c0_and_reads_eeprom() {
     i2c.write_u32(0x1C, 0x67).unwrap(); // addr+R (0x33<<1 | 1)
     i2c.write_u32(0x04, 1 << 5).unwrap(); // TRANS_START
 
-    // The C3 controller now clocks the command list bit-by-bit over
-    // simulated cycles; run the engine to completion.
-    for _ in 0..1_000_000 {
-        if !i2c.engine_active() {
-            break;
-        }
-        i2c.tick_elapsed(64);
-    }
-    assert!(!i2c.engine_active(), "C3 I2C bit engine must complete");
+    run_c3_i2c_to_completion(i2c);
 
     let int_raw = i2c.read_u32(0x20).unwrap();
     assert_eq!(
@@ -2682,6 +2906,7 @@ external_devices:
     );
     assert_eq!(bus.motor_snapshots()[0].id, "wheel");
 
+    bus.write_u32(0x4800_0000, 0x55).unwrap(); // PA0..PA3 output mode
     bus.write_u32(0x4800_0014, 0b1011).unwrap(); // PWM, direction, enable
     bus.set_current_cycle(100);
     bus.tick_peripherals_with_costs();
@@ -2753,6 +2978,7 @@ motor_models:
     );
 
     // PWM + enable high, direction constant-true, brake constant-false → forward.
+    bus.write_u32(0x4800_0000, 0x41).unwrap(); // PA0/PA3 output mode
     bus.write_u32(0x4800_0014, 0b1001).unwrap(); // PA0 pwm, PA3 enable
     bus.set_current_cycle(100);
     bus.tick_peripherals_with_costs();
@@ -2807,6 +3033,7 @@ motor_models:
     )
     .unwrap();
     let mut bus = SystemBus::from_config(&chip, &manifest).unwrap();
+    bus.write_u32(0x4800_0000, 0x05).unwrap(); // PA0/PA1 output mode
     bus.write_u32(0x4800_0014, 0b0011).unwrap(); // PWM + direction, no enable bit
     bus.set_current_cycle(100);
     bus.tick_peripherals_with_costs();
@@ -2902,6 +3129,7 @@ motor_models:
     );
 
     let mut bus = SystemBus::from_config(&chip, &manifest).unwrap();
+    bus.write_u32(0x4800_0000, 0x55).unwrap(); // PA0..PA3 output mode
     bus.write_u32(0x4800_0014, 0b1011).unwrap(); // PWM, direction, enable
 
     let initial = bus.motor_snapshots();
@@ -2950,6 +3178,7 @@ motor_models:
     };
     config.simulation_clock_hz = 40_000_000;
     let mut slower_clock = SystemBus::from_config(&chip, &slower_clock_manifest).unwrap();
+    slower_clock.write_u32(0x4800_0000, 0x55).unwrap();
     slower_clock.write_u32(0x4800_0014, 0b1011).unwrap();
     slower_clock.set_current_cycle(100);
     slower_clock.tick_peripherals_with_costs();
@@ -3014,6 +3243,7 @@ motor_models:
         SystemBus::from_config(&chip, &manifest).unwrap()
     }
     fn configure_pwm(bus: &mut SystemBus) {
+        bus.write_u32(0x4800_0000, 1).unwrap(); // PA0 output, feedback pads input
         bus.write_u32(0x4800_0014, 1).unwrap(); // inverter enable
         bus.write_u32(0x4001_2c2c, 99).unwrap(); // ARR
         bus.write_u32(0x4001_2c38, 25).unwrap(); // CH2: complementary low
@@ -3338,6 +3568,7 @@ fn chip_with_i2c_and_uart() -> labwired_config::ChipDescriptor {
         schema_version: "1.0".to_string(),
         reset_vector_offset: 0,
         flash_boot_alias: true,
+        coprocessors: Vec::new(),
         atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
         ns_alias_offset: None,
         memory_regions: Vec::new(),
@@ -3348,10 +3579,12 @@ fn chip_with_i2c_and_uart() -> labwired_config::ChipDescriptor {
         flash: MemoryRange {
             base: 0x0800_0000,
             size: 64000,
+            cpu_writes: labwired_config::CpuWritePolicy::Allow,
         },
         ram: MemoryRange {
             base: 0x2000_0000,
             size: 20000,
+            cpu_writes: labwired_config::CpuWritePolicy::Allow,
         },
         peripherals: vec![
             PeripheralConfig {
@@ -3615,6 +3848,11 @@ fn test_wide_ram_store_observation_is_explicit_and_exact() {
 fn test_flash_boot_alias_read_and_write() {
     let mut bus = SystemBus {
         flash: LinearMemory::new_erased(256, 0x0800_0000),
+        memory_policy: crate::bus::memory_policy::MemoryPolicyState::default(),
+        memory_policy_bypass: false,
+        debug_watches: Vec::new(),
+        debug_watch_hit: Cell::new(None),
+        debug_watch_host_bypass: std::cell::Cell::new(false),
         ram: LinearMemory::new(256, 0x2000_0000),
         extra_mem: Vec::new(),
         peripherals: Vec::new(),
@@ -3625,6 +3863,7 @@ fn test_flash_boot_alias_read_and_write() {
         observers: Vec::new(),
         config: crate::SimulationConfig::default(),
         cpu_hz: 0,
+        riscv_profile: crate::cpu::RiscVCoreProfile::Esp32C3,
         bit_band_enabled: true,
         pending_cpu_irqs: [0; 2],
         esp32s3_irq_audit: None,
@@ -3634,6 +3873,8 @@ fn test_flash_boot_alias_read_and_write() {
         rp2040_io_bank0_idx: None,
         rp2040_sio_idx: None,
         pad_control_links: Vec::new(),
+        rtc_io_link: None,
+        pad_claim_links: Default::default(),
         pin_port_ids: Vec::new(),
         rcc_idx: None,
         clock_gating_bypass: false,
@@ -3656,22 +3897,30 @@ fn test_flash_boot_alias_read_and_write() {
         pending_schedule: Vec::new(),
         freerunning_timer_poll_mmio: std::cell::Cell::new(0),
         side_effecting_mmio: std::cell::Cell::new(0),
+        batch_stop: Default::default(),
         memory_reads: std::cell::Cell::new(0),
         memory_writes: std::cell::Cell::new(0),
         peripheral_accesses: std::cell::Cell::new(0),
         poll_streak: std::cell::Cell::new((u32::MAX, 0, 0, 0)),
         legacy_walk_disabled: false,
         samd_native_quiescent_chunks: false,
+        legacy_walk_pinned_on: false,
+        legacy_tick_candidate_mask: Vec::new(),
+        legacy_tick_peer_write_indices: Vec::new(),
         reset_vector_offset: 0,
         flash_boot_alias: true,
         atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
+        rp2350_dcp: None,
+        rp2350_gpioc: false,
         ns_alias_offset: None,
+        mem_aliases: Vec::new(),
         resident_tick_interval_override: None,
         gpio_devices: Vec::new(),
         device_pin_pads: Vec::new(),
         device_open_drain_nets: Default::default(),
         observed: Vec::new(),
         motors: Vec::new(),
+        ina219_senses: Vec::new(),
         motor_cycle_anchor: 0,
         analog_inputs: Vec::new(),
         analog_muxes: Vec::new(),
@@ -3692,6 +3941,7 @@ fn test_flash_boot_alias_read_and_write() {
         flash_error_flags_idx: None,
         u5_program_gate_idx: None,
         nrf52_nvmc_idx: None,
+        flash_store_owner_idx: None,
         samd51_nvmctrl_idx: None,
         bus_trace: bus_trace::new_log(),
         logic_tap: crate::logic_capture::LogicTap::new(),
@@ -3724,6 +3974,11 @@ fn h5_flash_bus(gate: bool) -> SystemBus {
     flash.data.iter_mut().for_each(|b| *b = 0xFF);
     let mut bus = SystemBus {
         flash,
+        memory_policy: crate::bus::memory_policy::MemoryPolicyState::default(),
+        memory_policy_bypass: false,
+        debug_watches: Vec::new(),
+        debug_watch_hit: Cell::new(None),
+        debug_watch_host_bypass: std::cell::Cell::new(false),
         ram: LinearMemory::new(256, 0x2000_0000),
         extra_mem: Vec::new(),
         peripherals: vec![PeripheralEntry {
@@ -3747,6 +4002,7 @@ fn h5_flash_bus(gate: bool) -> SystemBus {
         observers: Vec::new(),
         config: crate::SimulationConfig::default(),
         cpu_hz: 0,
+        riscv_profile: crate::cpu::RiscVCoreProfile::Esp32C3,
         bit_band_enabled: false,
         pending_cpu_irqs: [0; 2],
         esp32s3_irq_audit: None,
@@ -3756,6 +4012,8 @@ fn h5_flash_bus(gate: bool) -> SystemBus {
         rp2040_io_bank0_idx: None,
         rp2040_sio_idx: None,
         pad_control_links: Vec::new(),
+        rtc_io_link: None,
+        pad_claim_links: Default::default(),
         pin_port_ids: Vec::new(),
         rcc_idx: None,
         clock_gating_bypass: false,
@@ -3778,22 +4036,30 @@ fn h5_flash_bus(gate: bool) -> SystemBus {
         pending_schedule: Vec::new(),
         freerunning_timer_poll_mmio: std::cell::Cell::new(0),
         side_effecting_mmio: std::cell::Cell::new(0),
+        batch_stop: Default::default(),
         memory_reads: std::cell::Cell::new(0),
         memory_writes: std::cell::Cell::new(0),
         peripheral_accesses: std::cell::Cell::new(0),
         poll_streak: std::cell::Cell::new((u32::MAX, 0, 0, 0)),
         legacy_walk_disabled: false,
         samd_native_quiescent_chunks: false,
+        legacy_walk_pinned_on: false,
+        legacy_tick_candidate_mask: Vec::new(),
+        legacy_tick_peer_write_indices: Vec::new(),
         reset_vector_offset: 0,
         flash_boot_alias: true,
         atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
+        rp2350_dcp: None,
+        rp2350_gpioc: false,
         ns_alias_offset: None,
+        mem_aliases: Vec::new(),
         resident_tick_interval_override: None,
         gpio_devices: Vec::new(),
         device_pin_pads: Vec::new(),
         device_open_drain_nets: Default::default(),
         observed: Vec::new(),
         motors: Vec::new(),
+        ina219_senses: Vec::new(),
         motor_cycle_anchor: 0,
         analog_inputs: Vec::new(),
         analog_muxes: Vec::new(),
@@ -3814,6 +4080,7 @@ fn h5_flash_bus(gate: bool) -> SystemBus {
         flash_error_flags_idx: None,
         u5_program_gate_idx: None,
         nrf52_nvmc_idx: None,
+        flash_store_owner_idx: None,
         samd51_nvmctrl_idx: None,
         bus_trace: bus_trace::new_log(),
         logic_tap: crate::logic_capture::LogicTap::new(),
@@ -3999,6 +4266,11 @@ fn h5_rww_bus(gate: bool) -> SystemBus {
     flash.data.iter_mut().for_each(|b| *b = 0xFF);
     let mut bus = SystemBus {
         flash,
+        memory_policy: crate::bus::memory_policy::MemoryPolicyState::default(),
+        memory_policy_bypass: false,
+        debug_watches: Vec::new(),
+        debug_watch_hit: Cell::new(None),
+        debug_watch_host_bypass: std::cell::Cell::new(false),
         ram: LinearMemory::new(0x1000, 0x2000_0000),
         extra_mem: Vec::new(),
         peripherals: vec![PeripheralEntry {
@@ -4022,6 +4294,7 @@ fn h5_rww_bus(gate: bool) -> SystemBus {
         observers: Vec::new(),
         config: crate::SimulationConfig::default(),
         cpu_hz: 0,
+        riscv_profile: crate::cpu::RiscVCoreProfile::Esp32C3,
         bit_band_enabled: false,
         pending_cpu_irqs: [0; 2],
         esp32s3_irq_audit: None,
@@ -4031,6 +4304,8 @@ fn h5_rww_bus(gate: bool) -> SystemBus {
         rp2040_io_bank0_idx: None,
         rp2040_sio_idx: None,
         pad_control_links: Vec::new(),
+        rtc_io_link: None,
+        pad_claim_links: Default::default(),
         pin_port_ids: Vec::new(),
         rcc_idx: None,
         clock_gating_bypass: false,
@@ -4053,22 +4328,30 @@ fn h5_rww_bus(gate: bool) -> SystemBus {
         pending_schedule: Vec::new(),
         freerunning_timer_poll_mmio: std::cell::Cell::new(0),
         side_effecting_mmio: std::cell::Cell::new(0),
+        batch_stop: Default::default(),
         memory_reads: std::cell::Cell::new(0),
         memory_writes: std::cell::Cell::new(0),
         peripheral_accesses: std::cell::Cell::new(0),
         poll_streak: std::cell::Cell::new((u32::MAX, 0, 0, 0)),
         legacy_walk_disabled: false,
         samd_native_quiescent_chunks: false,
+        legacy_walk_pinned_on: false,
+        legacy_tick_candidate_mask: Vec::new(),
+        legacy_tick_peer_write_indices: Vec::new(),
         reset_vector_offset: 0,
         flash_boot_alias: true,
         atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
+        rp2350_dcp: None,
+        rp2350_gpioc: false,
         ns_alias_offset: None,
+        mem_aliases: Vec::new(),
         resident_tick_interval_override: None,
         gpio_devices: Vec::new(),
         device_pin_pads: Vec::new(),
         device_open_drain_nets: Default::default(),
         observed: Vec::new(),
         motors: Vec::new(),
+        ina219_senses: Vec::new(),
         motor_cycle_anchor: 0,
         analog_inputs: Vec::new(),
         analog_muxes: Vec::new(),
@@ -4089,6 +4372,7 @@ fn h5_rww_bus(gate: bool) -> SystemBus {
         flash_error_flags_idx: None,
         u5_program_gate_idx: None,
         nrf52_nvmc_idx: None,
+        flash_store_owner_idx: None,
         samd51_nvmctrl_idx: None,
         bus_trace: bus_trace::new_log(),
         logic_tap: crate::logic_capture::LogicTap::new(),
@@ -4264,6 +4548,11 @@ fn rww_gate_off_same_bank_erase_succeeds_silently() {
 fn test_peripheral_range_index_lookup() {
     let mut bus = SystemBus {
         flash: LinearMemory::new_erased(256, 0x0800_0000),
+        memory_policy: crate::bus::memory_policy::MemoryPolicyState::default(),
+        memory_policy_bypass: false,
+        debug_watches: Vec::new(),
+        debug_watch_hit: Cell::new(None),
+        debug_watch_host_bypass: std::cell::Cell::new(false),
         ram: LinearMemory::new(256, 0x2000_0000),
         extra_mem: Vec::new(),
         peripherals: vec![
@@ -4293,6 +4582,7 @@ fn test_peripheral_range_index_lookup() {
         observers: Vec::new(),
         config: crate::SimulationConfig::default(),
         cpu_hz: 0,
+        riscv_profile: crate::cpu::RiscVCoreProfile::Esp32C3,
         bit_band_enabled: true,
         pending_cpu_irqs: [0; 2],
         esp32s3_irq_audit: None,
@@ -4302,6 +4592,8 @@ fn test_peripheral_range_index_lookup() {
         rp2040_io_bank0_idx: None,
         rp2040_sio_idx: None,
         pad_control_links: Vec::new(),
+        rtc_io_link: None,
+        pad_claim_links: Default::default(),
         pin_port_ids: Vec::new(),
         rcc_idx: None,
         clock_gating_bypass: false,
@@ -4324,22 +4616,30 @@ fn test_peripheral_range_index_lookup() {
         pending_schedule: Vec::new(),
         freerunning_timer_poll_mmio: std::cell::Cell::new(0),
         side_effecting_mmio: std::cell::Cell::new(0),
+        batch_stop: Default::default(),
         memory_reads: std::cell::Cell::new(0),
         memory_writes: std::cell::Cell::new(0),
         peripheral_accesses: std::cell::Cell::new(0),
         poll_streak: std::cell::Cell::new((u32::MAX, 0, 0, 0)),
         legacy_walk_disabled: false,
         samd_native_quiescent_chunks: false,
+        legacy_walk_pinned_on: false,
+        legacy_tick_candidate_mask: Vec::new(),
+        legacy_tick_peer_write_indices: Vec::new(),
         reset_vector_offset: 0,
         flash_boot_alias: true,
         atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
+        rp2350_dcp: None,
+        rp2350_gpioc: false,
         ns_alias_offset: None,
+        mem_aliases: Vec::new(),
         resident_tick_interval_override: None,
         gpio_devices: Vec::new(),
         device_pin_pads: Vec::new(),
         device_open_drain_nets: Default::default(),
         observed: Vec::new(),
         motors: Vec::new(),
+        ina219_senses: Vec::new(),
         motor_cycle_anchor: 0,
         analog_inputs: Vec::new(),
         analog_muxes: Vec::new(),
@@ -4360,6 +4660,7 @@ fn test_peripheral_range_index_lookup() {
         flash_error_flags_idx: None,
         u5_program_gate_idx: None,
         nrf52_nvmc_idx: None,
+        flash_store_owner_idx: None,
         samd51_nvmctrl_idx: None,
         bus_trace: bus_trace::new_log(),
         logic_tap: crate::logic_capture::LogicTap::new(),
@@ -4391,6 +4692,7 @@ fn test_execute_dma_copy_request() {
         val: 0,
         direction: crate::DmaDirection::Copy,
         transform: None,
+        remaining: None,
     };
     bus.execute_dma(&[req]).unwrap();
 
@@ -4401,6 +4703,11 @@ fn test_execute_dma_copy_request() {
 fn test_dma_tick_executes_copy_and_raises_irq() {
     let mut bus = SystemBus {
         flash: LinearMemory::new_erased(256, 0x0800_0000),
+        memory_policy: crate::bus::memory_policy::MemoryPolicyState::default(),
+        memory_policy_bypass: false,
+        debug_watches: Vec::new(),
+        debug_watch_hit: Cell::new(None),
+        debug_watch_host_bypass: std::cell::Cell::new(false),
         ram: LinearMemory::new(256, 0x2000_0000),
         extra_mem: Vec::new(),
         peripherals: vec![PeripheralEntry {
@@ -4419,6 +4726,7 @@ fn test_dma_tick_executes_copy_and_raises_irq() {
         observers: Vec::new(),
         config: crate::SimulationConfig::default(),
         cpu_hz: 0,
+        riscv_profile: crate::cpu::RiscVCoreProfile::Esp32C3,
         bit_band_enabled: true,
         pending_cpu_irqs: [0; 2],
         esp32s3_irq_audit: None,
@@ -4428,6 +4736,8 @@ fn test_dma_tick_executes_copy_and_raises_irq() {
         rp2040_io_bank0_idx: None,
         rp2040_sio_idx: None,
         pad_control_links: Vec::new(),
+        rtc_io_link: None,
+        pad_claim_links: Default::default(),
         pin_port_ids: Vec::new(),
         rcc_idx: None,
         clock_gating_bypass: false,
@@ -4450,22 +4760,30 @@ fn test_dma_tick_executes_copy_and_raises_irq() {
         pending_schedule: Vec::new(),
         freerunning_timer_poll_mmio: std::cell::Cell::new(0),
         side_effecting_mmio: std::cell::Cell::new(0),
+        batch_stop: Default::default(),
         memory_reads: std::cell::Cell::new(0),
         memory_writes: std::cell::Cell::new(0),
         peripheral_accesses: std::cell::Cell::new(0),
         poll_streak: std::cell::Cell::new((u32::MAX, 0, 0, 0)),
         legacy_walk_disabled: false,
         samd_native_quiescent_chunks: false,
+        legacy_walk_pinned_on: false,
+        legacy_tick_candidate_mask: Vec::new(),
+        legacy_tick_peer_write_indices: Vec::new(),
         reset_vector_offset: 0,
         flash_boot_alias: true,
         atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
+        rp2350_dcp: None,
+        rp2350_gpioc: false,
         ns_alias_offset: None,
+        mem_aliases: Vec::new(),
         resident_tick_interval_override: None,
         gpio_devices: Vec::new(),
         device_pin_pads: Vec::new(),
         device_open_drain_nets: Default::default(),
         observed: Vec::new(),
         motors: Vec::new(),
+        ina219_senses: Vec::new(),
         motor_cycle_anchor: 0,
         analog_inputs: Vec::new(),
         analog_muxes: Vec::new(),
@@ -4486,6 +4804,7 @@ fn test_dma_tick_executes_copy_and_raises_irq() {
         flash_error_flags_idx: None,
         u5_program_gate_idx: None,
         nrf52_nvmc_idx: None,
+        flash_store_owner_idx: None,
         samd51_nvmctrl_idx: None,
         bus_trace: bus_trace::new_log(),
         logic_tap: crate::logic_capture::LogicTap::new(),
@@ -5995,4 +6314,547 @@ fn uds_tester_waits_the_step_delay_before_sending() {
     bus.service_can_uds_testers();
     assert_eq!(bus.can_uds_testers[0].state, CanUdsTesterState::AwaitResp);
     assert_eq!(bus.can_uds_testers[0].transcript[1].request_cycle, 120);
+}
+
+#[test]
+fn cpu_store_to_fault_flash_faults_and_records() {
+    let mut bus = SystemBus::new();
+    bus.flash = LinearMemory::new_erased(64 * 1024, 0x0800_0000);
+    bus.ram = LinearMemory::new(16 * 1024, 0x2000_0000);
+    bus.memory_policy.flash = crate::bus::CpuWritePolicy::Fault;
+    bus.memory_policy.cycle = 42;
+    bus.memory_policy.note_pc(0x0800_006C);
+    let err = bus.write_u8(0x0800_1000, 0xAB).unwrap_err();
+    assert!(matches!(
+        err,
+        crate::SimulationError::MemoryViolation(0x0800_1000)
+    ));
+    let first = bus
+        .memory_policy
+        .first_flash
+        .as_ref()
+        .expect("first violation recorded");
+    assert_eq!(first.cycle, 42);
+    assert_eq!(first.pc, Some(0x0800_006C));
+    assert_eq!(bus.memory_policy.violations_flash, 1);
+    // The byte was NOT committed (flash is erased-filled 0xFF).
+    assert_eq!(bus.flash.read_u8(0x0800_1000), Some(0xFF));
+    // Both wider widths gate too.
+    assert!(bus.write_u16(0x0800_1002, 0x1234).is_err());
+    assert!(bus.write_u32(0x0800_1004, 0x1234_5678).is_err());
+}
+
+#[test]
+fn set_current_cycle_mirrors_into_memory_policy() {
+    let mut bus = SystemBus::new();
+    bus.set_current_cycle(1234);
+    assert_eq!(bus.memory_policy.cycle, 1234);
+}
+
+#[test]
+fn cpu_store_to_warn_flash_commits_and_records() {
+    let mut bus = SystemBus::new();
+    bus.flash = LinearMemory::new_erased(64 * 1024, 0x0800_0000);
+    bus.ram = LinearMemory::new(16 * 1024, 0x2000_0000);
+    bus.memory_policy.flash = crate::bus::CpuWritePolicy::Warn;
+    bus.write_u8(0x0800_1000, 0xAB).unwrap();
+    assert_eq!(bus.flash.read_u8(0x0800_1000), Some(0xAB));
+    assert_eq!(bus.memory_policy.violations_flash, 1);
+}
+
+#[test]
+fn default_policy_remains_byte_identical() {
+    let mut bus = SystemBus::new();
+    bus.flash = LinearMemory::new_erased(64 * 1024, 0x0800_0000);
+    bus.ram = LinearMemory::new(16 * 1024, 0x2000_0000);
+    bus.write_u8(0x0800_1000, 0xAB).unwrap();
+    assert!(bus.memory_policy.report().is_none());
+    assert_eq!(
+        bus.flash.read_u8(0x0800_1000),
+        Some(0xAB),
+        "default policy must commit the byte"
+    );
+    assert_eq!(bus.memory_policy.violations_flash, 0);
+}
+
+#[test]
+fn dma_writes_bypass_the_cpu_policy() {
+    let mut bus = SystemBus::new();
+    bus.flash = LinearMemory::new_erased(64 * 1024, 0x0800_0000);
+    bus.ram = LinearMemory::new(16 * 1024, 0x2000_0000);
+    bus.memory_policy.ram = crate::bus::CpuWritePolicy::Fault;
+
+    let write = crate::DmaRequest {
+        src_addr: 0,
+        addr: 0x2000_0020,
+        val: 0xAB,
+        direction: crate::DmaDirection::Write,
+        transform: None,
+        remaining: None,
+    };
+    bus.execute_dma_request(&write).unwrap();
+    assert_eq!(bus.ram.read_u8(0x2000_0020), Some(0xAB));
+
+    bus.ram.write_u8(0x2000_0010, 0x5A);
+    let copy = crate::DmaRequest {
+        src_addr: 0x2000_0010,
+        addr: 0x2000_0030,
+        val: 0,
+        direction: crate::DmaDirection::Copy,
+        transform: Some(crate::DmaUnitTransform {
+            src_width: 4,
+            dst_width: 4,
+            pam: 0,
+            sbx: false,
+            dbx: false,
+            dhx: false,
+        }),
+        remaining: None,
+    };
+    bus.execute_dma_request(&copy).unwrap();
+    assert_eq!(bus.ram.read_u8(0x2000_0030), Some(0x5A));
+
+    assert_eq!(bus.memory_policy.violations_ram, 0);
+}
+
+#[test]
+fn cpu_store_u64_obeys_ram_policy() {
+    let mut bus = SystemBus::new();
+    bus.flash = LinearMemory::new_erased(64 * 1024, 0x0800_0000);
+    bus.ram = LinearMemory::new(16 * 1024, 0x2000_0000);
+    bus.memory_policy.ram = crate::bus::CpuWritePolicy::Fault;
+    let err = crate::Bus::write_u64(&mut bus, 0x2000_0100, 0xDEAD_BEEF_DEAD_BEEF).unwrap_err();
+    assert!(matches!(
+        err,
+        crate::SimulationError::MemoryViolation(0x2000_0100)
+    ));
+    assert_eq!(bus.memory_policy.violations_ram, 1);
+    assert_eq!(bus.ram.read_u32(0x2000_0100), Some(0));
+    assert_eq!(bus.ram.read_u32(0x2000_0104), Some(0));
+
+    bus.memory_policy.ram = crate::bus::CpuWritePolicy::Allow;
+    crate::Bus::write_u64(&mut bus, 0x2000_0100, 0xDEAD_BEEF_DEAD_BEEF).unwrap();
+    assert_eq!(bus.ram.read_u32(0x2000_0100), Some(0xDEAD_BEEF));
+    assert_eq!(bus.ram.read_u32(0x2000_0104), Some(0xDEAD_BEEF));
+}
+
+#[test]
+fn ram_cpu_writes_gated_tracks_the_policy() {
+    let mut bus = SystemBus::new();
+    assert!(!bus.ram_cpu_writes_gated());
+    bus.memory_policy.ram = crate::bus::CpuWritePolicy::Warn;
+    assert!(bus.ram_cpu_writes_gated());
+    bus.memory_policy.ram = crate::bus::CpuWritePolicy::Fault;
+    assert!(bus.ram_cpu_writes_gated());
+}
+
+#[test]
+fn riscv_spin_commit_refused_under_ram_policy() {
+    let mut bus = SystemBus::new();
+    bus.flash = LinearMemory::new_erased(64 * 1024, 0x0800_0000);
+    bus.ram = LinearMemory::new(16 * 1024, 0x2000_0000);
+    bus.memory_policy.ram = crate::bus::CpuWritePolicy::Fault;
+
+    assert!(!bus.commit_ram_store_spin(0x2000_0100, 0xDEAD_BEEF, 4));
+    assert_eq!(bus.ram.read_u32(0x2000_0100), Some(0));
+    assert_eq!(bus.memory_policy.violations_ram, 0);
+
+    let err = bus.write_u32(0x2000_0100, 0xDEAD_BEEF).unwrap_err();
+    assert!(matches!(
+        err,
+        crate::SimulationError::MemoryViolation(0x2000_0100)
+    ));
+    assert_eq!(bus.memory_policy.violations_ram, 1);
+}
+
+#[test]
+fn host_writes_bypass_the_policy() {
+    let mut bus = SystemBus::new();
+    bus.flash = LinearMemory::new_erased(64 * 1024, 0x0800_0000);
+    bus.ram = LinearMemory::new(16 * 1024, 0x2000_0000);
+    bus.memory_policy.flash = crate::bus::CpuWritePolicy::Fault;
+    bus.flash.write_u8(0x0800_1000, 0xAB); // loader path — direct LinearMemory
+    assert_eq!(bus.flash.read_u8(0x0800_1000), Some(0xAB));
+}
+
+#[test]
+fn debug_watch_store_latches_and_is_taken_once() {
+    let mut bus = SystemBus::new();
+    assert!(bus.add_debug_watch(0x2000_0100, 4, false, true));
+    assert_eq!(bus.take_debug_watch_hit(), None);
+    bus.write_u32(0x2000_0104, 0xAABB_CCDD).unwrap();
+    assert_eq!(
+        bus.take_debug_watch_hit(),
+        None,
+        "a store past the watched range must not latch"
+    );
+    bus.write_u8(0x2000_0100, 0xAB).unwrap();
+    assert_eq!(bus.take_debug_watch_hit(), Some(0x2000_0100));
+    assert_eq!(
+        bus.take_debug_watch_hit(),
+        None,
+        "take consumes the hit exactly once"
+    );
+}
+
+#[test]
+fn debug_watch_u64_store_latches_too() {
+    let mut bus = SystemBus::new();
+    assert!(bus.add_debug_watch(0x2000_0100, 4, false, true));
+    crate::Bus::write_u64(&mut bus, 0x2000_0100, 0xDEAD_BEEF_DEAD_BEEF).unwrap();
+    assert_eq!(bus.take_debug_watch_hit(), Some(0x2000_0100));
+}
+
+#[test]
+fn debug_watch_u16_store_latches_too() {
+    let mut bus = SystemBus::new();
+    assert!(bus.add_debug_watch(0x2000_0100, 4, false, true));
+    bus.write_u16(0x2000_0102, 0xBEEF).unwrap();
+    assert_eq!(bus.take_debug_watch_hit(), Some(0x2000_0102));
+}
+
+#[test]
+fn debug_watch_latch_keeps_the_first_hit() {
+    let mut bus = SystemBus::new();
+    assert!(bus.add_debug_watch(0x2000_0100, 4, false, true));
+    assert!(bus.add_debug_watch(0x2000_0200, 4, false, true));
+    bus.write_u32(0x2000_0100, 1).unwrap();
+    bus.write_u32(0x2000_0200, 2).unwrap();
+    assert_eq!(
+        bus.take_debug_watch_hit(),
+        Some(0x2000_0100),
+        "a second in-range store must not overwrite the pending hit"
+    );
+    assert_eq!(
+        bus.take_debug_watch_hit(),
+        None,
+        "the latch holds exactly the first hit"
+    );
+}
+
+#[test]
+fn debug_watch_read_u64_latches() {
+    let mut bus = SystemBus::new();
+    assert!(bus.add_debug_watch(0x2000_0100, 8, true, false));
+    let _ = crate::Bus::read_u64(&bus, 0x2000_0100).unwrap();
+    assert_eq!(
+        bus.take_debug_watch_hit(),
+        Some(0x2000_0100),
+        "a 64-bit CPU load (Cortex-A7 w=8) is watched like any other width"
+    );
+}
+
+#[test]
+fn debug_watch_latches_a_policy_rejected_store() {
+    let mut bus = SystemBus::new();
+    assert!(bus.add_debug_watch(0x2000_0100, 4, false, true));
+    bus.memory_policy.ram = crate::bus::CpuWritePolicy::Fault;
+    assert!(bus.write_u32(0x2000_0100, 0xDEAD_BEEF).is_err());
+    assert_eq!(
+        bus.take_debug_watch_hit(),
+        Some(0x2000_0100),
+        "an attempted store latches even when the policy rejects it"
+    );
+}
+
+#[test]
+fn debug_watch_read_only_fires_on_loads() {
+    let mut bus = SystemBus::new();
+    assert!(bus.add_debug_watch(0x2000_0200, 8, true, false));
+    let _ = bus.read_u32(0x2000_0200).unwrap();
+    assert_eq!(bus.take_debug_watch_hit(), Some(0x2000_0200));
+    let _ = bus.read_u16(0x2000_0202).unwrap();
+    assert_eq!(bus.take_debug_watch_hit(), Some(0x2000_0202));
+    let _ = bus.read_u8(0x2000_0206).unwrap();
+    assert_eq!(bus.take_debug_watch_hit(), Some(0x2000_0206));
+    bus.write_u32(0x2000_0204, 0x1234_5678).unwrap();
+    assert_eq!(
+        bus.take_debug_watch_hit(),
+        None,
+        "a read-only watch must ignore stores inside its range"
+    );
+}
+
+#[test]
+fn debug_watch_2kib_range_is_one_watch() {
+    let mut bus = SystemBus::new();
+    assert!(bus.add_debug_watch(0x2000_0000, 2048, false, true));
+    bus.write_u32(0x2000_07FC, 0x1122_3344).unwrap();
+    assert_eq!(bus.take_debug_watch_hit(), Some(0x2000_07FC));
+}
+
+#[test]
+fn debug_watch_cap_is_16_and_remove_frees_a_slot() {
+    let mut bus = SystemBus::new();
+    for i in 0..16u64 {
+        assert!(bus.add_debug_watch(0x2000_1000 + i * 16, 4, false, true));
+    }
+    assert!(
+        !bus.add_debug_watch(0x2000_2000, 4, false, true),
+        "17th watch is rejected at the cap"
+    );
+    assert!(
+        !bus.add_debug_watch(0x2000_2000, 0, false, true),
+        "zero-length watch is rejected"
+    );
+    assert!(
+        !bus.add_debug_watch(0x2000_2000, 4097, false, true),
+        "watches wider than 4 KiB are rejected"
+    );
+    assert!(bus.remove_debug_watch(0x2000_1000, 4, false, true));
+    assert!(
+        !bus.remove_debug_watch(0x2000_1000, 8, false, true),
+        "a field mismatch is not a match"
+    );
+    assert!(bus.add_debug_watch(0x2000_2000, 4, false, true));
+    bus.clear_debug_watches();
+    assert!(
+        !bus.remove_debug_watch(0x2000_2000, 4, false, true),
+        "clear drops every watch"
+    );
+}
+
+#[test]
+fn debug_watch_clear_drops_a_pending_hit() {
+    let mut bus = SystemBus::new();
+    assert!(bus.add_debug_watch(0x2000_0100, 4, false, true));
+    bus.write_u8(0x2000_0100, 0xAB).unwrap();
+    bus.clear_debug_watches();
+    assert_eq!(
+        bus.take_debug_watch_hit(),
+        None,
+        "a cleared watch cannot leave a stale hit to report"
+    );
+}
+
+#[test]
+fn debug_watch_remove_drops_an_uncovered_pending_hit() {
+    let mut bus = SystemBus::new();
+    assert!(bus.add_debug_watch(0x2000_0100, 4, false, true)); // A
+    assert!(bus.add_debug_watch(0x2000_0200, 4, false, true)); // B
+
+    // Hit on A; removing A leaves no watch covering the pending hit.
+    bus.write_u8(0x2000_0100, 0xAB).unwrap();
+    assert!(bus.remove_debug_watch(0x2000_0100, 4, false, true));
+    assert_eq!(
+        bus.take_debug_watch_hit(),
+        None,
+        "removing the hit watch clears the pending hit"
+    );
+
+    // Hit on B; removing an unrelated watch (A) keeps the covered hit ...
+    bus.write_u8(0x2000_0200, 0xCD).unwrap();
+    assert!(bus.add_debug_watch(0x2000_0100, 4, false, true));
+    assert!(bus.remove_debug_watch(0x2000_0100, 4, false, true));
+    assert_eq!(
+        bus.take_debug_watch_hit(),
+        Some(0x2000_0200),
+        "a hit a remaining watch still covers survives an unrelated removal"
+    );
+
+    // ... and the hit is cleared once its own (only) covering watch goes.
+    bus.write_u8(0x2000_0200, 0xEF).unwrap();
+    assert!(bus.remove_debug_watch(0x2000_0200, 4, false, true));
+    assert_eq!(
+        bus.take_debug_watch_hit(),
+        None,
+        "removing the covering watch clears the pending hit"
+    );
+}
+
+#[test]
+fn debug_watch_remove_keeps_an_overlapping_hit() {
+    let mut bus = SystemBus::new();
+    assert!(bus.add_debug_watch(0x2000_0100, 4, false, true));
+    assert!(bus.add_debug_watch(0x2000_0100, 8, false, true));
+    bus.write_u8(0x2000_0100, 0xAB).unwrap();
+    assert!(bus.remove_debug_watch(0x2000_0100, 4, false, true));
+    assert_eq!(
+        bus.take_debug_watch_hit(),
+        Some(0x2000_0100),
+        "ANY remaining watch covering the address keeps the hit"
+    );
+}
+
+#[test]
+fn debug_watch_host_bypass_suppresses_latching() {
+    let mut bus = SystemBus::new();
+    assert!(bus.add_debug_watch(0x2000_0100, 4, false, true));
+    bus.debug_watch_host_bypass.set(true);
+    bus.write_u8(0x2000_0100, 0xAB).unwrap();
+    let _ = bus.read_u8(0x2000_0100).unwrap();
+    let _ = crate::Bus::read_u64(&bus, 0x2000_0100).unwrap();
+    assert_eq!(bus.take_debug_watch_hit(), None);
+    bus.debug_watch_host_bypass.set(false);
+    bus.write_u8(0x2000_0100, 0xCD).unwrap();
+    assert_eq!(bus.take_debug_watch_hit(), Some(0x2000_0100));
+}
+
+#[test]
+fn dma_transfers_do_not_latch_debug_watches() {
+    let mut bus = SystemBus::new();
+    assert!(bus.add_debug_watch(0x2000_0100, 8, true, true));
+
+    // A DMA store into the watched range: the controller is its own bus
+    // master, not the CPU, so the DWT-style watch must ignore it.
+    let write = crate::DmaRequest {
+        src_addr: 0,
+        addr: 0x2000_0100,
+        val: 0xAB,
+        direction: crate::DmaDirection::Write,
+        transform: None,
+        remaining: None,
+    };
+    bus.execute_dma_request(&write).unwrap();
+    assert_eq!(
+        bus.take_debug_watch_hit(),
+        None,
+        "a DMA store must not latch a store watch"
+    );
+
+    // A DMA load from the watched range: same rule for the read side.
+    let read = crate::DmaRequest {
+        src_addr: 0,
+        addr: 0x2000_0100,
+        val: 0,
+        direction: crate::DmaDirection::Read,
+        transform: None,
+        remaining: None,
+    };
+    bus.execute_dma_request(&read).unwrap();
+    assert_eq!(
+        bus.take_debug_watch_hit(),
+        None,
+        "a DMA load must not latch a read watch"
+    );
+
+    // The bypass must be restored: a CPU store still latches.
+    bus.write_u8(0x2000_0100, 0xCD).unwrap();
+    assert_eq!(
+        bus.take_debug_watch_hit(),
+        Some(0x2000_0100),
+        "the DMA bypass must not leak into the CPU path"
+    );
+}
+
+#[test]
+fn debug_watch_default_bus_has_no_hit() {
+    let mut bus = SystemBus::new();
+    bus.write_u8(0x2000_0100, 0xAB).unwrap();
+    let _ = bus.read_u32(0x2000_0100).unwrap();
+    assert_eq!(bus.take_debug_watch_hit(), None);
+}
+
+// ── Flash-store owner ─────────────────────────────────────────────────────
+
+type StoreLog = std::sync::Arc<std::sync::Mutex<Vec<(u64, u8, u32)>>>;
+
+/// A peripheral that owns CPU stores into the flash region and answers each
+/// with a scripted outcome, recording what it was offered.
+#[derive(Debug)]
+struct FlashStoreProbe {
+    outcome: crate::FlashStoreOutcome,
+    seen: StoreLog,
+}
+
+impl crate::Peripheral for FlashStoreProbe {
+    fn read(&self, _offset: u64) -> crate::SimResult<u8> {
+        Ok(0)
+    }
+    fn write(&mut self, _offset: u64, _value: u8) -> crate::SimResult<()> {
+        Ok(())
+    }
+    fn owns_flash_stores(&self) -> bool {
+        true
+    }
+    fn flash_cpu_store(&mut self, offset: u64, width: u8, value: u32) -> crate::FlashStoreOutcome {
+        self.seen.lock().unwrap().push((offset, width, value));
+        self.outcome
+    }
+}
+
+fn flash_owner_bus(outcome: Option<crate::FlashStoreOutcome>) -> (SystemBus, StoreLog) {
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut bus = SystemBus::empty();
+    bus.flash = crate::memory::LinearMemory::new_erased(0x1000, 0x0);
+    bus.ram = crate::memory::LinearMemory::new(0x1000, 0x2000_0000);
+    if let Some(outcome) = outcome {
+        bus.peripherals.push(PeripheralEntry {
+            name: "flashctl".to_string(),
+            base: 0x4000_0000,
+            size: 0x1000,
+            irq: None,
+            dev: Box::new(FlashStoreProbe {
+                outcome,
+                seen: seen.clone(),
+            }),
+            ticks_remaining: 0,
+            clock_gate: None,
+        });
+    }
+    bus.rebuild_peripheral_ranges();
+    (bus, seen)
+}
+
+#[test]
+fn flash_store_owner_commit_keeps_the_direct_write() {
+    let (mut bus, seen) = flash_owner_bus(Some(crate::FlashStoreOutcome::Commit));
+    bus.write_u32(0x100, 0x1234_5678).unwrap();
+    assert_eq!(bus.read_u32(0x100).unwrap(), 0x1234_5678);
+    assert_eq!(seen.lock().unwrap().as_slice(), &[(0x100, 4, 0x1234_5678)]);
+}
+
+#[test]
+fn flash_store_owner_consumed_drops_the_store() {
+    let (mut bus, seen) = flash_owner_bus(Some(crate::FlashStoreOutcome::Consumed));
+    bus.write_u8(0x20, 0xBB).unwrap();
+    bus.write_u16(0x30, 0xBEEF).unwrap();
+    bus.write_u32(0x40, 0xDEAD_BEEF).unwrap();
+    assert_eq!(bus.read_u32(0x20).unwrap(), 0xFFFF_FFFF);
+    assert_eq!(bus.read_u32(0x30).unwrap(), 0xFFFF_FFFF);
+    assert_eq!(bus.read_u32(0x40).unwrap(), 0xFFFF_FFFF);
+    assert_eq!(
+        seen.lock().unwrap().as_slice(),
+        &[(0x20, 1, 0xBB), (0x30, 2, 0xBEEF), (0x40, 4, 0xDEAD_BEEF)]
+    );
+}
+
+#[test]
+fn flash_store_owner_program_only_clears_bits() {
+    let (mut bus, _) = flash_owner_bus(Some(crate::FlashStoreOutcome::Program));
+    bus.write_u32(0x100, 0xF0F0_F0F0).unwrap();
+    assert_eq!(bus.read_u32(0x100).unwrap(), 0xF0F0_F0F0);
+    bus.write_u32(0x100, 0x0FF0_0FF0).unwrap();
+    assert_eq!(bus.read_u32(0x100).unwrap(), 0x00F0_00F0, "existing & new");
+    bus.write_u16(0x104, 0x1234).unwrap();
+    assert_eq!(bus.read_u16(0x104).unwrap(), 0x1234);
+    bus.write_u8(0x106, 0x0F).unwrap();
+    assert_eq!(bus.read_u8(0x106).unwrap(), 0x0F);
+}
+
+#[test]
+fn flash_store_owner_is_not_offered_ram_or_device_writes() {
+    let (mut bus, seen) = flash_owner_bus(Some(crate::FlashStoreOutcome::Consumed));
+    bus.write_u32(0x2000_0010, 7).unwrap();
+    assert_eq!(bus.read_u32(0x2000_0010).unwrap(), 7);
+    crate::with_device_write_bypass(&mut bus, |b| b.write_u32(0x80, 0).unwrap());
+    assert_eq!(
+        bus.read_u32(0x80).unwrap(),
+        0,
+        "the controller's own programming reaches the array"
+    );
+    assert!(seen.lock().unwrap().is_empty());
+}
+
+#[test]
+fn bus_without_a_flash_store_owner_commits_as_before() {
+    let (mut bus, _) = flash_owner_bus(None);
+    assert!(bus.flash_store_owner_idx.is_none());
+    bus.write_u32(0x100, 0x1234_5678).unwrap();
+    bus.write_u32(0x100, 0xFFFF_0000).unwrap();
+    assert_eq!(
+        bus.read_u32(0x100).unwrap(),
+        0xFFFF_0000,
+        "plain overwrite, no AND"
+    );
 }

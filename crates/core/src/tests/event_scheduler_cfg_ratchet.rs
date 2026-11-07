@@ -192,7 +192,14 @@ const FEATURE: &str = "event-scheduler";
 // AVR coalescer's new equivalent gate are folded into one inline
 // `advance_batch_cycle` choke point. This both avoids growing the split for a
 // new CPU fast path and removes one existing site.
-const MAX_MODEL_SITES: usize = 178;
+//
+// 2026-10-17: 178 -> 179. `cycle_clock::event_scheduler_enabled()` is the
+// single public compile-time availability predicate for harnesses (the
+// source-bound SAMD reset guest picks its profile label with it instead of
+// copying its own feature conditional). It is a centralisation point, not a
+// new model fork: no peripheral gained a second-world branch, and the guest
+// that reads it is a test harness outside this crate's `src/**`.
+const MAX_MODEL_SITES: usize = 179;
 
 /// The rest of `crates/**` — test harnesses and downstream crates.
 ///
@@ -277,7 +284,28 @@ const MAX_MODEL_SITES: usize = 178;
 /// sleeping ATmega328P on a GPIO net skips its idle cycles and every
 /// observable stays the same" has nothing to measure without it. The rest of
 /// `world_multichip` runs in both builds. Ends with the feature.
-const MAX_HARNESS_SITES: usize = 87;
+///
+/// 87 → 88: `tests/xtensa_poll_loop_skip.rs` is one gated file. The CCOUNT
+/// poll-loop skip is part of the idle fast-forward, which only exists on the
+/// event-scheduler run, so "a CCOUNT busy-wait on either core is skipped and
+/// every record, CCOUNT and machine cycle stays the same" has nothing to
+/// measure without it. `required-features` and the `pr-scheduler-observable`
+/// lane keep it from reading green empty. Ends with the feature.
+///
+/// 88 → 89: `tests/cortex_m_loop_trace_differential.rs` is one gated file.
+/// It compares the native JIT with counted loop traces on against traces off,
+/// and both run only on the event-scheduler build (cycle/budget accounting is
+/// what the trace changes). `required-features` and the Cortex-M JIT
+/// differential lane keep it from reading green empty. Ends with the feature.
+///
+/// 89 → 90: `tests/esp32_classic_irq_resettle.rs` is one gated file. It pins
+/// that a classic-ESP32 level-1 ISR reads its own scheduler-driven source
+/// (I2C0) in `RSR.INTERRUPT` after dispatch cleared the routed bit
+/// (labwired-core#1712). The source is scheduler-only, so without the feature
+/// there is no such source to lose. `required-features` and the
+/// `pr-scheduler-observable` lane keep it from reading green empty. Ends with
+/// the feature.
+const MAX_HARNESS_SITES: usize = 90;
 
 // ---------------------------------------------------------------------------
 // The counter. A pure function over source text, so its definition is testable

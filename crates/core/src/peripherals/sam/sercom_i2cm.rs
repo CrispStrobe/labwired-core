@@ -1,3 +1,5 @@
+// LabWired - Firmware Simulation Platform
+// Copyright (C) 2026 Andrii Shylenko
 // SPDX-License-Identifier: MIT
 //! Opt-in SAMD51 SERCOM I2C master slice (DS60001507F 36): 7-bit addressing,
 //! writes, smart-mode reads, repeated start, STOP and the MB/SB/RXNACK
@@ -522,6 +524,7 @@ impl I2cSlaveHost for Samd51SercomI2cm {
 
 impl Peripheral for Samd51SercomI2cm {
     fn on_system_reset(&mut self) {
+        self.stop_selected();
         self.reset();
     }
     fn read(&self, offset: u64) -> SimResult<u8> {

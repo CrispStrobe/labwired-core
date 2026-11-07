@@ -1,5 +1,7 @@
+// LabWired - Firmware Simulation Platform
+// Copyright (C) 2026 Andrii Shylenko
 // SPDX-License-Identifier: MIT
-// Copyright (c) 2026 CrispStrobe contributors
+
 //! Explicit SAMD51 device-bank slice, independently authored from DS60001507F.
 //! No USB descriptor/class replies are manufactured. Host tokens transfer real
 //! SRAM bytes only. Wire timing, PID/retry/isochronous and host modes are excluded.

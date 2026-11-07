@@ -87,6 +87,33 @@ impl ServoCal {
         }
     }
 
+    /// TowerPro MG995 metal-gear servo: ~0.5–2.5 ms → 0–180°, 50 Hz.
+    /// Matches the wide Adafruit PWM range (`SERVO_MIN`/`SERVO_MAX` 102..512
+    /// ticks at 50 Hz ≈ 0.5..2.5 ms) used by Project P.I.G. firmware, so a
+    /// mid-scale OFF count of 307 ticks (~1.5 ms) reads ~90°.
+    pub const fn mg995() -> Self {
+        Self {
+            min_us: 500.0,
+            max_us: 2500.0,
+            min_angle: 0.0,
+            max_angle: 180.0,
+            frame_hz: 50.0,
+        }
+    }
+
+    /// TowerPro MG90S micro metal-gear servo: ~0.5–2.5 ms → 0–180°, 50 Hz.
+    /// Same wide pulse window as [`Self::mg995`] so PCA9685 tick maps used by
+    /// Adafruit's library centre at ~90°.
+    pub const fn mg90s() -> Self {
+        Self {
+            min_us: 500.0,
+            max_us: 2500.0,
+            min_angle: 0.0,
+            max_angle: 180.0,
+            frame_hz: 50.0,
+        }
+    }
+
     /// Map a pulse width (µs) to a shaft angle, clamped to the travel range.
     fn pulse_to_angle(&self, pulse_us: f32) -> f32 {
         let span_us = self.max_us - self.min_us;
@@ -124,6 +151,13 @@ struct ServoState {
     angle: f32,
     /// True once at least one valid duty measurement has been applied.
     commanded: bool,
+    /// What drives the control pad, as the GPIO port last reported it.
+    /// `None` when the port never reports sources (see
+    /// [`Servo::on_ledc_duty`]).
+    source: Option<crate::peripherals::device::PadSource>,
+    /// Last committed duty fraction per LEDC channel, seen through a routed
+    /// driver ([`LedcServoDriver::routed`]).
+    ledc_duty: [Option<f64>; 16],
 }
 
 /// A hobby PWM servo digital twin. See module docs.
@@ -167,6 +201,14 @@ impl Servo {
         Self::new(ServoCal::sg90(), pin)
     }
 
+    pub fn mg995(pin: u8) -> Self {
+        Self::new(ServoCal::mg995(), pin)
+    }
+
+    pub fn mg90s(pin: u8) -> Self {
+        Self::new(ServoCal::mg90s(), pin)
+    }
+
     /// Diagram / board_io part id (empty when constructed without one).
     pub fn id(&self) -> &str {
         &self.id
@@ -197,6 +239,51 @@ impl Servo {
     /// True once the servo has seen at least one valid PWM command.
     pub fn is_commanded(&self) -> bool {
         self.state.lock().unwrap().commanded
+    }
+
+    /// LEDC channel `channel` committed `fraction` (a routed driver,
+    /// [`LedcServoDriver::routed`]). The servo follows it only when the GPIO
+    /// matrix routes that channel to its pad: four servos on four channels
+    /// each follow their own channel. When the GPIO port never reports pad
+    /// sources (no pin matrix model), every channel drives the servo, as
+    /// before routing was known.
+    pub fn on_ledc_duty(&self, channel: u64, fraction: f64) {
+        use crate::peripherals::device::PadSource;
+        let follow = {
+            let mut s = self.state.lock().unwrap();
+            if let Some(slot) = s.ledc_duty.get_mut(channel as usize) {
+                *slot = Some(fraction);
+            }
+            match s.source {
+                None => true,
+                Some(PadSource::Ledc(ch)) => u64::from(ch) == channel,
+                Some(_) => false,
+            }
+        };
+        if follow {
+            self.apply_duty_fraction(fraction);
+        }
+    }
+
+    /// The GPIO port reports what drives pad `pin`. When the matrix hands
+    /// this servo's pad to an LEDC channel that already has a duty, the servo
+    /// takes it at once (`ledcWrite` before `ledcAttachPin`).
+    pub fn on_pad_source(&self, pin: u8, source: crate::peripherals::device::PadSource) {
+        use crate::peripherals::device::PadSource;
+        if pin != self.pin {
+            return;
+        }
+        let duty = {
+            let mut s = self.state.lock().unwrap();
+            s.source = Some(source);
+            match source {
+                PadSource::Ledc(ch) => s.ledc_duty.get(ch as usize).copied().flatten(),
+                _ => None,
+            }
+        };
+        if let Some(fraction) = duty {
+            self.apply_duty_fraction(fraction);
+        }
     }
 
     /// Drive the servo from a PWM **duty fraction** (`high / period`, in
@@ -258,6 +345,10 @@ impl crate::peripherals::device::GpioObserver for Servo {
     fn on_pin_change(&self, pin: u8, _from: bool, to: bool, sim_cycle: u64) {
         self.on_gpio_edge(pin, to, sim_cycle);
     }
+
+    fn on_pad_source(&self, pin: u8, source: crate::peripherals::device::PadSource) {
+        Servo::on_pad_source(self, pin, source);
+    }
 }
 
 /// Binds an [`Ledc`](crate::peripherals::esp32::ledc::Ledc) PWM channel to a
@@ -266,21 +357,36 @@ impl crate::peripherals::device::GpioObserver for Servo {
 /// servo)))` and keep an `Arc<Servo>` clone to read the angle back.
 #[derive(Debug)]
 pub struct LedcServoDriver {
-    channel: u64,
+    /// `Some(ch)`: bound to one channel. `None`: follow whichever channel the
+    /// GPIO matrix routes to the servo's pad ([`Servo::on_ledc_duty`]).
+    channel: Option<u64>,
     servo: Arc<Servo>,
 }
 
 impl LedcServoDriver {
     /// Drive `servo` from LEDC `channel`'s duty.
     pub fn new(channel: u64, servo: Arc<Servo>) -> Self {
-        Self { channel, servo }
+        Self {
+            channel: Some(channel),
+            servo,
+        }
+    }
+
+    /// Drive `servo` from the LEDC channel routed to its pad.
+    pub fn routed(servo: Arc<Servo>) -> Self {
+        Self {
+            channel: None,
+            servo,
+        }
     }
 }
 
 impl crate::peripherals::esp32::ledc::LedcDutyObserver for LedcServoDriver {
     fn on_duty_change(&self, channel: u64, duty_fraction: f64) {
-        if channel == self.channel {
-            self.servo.apply_duty_fraction(duty_fraction);
+        match self.channel {
+            Some(ch) if ch == channel => self.servo.apply_duty_fraction(duty_fraction),
+            Some(_) => {}
+            None => self.servo.on_ledc_duty(channel, duty_fraction),
         }
     }
 }
@@ -326,7 +432,7 @@ static SERVO_METADATA: KitMetadata = KitMetadata {
     label: std::borrow::Cow::Borrowed("Hobby PWM Servo"),
     summary: std::borrow::Cow::Borrowed("RC hobby servo driven by a single PWM control pin (GPIO edges and/or LEDC duty)."),
     detail: std::borrow::Cow::Borrowed("Attaches as a GPIO observer on signal_pin; optional ledc_channel binds ESP32 LEDC \
-             duty for ledcWrite paths. Type aliases sg90 / mg996r select calibration via config.model \
+             duty for ledcWrite paths. Type aliases sg90 / mg996r / mg995 / mg90s select calibration via config.model \
              or the top-level type string."),
     transport: Transport::GpioGroup,
     category: Category::Gpio,
@@ -339,12 +445,12 @@ static SERVO_METADATA: KitMetadata = KitMetadata {
         ConfigKey {
             name: std::borrow::Cow::Borrowed("model"),
             ty: ConfigType::Str,
-            doc: std::borrow::Cow::Borrowed("Calibration: sg90 | mg996r | standard. Defaults from type alias when omitted."),
+            doc: std::borrow::Cow::Borrowed("Calibration: sg90 | mg996r | mg995 | mg90s | standard. Defaults from type alias when omitted."),
         },
         ConfigKey {
             name: std::borrow::Cow::Borrowed("ledc_channel"),
             ty: ConfigType::Int,
-            doc: std::borrow::Cow::Borrowed("Optional ESP32 LEDC channel (0..15). When omitted, all 16 channels observe."),
+            doc: std::borrow::Cow::Borrowed("Optional ESP32 LEDC channel (0..15). When omitted, the servo follows the channel the GPIO matrix routes to its pad."),
         },
     ]),
     labs: std::borrow::Cow::Borrowed(&[]),
@@ -373,6 +479,8 @@ impl PeripheralKit for ServoKit {
         let cal = match model {
             "sg90" => ServoCal::sg90(),
             "mg996r" => ServoCal::mg996r(),
+            "mg995" => ServoCal::mg995(),
+            "mg90s" => ServoCal::mg90s(),
             _ => ServoCal::standard(),
         };
         let pad_odr = ctx.resolve_pin_odr(pin_label);
@@ -392,16 +500,19 @@ impl PeripheralKit for ServoKit {
             }
         }
         // Any LEDC model (classic ESP32: 16 channels, ESP32-S3: 8, ESP32-C3:
-        // 6) reports its committed duties through the same observer.
-        let channels = ctx
-            .config_i64("ledc_channel")
-            .map_or(0..16, |ch| ch as u64..ch as u64 + 1);
+        // 6) reports its committed duties through the same observer. Without
+        // an explicit `ledc_channel` the servo follows the channel the GPIO
+        // matrix routes to its pad, so servos on different channels do not
+        // all take the last `ledcWrite`.
+        let ledc_channel = ctx.config_i64("ledc_channel");
         for name in ["ledc", "LEDC"] {
             if let Some(idx) = ctx.bus.find_peripheral_index_by_name(name) {
                 let ledc = &mut ctx.bus.peripherals[idx].dev;
-                for ch in channels.clone() {
-                    ledc.add_ledc_duty_observer(Arc::new(LedcServoDriver::new(ch, servo.clone())));
-                }
+                let driver = match ledc_channel {
+                    Some(ch) => LedcServoDriver::new(ch as u64, servo.clone()),
+                    None => LedcServoDriver::routed(servo.clone()),
+                };
+                ledc.add_ledc_duty_observer(Arc::new(driver));
             }
         }
         // Likewise any MCPWM unit's operators (`mcpwm_set_duty`; ESP32Servo
@@ -600,5 +711,31 @@ mod tests {
         servo.apply_duty_fraction(0.075); // 1500 µs
         let a = servo.angle_degrees();
         assert!((a - 94.7).abs() < 1.0, "sg90 mid={a}");
+    }
+
+    #[test]
+    fn mg995_mid_pulse_is_about_90() {
+        let servo = Servo::mg995(5);
+        // 1.5 ms at 50 Hz → duty 0.075
+        servo.apply_duty_fraction(0.075);
+        let a = servo.angle_degrees();
+        assert!((a - 90.0).abs() < 1.0, "mg995 mid={a}");
+    }
+
+    #[test]
+    fn mg90s_half_ms_is_about_0_and_2_5_ms_is_180() {
+        let servo = Servo::mg90s(5);
+        servo.apply_duty_fraction(0.025); // 0.5 ms
+        assert!(
+            servo.angle_degrees() < 1.0,
+            "mg90s min={}",
+            servo.angle_degrees()
+        );
+        servo.apply_duty_fraction(0.125); // 2.5 ms
+        assert!(
+            (servo.angle_degrees() - 180.0).abs() < 1.0,
+            "mg90s max={}",
+            servo.angle_degrees()
+        );
     }
 }

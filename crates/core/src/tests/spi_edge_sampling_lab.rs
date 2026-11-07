@@ -35,6 +35,7 @@ mod spi_edge_sampling_lab_tests {
             schema_version: "1.0".to_string(),
             reset_vector_offset: 0,
             flash_boot_alias: true,
+            coprocessors: Vec::new(),
             atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
             ns_alias_offset: None,
             memory_regions: Vec::new(),
@@ -45,10 +46,12 @@ mod spi_edge_sampling_lab_tests {
             flash: MemoryRange {
                 base: 0x0800_0000,
                 size: 64 * 1024,
+                cpu_writes: labwired_config::CpuWritePolicy::Allow,
             },
             ram: MemoryRange {
                 base: 0x2000_0000,
                 size: 20 * 1024,
+                cpu_writes: labwired_config::CpuWritePolicy::Allow,
             },
             peripherals: vec![PeripheralConfig {
                 id: "spi1".to_string(),

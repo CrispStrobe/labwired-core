@@ -1,5 +1,11 @@
 # Opt-in SAMD51 manual storage: qualified source boundary
 
+Backported from `CrispStrobe/labwired-core` PR249/PR252. The source and CI
+receipts below remain bound to that fork; this tree carries the model, the
+instruction-boundary commit, the opt-in factory and the hosted fixture test.
+The hosted builder, mutation harness and exact external checkout pins remain in
+the fork and are not part of this chunk.
+
 This lane follows the [qualified public source census](https://github.com/CrispStrobe/codal-samd/pull/71).
 It adds an explicitly selected manual NVMCTRL slice, CMCC controls and a hosted
 caller of the real public ZFlash implementation. The selected guest qualification

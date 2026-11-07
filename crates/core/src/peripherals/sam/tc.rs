@@ -1,3 +1,5 @@
+// LabWired - Firmware Simulation Platform
+// Copyright (C) 2026 Andrii Shylenko
 // SPDX-License-Identifier: MIT
 //! Opt-in SAMD51 TC slice (DS60001507F 48): 8- and 16-bit counters with the
 //! NFRQ/MFRQ/NPWM/MPWM wave generators, compare-match and overflow interrupts,
@@ -417,6 +419,12 @@ impl Samd51Tc {
 }
 
 impl Peripheral for Samd51Tc {
+    /// The overflow DMA request for trigger `source` (this TC's OVF trigger),
+    /// consumed on read; `None` for any other source. The board DMAC profile
+    /// (`samd51_dmac_board`) polls it through `Bus::take_dma_trigger`.
+    fn take_dma_trigger(&mut self, source: u32) -> Option<bool> {
+        (source == self.instance.dma_ovf).then(|| std::mem::take(&mut self.ovf_request))
+    }
     fn on_system_reset(&mut self) {
         self.reset();
         self.refresh_outputs();
@@ -471,9 +479,6 @@ impl Peripheral for Samd51Tc {
     }
     fn attach_cycle_clock(&mut self, clock: crate::CycleClock) {
         self.clock = Some(clock);
-    }
-    fn take_dma_trigger(&mut self, source: u32) -> Option<bool> {
-        (source == self.instance.dma_ovf).then(|| std::mem::take(&mut self.ovf_request))
     }
     fn timer_output_family(&self) -> Option<&'static str> {
         Some("samd51_tc")

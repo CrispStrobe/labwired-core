@@ -1,3 +1,5 @@
+// LabWired - Firmware Simulation Platform
+// Copyright (C) 2026 Andrii Shylenko
 // SPDX-License-Identifier: MIT
 //! Opt-in SAMD51 EIC slice (DS60001507F 21): sixteen external interrupt
 //! channels with rise/fall/both/high/low sensing, per-channel flags and IRQ

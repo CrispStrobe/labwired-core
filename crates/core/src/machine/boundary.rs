@@ -153,10 +153,7 @@ impl<C: Cpu> Machine<C> {
                 // is present so a mid-batch SW_SYS_RST latches and stops the
                 // window before more PRO instructions retire past the reset.
                 // Otherwise use step_batch for throughput.
-                let secondary_state = self
-                    .cpu_secondary
-                    .as_ref()
-                    .map(|s| s.secondary_execution_state());
+                let secondary_state = self.secondary_plan_state();
                 let parked_secondary =
                     secondary_state == Some(crate::SecondaryExecutionState::ParkedIdle);
                 let reset_held_secondary =
@@ -173,6 +170,18 @@ impl<C: Cpu> Machine<C> {
                     .cpu
                     .instruction_cycles_are_time()
                     .then(|| self.cpu.clock_cycles());
+                // Only beside a DEFERRED secondary: beside a WAITI-parked one
+                // the same batch moved a servo edge stamp by 776 cycles on the
+                // four-servo lab, so that core keeps the per-cycle loop.
+                if self.secondary_defer.is_some()
+                    && count > 1
+                    && self.config.peripheral_tick_interval.max(1) == 1
+                    && self.observers.is_empty()
+                    && !self.logic_capture.poll_active()
+                    && self.bus.per_cycle_tick_is_trivial()
+                {
+                    return self.run_primary_beside_quiet_secondary(count);
+                }
                 if (parked_secondary || reset_held_secondary)
                     && self.config.peripheral_tick_interval.max(1) == 1
                 {
@@ -182,6 +191,10 @@ impl<C: Cpu> Machine<C> {
                         // Same pre-charge publication as the quantum-1 arm.
                         self.bus.set_current_cycle(self.total_cycles);
                         self.bus.bus_trace.set_cycle(self.total_cycles);
+                        // Batch entry: the recorded PC is the batch-start PC (accepted granularity).
+                        if self.bus.memory_policy.active() {
+                            self.bus.memory_policy.note_pc(self.cpu.get_pc());
+                        }
                         let retired =
                             self.cpu
                                 .step_batch(&mut self.bus, &self.observers, &self.config, 1)?;
@@ -191,6 +204,26 @@ impl<C: Cpu> Machine<C> {
                         debug_assert_eq!(retired, 1);
                         self.total_cycles += u64::from(retired);
                         primary_steps += retired;
+
+                        // A deferred secondary: this primary instruction may
+                        // have changed what its loop reads or raised an
+                        // interrupt it takes. Its lockstep steps before this
+                        // cycle saw neither; its step in this cycle, after
+                        // the primary's, sees both.
+                        let mut defer_ended = false;
+                        if self.secondary_defer.is_some()
+                            && self
+                                .cpu_secondary
+                                .as_ref()
+                                .is_some_and(|sec| sec.poll_loop_defer_changed(&self.bus))
+                        {
+                            self.end_secondary_defer(self.total_cycles - 1);
+                            if let Some(sec) = self.cpu_secondary.as_mut() {
+                                sec.step(&mut self.bus, &self.observers, &self.config)?;
+                                secondary_steps += 1;
+                            }
+                            defer_ended = true;
+                        }
 
                         // A reset-held APP CPU can be released by this primary
                         // instruction. Consume the request now, run APP once at
@@ -203,19 +236,53 @@ impl<C: Cpu> Machine<C> {
                                 sec.secondary_execution_state()
                                     != crate::SecondaryExecutionState::ResetHeld
                             });
+                        // A parked secondary that wakes in this step (its
+                        // interrupt arrived) runs from the next cycle on: end
+                        // the window so the next one locksteps it. Left in this
+                        // loop, which steps a secondary only while it is
+                        // parked, it sat unstepped for the rest of the window,
+                        // and the result depended on where an `advance` call
+                        // happened to end.
+                        let mut secondary_woke = false;
                         if let Some(sec) = self.cpu_secondary.as_mut() {
                             if sec.is_parked_idle() || secondary_released {
-                                sec.step(&mut self.bus, &self.observers, &self.config)?;
+                                let was_parked = sec.is_parked_idle();
+                                for obs in &self.observers {
+                                    obs.on_core_switch(1);
+                                }
+                                if self.bus.memory_policy.active() {
+                                    self.bus.memory_policy.note_pc(sec.get_pc());
+                                }
+                                let stepped =
+                                    sec.step(&mut self.bus, &self.observers, &self.config);
+                                for obs in &self.observers {
+                                    obs.on_core_switch(0);
+                                }
+                                stepped?;
                                 secondary_steps += retired;
+                                secondary_woke = was_parked && !sec.is_parked_idle();
                             }
                         }
                         self.tick_peripherals_at_boundary();
                         #[cfg(feature = "event-scheduler")]
                         self.drain_scheduler_events();
+                        if secondary_woke {
+                            break;
+                        }
+                        if defer_ended || self.check_secondary_defer() {
+                            break;
+                        }
                         if self.rtc_cntl_reset_pending() {
                             break;
                         }
                         if secondary_released {
+                            break;
+                        }
+                        // End the window at a poll-loop anchor so the idle
+                        // skip can try it (`Cpu::poll_loop_anchor_ready`).
+                        if self.config.idle_fast_forward_enabled
+                            && self.cpu.poll_loop_anchor_ready()
+                        {
                             break;
                         }
                     }
@@ -229,18 +296,42 @@ impl<C: Cpu> Machine<C> {
                 let executed = if parked_secondary && self.rtc_cntl_index.is_some() {
                     let mut n = 0u32;
                     for _ in 0..count {
+                        if self.bus.memory_policy.active() {
+                            self.bus.memory_policy.note_pc(self.cpu.get_pc());
+                        }
                         self.cpu
                             .step(&mut self.bus, &self.observers, &self.config)?;
                         n += 1;
                         if self.rtc_cntl_reset_pending() {
                             break;
                         }
+                        if self.config.idle_fast_forward_enabled
+                            && self.cpu.poll_loop_anchor_ready()
+                        {
+                            break;
+                        }
                     }
                     n
                 } else {
-                    let mut retired =
+                    // Batch entry: the recorded PC is the batch-start PC (accepted granularity).
+                    if self.bus.memory_policy.active() {
+                        self.bus.memory_policy.note_pc(self.cpu.get_pc());
+                    }
+                    // See `Machine::exact_batch_boundaries`. Armed only for a
+                    // batch that can span more than one cycle of tick work.
+                    let exact = self.exact_batch_boundaries
+                        && self.config.peripheral_tick_interval > 1
+                        && !self.bus.batch_stop.armed();
+                    if exact {
+                        self.bus.batch_stop.arm(&[]);
+                    }
+                    let first =
                         self.cpu
-                            .step_batch(&mut self.bus, &self.observers, &self.config, count)?;
+                            .step_batch(&mut self.bus, &self.observers, &self.config, count);
+                    if exact && first.is_err() {
+                        self.bus.batch_stop.disarm();
+                    }
+                    let mut retired = first?;
                     // Finish the tick window. `count` was it divided by the
                     // LONGEST instruction, so a batch of cheaper ones stops
                     // short; left alone the leftover goes back to the planner,
@@ -261,6 +352,7 @@ impl<C: Cpu> Machine<C> {
                         while retired > 0
                             && retired < fill.max_steps
                             && !self.bus.logic_tap.batch_stop_hit()
+                            && !self.bus.batch_stop.hit()
                         {
                             let spent = self.cpu.clock_cycles().saturating_sub(before);
                             let Some(left) =
@@ -275,6 +367,10 @@ impl<C: Cpu> Machine<C> {
                             if more == 0 {
                                 break;
                             }
+                            // Batch entry: the recorded PC is the batch-start PC (accepted granularity).
+                            if self.bus.memory_policy.active() {
+                                self.bus.memory_policy.note_pc(self.cpu.get_pc());
+                            }
                             let n = self.cpu.step_batch(
                                 &mut self.bus,
                                 &self.observers,
@@ -286,6 +382,9 @@ impl<C: Cpu> Machine<C> {
                             }
                             retired = retired.saturating_add(n);
                         }
+                    }
+                    if exact {
+                        self.bus.batch_stop.disarm();
                     }
                     retired
                 };
@@ -309,7 +408,17 @@ impl<C: Cpu> Machine<C> {
                             if ff > 0 {
                                 sec.fast_forward_idle_cycles(ff);
                             }
-                            sec.step(&mut self.bus, &self.observers, &self.config)?;
+                            if self.bus.memory_policy.active() {
+                                self.bus.memory_policy.note_pc(sec.get_pc());
+                            }
+                            for obs in &self.observers {
+                                obs.on_core_switch(1);
+                            }
+                            let stepped = sec.step(&mut self.bus, &self.observers, &self.config);
+                            for obs in &self.observers {
+                                obs.on_core_switch(0);
+                            }
+                            stepped?;
                             secondary_steps = executed;
                         }
                     }
@@ -330,6 +439,10 @@ impl<C: Cpu> Machine<C> {
                 .instruction_cycles_are_time()
                 .then(|| self.cpu.clock_cycles());
             let provisional = self.total_cycles;
+            // Boundary-fresh PC: the entry PC of this single step.
+            if self.bus.memory_policy.active() {
+                self.bus.memory_policy.note_pc(self.cpu.get_pc());
+            }
             let retired = self
                 .cpu
                 .step_retired(&mut self.bus, &self.observers, &self.config)?;
@@ -372,9 +485,18 @@ impl<C: Cpu> Machine<C> {
             });
         }
 
+        if self.bus.memory_policy.active() {
+            self.bus.memory_policy.note_pc(self.cpu.get_pc());
+        }
         self.cpu
             .step(&mut self.bus, &self.observers, &self.config)?;
         self.release_secondary_cpu_if_requested();
+        // On purpose after release: stamp boot PC, not reset PC.
+        if let Some(sec) = self.cpu_secondary.as_mut() {
+            if self.bus.memory_policy.active() {
+                self.bus.memory_policy.note_pc(sec.get_pc());
+            }
+        }
         if let Err(error) =
             self.cpu_secondary
                 .as_mut()
@@ -389,6 +511,75 @@ impl<C: Cpu> Machine<C> {
             secondary_steps: 1,
             timed_cycles: None,
             internally_committed_cycles: false,
+        })
+    }
+
+    /// The quantum-1 window beside a deferred secondary, as one primary batch
+    /// instead of one instruction per tick.
+    ///
+    /// On a bus whose per-cycle tick does nothing (`per_cycle_tick_is_trivial`)
+    /// and with the window already clamped to the next scheduler event, motor
+    /// and resident-edge deadline and the secondary's own timer edge, the
+    /// per-cycle tick, drain and secondary step change nothing until the
+    /// primary touches a device or stores into a byte the deferred loop reads
+    /// (`bus::BatchStop`). The batch ends right after that instruction, which
+    /// is the window's last cycle; there the secondary catches up and steps
+    /// if anything its loop depends on changed, and the tick and drain run,
+    /// as the per-cycle loop does after the same instruction.
+    fn run_primary_beside_quiet_secondary(&mut self, count: u32) -> SimResult<CoreProgress> {
+        let mut watch = std::mem::take(&mut self.batch_watch_scratch);
+        watch.clear();
+        if let Some(sec) = self.cpu_secondary.as_ref() {
+            sec.poll_loop_watch(&mut watch);
+        }
+        self.primary_batches_beside_deferred += 1;
+        self.bus.batch_stop.arm(&watch);
+        self.batch_watch_scratch = watch;
+        self.bus.set_current_cycle(self.total_cycles);
+        self.bus.bus_trace.set_cycle(self.total_cycles);
+        if self.logic_capture.push_active() {
+            self.bus.logic_tap.set_clock(self.total_cycles);
+        }
+        let retired = self
+            .cpu
+            .step_batch(&mut self.bus, &self.observers, &self.config, count);
+        self.bus.batch_stop.disarm();
+        let retired = retired?;
+        if retired == 0 {
+            return Ok(CoreProgress {
+                primary_steps: 0,
+                secondary_steps: 0,
+                timed_cycles: None,
+                internally_committed_cycles: true,
+            });
+        }
+        self.total_cycles += u64::from(retired);
+        let mut secondary_steps = 0u32;
+        if self.secondary_defer.is_some() {
+            let changed = self
+                .cpu_secondary
+                .as_ref()
+                .is_some_and(|sec| sec.poll_loop_defer_changed(&self.bus));
+            if changed {
+                self.end_secondary_defer(self.total_cycles - 1);
+                if let Some(sec) = self.cpu_secondary.as_mut() {
+                    sec.step(&mut self.bus, &self.observers, &self.config)?;
+                    secondary_steps = 1;
+                }
+            }
+        }
+        self.bus.set_current_cycle(self.total_cycles);
+        self.bus.bus_trace.set_cycle(self.total_cycles);
+        self.tick_peripherals_at_boundary();
+        // Only reached on a walk-free bus, which needs the scheduler.
+        #[cfg(feature = "event-scheduler")]
+        self.drain_scheduler_events();
+        self.check_secondary_defer();
+        Ok(CoreProgress {
+            primary_steps: retired,
+            secondary_steps,
+            timed_cycles: None,
+            internally_committed_cycles: true,
         })
     }
 
@@ -469,9 +660,13 @@ impl<C: Cpu> Machine<C> {
         let coalesced_dual_idle = mode == ExecutionMode::RunBatch
             && ((progress.secondary_steps > 0 && progress.primary_steps > 1)
                 || (H::CHECKED && std::mem::take(&mut self.quiescent_chunk_retired)));
+        // Under exact boundaries every window ends where state can change (a
+        // device access, a scheduler or interrupt deadline), so a tick at
+        // every boundary is the tick interval 1 runs at that cycle.
+        let exact_tick = self.exact_batch_boundaries && tick_interval > 1;
         let should_tick = if internally_committed_per_cycle_batch {
             false
-        } else if coalesced_dual_idle {
+        } else if coalesced_dual_idle || exact_tick {
             true
         } else if progress.timed_cycles.is_some() {
             // A timed core's window can end past a tick boundary (its last
@@ -555,14 +750,33 @@ impl<C: Cpu> Machine<C> {
             }
             self.reset_core_system_state();
             self.reset()?;
-            for peripheral in &mut self.bus.peripherals {
-                peripheral.dev.on_system_reset();
-            }
+            self.record_peripheral_reset_cause(crate::PeripheralResetCause::System);
+            self.system_reset_peripherals();
             // An emulated SoftDevice restarts with the chip (crate::sd_hle).
             if let Some(slot) = self.sd_hle.as_mut() {
                 slot.sd.reset();
             }
             tracing::debug!("SCB SYSRESETREQ: CPU rebooted through vector table");
+        }
+
+        // Peripheral-requested CPU reset (e.g. a watchdog time-out with reset
+        // enabled). Same clean-boundary contract and the same reboot sequence
+        // as SYSRESETREQ above; the requesting peripheral clears its own latch
+        // inside `take_reset_request`. Short-circuits on an empty index list.
+        if !self.reset_request_indices.is_empty() {
+            let requests = self.drain_peripheral_reset_requests();
+            if !requests.is_empty() {
+                self.reset_core_system_state();
+                self.reset()?;
+                for cause in requests.into_iter().flatten() {
+                    self.record_peripheral_reset_cause(cause);
+                }
+                self.system_reset_peripherals();
+                if let Some(slot) = self.sd_hle.as_mut() {
+                    slot.sd.reset();
+                }
+                tracing::debug!("peripheral reset request: CPU rebooted through vector table");
+            }
         }
 
         // nRF52 NVMC erase drain (same clean-boundary contract as the SCB
@@ -622,16 +836,17 @@ impl<C: Cpu> Machine<C> {
         // batch/CLI run path (`Machine::run`), which executes cycle-accurately
         // when an H5 op-modeling FLASH is present so this fires per instruction.
         self.apply_pending_flash_op()?;
-        // Opt-in SAMD51 storage commits use the same instruction boundary on
-        // step/advance paths. Pending operations stop Cortex-M batches; JIT
-        // hosts already refuse buses whose models_flash_ops predicate is true.
+        // Opt-in SAMD51 manual storage commits on the same retired-window
+        // boundary. Absent controllers pay one predictable None check.
         self.bus.service_samd51_storage_boundary()?;
 
-        // Logic-analyzer edge capture. No-op (one `is_active` check) unless a
-        // watch set is installed. Observed after the instruction + peripheral
-        // effects of this cycle have landed, so pad levels are the committed
-        // state at `total_cycles`.
-        self.logic_observe(logic_boundary);
+        // Logic-analyzer edge capture. The caller checks `is_active` inline so
+        // an unflagged run pays one bool rather than a cross-module call.
+        // Observed after the instruction + peripheral effects of this cycle
+        // have landed, so pad levels are the committed state at `total_cycles`.
+        if self.logic_capture.is_active() {
+            self.logic_observe(logic_boundary);
+        }
 
         Ok(())
     }

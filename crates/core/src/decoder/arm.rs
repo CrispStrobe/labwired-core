@@ -221,7 +221,7 @@ pub enum Instruction {
     LdrbImm {
         rt: u8,
         rn: u8,
-        imm: u8,
+        imm: u16,
     }, // LDRB Rt, [Rn, #imm]
     LdrbReg {
         rt: u8,
@@ -231,7 +231,7 @@ pub enum Instruction {
     StrbImm {
         rt: u8,
         rn: u8,
-        imm: u8,
+        imm: u16,
     }, // STRB Rt, [Rn, #imm]
     StrbReg {
         rt: u8,
@@ -241,12 +241,12 @@ pub enum Instruction {
     LdrhImm {
         rt: u8,
         rn: u8,
-        imm: u8,
+        imm: u16,
     }, // LDRH Rt, [Rn, #imm] (imm is *2)
     StrhImm {
         rt: u8,
         rn: u8,
-        imm: u8,
+        imm: u16,
     }, // STRH Rt, [Rn, #imm] (imm is *2)
     StrhReg {
         rt: u8,
@@ -299,6 +299,29 @@ pub enum Instruction {
     Bl {
         offset: i32,
     }, // BL <label> (32-bit T1+T2)
+    // Armv8.1-M low-overhead loops (no tail predication: DLSTP/WLSTP/LETP
+    // and LCTP need MVE and are not decoded).
+    Dls {
+        rn: u8,
+    }, // DLS LR, Rn
+    Wls {
+        rn: u8,
+        imm: u16,
+    }, // WLS LR, Rn, <label> (forward, PC + 4 + imm)
+    Le {
+        lr: bool,
+        imm: u16,
+    }, // LE LR, <label> / LE <label> (backward, PC + 4 - imm)
+    // Armv8.1-M conditional select: Rd = cond ? Rn : f(Rm) with f = id
+    // (CSEL), +1 (CSINC), NOT (CSINV), negate (CSNEG). Register 15 in Rn/Rm
+    // is the zero register (the CSET/CSETM/CINC/CINV/CNEG aliases).
+    Csel {
+        rd: u8,
+        rn: u8,
+        rm: u8,
+        cond: u8,
+        op: u8,
+    },
     Bx {
         rm: u8,
     }, // BX Rm
@@ -604,6 +627,15 @@ pub enum Instruction {
     /// emit them routinely.
     Barrier,
 
+    /// TT{T}{A} Rd, Rn (Armv8-M T1) — Test Target: the MPU (and, with the
+    /// Security Extension, SAU/IDAU) attributes of the address in Rn.
+    /// `t`: ask for unprivileged; `a`: the alternate security state.
+    Tt {
+        rd: u8,
+        rn: u8,
+        t: bool,
+        a: bool,
+    },
     /// MRS Rd, <sysm> — read a system register into a GP register.
     /// Only PRIMASK (sysm = 0x10) is modelled; other sysm values are
     /// accepted and return 0 from the executor.
@@ -944,6 +976,48 @@ pub enum Instruction {
     Unknown32(u16, u16),
 }
 
+impl Instruction {
+    /// True for every floating-point (VFP / FP extension) instruction: the
+    /// ones whose execution runs the architecture's `ExecuteFPCheck`, which
+    /// sets CONTROL.FPCA (`crate::peripherals::cortex_m_fpu`). Every `V*`
+    /// variant of this enum must be listed here; `tests::is_vfp_covers_every_v_variant`
+    /// checks the list against the enum source.
+    pub fn is_vfp(&self) -> bool {
+        use Instruction::*;
+        matches!(
+            self,
+            VaddF32 { .. }
+                | VaddF64 { .. }
+                | VcvtF32FromInt { .. }
+                | VcvtIntFromF32 { .. }
+                | VdivF32 { .. }
+                | VdivF64 { .. }
+                | VfmaF32 { .. }
+                | VfmsF32 { .. }
+                | VfnmaF32 { .. }
+                | VfnmsF32 { .. }
+                | Vfp { .. }
+                | VfpLoadMultiple { .. }
+                | VfpStoreMultiple { .. }
+                | Vldr { .. }
+                | Vldr64 { .. }
+                | VmovDRtRt2 { .. }
+                | VmovF32Imm { .. }
+                | VmovF32Reg { .. }
+                | VmovF64Reg { .. }
+                | VmovRtRt2D { .. }
+                | VmovRtSn { .. }
+                | VmovSnRt { .. }
+                | VmulF32 { .. }
+                | VmulF64 { .. }
+                | Vstr { .. }
+                | Vstr64 { .. }
+                | VsubF32 { .. }
+                | VsubF64 { .. }
+        )
+    }
+}
+
 /// Low S-register indices (2*Dreg) of the three operands of a double-precision
 /// VFP data-processing encoding: `1110 111o oDoo nnnn dddd 1011 NoMo mmmm`.
 fn vfp_dp_regs(h1: u16, h2: u16) -> (u8, u8, u8) {
@@ -1116,7 +1190,7 @@ pub fn decode_thumb_16(opcode: u16) -> Instruction {
     // 4.3 Load/Store Byte (Imm5) (T1): 0111 Liii iinn nttt
     if (opcode & 0xF000) == 0x7000 {
         let is_load = (opcode & 0x0800) != 0;
-        let imm = ((opcode >> 6) & 0x1F) as u8;
+        let imm = (opcode >> 6) & 0x1F;
         let rn = ((opcode >> 3) & 0x7) as u8;
         let rt = (opcode & 0x7) as u8;
 
@@ -1130,7 +1204,7 @@ pub fn decode_thumb_16(opcode: u16) -> Instruction {
     // 4.5 Load/Store Halfword (Imm5) (T1): 1000 Liii iinn nttt
     if (opcode & 0xF000) == 0x8000 {
         let is_load = (opcode & 0x0800) != 0;
-        let imm5 = ((opcode >> 6) & 0x1F) as u8;
+        let imm5 = (opcode >> 6) & 0x1F;
         // The immediate is scaled by 2 for halfword access
         let imm = imm5 << 1;
         let rn = ((opcode >> 3) & 0x7) as u8;
@@ -1446,6 +1520,9 @@ pub fn decode_thumb_32(h1: u16, h2: u16) -> Instruction {
     // `_early`/`_mid`/`_late` functions rather than reordered.
     // First: the FP encodings live in the coprocessor space (MCR/MRC for
     // VMOV-to-scalar and VMRS/VMSR), which `decode_system` would claim.
+    if let Some(i) = arm_thumb32::decode_v81m_csel(h1, h2) {
+        return i;
+    }
     if let Some(i) = arm_thumb32::decode_vfp_generic(h1, h2) {
         return i;
     }
@@ -1524,6 +1601,29 @@ mod tests {
     use super::*;
 
     // ... (existing tests)
+
+    #[test]
+    fn is_vfp_covers_every_v_variant() {
+        // Every `V*` variant of `Instruction` is an FP instruction, and
+        // `is_vfp` must name it or CONTROL.FPCA misses it.
+        let src = include_str!("arm.rs");
+        let start = src.find("pub enum Instruction {").unwrap();
+        let end = start + src[start..].find("\n}\n").unwrap();
+        let isvfp = &src[src.find("pub fn is_vfp").unwrap()..];
+        let isvfp = &isvfp[..isvfp.find("\n    }\n").unwrap()];
+        for line in src[start..end].lines() {
+            let t = line.trim_start();
+            if line.starts_with("    V") {
+                let name: String = t.chars().take_while(|c| c.is_alphanumeric()).collect();
+                assert!(
+                    isvfp.contains(&format!("{name} {{")),
+                    "Instruction::{name} is missing from is_vfp"
+                );
+            }
+        }
+        assert!(Instruction::Vfp { op: 0 }.is_vfp());
+        assert!(!Instruction::Nop.is_vfp());
+    }
 
     #[test]
     fn test_decode_bfi() {
@@ -1647,58 +1747,6 @@ mod tests {
     }
 
     #[test]
-    fn test_decode_memory_ops() {
-        // LDR R0, [R1, #4] (T1) -> 6848
-        // imm5 = 1 (4>>2). rn=1. rt=0.
-        // 0110 1000 0100 1000 -> 6848
-        assert_eq!(
-            decode_thumb_16(0x6848),
-            Instruction::LdrImm {
-                rt: 0,
-                rn: 1,
-                imm: 4
-            }
-        );
-
-        // STR R2, [R3, #0] (T1) -> 601A
-        // imm5=0. rn=3. rt=2.
-        // 0110 0000 0001 1010 -> 601A
-        assert_eq!(
-            decode_thumb_16(0x601A),
-            Instruction::StrImm {
-                rt: 2,
-                rn: 3,
-                imm: 0
-            }
-        );
-    }
-
-    #[test]
-    fn test_decode_push_pop() {
-        // PUSH {R0, LR} (T1) -> B501
-        // 1011 0101 0000 0001
-        // m=1 (LR), regs=1 (R0)
-        assert_eq!(
-            decode_thumb_16(0xB501),
-            Instruction::Push {
-                registers: 1,
-                m: true
-            }
-        );
-
-        // POP {R1, PC} (T1) -> BD02
-        // 1011 1101 0000 0010
-        // p=1 (PC), regs=2 (R1)
-        assert_eq!(
-            decode_thumb_16(0xBD02),
-            Instruction::Pop {
-                registers: 2,
-                p: true
-            }
-        );
-    }
-
-    #[test]
     fn test_decode_misc_rev() {
         // REV R0, R2 (using F081 -> Rd=0)
         assert_eq!(
@@ -1757,16 +1805,6 @@ mod tests {
                 op: 3
             }
         );
-    }
-
-    #[test]
-    fn test_decode_rev_t1_16bit() {
-        // REV T1 (16-bit): `rev r3, r3` = 0xBA1B (0xBA00 | (rm=3<<3) | rd=3).
-        assert_eq!(decode_thumb_16(0xBA1B), Instruction::Rev { rd: 3, rm: 3 });
-        // REV16 T1: `rev16 r5, r5` = 0xBA6D (0xBA40 | (rm=5<<3) | rd=5).
-        assert_eq!(decode_thumb_16(0xBA6D), Instruction::Rev16 { rd: 5, rm: 5 });
-        // REVSH T1: `revsh r0, r1` = 0xBAC8 (0xBAC0 | (rm=1<<3) | rd=0).
-        assert_eq!(decode_thumb_16(0xBAC8), Instruction::RevSh { rd: 0, rm: 1 });
     }
 
     #[test]

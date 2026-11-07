@@ -363,10 +363,12 @@ impl SamDmacByte {
         d: Descriptor,
     ) -> SimResult<()> {
         let start = u64::from(self.writeback) + index as u64 * 16;
-        for (byte, value) in d.encode().into_iter().enumerate() {
-            bus.write_u8(start + byte as u64, value)?;
-        }
-        Ok(())
+        crate::with_device_write_bypass(bus, |bus| {
+            for (byte, value) in d.encode().into_iter().enumerate() {
+                bus.write_u8(start + byte as u64, value)?;
+            }
+            Ok(())
+        })
     }
 
     fn error(&mut self, bus: &mut dyn Bus, index: usize) {
@@ -397,15 +399,17 @@ impl SamDmacByte {
         if self.channels[index].descriptor.is_none() {
             let start = table;
             let mut raw = [0; 16];
-            for (byte, value) in raw.iter_mut().enumerate() {
-                match bus.read_u8(start + byte as u64) {
-                    Ok(read) => *value = read,
-                    Err(_) => {
-                        self.error(bus, index);
-                        return;
+            crate::with_device_write_bypass(bus, |bus| {
+                for (byte, value) in raw.iter_mut().enumerate() {
+                    match bus.read_u8(start + byte as u64) {
+                        Ok(read) => *value = read,
+                        Err(_) => {
+                            self.error(bus, index);
+                            return;
+                        }
                     }
                 }
-            }
+            });
             let d = Descriptor::decode(raw);
             let tc3 = self.channels[index].control & !ENABLE == TC3_TRIGGER;
             if let Some(reason) = d.refusal(self.profile == Profile::Board && tc3) {
@@ -450,7 +454,9 @@ impl SamDmacByte {
                     return;
                 }
             }
-            let sample = match (bus.read_u8(source), bus.read_u8(source + 1)) {
+            let sample = match crate::with_device_write_bypass(bus, |bus| {
+                (bus.read_u8(source), bus.read_u8(source + 1))
+            }) {
                 (Ok(lo), Ok(hi)) => u16::from_le_bytes([lo, hi]),
                 _ => {
                     self.error(bus, index);
@@ -483,9 +489,11 @@ impl SamDmacByte {
                     return;
                 }
             }
-            let transferred = bus
-                .read_u8(source)
-                .and_then(|value| bus.write_u8(destination, value));
+            // The DATA read consumes the byte; only the RAM write is a
+            // device-engine guest-memory transfer.
+            let transferred = bus.read_u8(source).and_then(|value| {
+                crate::with_device_write_bypass(bus, |bus| bus.write_u8(destination, value))
+            });
             if transferred.is_err() {
                 self.error(bus, index);
                 return;
@@ -514,7 +522,7 @@ impl SamDmacByte {
                     return;
                 }
             }
-            let value = match bus.read_u8(source) {
+            let value = match crate::with_device_write_bypass(bus, |bus| bus.read_u8(source)) {
                 Ok(value) => value,
                 Err(_) => {
                     self.error(bus, index);
@@ -534,9 +542,10 @@ impl SamDmacByte {
                 }
             }
         } else {
-            let transferred = bus
-                .read_u8(source)
-                .and_then(|value| bus.write_u8(destination, value));
+            let transferred = crate::with_device_write_bypass(bus, |bus| {
+                bus.read_u8(source)
+                    .and_then(|value| bus.write_u8(destination, value))
+            });
             if transferred.is_err() {
                 self.error(bus, index);
                 return;
@@ -554,14 +563,17 @@ impl SamDmacByte {
             return;
         }
         if completed {
+            // Capture before the channels borrow: Board/CODAL latches TCMPL for
+            // NOACT and INT alike (DmaInstance / Adafruit_ZeroDMA). Software-byte
+            // / SERCOM4 TX foundation guests still gate on BTCTRL bit 3 so NOACT
+            // stays silent when INTEN is armed (sam_dmac_byte authored modes).
+            let latch_tcmpl = self.profile == Profile::Board || d.control & 8 != 0;
             let c = &mut self.channels[index];
             c.control &= !ENABLE;
             c.pending = false;
-            // Links are refused, so this block ends the transaction: the
-            // channel disables and TCMPL is set for NOACT and INT alike.
-            // CODAL's DmaInstance and Adafruit_ZeroDMA both complete
-            // single-descriptor transfers this way on SAMD21/SAMD51 hardware.
-            c.flags |= TCMPL;
+            if latch_tcmpl {
+                c.flags |= TCMPL;
+            }
         }
     }
 

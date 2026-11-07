@@ -2,7 +2,7 @@
 //! Opt-in SAMD51 main-array buffering and boundary commit. Other buses keep
 //! their existing memory routing. No generic flash controller is substituted.
 use super::*;
-use crate::peripherals::sam::nvmctrl::{Operation, FLASH_SIZE};
+use crate::peripherals::sam::nvmctrl::{Operation, FLASH_SIZE, STORAGE_START};
 use crate::SimulationError;
 
 impl SystemBus {
@@ -14,7 +14,18 @@ impl SystemBus {
         value: u32,
     ) -> Option<SimResult<()>> {
         let index = self.samd51_nvmctrl_idx?;
-        self.flash.read_u8(address)?;
+        // Device-originated writes program the array through their own path;
+        // they must not populate the CPU-facing manual page buffer.
+        if self.device_write_bypass() {
+            return None;
+        }
+        // Only the qualified storage window is the manual controller's. Stores
+        // elsewhere keep the bus's existing flash behaviour instead of turning
+        // into a hard error on an opt-in board.
+        if !(STORAGE_START..FLASH_SIZE).contains(&address) || self.flash.read_u8(address).is_none()
+        {
+            return None;
+        }
         if self.flash.base_addr != 0 || self.flash.data.len() != FLASH_SIZE as usize {
             return Some(Err(SimulationError::NotImplemented(
                 "SAMD51 storage requires exact 512KiB zero-based backing".into(),
@@ -24,8 +35,10 @@ impl SystemBus {
             self.peripherals[index]
                 .dev
                 .manual_flash_storage_mut()
-                .unwrap()
-                .store(address, width, value),
+                .ok_or_else(|| {
+                    SimulationError::NotImplemented("SAMD51 manual storage disappeared".into())
+                })
+                .and_then(|storage| storage.store(address, width, value)),
         )
     }
 
@@ -44,10 +57,13 @@ impl SystemBus {
     // check; enabled controllers retain the same service and error ordering.
     #[inline(never)]
     fn service_samd51_storage_controller(&mut self, index: usize) -> SimResult<()> {
-        let operation = self.peripherals[index]
-            .dev
-            .manual_flash_storage_mut()
-            .unwrap()
+        let operation = self
+            .peripherals
+            .get_mut(index)
+            .and_then(|p| p.dev.manual_flash_storage_mut())
+            .ok_or_else(|| {
+                SimulationError::NotImplemented("SAMD51 manual storage disappeared".into())
+            })?
             .boundary();
         let Some(operation) = operation else {
             return Ok(());
@@ -60,20 +76,36 @@ impl SystemBus {
         match operation {
             Operation::Clear => {}
             Operation::Erase { address } => {
-                self.flash.data[address..address + 8192].fill(0xff);
+                let end = address
+                    .checked_add(8192)
+                    .filter(|end| *end <= self.flash.data.len())
+                    .ok_or_else(|| {
+                        SimulationError::NotImplemented("SAMD51 erase outside flash backing".into())
+                    })?;
+                self.flash.data[address..end].fill(0xff);
                 self.note_memory_write();
             }
             Operation::Program { address, bytes } => {
-                for (old, new) in self.flash.data[address..address + 16].iter_mut().zip(bytes) {
+                let end = address
+                    .checked_add(bytes.len())
+                    .filter(|end| *end <= self.flash.data.len())
+                    .ok_or_else(|| {
+                        SimulationError::NotImplemented(
+                            "SAMD51 program outside flash backing".into(),
+                        )
+                    })?;
+                for (old, new) in self.flash.data[address..end].iter_mut().zip(bytes) {
                     *old &= new;
                 }
                 self.note_memory_write();
             }
         }
-        self.peripherals[index]
-            .dev
-            .manual_flash_storage_mut()
-            .unwrap()
+        self.peripherals
+            .get_mut(index)
+            .and_then(|p| p.dev.manual_flash_storage_mut())
+            .ok_or_else(|| {
+                SimulationError::NotImplemented("SAMD51 manual storage disappeared".into())
+            })?
             .finish();
         Ok(())
     }
@@ -135,6 +167,27 @@ mod tests {
             assert!(b.write_u16(0x78000, 0).is_err());
         }
     }
+    #[test]
+    fn stores_outside_the_storage_window_keep_default_flash_behavior() {
+        for optimized in [false, true] {
+            let mut b = bus(optimized);
+            b.write_u32(0x1000, 0x1234_5678).unwrap();
+            assert_eq!(b.read_u32(0x1000).unwrap(), 0x1234_5678);
+            assert!(!b.has_pending_flash_op());
+            assert_eq!(b.read_u16(NVM + 0x12).unwrap() & 4, 0);
+        }
+    }
+
+    #[test]
+    fn device_originated_stores_do_not_enter_the_manual_page_buffer() {
+        let mut b = bus(false);
+        crate::with_device_write_bypass(&mut b, |b| {
+            b.write_u32(STORAGE_START, 0x1122_3344).unwrap();
+        });
+        assert!(!b.has_pending_flash_op());
+        assert_eq!(b.read_u16(NVM + 0x12).unwrap() & 4, 0);
+    }
+
     #[test]
     fn absent_controller_boundary_preserves_memory_on_both_bus_paths() {
         for optimized in [false, true] {

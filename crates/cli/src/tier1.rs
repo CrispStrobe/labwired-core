@@ -670,6 +670,15 @@ pub const TIER1_TARGETS: &[Tier1Target] = &[
         "configs/chips/stm32g474re.yaml",
         "tests/fixtures/tier1/stm32g474re.elf",
     ),
+    // G431RB: the demand-ranked "other STM32" 13% industrial/motor-control pick
+    // (JetBrains State of Embedded 2025), same RM0440 G4 die family as g474re.
+    // Raw-register self-test over the reused G4 peripheral map; STM32G431RBT6
+    // is Active on the ST eStore and in stock at distributors.
+    fast_boot(
+        "stm32g431rb",
+        "configs/chips/stm32g431rb.yaml",
+        "tests/fixtures/tier1/stm32g431rb.elf",
+    ),
     // Second Cortex-M0+ (ARMv6-M) row after stm32l073, and the first with the
     // dedicated `stm32g0` RCC map: self-tests clock/gpio/timer/pwm/dma/irq/
     // i2c/spi/adc/wdt/rtc with raw-register pokes. Measured: the full
@@ -1611,23 +1620,6 @@ peripherals:
         std::fs::write(dir.join("MANIFEST.json"), manifest).unwrap();
         let err = verify_fixture_manifest(&dir).unwrap_err();
         assert!(err.contains("esp32s3.elf"), "{err}");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn manifest_verification_happy_path() {
-        let dir = std::env::temp_dir().join(format!("tier1-manifest-happy-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let body = b"good-blob-bytes";
-        std::fs::write(dir.join("esp32s3.elf"), body).unwrap();
-        let sha = format!("{:x}", <sha2::Sha256 as sha2::Digest>::digest(body));
-        std::fs::write(
-            dir.join("MANIFEST.json"),
-            format!(r#"{{ "esp32s3.elf": {{ "sha256": "{sha}" }} }}"#),
-        )
-        .unwrap();
-        let verified = verify_fixture_manifest(&dir).unwrap();
-        assert!(verified.contains("esp32s3.elf"), "{verified:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

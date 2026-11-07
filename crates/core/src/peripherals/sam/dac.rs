@@ -1,3 +1,5 @@
+// LabWired - Firmware Simulation Platform
+// Copyright (C) 2026 Andrii Shylenko
 // SPDX-License-Identifier: MIT
 //! Opt-in SAMD51 DAC slice (DS60001507F 47): channel 0 conversions from DATA0
 //! writes while the DAC is enabled (CTRLA.ENABLE, DACCTRL0.ENABLE) and its
@@ -79,7 +81,7 @@ impl Samd51Dac {
         Ok(match offset {
             0x00 => u16::from(self.ctrla),
             0x01 => u16::from(self.ctrlb),
-            0x02 => 0,
+            0x02 | 0x03 => 0, // EVCTRL; 0x03 is reserved and reads 0
             0x04..=0x06 => 0,
             0x07 => u16::from(self.ready0()), // STATUS.READY0; EOC not modelled
             0x08..=0x0b => 0,                 // SYNCBUSY: writes complete at once
@@ -135,7 +137,7 @@ impl Samd51Dac {
 
 impl Peripheral for Samd51Dac {
     fn on_system_reset(&mut self) {
-        let _ = self.write_reg(0, 1); // SWRST keeps the recorded conversions
+        let _ = self.write_reg(0, 1); // CTRLA.SWRST keeps the recorded conversions
         self.clocked = false;
     }
     fn read(&self, offset: u64) -> SimResult<u8> {

@@ -189,11 +189,52 @@ pub fn build_node_with_options(
             #[cfg(not(all(feature = "qemu-arm", not(target_arch = "wasm32"))))]
             anyhow::bail!("node '{id}': Cortex-A7 needs a native build with --features qemu-arm; browser execution is unavailable")
         }
+        MachineFamily::CortexR => {
+            #[cfg(all(feature = "qemu-arm-system", not(target_arch = "wasm32")))]
+            {
+                let NodeFirmware::Elf(bytes) = firmware else {
+                    anyhow::bail!("node '{id}': Cortex-R5F takes an initialized-memory ELF");
+                };
+                let bus =
+                    crate::bus::SystemBus::from_config_with_plugins(chip, system, opts.plugins)?;
+                Ok(Box::new(crate::system::cortex_r::load_elf(
+                    bus, chip, &bytes,
+                )?))
+            }
+            #[cfg(not(all(feature = "qemu-arm-system", not(target_arch = "wasm32"))))]
+            anyhow::bail!("node '{id}': Cortex-R5F needs a native build with --features qemu-arm-system; browser execution is unavailable")
+        }
         MachineFamily::RiscV => {
             build_riscv_node(id, chip, system, firmware, opts.plugins, opts.fab, blobs)
         }
         MachineFamily::Xtensa => build_xtensa_node(id, chip, system, firmware, blobs, opts.profile),
         MachineFamily::Avr => build_avr_node(id, chip, system, firmware, opts.plugins),
+        MachineFamily::Pic24 => build_pic24_node(id, chip, system, firmware, opts.plugins),
+        MachineFamily::Pic18 => build_pic18_node(id, chip, system, firmware, opts.plugins),
+        MachineFamily::Pic16 => build_pic16_node(id, chip, system, firmware, opts.plugins),
+        MachineFamily::Rx => {
+            let NodeFirmware::Elf(bytes) = firmware else {
+                anyhow::bail!("node '{id}': RX takes an ELF");
+            };
+            let bus = crate::bus::SystemBus::from_config_with_plugins(chip, system, opts.plugins)?;
+            Ok(Box::new(crate::system::rx::load_elf(bus, &bytes)?))
+        }
+        MachineFamily::Mips => {
+            let NodeFirmware::Elf(bytes) = firmware else {
+                anyhow::bail!("node '{id}': MIPS takes an ELF");
+            };
+            let bus = crate::bus::SystemBus::from_config_with_plugins(chip, system, opts.plugins)?;
+            Ok(Box::new(crate::system::mips::load_elf(bus, &bytes)?))
+        }
+        MachineFamily::Aarch64 => {
+            let NodeFirmware::Elf(bytes) = firmware else {
+                anyhow::bail!("node '{id}': AArch64 takes an ELF");
+            };
+            let bus = crate::bus::SystemBus::from_config_with_plugins(chip, system, opts.plugins)?;
+            Ok(Box::new(crate::system::aarch64::load_elf(
+                bus, chip, &bytes,
+            )?))
+        }
     }
 }
 
@@ -259,20 +300,119 @@ fn build_avr_node(
         parse_elf_image(&bytes).with_context(|| format!("node '{id}': parse firmware ELF"))?;
     let mut bus = crate::bus::SystemBus::from_config_with_plugins(chip, system, plugins)
         .with_context(|| format!("node '{id}': build bus"))?;
-    let mut cpu = crate::cpu::Avr::new();
+    let mut cpu = crate::cpu::Avr::for_chip_name(&chip.name);
     cpu.load_program_image(&image);
-    // SPI/I2C kits park on bus controllers; the AVR interpreter owns
-    // transfers via SPDR / TWCR, so move slaves onto the CPU.
-    for name in ["spi", "spi0", "spi1"] {
-        for dev in bus.take_spi_devices(name) {
-            cpu.push_spi_device(dev);
-        }
-    }
+    // SPI kits stay on the bus parking controller (SPDR clocks via
+    // SystemBus::clock_parking_spi) so inspect can see the panel. I²C
+    // slaves still move onto the CPU TWI model.
     for name in ["i2c", "i2c0", "twi"] {
         for dev in bus.take_i2c_slaves(name) {
             cpu.push_i2c_slave(dev);
         }
     }
+    let machine = Machine::new(cpu, bus);
+    Ok(Box::new(machine))
+}
+
+/// PIC24/dsPIC33 node (M0): ELF in, CPU-internal UART1 out.
+fn build_pic24_node(
+    id: &str,
+    chip: &ChipDescriptor,
+    system: &SystemManifest,
+    firmware: NodeFirmware,
+    plugins: &[&dyn crate::plugin::ChipPlugin],
+) -> anyhow::Result<Box<dyn MachineTrait>> {
+    let NodeFirmware::Elf(bytes) = firmware else {
+        anyhow::bail!(
+            "node '{id}': chip '{}' boots from an ELF, but the firmware is not an ELF file",
+            chip.name
+        );
+    };
+    let image =
+        parse_elf_image(&bytes).with_context(|| format!("node '{id}': parse firmware ELF"))?;
+    if image.arch != crate::Arch::Pic24 {
+        anyhow::bail!(
+            "node '{id}': firmware architecture {:?} is incompatible with PIC24 chip '{}'",
+            image.arch,
+            chip.name
+        );
+    }
+    let bus = crate::bus::SystemBus::from_config_with_plugins(chip, system, plugins)
+        .with_context(|| format!("node '{id}': build bus"))?;
+    let mut cpu = crate::cpu::Pic24::new();
+    cpu.load_program_image(&image);
+    let machine = Machine::new(cpu, bus);
+    Ok(Box::new(machine))
+}
+
+/// PIC18 node: ELF in, CPU-local flash sized from the chip
+/// ([`crate::cpu::Pic18::for_chip_name`]). The EUSART is CPU-internal; no
+/// node console is attached (the CLI `test` path wires it).
+fn build_pic18_node(
+    id: &str,
+    chip: &ChipDescriptor,
+    system: &SystemManifest,
+    firmware: NodeFirmware,
+    plugins: &[&dyn crate::plugin::ChipPlugin],
+) -> anyhow::Result<Box<dyn MachineTrait>> {
+    let NodeFirmware::Elf(bytes) = firmware else {
+        anyhow::bail!(
+            "node '{id}': chip '{}' boots from an ELF, but the firmware is not an ELF file",
+            chip.name
+        );
+    };
+    let image =
+        parse_elf_image(&bytes).with_context(|| format!("node '{id}': parse firmware ELF"))?;
+    if image.arch != crate::Arch::Pic18 {
+        anyhow::bail!(
+            "node '{id}': firmware architecture {:?} is incompatible with PIC18 chip '{}'",
+            image.arch,
+            chip.name
+        );
+    }
+    crate::cpu::pic18::check_pic18_entry(image.entry_point)
+        .map_err(|e| anyhow::anyhow!("node '{id}': {e}"))?;
+    let bus = crate::bus::SystemBus::from_config_with_plugins(chip, system, plugins)
+        .with_context(|| format!("node '{id}': build bus"))?;
+    let mut cpu = crate::cpu::Pic18::for_chip_name(&chip.name);
+    cpu.load_program_image(&image);
+    let machine = Machine::new(cpu, bus);
+    Ok(Box::new(machine))
+}
+
+/// PIC16 node: ELF in, CPU-local flash sized from the chip
+/// ([`crate::cpu::Pic16::for_chip_name`]). EM_MCHP_PIC images are retargeted
+/// to PIC16 by the chip's `arch:` ([`crate::system::arch_policy::image_arch_for_chip`]).
+fn build_pic16_node(
+    id: &str,
+    chip: &ChipDescriptor,
+    system: &SystemManifest,
+    firmware: NodeFirmware,
+    plugins: &[&dyn crate::plugin::ChipPlugin],
+) -> anyhow::Result<Box<dyn MachineTrait>> {
+    let NodeFirmware::Elf(bytes) = firmware else {
+        anyhow::bail!(
+            "node '{id}': chip '{}' boots from an ELF, but the firmware is not an ELF file",
+            chip.name
+        );
+    };
+    let mut image =
+        parse_elf_image(&bytes).with_context(|| format!("node '{id}': parse firmware ELF"))?;
+    image.arch = crate::system::arch_policy::image_arch_for_chip(image.arch, chip.arch);
+    if image.arch != crate::Arch::Pic16 {
+        anyhow::bail!(
+            "node '{id}': firmware architecture {:?} is incompatible with PIC16 chip '{}'",
+            image.arch,
+            chip.name
+        );
+    }
+    crate::cpu::pic16::check_pic16_entry(image.entry_point)
+        .map_err(|e| anyhow::anyhow!("node '{id}': {e}"))?;
+    let bus = crate::bus::SystemBus::from_config_with_plugins(chip, system, plugins)
+        .with_context(|| format!("node '{id}': build bus"))?;
+    let mut cpu = crate::cpu::Pic16::for_chip_name(&chip.name);
+    cpu.load_program_image(&image)
+        .map_err(|e| anyhow::anyhow!("node '{id}': {e}"))?;
     let machine = Machine::new(cpu, bus);
     Ok(Box::new(machine))
 }
@@ -388,6 +528,16 @@ fn build_riscv_node(
             let image = parse_elf_image(&bytes)
                 .with_context(|| format!("node '{id}': parse firmware ELF"))?;
             use crate::Cpu as _;
+            // A `core: rv64…` chip runs the 64-bit hart. Nothing ESP-specific
+            // applies, and the image sets up its own stack from reset.
+            if crate::cpu::riscv64::is_rv64_chip(chip) {
+                let mut machine = Machine::new(crate::cpu::RiscV64::for_chip(chip), bus);
+                machine
+                    .load_firmware(&image)
+                    .map_err(|e| anyhow::anyhow!("node '{id}': load firmware: {e:?}"))?;
+                machine.cpu.set_pc(image.entry_point as u32);
+                return Ok(Box::new(machine));
+            }
             // The single-chip engine's C3 bare-ELF path, step for step
             // (`builder::riscv`, the browser's `new_from_config_riscv`): the
             // real mask ROM in its windows, its reset-time `.data` copy
@@ -403,16 +553,26 @@ fn build_riscv_node(
                     crate::boot::esp32c3_rom::install_fast_boot_rom(&mut bus, &images);
                 }
             }
+            // C6 Arduino Preferences/NVS substrate (SPI_MEM + partitions @ 0x8000).
+            crate::boot::esp32c6_rom::maybe_install_arduino_flash(&mut bus, chip);
             let cpu = crate::system::riscv::configure_riscv(&mut bus);
             let mut machine = Machine::new(cpu, bus);
             machine
                 .load_firmware(&image)
                 .map_err(|e| anyhow::anyhow!("node '{id}': load firmware: {e:?}"))?;
+            // Re-seed ROM .data after ELF load (mask-ROM unpack never ran).
+            if crate::boot::esp32c6_rom::is_esp32c6(chip) {
+                crate::boot::esp32c6_rom::seed_rom_data(&mut machine.bus);
+            }
             // Fast boot skips the ROM/2nd-stage bootloader that would normally
-            // set the stack pointer, so seed it at the top of RAM (16-byte
+            // set the stack pointer, so seed it at the top of app SRAM (16-byte
             // aligned, RISC-V ABI) or the first prologue store faults.
-            let ram_size = chip.ram.size;
-            let sp_top = (chip.ram.base + ram_size) as u32;
+            // C6: below ROM-reserved HP SRAM (esp32c6_rom::APP_SRAM_END).
+            let sp_top = if crate::boot::esp32c6_rom::is_esp32c6(chip) {
+                crate::boot::esp32c6_rom::app_stack_top()
+            } else {
+                (chip.ram.base + chip.ram.size) as u32
+            };
             machine.cpu.set_sp(sp_top & !0xF);
             machine.cpu.set_pc(image.entry_point as u32);
             Ok(Box::new(machine))
@@ -465,6 +625,17 @@ fn build_xtensa_node(
     machine
         .reset()
         .map_err(|e| anyhow::anyhow!("node '{id}': reset: {e:?}"))?;
+    // The reset leaves the core at the BROM reset vector, which this bank
+    // does not emulate: enter the ELF where a 2nd-stage bootloader would land,
+    // with the stacks the BROM seeds — what `builder::xtensa::build_esp32`
+    // does for the single-chip engine. Without it a bare ELF node faulted on
+    // its first fetch.
+    use crate::Cpu as _;
+    machine.cpu.set_pc(image.entry_point as u32);
+    machine.cpu.set_sp(0x3FFE_0000);
+    if let Some(cpu1) = machine.cpu_secondary.as_mut() {
+        cpu1.set_sp(0x3FFD_8000);
+    }
     Ok(Box::new(machine))
 }
 
@@ -649,9 +820,7 @@ pub fn parse_avr_elf_image(bytes: &[u8]) -> anyhow::Result<crate::memory::Progra
             continue;
         }
         let (off, n) = (ph.p_offset as usize, ph.p_filesz as usize);
-        if off + n > bytes.len() {
-            anyhow::bail!("Segment out of bounds in ELF file");
-        }
+        check_load_segment(ph, bytes.len())?;
         let data = bytes[off..off + n].to_vec();
         let vma = if ph.p_vaddr != 0 {
             ph.p_vaddr
@@ -670,7 +839,8 @@ pub fn parse_avr_elf_image(bytes: &[u8]) -> anyhow::Result<crate::memory::Progra
             }
             AvrLoadSpace::Data | AvrLoadSpace::Eeprom => {
                 // Flash LMA holds the initializer image.
-                if ph.p_paddr < 0x8000 {
+                // Below 256 KB: the largest modelled AVR flash (ATmega2560).
+                if ph.p_paddr < 0x4_0000 {
                     image.add_segment(ph.p_paddr, data.clone());
                 }
                 // Keep the biased VMA so `load_program_image` can tell data
@@ -680,6 +850,28 @@ pub fn parse_avr_elf_image(bytes: &[u8]) -> anyhow::Result<crate::memory::Progra
         }
     }
     Ok(image)
+}
+
+/// A nonempty PT_LOAD segment's header is checked before it is loaded or
+/// skipped: its bytes must lie inside the file, and it cannot carry more file
+/// bytes than it occupies in memory.
+fn check_load_segment(ph: &goblin::elf::ProgramHeader, file_len: usize) -> anyhow::Result<()> {
+    if ph.p_filesz > ph.p_memsz {
+        anyhow::bail!(
+            "ELF segment at {:#x} has p_filesz {:#x} > p_memsz {:#x}",
+            ph.p_paddr,
+            ph.p_filesz,
+            ph.p_memsz
+        );
+    }
+    let end = (ph.p_offset as usize).checked_add(ph.p_filesz as usize);
+    if end.is_none_or(|end| end > file_len) {
+        anyhow::bail!(
+            "ELF segment at {:#x} runs past the end of the file",
+            ph.p_paddr
+        );
+    }
+    Ok(())
 }
 
 /// Parse ELF bytes into a [`crate::memory::ProgramImage`].
@@ -696,18 +888,83 @@ pub fn parse_elf_image(bytes: &[u8]) -> anyhow::Result<crate::memory::ProgramIma
     let machine = elf.header.e_machine;
     let arch = elf_arch(machine)
         .ok_or_else(|| anyhow::anyhow!("unsupported ELF machine type {machine}"))?;
+    if arch == crate::Arch::Pic24 {
+        crate::cpu::pic24::check_xc16_entry(elf.entry).map_err(anyhow::Error::msg)?;
+    }
+    if arch == crate::Arch::Pic18 {
+        crate::cpu::pic18::check_pic18_entry(elf.entry).map_err(anyhow::Error::msg)?;
+    }
     let mut image = crate::memory::ProgramImage::new(elf.entry, arch);
+    if arch == crate::Arch::Pic24 {
+        // XC16 executable sections are already in the CPU's 4-byte slot form
+        // (24-bit word + pad) and addresses are PC units. Program headers can
+        // cover several sections at once, so walk the sections to keep every
+        // section at its own address (the real toolchain puts `.reset`,
+        // `.ivt.*`/`.aivt.*` and `.text` at non-contiguous PC addresses).
+        parse_pic24_sections(&elf, bytes, &mut image)?;
+        return Ok(image);
+    }
     for ph in &elf.program_headers {
         if ph.p_type != PT_LOAD || ph.p_filesz == 0 {
             continue;
         }
         let off = ph.p_offset as usize;
         let n = ph.p_filesz as usize;
-        if off + n <= bytes.len() {
-            image.add_segment(ph.p_paddr, bytes[off..off + n].to_vec());
-        }
+        check_load_segment(ph, bytes.len())?;
+        let addr = if arch == crate::Arch::Mips {
+            // MIPS ELFs name KSEG0/KSEG1 addresses; the bus is physical.
+            crate::system::mips::kseg_to_physical(ph.p_paddr)
+        } else if arch == crate::Arch::XtensaLx7 && ph.p_vaddr != 0 {
+            // ESP-IDF app ELFs distinguish the flash/load address in p_paddr
+            // from the address visible to the running core in p_vaddr. Fast
+            // boot skips the bootloader, so populate the runtime VMA directly.
+            ph.p_vaddr
+        } else {
+            ph.p_paddr
+        };
+        image.add_segment(addr, bytes[off..off + n].to_vec());
     }
     Ok(image)
+}
+
+/// Load a PIC24 XC16 ELF from its **section** table (see [`parse_elf_image`]).
+///
+/// Only executable sections are loaded; non-executable program-space data
+/// (PSV/table reads) is not modelled and is skipped. Every loaded section
+/// must be a whole number of 4-byte slots — the parsers reject anything else
+/// instead of guessing (verified against XC16 v1.70 output).
+pub fn parse_pic24_sections(
+    elf: &goblin::elf::Elf<'_>,
+    bytes: &[u8],
+    image: &mut crate::memory::ProgramImage,
+) -> anyhow::Result<()> {
+    use goblin::elf::section_header::{SHF_EXECINSTR, SHT_PROGBITS};
+    let mut loaded = 0usize;
+    for sh in &elf.section_headers {
+        if sh.sh_type != SHT_PROGBITS || sh.sh_size == 0 {
+            continue;
+        }
+        let (off, n) = (sh.sh_offset as usize, sh.sh_size as usize);
+        if off + n > bytes.len() {
+            anyhow::bail!(
+                "PIC24 section at {:#x} runs past the end of the ELF file",
+                sh.sh_addr
+            );
+        }
+        if sh.sh_flags & u64::from(SHF_EXECINSTR) == 0 {
+            // Read-only program-space data (PSV/table reads) is not modelled:
+            // skip it rather than misread it as instructions.
+            continue;
+        }
+        let data = &bytes[off..off + n];
+        crate::cpu::pic24::check_xc16_section(sh.sh_addr, data).map_err(anyhow::Error::msg)?;
+        image.add_segment(sh.sh_addr, data.to_vec());
+        loaded += 1;
+    }
+    if loaded == 0 {
+        anyhow::bail!("PIC24 ELF has no executable sections to load");
+    }
+    Ok(())
 }
 
 /// A Cortex-M image must carry a usable reset vector, or the machine boots to

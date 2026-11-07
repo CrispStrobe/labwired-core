@@ -14,21 +14,20 @@
 //! SERCOM, the one block that *is* the UART, the SPI controller and the I²C
 //! controller depending on `CTRLA.MODE`.
 
-pub mod dmac_byte;
-pub mod sercom_spi;
-pub mod sercom_usart;
-
-pub mod cmcc;
-pub mod nvmctrl;
-
-pub mod usb_device;
-
 pub mod adc;
 pub mod clock_tree;
+pub mod cmcc;
 pub mod dac;
+pub mod dmac_byte;
 pub mod eic;
+pub mod nvmctrl;
 pub mod oscctrl;
 pub mod pac;
 pub mod sercom_i2cm;
+pub mod sercom_spi;
+pub mod sercom_usart;
+
+pub mod usb_device;
+
 pub mod tc;
 pub mod tcc;

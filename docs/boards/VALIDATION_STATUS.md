@@ -9,46 +9,66 @@ The models column is a content digest over everything that board's `models` list
 
 | Board | Tier | Last silicon capture | Models | Status |
 |-------|------|----------------------|--------|--------|
-| `nrf52840` | 🟢 silicon-verified | 2026-08-09 | `319029f35722e4fc` | ⚠ drift acked 2026-10-29, expires 2026-11-27 (re-capture pending) |
-| `seeed-xiao-nrf52840-sense` | 🟢 silicon-verified | 2026-08-09 | `319029f35722e4fc` | ⚠ drift acked 2026-10-29, expires 2026-11-27 (re-capture pending) |
-| `stm32h563` | 🟢 silicon-verified | 2026-08-10 | `60dcf293d9b14782` | ⚠ drift acked 2026-10-28, expires 2026-11-27 (re-capture pending) |
-| `esp32c3` | 🟢 silicon-verified | 2026-08-09 | `a3524376e76a254b` | ⚠ drift acked 2026-10-12, expires 2026-11-11 (re-capture pending) |
-| `nucleo-l476rg` | 🟢 silicon-verified | 2026-08-09 | `fae7918001157995` | ⚠ drift acked 2026-10-28, expires 2026-11-27 (re-capture pending) |
-| `nucleo-l073rz` | 🟢 silicon-verified | 2026-08-09 | `3db55a0d6b97210b` | ⚠ drift acked 2026-10-28, expires 2026-11-27 (re-capture pending) |
-| `stm32f103` | 🟢 silicon-verified | 2026-08-09 | `da1fc83bafe8826d` | ⚠ drift acked 2026-10-28, expires 2026-11-27 (re-capture pending) |
-| `stm32f407` | 🟢 silicon-smoke | 2026-06-20 | `ae1c3c159f9d9d15` | ⚠ drift acked 2026-10-28, expires 2026-11-27 (re-capture pending) |
-| `esp32s3` | 🟢 silicon-verified | 2026-08-09 | `952a2b85b15b54f1` | ⚠ drift acked 2026-11-01, expires 2026-12-01 (re-capture pending) |
-| `esp32s3-zero` | 🔵 sim-validated (deep model, no HW diff) | — | `d2417b02ea4a5e17` | no silicon capture |
-| `stm32f401` | 🟡 smoke-manual | — | `8c558b7a32ec55cc` | no silicon capture |
-| `stm32wba52` | 🟡 smoke-manual | — | `e816b3c4c9a67c5d` | no silicon capture |
-| `nrf52832` | ⚪ structural | — | `2640a72317a5e835` | no silicon capture |
-| `microbit-v1` | 🟡 smoke-manual | — | `1b0993c561f9fb2b` | no silicon capture |
-| `microbit-v2` | 🟡 smoke-manual | — | `afa391d05d5d2396` | no silicon capture |
-| `rp2040` | ⚪ structural | — | `1891f0f2ee5968b5` | no silicon capture |
-| `rp2350` | 🟡 smoke-manual | — | `9b7745d760da6842` | no silicon capture |
-| `nrf5340` | 🔵 sim-validated (deep model, no HW diff) | — | `f11c86e698d0f6ea` | no silicon capture |
-| `stm32h735` | 🔵 sim-validated (deep model, no HW diff) | — | `7f9c3c5a9770b6dd` | no silicon capture |
-| `stm32u575` | 🔵 sim-validated (deep model, no HW diff) | — | `564c5f5c00bea16b` | no silicon capture |
-| `nucleo-u545re` | 🔵 sim-validated (deep model, no HW diff) | — | `3959a30d603275fe` | no silicon capture |
-| `stm32f411ceu6` | 🔵 sim-validated (deep model, no HW diff) | — | `65926e29bd2776b2` | no silicon capture |
-| `brd2709a` | 🟡 smoke-manual | — | `68b207d313219864` | no silicon capture |
-| `esp32` | ⚪ structural | — | `4739e0b44cb95063` | no silicon capture |
-| `mkw41z4` | 🔵 sim-validated (deep model, no HW diff) | — | `85dab0bef5742946` | no silicon capture |
-| `stm32f405` | 🔵 sim-validated (deep model, no HW diff) | — | `37c4763c4804df03` | no silicon capture |
-| `stm32f767` | 🔵 sim-validated (deep model, no HW diff) | — | `4d0026c3e7528cf3` | no silicon capture |
-| `stm32f401cdu6` | 🔵 sim-validated (deep model, no HW diff) | — | `aec999de8932996d` | no silicon capture |
-| `atsamd21g18a` | 🔵 sim-validated (deep model, no HW diff) | — | `062a98d6d7acac01` | no silicon capture |
-| `nrf54l15` | 🔵 sim-validated (deep model, no HW diff) | — | `91c0dc6c905a9edf` | no silicon capture |
-| `stm32g474re` | 🔵 sim-validated (deep model, no HW diff) | — | `be85e0439699abdb` | no silicon capture |
-| `stm32wb55` | 🔵 sim-validated (deep model, no HW diff) | — | `0df8103e8bcbd697` | no silicon capture |
-| `ci-fixture-riscv` | ⚪ structural | — | `e519faf4d2cb48f0` | no silicon capture |
-| `nano-33-iot` | 🟡 smoke-manual | — | `3d0617245b766a87` | no silicon capture |
-| `metro-m4` | 🟡 smoke-manual | — | `f9bb8e5446af4823` | no silicon capture |
-| `arduino-uno-r4-minima` | 🟡 smoke-manual | — | `115793b15018f216` | no silicon capture |
-| `teensy-41` | 🟡 smoke-manual | — | `73c6b85ea80189c5` | no silicon capture |
-| `stm32f7-discovery` | 🟡 smoke-manual | — | `95d2e048e1b06747` | no silicon capture |
-| `nucleo-g071rb` | 🟡 smoke-manual | — | `5621518c353dea29` | no silicon capture |
-| `esp32c6-devkitc` | 🟡 smoke-manual | — | `99d3d6c240f57b9d` | no silicon capture |
+| `nrf52840` | 🟢 silicon-verified | 2026-08-09 | `49b2126db24a8dcd` | ✖ DRIFT — model 2026-10-29 > capture; RE-CAPTURE |
+| `seeed-xiao-nrf52840-sense` | 🟢 silicon-verified | 2026-08-09 | `49b2126db24a8dcd` | ✖ DRIFT — model 2026-10-29 > capture; RE-CAPTURE |
+| `stm32h563` | 🟢 silicon-verified | 2026-08-10 | `d91eeb51f454a40f` | ✖ DRIFT — model 2026-10-27 > capture; RE-CAPTURE |
+| `esp32c3` | 🟢 silicon-verified | 2026-08-09 | `7f49c91c00c6ad77` | ✖ DRIFT — model 2026-10-12 > capture; RE-CAPTURE |
+| `nucleo-l476rg` | 🟢 silicon-verified | 2026-08-09 | `ac14563702a3df2b` | ✖ DRIFT — model 2026-10-27 > capture; RE-CAPTURE |
+| `nucleo-l073rz` | 🟢 silicon-verified | 2026-08-09 | `6c4db87219863b2e` | ✖ DRIFT — model 2026-10-27 > capture; RE-CAPTURE |
+| `stm32f103` | 🟢 silicon-verified | 2026-08-09 | `31ced96429aa83df` | ✖ DRIFT — model 2026-10-27 > capture; RE-CAPTURE |
+| `stm32f407` | 🟢 silicon-smoke | 2026-06-20 | `3c5b606f27255fd4` | ✖ DRIFT — model 2026-10-27 > capture; RE-CAPTURE |
+| `esp32s3` | 🟢 silicon-verified | 2026-08-09 | `f2f66b82d3d4deff` | ✖ DRIFT — model 2026-11-01 > capture; RE-CAPTURE |
+| `esp32s3-zero` | 🔵 sim-validated (deep model, no HW diff) | — | `f2661c9d7300a31e` | no silicon capture |
+| `stm32f401` | 🟡 smoke-manual | — | `46e8bfb5ff3f4988` | no silicon capture |
+| `stm32wba52` | 🟡 smoke-manual | — | `0e634be5c41e8fbf` | no silicon capture |
+| `nrf52832` | ⚪ structural | — | `9b566d8c4ddefd9a` | no silicon capture |
+| `microbit-v1` | 🟡 smoke-manual | — | `55b0dc0a6a9d8c5f` | no silicon capture |
+| `microbit-v2` | 🟡 smoke-manual | — | `211609e201a9d1a9` | no silicon capture |
+| `rp2040` | ⚪ structural | — | `e594a5e2212d2666` | no silicon capture |
+| `rp2350` | 🟡 smoke-manual | — | `60c1fb3467f7761c` | no silicon capture |
+| `nrf5340` | 🔵 sim-validated (deep model, no HW diff) | — | `5a49d990d67cbb7a` | no silicon capture |
+| `stm32h735` | 🔵 sim-validated (deep model, no HW diff) | — | `093fa902011a0030` | no silicon capture |
+| `stm32u575` | 🔵 sim-validated (deep model, no HW diff) | — | `b665c768115ac386` | no silicon capture |
+| `stm32u5a5zj` | 🔵 sim-validated (deep model, no HW diff) | — | `ced9a92d3a5fab43` | no silicon capture |
+| `nucleo-u545re` | 🔵 sim-validated (deep model, no HW diff) | — | `87ededffbb9d5d2e` | no silicon capture |
+| `stm32f411ceu6` | 🔵 sim-validated (deep model, no HW diff) | — | `6961ffb5be4248a8` | no silicon capture |
+| `brd2709a` | 🟡 smoke-manual | — | `f82b1becde010bf6` | no silicon capture |
+| `esp32` | ⚪ structural | — | `13876bdf8c7d0233` | no silicon capture |
+| `mkw41z4` | 🔵 sim-validated (deep model, no HW diff) | — | `1efc731af7d55c7b` | no silicon capture |
+| `stm32f405` | 🔵 sim-validated (deep model, no HW diff) | — | `ab4e91c6348180da` | no silicon capture |
+| `stm32f767` | 🔵 sim-validated (deep model, no HW diff) | — | `4ef3f6bd2cccb5be` | no silicon capture |
+| `stm32f401cdu6` | 🔵 sim-validated (deep model, no HW diff) | — | `a75a0d49c7a00bd8` | no silicon capture |
+| `atsamd21g18a` | 🔵 sim-validated (deep model, no HW diff) | — | `8fa1c5f0ea9e4bfa` | no silicon capture |
+| `nrf54l15` | 🔵 sim-validated (deep model, no HW diff) | — | `e6d3446e7a6061e1` | no silicon capture |
+| `stm32g474re` | 🔵 sim-validated (deep model, no HW diff) | — | `b9701510e648ffb9` | no silicon capture |
+| `stm32g431rb` | ⚪ structural | — | `89934b72e5d86f92` | no silicon capture |
+| `stm32wb55` | 🔵 sim-validated (deep model, no HW diff) | — | `d7b2723874a4c0f9` | no silicon capture |
+| `ci-fixture-riscv` | ⚪ structural | — | `9acdcc39df138ec7` | no silicon capture |
+| `nano-33-iot` | 🟡 smoke-manual | — | `2f61c9275196b122` | no silicon capture |
+| `metro-m4` | 🟡 smoke-manual | — | `7e957a613a94b633` | no silicon capture |
+| `arduino-uno-r4-minima` | 🟡 smoke-manual | — | `01c8679abe40c1b2` | no silicon capture |
+| `teensy-41` | 🟡 smoke-manual | — | `e8e57aa6d4899331` | no silicon capture |
+| `stm32f7-discovery` | 🟡 smoke-manual | — | `dcdc62ec99745814` | no silicon capture |
+| `nucleo-g071rb` | 🟡 smoke-manual | — | `9e9258177c028672` | no silicon capture |
+| `esp32c6-devkitc` | 🟡 smoke-manual | — | `7397cedcb9b3a72b` | no silicon capture |
+| `litex-vexriscv` | 🟡 smoke-manual | — | `e2e1b343c43e7eb5` | no silicon capture |
+| `stm32l552` | 🟡 smoke-manual | — | `e4c1dc00420dc650` | no silicon capture |
+| `cc2538sf53` | 🟡 smoke-manual | — | `628e7e8f8564acf9` | no silicon capture |
+| `amap42kp` | 🟡 smoke-manual | — | `81927cb23a2b19db` | no silicon capture |
+| `r7fa6m5bh` | 🟡 smoke-manual | — | `038a032eb28a35c5` | no silicon capture |
+| `r7fa8m1ah` | 🟡 smoke-manual | — | `fcfd95d160edeca8` | no silicon capture |
+| `same70q21b` | 🟡 smoke-manual | — | `1aa551a8b0af8f6a` | no silicon capture |
+| `mk64f12` | 🟡 smoke-manual | — | `b4bb8a42234b7eeb` | no silicon capture |
+| `s32k388` | 🟡 smoke-manual | — | `f2bfc382bbaddf5d` | no silicon capture |
+| `mimxrt595s` | 🟡 smoke-manual | — | `cc632043ccf9a95e` | no silicon capture |
+| `sam4s16c` | 🟡 smoke-manual | — | `cb67e4f3a99db7fc` | no silicon capture |
+| `stm32f072` | 🟡 smoke-manual | — | `6b47714c67349c86` | no silicon capture |
+| `arty-litex-vexriscv` | 🟡 smoke-manual | — | `fd8c56dbf5db696d` | no silicon capture |
+| `vegaboard-ri5cy` | 🟡 smoke-manual | — | `eadd417939118293` | no silicon capture |
+| `mpfs095t` | 🟡 smoke-manual | — | `961d412ebb140783` | no silicon capture |
+| `am6234` | 🟡 smoke-manual | — | `5568d453b82b0085` | no silicon capture |
+| `r5f52618bgfp` | 🟡 smoke-manual | — | `319acebef5d73019` | no silicon capture |
+| `pic32mz2048efm144` | 🟡 smoke-manual | — | `117c8cddce9998e5` | no silicon capture |
 
 ## `nrf52840` — 🟢 silicon-verified
 
@@ -56,7 +76,7 @@ The models column is a content digest over everything that board's `models` list
 - Silicon: **2026-08-09** on ST-LINK V2 (V2J37S7, serial 48FF6B064884534929321087), openocd 0.12.0 hla_swd; nRF52840 FICR INFO.PART=0x00052840, DEVICEID 707dc298 — re-captured live 2026-08-09 with NRF52_STRICT=1: ALL 11 hw-oracle suites pass — conformance, cpu_conformance, mmio 16/16, gpio, onboarding, power, spis_twis, timer_rtc, spim_easydma, full_register, ccm. NOT a second board: DEVICEID 707dc298 matches the 2026-06-09 baseline, so this is a re-read of the SAME part (unlike the C3/S3 re-captures, which were cross-board). The run was NOT clean on arrival and found three real defects, all fixed in this commit: (1) seven nrf52_* hw-oracle tests had not COMPILED since the 2026-07-18 bus consolidation removed the inherent SystemBus read_u32/write_u32 shadows — they build only under --features hw-oracle-nrf52, which CI never enables, so the 're-capture pending' ack pointed at a path that could not build; (2) mmio was 15/16, SPIM0 PSEL_MISO sim=0x0 vs hw=0x2E, because the serial-instance broadcast PSEL WRITES to both halves but dispatched READS to TWIM, which models only 0x508/0x50C; (3) SPIM PSEL.CSN (0x514) was missing from Nrf52SpiRegs entirely — corroborated present on silicon (wrote 0x2B, read 0x2B). Guarded going forward by a hardware-free unit test, serial_instance::psel_block_reads_back_while_disabled.
   - offline (CI): nrf52_conformance::conformance_sim (digest vs frozen 2026-06-09 capture)
   - offline (CI): nrf52_mmio_diff / nrf52_gpio_conformance (sim halves)
-- Drift status: **⚠ drift acked 2026-10-29, expires 2026-11-27 (re-capture pending)**
+- Drift status: **✖ DRIFT — model 2026-10-29 > capture; RE-CAPTURE**
 
 ## `seeed-xiao-nrf52840-sense` — 🟢 silicon-verified
 
@@ -64,7 +84,7 @@ The models column is a content digest over everything that board's `models` list
 - Note: Same silicon as nrf52840 (the bench board IS a Seeed XIAO nRF52840 Sense).
 - Silicon: **2026-08-09** on ST-LINK V2 (V2J37S7, serial 48FF6B064884534929321087) — the same physical XIAO the nrf52840 entry describes — rides the nrf52840 re-capture of 2026-08-09: all 11 hw-oracle suites pass under NRF52_STRICT=1, mmio 16/16. This is not an independent run — it is the SAME board and the SAME suites, which is exactly what `note` says this entry means. See the nrf52840 result for the three defects that run uncovered and fixed.
   - offline (CI): nrf52.rs xiao_* (manifest build, GPIO task regs, SPIM0 EasyDMA)
-- Drift status: **⚠ drift acked 2026-10-29, expires 2026-11-27 (re-capture pending)**
+- Drift status: **✖ DRIFT — model 2026-10-29 > capture; RE-CAPTURE**
 
 ## `stm32h563` — 🟢 silicon-verified
 
@@ -72,7 +92,7 @@ The models column is a content digest over everything that board's `models` list
 - Silicon: **2026-08-10** on STLINK-V3 (V3J13, serial 002100174741500220383733, USB 0483:374e, NUCLEO-H563ZI on-board CN1/STLK, dapdirect AP1 recipe) — Re-captured live 2026-08-10 with H563_STRICT=1 on merge commit e1851d80 (a clean tree — see the caveat below): h563_mmio_diff 8/8, h563_parity_diff 48/48, h563_class_diff 65/65, 121 cases total, 0 divergence / 0 both_disagree / 0 sim_err. Clean on arrival; nothing to fix. Target answered SWD DPIDR 0x6ba02477, Cortex-M33 r0p4, target voltage 3.289 V. Probe serial is recorded from this run on — the 2026-06-22 entry named the USB PID but no serial, so whether this is the same physical NUCLEO as that capture cannot be established either way. SCOPE CAVEAT, read before treating this as a full re-validation: this run re-executed the MMIO/parity/class register diff ONLY. The FLASH program-behaviour live-diff described below (real program/erase driven over SWD) was NOT re-run on 2026-08-10; its findings are carried forward from 2026-06-22 and are older than this date stamp implies. TREE CAVEAT: an initial run of the same 121 cases also passed, but was executed while another session had an uncommitted merge of origin/main staged in this worktree, so it was not attributable to any commit; it was discarded and the run recorded here was repeated against a 0-dirty checkout of e1851d80. FLASH program-behaviour live-diff run on the board 2026-06-22 (drives real program/erase over SWD): write buffer (NSSR.WBNE) accumulates a 16-byte quad-word, commits + sets EOP only on completion; a misaligned quad-word raises INCERR alone and commits nothing; program-over-not-erased is permitted and ANDs the bits (no PGSERR); flags clear via NSCCR (0x30), not by writing NSSR. The sim H5 flash error-flag + read-while-write fidelity gates were CORRECTED to match this capture (earlier datasheet model was wrong on all four points). Prior MMIO/reset diff (h563_mmio_diff + h563_parity_diff + h563_class_diff, 0 divergence) still holds.
   - offline (CI): h563_conformance (6 tests vs frozen 2026-06-10..12 captures)
   - offline (CI): h563_mmio_diff::{h563_mmio_sim_only,h563_parity_sim_only,h563_class_sim_only}
-- Drift status: **⚠ drift acked 2026-10-28, expires 2026-11-27 (re-capture pending)**
+- Drift status: **✖ DRIFT — model 2026-10-27 > capture; RE-CAPTURE**
 
 ## `esp32c3` — 🟢 silicon-verified
 
@@ -81,7 +101,7 @@ The models column is a content digest over everything that board's `models` list
 - Silicon: **2026-08-09** on USB-JTAG (built-in) + openocd-esp32 v0.12.0-esp32-20260703, board MAC 9c:cc:01:d0:98:e0 (QFN32 rev v0.4) — re-captured live 2026-08-09 on a SECOND physical C3 (MAC 9c:cc:01:d0:98:e0; the 2026-06-11 baseline came from 38:44:be:42:f5:58, same QFN32 rev v0.4) — cross-board corroboration, not a re-read of the same part. 1207 registers read in ONE state (21 estate windows + 43 control registers + the radio windows): 84/84 RESET_VALUES matched, 0 mismatched, and both FREE_RUNNING_COUNTERS windows mapped. Radio note: a JTAG `reset halt` on the C3 is a software CORE reset that does not cold-reset peripherals, so RADIO_FE/WIFI_MAC only read their cold baseline when no resident firmware has brought the PHY up — the board was temporarily flashed with crates/wasm/tests/fixtures/esp32c3-hello-world-flash.bin for the capture, then its original 4 MB image was restored and verified byte-identical (sha256 844abc88…8a910). Do NOT try to reach cold radio via RTC_CNTL SW_SYS_RST: it resets the USB-Serial-JTAG bridge too and drops the debug link mid-write (verified, LIBUSB_ERROR_IO). Artifacts: scripts/hw-oracle/captures/esp32c3/recapture-20260809T121824Z/.
   - offline (CI): esp32c3_reset_conformance::esp32c3_reset_values_match_silicon (87 regs; 366/423 overlap matched silicon)
   - offline (CI): esp32c3_reset_conformance::esp32c3_free_running_counters_are_mapped (2 WiFi MAC counter windows; mapping only, no equality claim)
-- Drift status: **⚠ drift acked 2026-10-12, expires 2026-11-11 (re-capture pending)**
+- Drift status: **✖ DRIFT — model 2026-10-12 > capture; RE-CAPTURE**
 
 ## `nucleo-l476rg` — 🟢 silicon-verified
 
@@ -90,7 +110,7 @@ The models column is a content digest over everything that board's `models` list
 - Silicon: **2026-08-09** on STLINK-V2.1 (USB 0483:374b serial 0670FF…1747, NUCLEO-L476RG onboard) — re-captured live 2026-08-09 with L476_STRICT=1: l476_mmio_diff 15/15 and l476_parity_diff 104/104, 0 divergence — identical to the 2026-06-20 figures. Clean on arrival; nothing to fix. SAME physical board as that baseline, established by probe serial 0670FF535155878281121747 being recorded in both (the L073 entry could not make that claim, having no serial on file before today). Scope unchanged and still partial: the mmio+parity set, not a full-chip sweep.
   - offline (CI): l476_mmio_diff::{l476_mmio_sim_only,l476_parity_sim_only}
   - offline (CI): firmware_survival L476 cases (UART byte stream)
-- Drift status: **⚠ drift acked 2026-10-28, expires 2026-11-27 (re-capture pending)**
+- Drift status: **✖ DRIFT — model 2026-10-27 > capture; RE-CAPTURE**
 
 ## `nucleo-l073rz` — 🟢 silicon-verified
 
@@ -99,7 +119,7 @@ The models column is a content digest over everything that board's `models` list
 - Silicon: **2026-08-09** on ST-LINK V2.1 (NUCLEO-L073RZ on-board, V2J28S17, serial 066CFF555054877567065340) over SWD; DBGMCU IDCODE read back 0x20086447 — re-captured live 2026-08-09 with L073_STRICT=1: l0_mmio_diff 20/20, 0 divergence (RCC IOPENR/APB1ENR/APB2ENR/AHBENR/CFGR clock switch, GPIOA BSRR/BRR, SPI1 CR1/CR2, TIM2 ARR/PSC/CR1, TIM21 ARR, DBGMCU IDCODE). Clean on arrival — unlike the nRF re-capture the same day, this one found nothing to fix. Scope is UNCHANGED and still partial: RCC/GPIO/SPI1/TIM2/TIM21 only, not a full-chip sweep (see `note`); I2C/UART/ADC on this part remain outside the asserted set. Probe serial is recorded from this run on — the earlier entries named no serial, so whether this is the same physical NUCLEO as the 2026-06-20 capture cannot be established either way.
   - offline (CI): stm32l0_mmio_diff::{l0_mmio_sim_only,l0_parity_sim_only}
   - offline (CI): firmware_survival L073 smoke case
-- Drift status: **⚠ drift acked 2026-10-28, expires 2026-11-27 (re-capture pending)**
+- Drift status: **✖ DRIFT — model 2026-10-27 > capture; RE-CAPTURE**
 
 ## `stm32f103` — 🟢 silicon-verified
 
@@ -108,7 +128,7 @@ The models column is a content digest over everything that board's `models` list
 - Silicon: **2026-08-09** on ST-LINK V2.1 (V2J43S28, serial 066CFF534951775087071123, USB 0483:374b), genuine STM32F103 — chipid 0x410 STM32F1xx_MD, 128K flash / 20K SRAM — re-captured live 2026-08-09 with F103_STRICT=1: stm32f1_mmio_diff 102/102 (24 reset + 26 R/W + 52 sweep), 0 divergence, and f103_conformance reports no sim-vs-silicon gaps — identical to the 2026-06-20 figures. Clean on arrival; nothing to fix. f103_conformance needed firmware-f103-conformance built for thumbv7m-none-eabi first; without it the test panics in 0.00s, which reads like a failure but is a missing prerequisite. Probe serial recorded from this run on, so a future capture can tell whether it is the same physical board (the earlier entry named none). (Earlier capture caught + fixed a classic SPI CR1 bug masking CRCNEXT bit 12 — 0xEFFF vs silicon 0xFFFF.)
   - offline (CI): stm32f1_mmio_diff::{f1_reset_sim_only,f1_mmio_sim_only,f1_parity_sim_only,f1_sweep_sim_only}
   - offline (CI): f103_conformance::conformance_sim (digest)
-- Drift status: **⚠ drift acked 2026-10-28, expires 2026-11-27 (re-capture pending)**
+- Drift status: **✖ DRIFT — model 2026-10-27 > capture; RE-CAPTURE**
 
 ## `stm32f407` — 🟢 silicon-smoke
 
@@ -117,7 +137,7 @@ The models column is a content digest over everything that board's `models` list
 - Silicon: **2026-06-20** on ST-LINK/V2 (USB 0483:3748, IDCODE 0x10016413) — connect-under-reset (firmware was holding SWD), adapter 480 kHz — Live re-capture after the v0.17.0 merge: stm32f4_mmio_diff 37/37 (2 reset + 31 sweep + 4 behaviour), 0 divergence. Caught + fixed a real model bug: F407 silicon does NOT latch SPI1 CR1 bit 12 (CRCNEXT) — writes 0xFFFF, reads 0xEFFF — vs F103 which keeps it writable; spi.rs now applies a per-part cr1_mask (F4 0xEFFF). Supersedes the 2026-06-19 drift_ack. (I²C/UART models still smoke-tier — not in the mmio diff.)
   - offline (CI): stm32f4_mmio_diff::{f4_reset_sim_only,f4_sweep_sim_only,f4_behavior_sim_only}
   - offline (CI): firmware_survival F407 smoke + i2c cases (sim-self-pinned)
-- Drift status: **⚠ drift acked 2026-10-28, expires 2026-11-27 (re-capture pending)**
+- Drift status: **✖ DRIFT — model 2026-10-27 > capture; RE-CAPTURE**
 
 ## `esp32s3` — 🟢 silicon-verified
 
@@ -126,7 +146,7 @@ The models column is a content digest over everything that board's `models` list
 - Silicon: **2026-08-09** on USB-JTAG built-in (USB 303a:1001, openocd-esp32 v0.12.0-esp32-20260703, both Tensilica taps 0x120034e5), board MAC 3c:0f:02:df:f3:c8 (QFN56 rev v0.2) — re-captured live 2026-08-09 on a SECOND physical S3 (MAC 3c:0f:02:df:f3:c8, QFN56 rev v0.2; the 2026-07-15 baseline came from an ESP32-S3-Zero, MAC 9c:13:9e:f4:40:c0, same rev) — cross-board corroboration, not a re-read of the same part. Both Xtensa taps (tap0+tap1) examined. 384 registers read across 10 windows (UART0, GPIO, I2C0, RMT, MCPWM0, TIMG0, SYSTIMER, GDMA, SYSTEM, RTC_CNTL): 9/9 RESET_VALUES matched, 0 mismatched. Scope is unchanged and still thin — this is a 9-register reset-state anchor, NOT a broad register or behavioural diff; see the KNOWN GAPS in `note`. Artifacts: scripts/hw-oracle/captures/esp32s3/recapture-20260809T130700Z/.
   - offline (CI): esp32s3_reset_conformance (9 reset regs vs live silicon, firmware-path bus)
   - offline (CI): e2e_i2c_tmp102 / e2e_hello_world / xtensa_exec / e2e_esp32_epaper (sim)
-- Drift status: **⚠ drift acked 2026-11-01, expires 2026-12-01 (re-capture pending)**
+- Drift status: **✖ DRIFT — model 2026-11-01 > capture; RE-CAPTURE**
 
 ## `esp32s3-zero` — 🔵 sim-validated (deep model, no HW diff)
 
@@ -210,22 +230,37 @@ The models column is a content digest over everything that board's `models` list
 ## `stm32u575` — 🔵 sim-validated (deep model, no HW diff)
 
 - Doc: [`docs/boards/stm32u575.md`](stm32u575.md)  ·  Chip: `configs/chips/stm32u575.yaml`
-- Note: STM32U575ZI (NUCLEO-U575ZI-Q), first U5 part. Cortex-M33, 2 MiB flash, 768 KiB SRAM + 16 KiB SRAM4. Reuses the shared V2 RCC/GPIO/UART models plus the U5 PLL1 register block (PLL1CFGR 0x28 / DIVR 0x34 / FRACR 0x38), the U5 CR ready pairs, and a CRS register-surface model. ADC1 runs the SVD-verified U5 layout (CFGR1.RES[3:2] 14/12/10/8, PCSEL@0x1C, LTR1-3/HTR1-3@0xA8..0xBC, CALFACT2@0xC8) and passes Arduino L5 analogRead; GPDMA1 models all 16 channels. FDCAN1 (0x4000A400, 4 KiB window over SRAMCAN @ +0x800, RCC_APB1ENR2.FDCAN1EN bit 9 gate) reuses the Bosch M_CAN model and passes Arduino L8 enter_loopback; the U575 has a single FDCAN instance (SVD + stm32u575xx.h declare only FDCAN1 — no fdcan2). Validated by: real STM32CubeU5 HAL firmware (160 MHz PLL1 bring-up, USART1 VCP banner + LED loop), Rust io-smoke, Arduino matrix L0-L8, Zephyr matrix L0-L3, unsupported-instruction audit. NO bench part: every value is SVD/RM0456-derived; Renode has no STM32U5 platform, so no Renode differential is claimed. TrustZone/GTZC, OCTOSPI and USB are not modeled; flash program/erase IS modeled (unlock, page erase, quad-word program, EOP/WRPERR, option-byte read) with documented residuals: mass erase accepted-but-not-applied, secure path/SECKEYR unmodeled, no option reload/SWAP_BANK. ADC4 is not declared: its SVD map is a different 12-bit class (SMPR/AWDxTR/CHSELRMOD0/1, no PCSEL/LTR/HTR/CALFACT2), not a sibling of the ADC1 map.
+- Note: STM32U575ZI (NUCLEO-U575ZI-Q), first U575 target. Cortex-M33, 2 MiB flash, 768 KiB SRAM + 16 KiB SRAM4. Reuses the shared V2 RCC/GPIO/UART models plus U5 PLL1/2/3 and ready pairs, and a CRS register-surface model. GPIO models analog-reset IDR, one-shot LCKR, and per-chip SECCFGR reset; U5 USART TXFE/AUTOCR are enabled only on U5 configs. ADC1 uses the SVD-verified U5 layout and passes Arduino L5 analogRead; GPDMA1 models all 16 channels and split NVIC lines 29-36/80-87; the core-onboarding-smoke lane exercises SPI-DMA, UART-DMA and flash-to-RAM reference firmware in the LabWired simulator on main pushes, nightly and manual dispatch (not PR, silicon or Renode comparison). The U5 ICACHE profile has a limited register contract; cache contents and line effects are not simulated. The 2 KiB U5 system-memory window seeds a read-only per-part FLASHSIZE word; OTP/package/UID bytes are simplified read/write storage. FDCAN1 (0x4000A400, 4 KiB window over SRAMCAN @ +0x800, RCC_APB1ENR2.FDCAN1EN bit 9 gate) reuses Bosch M_CAN and passes Arduino L8 internal loopback; the U575 has a single FDCAN instance. HASH supports CPU-fed SHA-1, MD5, SHA-224, SHA-256 and HMAC; completion is synchronous and DMA pacing/timing are not modeled. U575 has no PKA or SAES. Rust io-smoke and a local Star Catcher smoke cover startup; the latter checks PC13 input/B1, simulated SSD1306 output and USART1 TX. Also validated by real STM32CubeU5 HAL firmware, Arduino matrix L0-L8, Zephyr matrix L0-L3, and unsupported-instruction audit. NO bench part: values are SVD/RM0456-derived; upstream Renode master has no built-in STM32U5 platform, and this work does not compare against the separate 60North reference platform. TrustZone/GTZC, OCTOSPI and USB are not modeled. Flash supports non-secure unlock, page and one-/two-bank erase, quad-word program, EOP/WRPERR and option-byte storage; residuals include secure path/SECKEYR, read-while-write stalling and option reload/SWAP_BANK. ADC4 is not declared because its SVD map is a different 12-bit class from ADC1.
 - Silicon: none — not validated against real hardware.
   - offline (CI): strict_onboarding (io-smoke builds + runs firmware-stm32u575-demo)
   - offline (CI): chip_conformance (estate OK)
   - offline (CI): svd_conformance / register_coverage (SVD pinning)
   - offline (CI): firmware_survival test_stm32u575_zephyr_survival (stock Zephyr hello)
+  - offline (CI): firmware_survival test_stm32u575_arduino_serial_survival (stock Arduino serial)
+  - offline (CI): core-onboarding-smoke (main push/nightly/manual: 60North hal-spi-dma, hal-uart-dma, st-dma-flash-to-ram in LabWired simulator; not PR/silicon/Renode)
+  - offline (CI): stm32u575_60north_registers::u575_hash_* (SHA-1/MD5/SHA-224/SHA-256 register digest vectors)
   - offline (CI): arduino matrix L0-L8 (validation/arduino-matrix)
+- Drift status: **no silicon capture**
+
+## `stm32u5a5zj` — 🔵 sim-validated (deep model, no HW diff)
+
+- Doc: [`docs/boards/stm32u5a5zj.md`](stm32u5a5zj.md)  ·  Chip: `configs/chips/stm32u5a5zj.yaml`
+- Note: STM32U5A5ZJT6Q on NUCLEO-U5A5ZJ-Q (MB1549), LQFP144, 4 MiB flash and 2.5-MiB-class SRAM. It shares the STM32U5 register surfaces with U575 and adds HASH, SAES and PKA behavioral models. The U5A5 SystemBus oracle checks SHA-256 of abc, AES-128 ECB, 4^13 mod 497, and negative PKA subtraction sign extension through 4160 bits; it rejects 4161-bit operands. Shared-model tests on U575 cover SHA-1/SHA-224/MD5 and RFC 4231 HMAC, while SAES unit vectors cover AES-128 ECB/CBC/CTR. The model implements AES-256 ECB/CBC/CTR, but no AES-256 vector currently tests it. PKA operations are limited to the documented 4160-bit operand maximum. These models are synchronous and omit DMA pacing/timing; SAES GCM/CCM, TrustZone key selection, DPA, and PKA ECC/RSA-CRT/Montgomery helper modes remain unsupported. ICACHE is register-contract only, FDCAN loopback is not a physical bus, and the U5A5 pin/AF map in Playground is a common subset rather than a complete pin inventory. Simulator evidence only; no physical U5A5 board acceptance is claimed.
+- Silicon: none — not validated against real hardware.
+  - offline (CI): chip_conformance (estate OK; register-level HASH/SAES/PKA behavior gate)
+  - offline (CI): stm32u5_exec_oracle::u5a5_hash_saes_and_pka_execute_register_level_operations
+  - offline (CI): stm32u5_exec_oracle::u5a5_pka_arithmetic_subtraction_returns_sign_extended_negative_result
+  - offline (CI): stm32u5_exec_oracle::u5a5_pka_rejects_operand_widths_above_the_hardware_limit
+  - offline (CI): stm32u5_reset_conformance
 - Drift status: **no silicon capture**
 
 ## `nucleo-u545re` — 🔵 sim-validated (deep model, no HW diff)
 
 - Doc: [`docs/boards/nucleo-u545re.md`](nucleo-u545re.md)  ·  Chip: `configs/chips/stm32u545.yaml`
-- Note: STM32U545RET6Q (NUCLEO-U545RE-Q, MB1841). Cortex-M33, 512 KiB flash in two 256 KiB banks, SRAM1+SRAM2 256 KiB + SRAM4 16 KiB. A self-contained derivative of stm32u575.yaml: every peripheral kept is byte-identical to the U575 entry, enforced by crates/core/tests/u545_u575_drift_guard.rs; differences are the memory map, no USART2/GPIOF/GPIOI, DBGMCU IDCODE 0x10026455 (the U5 flash erase path derives the 256 KiB bank size from the mapped flash). Board facts (LD2 PA5, B1 PC13, VCP USART1 PA9/PA10) from ST's stm32u5xx-nucleo-bsp, ST open pin data .ioc and Zephyr nucleo_u545re_q; st.com datasheet/RM0456/UM3062 were not reachable when this was written. Validated by: nucleo_u545re machine-run pin tests, the committed bare-metal blinky (survival gate), a Cube HAL 160 MHz run (ignored-by-default, evidence in VALIDATION.md), Arduino matrix L0-L8 on the generic U545RETxQ variant. Zephyr is NOT validated (workspace predates the U545 SoC). NO bench part: SVD-derived, no silicon diff.
+- Note: STM32U545RET6Q (NUCLEO-U545RE-Q, MB1841). Cortex-M33, 512 KiB flash in two 256 KiB banks, SRAM1+SRAM2 256 KiB + SRAM4 16 KiB. A self-contained derivative of stm32u575.yaml, checked by crates/core/tests/u545_u575_drift_guard.rs with two explicit shared peripheral-field exceptions: DBGMCU IDCODE 0x10026455 and sysmem.config.flash_size_kb (512 vs 2048 KiB). Top-level flash/RAM sizes and package pin maps also differ; USART2/GPIOF/GPIOI are absent. The U5 flash erase path derives the 256 KiB bank size from mapped flash. Its system-memory window seeds FLASHSIZE read-only and simplifies OTP/package/UID bytes as ordinary storage. Board facts (LD2 PA5, B1 PC13, VCP USART1 PA9/PA10) from ST's stm32u5xx-nucleo-bsp, ST open pin data .ioc and Zephyr nucleo_u545re_q; st.com datasheet/RM0456/UM3062 were not reachable when this was written. Validated by: nucleo_u545re machine-run pin tests, the committed bare-metal blinky (survival gate), a Cube HAL 160 MHz run (ignored-by-default, evidence in VALIDATION.md), Arduino matrix L0-L8 on the generic U545RETxQ variant. Zephyr is NOT validated (workspace predates the U545 SoC). NO bench part: SVD-derived, no silicon diff.
 - Silicon: none — not validated against real hardware.
-  - offline (CI): nucleo_u545re (LD2 PA5 edges, B1 PC13 -> VCP, USART1 RX echo, memory map, flash banks)
-  - offline (CI): u545_u575_drift_guard (peripherals identical to U575 except an allow-list)
+  - offline (CI): nucleo_u545re (LD2 PA5 edges, B1 PC13 -> VCP, USART1 RX queue-injected echo (PA10 pad input is not routed), memory map, flash banks)
+  - offline (CI): u545_u575_drift_guard (shared peripherals compared with the explicit DBGMCU IDCODE and sysmem flash-size allow-list)
   - offline (CI): chip_conformance (estate OK)
   - offline (CI): svd_conformance / register_coverage (STM32U545.svd)
   - offline (CI): firmware_survival test_stm32u545_blinky_survival
@@ -319,6 +354,13 @@ The models column is a content digest over everything that board's `models` list
   - offline (CI): firmware_survival::stm32g474_zephyr
 - Drift status: **no silicon capture**
 
+## `stm32g431rb` — ⚪ structural
+
+- Doc: [`docs/boards/stm32g431rb.md`](stm32g431rb.md)  ·  Chip: `configs/chips/stm32g431rb.yaml`
+- Note: STM32G431RB (Cortex-M4F, RM0440; NUCLEO-G431RB). Shares the RM0440 peripheral map with stm32g474re at the G431 geometry (128 KiB flash, 22 KiB SRAM + 10 KiB CCM). Exercised by the tier-1 fast-boot fixture (tests/fixtures/tier1/stm32g431rb.elf) via examples/stm32g431rb/{tier1-smoke,io-smoke}.yaml. No G431 silicon bench.
+- Silicon: none — not validated against real hardware.
+- Drift status: **no silicon capture**
+
 ## `stm32wb55` — 🔵 sim-validated (deep model, no HW diff)
 
 - Doc: [`docs/boards/stm32wb55.md`](stm32wb55.md)  ·  Chip: `configs/chips/stm32wb55.yaml`
@@ -380,7 +422,7 @@ The models column is a content digest over everything that board's `models` list
 - Note: NUCLEO-G071RB (STM32G071RB, Cortex-M0+). Bare-metal UART/LED smoke prints OK on USART2 (ST-LINK VCP) after the G0 RCC IOPENR/APBENR1 ungating and toggles LD4 PA5; register-vs-SVD coverage measured against the ST CMSIS-SVD. SIM-DERIVED — no silicon diff; no executing-fidelity differential; DBGMCU DEV_ID 0x460 is ST's published constant, not a bench read.
 - Silicon: none — not validated against real hardware.
   - offline (CI): firmware_survival::test_nucleo_g071rb_smoke_survival
-  - offline (CI): stm32g071_config::stm32g071_from_config_builds
+  - offline (CI): board_config_gates::stm32g071_from_config_builds
 - Drift status: **no silicon capture**
 
 ## `esp32c6-devkitc` — 🟡 smoke-manual
@@ -390,4 +432,163 @@ The models column is a content digest over everything that board's `models` list
 - Silicon: none — not validated against real hardware.
   - offline (CI): firmware_survival::test_esp32c6_demo_survival
   - offline (CI): svd_conformance::chip_configs_match_their_svd (configs/chips/esp32c6.yaml vs tests/fixtures/real_world/esp32c6.svd)
+- Drift status: **no silicon capture**
+
+## `litex-vexriscv` — 🟡 smoke-manual
+
+- Doc: [`docs/boards/litex-vexriscv.md`](litex-vexriscv.md)  ·  Chip: `configs/chips/litex-vexriscv.yaml`
+- Silicon: none — not validated against real hardware.
+  - offline (CI): firmware_survival::test_litex_vexriscv_smoke_survival
+- Drift status: **no silicon capture**
+
+## `stm32l552` — 🟡 smoke-manual
+
+- Doc: [`docs/boards/nucleo-l552ze-q.md`](nucleo-l552ze-q.md)  ·  Chip: `configs/chips/stm32l552.yaml`
+- Silicon: none — not validated against real hardware.
+  - offline (CI): firmware_survival::test_nucleo_l552ze_q_smoke_survival
+  - offline (CI): firmware_survival::test_stm32l552_zephyr_survival (stock Zephyr hello)
+- Drift status: **no silicon capture**
+
+## `cc2538sf53` — 🟡 smoke-manual
+
+- Doc: [`docs/boards/cc2538dk.md`](cc2538dk.md)  ·  Chip: `configs/chips/cc2538sf53.yaml`
+- Silicon: none — not validated against real hardware.
+  - offline (CI): firmware_survival::test_cc2538dk_smoke_survival
+  - offline (CI): firmware_survival::test_cc2538dk_contiki_hello_survival
+  - offline (CI): firmware_survival::test_cc2538dk_contiki_flash_test_survival
+  - offline (CI): firmware_survival::test_cc2538dk_contiki_crypto_ccm_survival
+  - offline (CI): firmware_survival::test_cc2538dk_contiki_crypto_sha256_survival
+  - offline (CI): cc2538_rom (12 tests: ROM utility API incl. PageErase/ProgramFlash through FLASH_CTRL + CCA boot on the CPU model)
+  - offline (CI): cc2538_sleep_timer_irq (compare -> SM Timer IRQ 145 -> handler)
+  - offline (CI): cc2538_rpl_udp (3 nodes, stock Contiki-NG rpl-udp: 3 round trips per client; event-scheduler)
+- Drift status: **no silicon capture**
+
+## `amap42kp` — 🟡 smoke-manual
+
+- Doc: [`docs/boards/apollo4p-evb.md`](apollo4p-evb.md)  ·  Chip: `configs/chips/amap42kp.yaml`
+- Silicon: none — not validated against real hardware.
+  - offline (CI): firmware_survival::test_apollo4p_evb_smoke_survival
+  - offline (CI): firmware_survival::test_apollo4p_evb_zephyr_survival
+  - offline (CI): apollo4_bootrom (3 tests: boot-ROM helper table on the CPU model)
+- Drift status: **no silicon capture**
+
+## `r7fa6m5bh` — 🟡 smoke-manual
+
+- Doc: [`docs/boards/ek-ra6m5.md`](ek-ra6m5.md)  ·  Chip: `configs/chips/r7fa6m5bh.yaml`
+- Silicon: none — not validated against real hardware.
+  - offline (CI): firmware_survival::test_ek_ra6m5_smoke_survival
+  - offline (CI): firmware_survival::test_ek_ra6m5_zephyr_survival (stock Zephyr hello)
+  - offline (CI): ra6m5_agt_icu (AGT0 compare match A through ICU IELSR84)
+  - offline (CI): ra6m5_sci_icu (SCI0 RXI/TXI/TEI through ICU IELSR0-2, SSR_FIFO)
+- Drift status: **no silicon capture**
+
+## `r7fa8m1ah` — 🟡 smoke-manual
+
+- Doc: [`docs/boards/ek-ra8m1.md`](ek-ra8m1.md)  ·  Chip: `configs/chips/r7fa8m1ah.yaml`
+- Silicon: none — not validated against real hardware.
+  - offline (CI): firmware_survival::test_ek_ra8m1_smoke_survival
+  - offline (CI): firmware_survival::test_ek_ra8m1_zephyr_survival (stock Zephyr hello)
+  - offline (CI): ra8m1_agt_icu (AGT0 compare match A through ICU IELSR84)
+  - offline (CI): ra8m1_sci_icu (SCI9 RXI/TXI/TEI through ICU IELSR24-26)
+- Drift status: **no silicon capture**
+
+## `same70q21b` — 🟡 smoke-manual
+
+- Doc: [`docs/boards/sam-e70-xplained.md`](sam-e70-xplained.md)  ·  Chip: `configs/chips/same70q21b.yaml`
+- Silicon: none — not validated against real hardware.
+  - offline (CI): firmware_survival::test_sam_e70_xplained_smoke_survival
+  - offline (CI): firmware_survival::test_sam_e70_xplained_zephyr_survival
+  - offline (CI): same70_zephyr_boot::zephyr_bring_up_walks_the_m7_caches_and_locks_the_plls
+- Drift status: **no silicon capture**
+
+## `mk64f12` — 🟡 smoke-manual
+
+- Doc: [`docs/boards/frdm-k64f.md`](frdm-k64f.md)  ·  Chip: `configs/chips/mk64f12.yaml`
+- Silicon: none — not validated against real hardware.
+  - offline (CI): firmware_survival::test_frdm_k64f_smoke_survival
+  - offline (CI): firmware_survival::test_frdm_k64f_zephyr_survival (stock Zephyr hello)
+  - offline (CI): mcg::tests (k6x PLL0) + uart::tests::test_kinetis_uart_c2_interrupt_enables
+- Drift status: **no silicon capture**
+
+## `s32k388` — 🟡 smoke-manual
+
+- Doc: [`docs/boards/s32k388-evb.md`](s32k388-evb.md)  ·  Chip: `configs/chips/s32k388.yaml`
+- Silicon: none — not validated against real hardware.
+  - offline (CI): firmware_survival::test_s32k388_evb_smoke_survival
+- Drift status: **no silicon capture**
+
+## `mimxrt595s` — 🟡 smoke-manual
+
+- Doc: [`docs/boards/mimxrt595-evk.md`](mimxrt595-evk.md)  ·  Chip: `configs/chips/mimxrt595s.yaml`
+- Silicon: none — not validated against real hardware.
+  - offline (CI): firmware_survival::test_mimxrt595_evk_smoke_survival
+  - offline (CI): firmware_survival::test_mimxrt595_evk_zephyr_survival (stock Zephyr hello)
+  - offline (CI): rt500_secure_map (secure aliases + boot-ROM OTP API)
+- Drift status: **no silicon capture**
+
+## `sam4s16c` — 🟡 smoke-manual
+
+- Doc: [`docs/boards/sam4s-xplained.md`](sam4s-xplained.md)  ·  Chip: `configs/chips/sam4s16c.yaml`
+- Silicon: none — not validated against real hardware.
+  - offline (CI): firmware_survival::test_sam4s_xplained_smoke_survival
+- Drift status: **no silicon capture**
+
+## `stm32f072` — 🟡 smoke-manual
+
+- Doc: [`docs/boards/stm32f072b-disco.md`](stm32f072b-disco.md)  ·  Chip: `configs/chips/stm32f072.yaml`
+- Silicon: none — not validated against real hardware.
+  - offline (CI): firmware_survival::test_stm32f072b_disco_smoke_survival
+- Drift status: **no silicon capture**
+
+## `arty-litex-vexriscv` — 🟡 smoke-manual
+
+- Doc: [`docs/boards/arty-litex-vexriscv.md`](arty-litex-vexriscv.md)  ·  Chip: `configs/chips/arty-litex-vexriscv.yaml`
+- Silicon: none — not validated against real hardware.
+  - offline (CI): firmware_survival::test_arty_litex_smoke_survival
+- Drift status: **no silicon capture**
+
+## `vegaboard-ri5cy` — 🟡 smoke-manual
+
+- Doc: [`docs/boards/vegaboard-ri5cy.md`](vegaboard-ri5cy.md)  ·  Chip: `configs/chips/vegaboard-ri5cy.yaml`
+- Silicon: none — not validated against real hardware.
+  - offline (CI): firmware_survival::test_vegaboard_ri5cy_smoke_survival
+- Drift status: **no silicon capture**
+
+## `mpfs095t` — 🟡 smoke-manual
+
+- Doc: [`docs/boards/mpfs-disco-kit.md`](mpfs-disco-kit.md)  ·  Chip: `configs/chips/mpfs095t.yaml`
+- Silicon: none — not validated against real hardware.
+  - offline (CI): firmware_survival::test_mpfs_disco_kit_zephyr_survival
+  - offline (CI): riscv64_tests (15 tests: RV64I/M/A/C, traps, CLINT + MTI, WFI fast-forward, CSR surface, snapshot)
+  - offline (CI): uart16550_dlab_routes_divisor_writes_to_the_latches
+- Drift status: **no silicon capture**
+
+## `am6234` — 🟡 smoke-manual
+
+- Doc: [`docs/boards/sk-am62.md`](sk-am62.md)  ·  Chip: `configs/chips/am6234.yaml`
+- Silicon: none — not validated against real hardware.
+  - offline (CI): firmware_survival::test_sk_am62_zephyr_survival
+  - offline (CI): examples/sk-am62/ci/test.sh (synchronization on the virtual timer, kernel/common 12 suites 63/63)
+  - offline (CI): aarch64_tests (11 tests: data processing, loads/stores and the exclusive monitor, branches, SVC/UNDEFINED syndromes, ERET, FP traps, MMU permission faults, AT/PAR, timer IRQ through the GIC, WFI fast-forward, sysreg EL checks)
+  - offline (CI): aarch64_gic unit tests (SPI acknowledge/EOI, level timer PPI, redistributor wake, PMR)
+- Drift status: **no silicon capture**
+
+## `r5f52618bgfp` — 🟡 smoke-manual
+
+- Doc: [`docs/boards/ek-rx261.md`](ek-rx261.md)  ·  Chip: `configs/chips/r5f52618bgfp.yaml`
+- Silicon: none — not validated against real hardware.
+  - offline (CI): firmware_survival::test_ek_rx261_zephyr_survival
+  - offline (CI): ek_rx261_zephyr (synchronization on the CMT0 tick, kernel/common 12 suites, uart_basic_api on the SCI6 RXI/TXI/TEI vectors)
+  - offline (CI): rx_tests (25 tests: integer forms and flags, memex sizes, string ops, INT/RTE stack switch, ICU priority/IPL, accumulators, FPU, BFMOV, MOVLI/MOVCO, undefined-instruction trap, snapshot)
+  - offline (CI): rx_cmt, rx_sysc unit tests (compare match, one live wake, OSCOVFSR, keyed MEMWAITR)
+- Drift status: **no silicon capture**
+
+## `pic32mz2048efm144` — 🟡 smoke-manual
+
+- Doc: [`docs/boards/curiosity-pic32mz-ef.md`](curiosity-pic32mz-ef.md)  ·  Chip: `configs/chips/pic32mz2048efm144.yaml`
+- Silicon: none — not validated against real hardware.
+  - offline (CI): firmware_survival::test_curiosity_pic32mz_nuttx_survival
+  - offline (CI): curiosity_pic32mz_nuttx (nsh: hello, ps, ls /dev typed over UART2)
+  - offline (CI): mips_tests (17 tests: overflow trap, delay slots and branch-likely, LWL/LWR/SWL/SWR, mult/div/madd/clz/ext/ins/seb/wsbh/ror, BD in a delay slot, LL/SC and ERET, AdEL/TLB refill, shadow sets, DI/EI, EVIC single and multi vector, core timer, software interrupt edge, idle-loop proof, WAIT, boot ISA)
+  - offline (CI): pic32_uart, pic32_timer unit tests (TX drain flag, RX threshold, SET/CLR/INV aliases, Timer1 at PBCLK3/8, SOSC, Type B prescaler)
 - Drift status: **no silicon capture**

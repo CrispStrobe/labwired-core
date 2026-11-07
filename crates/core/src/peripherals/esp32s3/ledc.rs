@@ -20,7 +20,7 @@
 //! **DUTY → DUTY_R commit** on a DUTY_START write — which is what this module
 //! does. Each channel's output is also a real waveform ([`LedcPads`], shared
 //! with the classic and C3 models) on its matrix wire (`LEDC_LS_SIG_OUT0..7` =
-//! 73..80), bound to every pad by `SystemBus::wire_esp_matrix_outputs`, so the
+//! 73..80), bound to every pad by `SystemBus::wire_esp32s3_ledc_pads`, so the
 //! duty reaches the pad `ledc_channel_config` routed.
 //!
 //! ## Register subset modeled
@@ -235,6 +235,13 @@ impl Esp32s3Ledc {
         }
         let duty = (self.active_duty(ch) >> 4) as f64;
         (duty / (1u64 << res) as f64).clamp(0.0, 1.0)
+    }
+
+    /// The eight channel outputs' wire, created on first call. The S3 GPIO
+    /// model binds its lines to the output-matrix signals
+    /// `LEDC_LS_SIG_OUT0..7` (73..80); see `SystemBus::wire_esp32s3_ledc_pads`.
+    pub(crate) fn pad_lines_arc(&mut self) -> Arc<PadLines> {
+        self.pads.lines_arc()
     }
 
     /// Active (committed) duty for channel `ch`, as exposed at DUTY_R. The
@@ -463,6 +470,12 @@ impl Peripheral for Esp32s3Ledc {
     }
 
     fn tick(&mut self) -> PeripheralTickResult {
+        // Legacy walk (no event scheduler): publish the pad waveform up to
+        // the bus clock here, since no edge wake will.
+        if !self.uses_scheduler() {
+            let now = self.wave_now();
+            self.pads.advance_to(now);
+        }
         // LEDC is a level interrupt: assert the matrix source for as long as
         // any enabled interrupt is latched. The intmatrix de-asserts when
         // INT_ST returns to 0 (firmware clears via INT_CLR).
@@ -525,12 +538,6 @@ impl Peripheral for Esp32s3Ledc {
 
     fn line_names(&self) -> &'static [&'static str] {
         LEDC_LINES
-    }
-
-    /// The channel outputs reach pads only through the GPIO matrix:
-    /// `LEDC_LS_SIG_OUT0_IDX` = 73 (esp-idf `soc/esp32s3/include/soc/gpio_sig_map.h` :157); the eight outputs are contiguous.
-    fn matrix_output_lines(&mut self) -> Option<(u32, Arc<PadLines>)> {
-        Some((73, self.pads.lines_arc()))
     }
 
     fn wire_lines(&self) -> Option<&PadLines> {

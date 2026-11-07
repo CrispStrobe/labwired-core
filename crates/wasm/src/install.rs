@@ -131,8 +131,13 @@ impl WasmSimulator {
             }
         }
 
-        // pxCurrentTCB pointer seed for xTaskGetCurrentTaskHandle thunk.
-        if let Some(&addr) = symbol_addrs.get("pxCurrentTCB") {
+        // pxCurrentTCB pointer seed for xTaskGetCurrentTaskHandle thunk and
+        // the hybrid window preserve key. IDF 5 dual-core names it
+        // `pxCurrentTCBs`; see `install_arduino_esp32_profile` in core.
+        if let Some(&addr) = symbol_addrs
+            .get("pxCurrentTCBs")
+            .or_else(|| symbol_addrs.get("pxCurrentTCB"))
+        {
             rom_thunks::PX_CURRENT_TCB_ADDR.with(|s| s.set(Some(addr)));
         }
 
@@ -206,15 +211,15 @@ impl WasmSimulator {
             "esp_clk_init",
             "esp_perip_clk_init",
             "core_intr_matrix_clear",
-            "esp_flash_init",
-            "esp_flash_init_default_chip",
-            "esp_flash_init_main",
-            "esp_flash_app_init",
+            // The esp_flash chip driver is NOT nop'd, as in the shared
+            // profile (`arduino_esp32_profile::NOP_STUBS`): `Esp32Spi` models
+            // the SPI NOR commands the driver probes with, so it initialises.
+            // Nopping it left `esp_flash_default_chip` without a driver, and
+            // with no `g_rom_flashchip` seed (below) the partition table could
+            // not be read: every classic-ESP32 lab printed "No core dump
+            // partition found" and "Failed to initialize NVS! Error: 261".
             "esp_flash_app_enable_os_functions",
-            "esp_flash_app_disable_protect",
             "esp_flash_app_disable_os_functions",
-            "esp_flash_read_chip_id",
-            "esp_flash_chip_driver_initialized",
             "do_core_init",
             "do_secondary_init",
             // NB: `esp_startup_start_app` is intentionally NOT stubbed —
@@ -223,7 +228,6 @@ impl WasmSimulator {
             // safety-loop at its tail and the FreeRTOS scheduler never
             // takes over (loopTask / setup() never run). Required for the
             // labwired-ereader Arduino sketch to actually paint.
-            "esp_partition_main_flash_region_safe",
             "spi_flash_init",
             "spi_flash_init_chip_state",
             "esp_efuse_check_errors",
@@ -275,17 +279,16 @@ impl WasmSimulator {
         // the SPI payload → blank render. Removing all of it lets the real SPI
         // bus mutex and critical sections run, matching the proven e2e path in
         // crates/core/tests/e2e_labwired_ereader.rs. (xQueueCreateMutexStatic
-        // keeps its echo thunk below — callers assert the returned handle equals
-        // the static buffer they passed in.)
-        // Stub spi_flash_init_lock — the real impl creates a mutex via
-        // xSemaphoreCreateMutex and asserts non-NULL; we don't need real
-        // flash-op locking in the single-task sim.
-        for sym in &[
-            "spi_flash_init_lock",
-            "spi_flash_op_lock",
-            "spi_flash_op_unlock",
-        ] {
-            push_named(&mut thunks, sym, rom_thunks::nop_return_zero);
+        // runs for real too.)
+        // spi_flash_init_lock / op_lock / op_unlock are NOT stubbed: the real
+        // FreeRTOS mutex create runs (see above), as in the shared profile.
+
+        // `g_rom_flashchip`: the ROM's flash-chip descriptor, which the boot
+        // ROM fills in and this path skips. Zeroed, `spi_flash_mmap` rejects
+        // the read of the partition table at 0x8000. Same seed as the shared
+        // profile — `boot::esp_partition_table::seed_rom_flashchip`.
+        if let Some(&addr) = symbol_addrs.get("g_rom_flashchip") {
+            labwired_core::boot::esp_partition_table::seed_rom_flashchip(&mut machine.bus, addr);
         }
         push_named(&mut thunks, "esp_chip_info", rom_thunks::esp_chip_info_stub);
         push_named(
@@ -303,11 +306,10 @@ impl WasmSimulator {
             "esp_clk_cpu_freq",
             rom_thunks::esp_clk_cpu_freq_240mhz,
         );
-        push_named(
-            &mut thunks,
-            "xQueueCreateMutexStatic",
-            rom_thunks::x_queue_create_mutex_static_echo,
-        );
+        // xQueueCreateMutexStatic is NOT echoed: the echo left the queue (and
+        // its spinlock) uninitialised, and IDF 5.x creates the UART driver's
+        // tx_mux through it, so the first Serial.print deadlocked. Same as the
+        // shared profile.
         push_named(
             &mut thunks,
             "xTaskGetCurrentTaskHandle",
@@ -390,6 +392,9 @@ impl WasmSimulator {
     /// partially overwritten — callers should treat that as a hard reset.
     #[wasm_bindgen]
     pub fn apply_runtime_snapshot(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        if let Some(reason) = self.runtime_snapshot_refusal() {
+            return Err(JsValue::from_str(reason));
+        }
         self.record(lab_tools::Op::ApplyRuntimeSnapshot(bytes.to_vec()));
         let machine = self
             .machine
@@ -409,6 +414,9 @@ impl WasmSimulator {
     /// `WasmSimulator` with the same firmware + bus topology.
     #[wasm_bindgen]
     pub fn take_runtime_snapshot(&self) -> Result<Vec<u8>, JsValue> {
+        if let Some(reason) = self.runtime_snapshot_refusal() {
+            return Err(JsValue::from_str(reason));
+        }
         let machine = self
             .machine
             .as_ref()

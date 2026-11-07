@@ -128,19 +128,35 @@ impl Avr {
         Ok(None)
     }
 
-    /// IJMP.
+    /// IJMP, EIJMP, EICALL.
     #[inline(always)]
     pub(in crate::cpu::avr) fn exec_branch_e(
         &mut self,
-        _bus: &mut dyn Bus,
+        bus: &mut dyn Bus,
         op: u16,
         _pc: u32,
-        _next: u32,
+        next: u32,
     ) -> SimResult<Option<()>> {
         if op == 0x9409 {
             let z = u16::from_le_bytes([self.r[30], self.r[31]]);
             self.pc = (z as u32) * 2;
             self.cycles += 2;
+            return Ok(Some(()));
+        }
+        // EIJMP: jump to EIND:Z (ATmega2560).
+        if op == 0x9419 && self.model.supports_eind() {
+            let z = u32::from(u16::from_le_bytes([self.r[30], self.r[31]]));
+            self.pc = ((self.eind() << 16) | z) * 2;
+            self.cycles += 2;
+            return Ok(Some(()));
+        }
+        // EICALL: call EIND:Z (ATmega2560; push_pc adds the 3-byte-PC cycle).
+        if op == 0x9519 && self.model.supports_eind() {
+            self.pc = next;
+            self.push_pc(bus)?;
+            let z = u32::from(u16::from_le_bytes([self.r[30], self.r[31]]));
+            self.pc = ((self.eind() << 16) | z) * 2;
+            self.cycles += 3;
             return Ok(Some(()));
         }
         Ok(None)
@@ -192,7 +208,7 @@ impl Avr {
         if (op & 0xFF00) == 0x9B00 {
             let a = ((op >> 3) & 0x1F) as u8;
             let b = (op & 0x07) as u8;
-            let v = self.data_read(0x20 + a as u16, bus)?;
+            let v = self.data_read(self.io_data_address(a), bus)?;
             let mut next = next;
             if v & (1 << b) != 0 {
                 let following = self.fetch_word(next)?;
@@ -207,7 +223,7 @@ impl Avr {
         if (op & 0xFF00) == 0x9900 {
             let a = ((op >> 3) & 0x1F) as u8;
             let b = (op & 0x07) as u8;
-            let v = self.data_read(0x20 + a as u16, bus)?;
+            let v = self.data_read(self.io_data_address(a), bus)?;
             let mut next = next;
             if v & (1 << b) == 0 {
                 let following = self.fetch_word(next)?;

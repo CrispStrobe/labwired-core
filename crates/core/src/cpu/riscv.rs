@@ -32,6 +32,126 @@ pub enum RiscVCoreProfile {
     Esp32C3,
     /// Baseline RV32 profile used by generic RISC-V targets.
     StandardRv32,
+    /// RV32E profile: the integer register file contains x0..x15 only.
+    Rv32e,
+}
+
+impl RiscVCoreProfile {
+    /// Select the profile a chip descriptor runs.
+    ///
+    /// The engine models two profiles: the standard RV32 machine and the
+    /// ESP32-C3's vendor CSR set. An `esp32*` chip keeps the vendor profile —
+    /// the C3 is the part whose ROM and performance-counter block the engine
+    /// models, and the C6 shares that register surface today. Any other chip
+    /// that declares a generic non-E `rv32*` core (e.g. `core: "rv32im"` on a
+    /// VexRiscv SoC) runs the standard profile. A chip with no `core:` keeps
+    /// the historical ESP32-C3 default, so descriptors written before this
+    /// selection existed behave exactly as they did.
+    pub fn for_chip(chip: &labwired_config::ChipDescriptor) -> Self {
+        let core = chip
+            .core
+            .as_deref()
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase();
+        if matches!(core.as_str(), "rv32e" | "rv32ec" | "rv32emc" | "rv32em") {
+            return Self::Rv32e;
+        }
+        if chip.name.to_ascii_lowercase().contains("esp32") {
+            return Self::Esp32C3;
+        }
+        if core.starts_with("rv32") {
+            Self::StandardRv32
+        } else {
+            Self::Esp32C3
+        }
+    }
+}
+
+/// Architectural integer-register operands used by an instruction. The
+/// implicit stack-pointer operands in the compressed formats are x2, which is
+/// legal in RV32E; compressed prime-register formats are already decoded to
+/// x8..x15 by `decode_rv32`.
+fn rv32e_reg_operands(instruction: &Instruction) -> [Option<u8>; 3] {
+    use Instruction::*;
+    match *instruction {
+        Lui { rd, .. } | Auipc { rd, .. } | Jal { rd, .. } => [Some(rd), None, None],
+        Jalr { rd, rs1, .. } => [Some(rd), Some(rs1), None],
+        Beq { rs1, rs2, .. }
+        | Bne { rs1, rs2, .. }
+        | Blt { rs1, rs2, .. }
+        | Bge { rs1, rs2, .. }
+        | Bltu { rs1, rs2, .. }
+        | Bgeu { rs1, rs2, .. }
+        | Sb { rs1, rs2, .. }
+        | Sh { rs1, rs2, .. }
+        | Sw { rs1, rs2, .. } => [Some(rs1), Some(rs2), None],
+        Lb { rd, rs1, .. }
+        | Lh { rd, rs1, .. }
+        | Lw { rd, rs1, .. }
+        | Lbu { rd, rs1, .. }
+        | Lhu { rd, rs1, .. }
+        | Addi { rd, rs1, .. }
+        | Slti { rd, rs1, .. }
+        | Sltiu { rd, rs1, .. }
+        | Xori { rd, rs1, .. }
+        | Ori { rd, rs1, .. }
+        | Andi { rd, rs1, .. }
+        | Slli { rd, rs1, .. }
+        | Srli { rd, rs1, .. }
+        | Srai { rd, rs1, .. }
+        | Csrrw { rd, rs1, .. }
+        | Csrrs { rd, rs1, .. }
+        | Csrrc { rd, rs1, .. }
+        | LrW { rd, rs1 } => [Some(rd), Some(rs1), None],
+        Add { rd, rs1, rs2 }
+        | Sub { rd, rs1, rs2 }
+        | Sll { rd, rs1, rs2 }
+        | Slt { rd, rs1, rs2 }
+        | Sltu { rd, rs1, rs2 }
+        | Xor { rd, rs1, rs2 }
+        | Srl { rd, rs1, rs2 }
+        | Sra { rd, rs1, rs2 }
+        | Or { rd, rs1, rs2 }
+        | And { rd, rs1, rs2 }
+        | Mul { rd, rs1, rs2 }
+        | Mulh { rd, rs1, rs2 }
+        | Mulhsu { rd, rs1, rs2 }
+        | Mulhu { rd, rs1, rs2 }
+        | Div { rd, rs1, rs2 }
+        | Divu { rd, rs1, rs2 }
+        | Rem { rd, rs1, rs2 }
+        | Remu { rd, rs1, rs2 }
+        | ScW { rd, rs1, rs2 }
+        | AmoSwapW { rd, rs1, rs2 }
+        | AmoAddW { rd, rs1, rs2 }
+        | AmoXorW { rd, rs1, rs2 }
+        | AmoOrW { rd, rs1, rs2 }
+        | AmoAndW { rd, rs1, rs2 }
+        | AmoMinW { rd, rs1, rs2 }
+        | AmoMaxW { rd, rs1, rs2 }
+        | AmoMinuW { rd, rs1, rs2 }
+        | AmoMaxuW { rd, rs1, rs2 } => [Some(rd), Some(rs1), Some(rs2)],
+        Csrrwi { rd, .. } | Csrrsi { rd, .. } | Csrrci { rd, .. } => [Some(rd), None, None],
+        CAddi { rd, .. } | CLi { rd, .. } | CSli { rd, .. } => [Some(rd), None, None],
+        CLw { rd, rs1, .. } => [Some(rd), Some(rs1), None],
+        CSw { rs2, rs1, .. } => [Some(rs1), Some(rs2), None],
+        CJr { rs1 } | CJalr { rs1 } | CBeqz { rs1, .. } | CBnez { rs1, .. } => {
+            [Some(rs1), None, None]
+        }
+        CMv { rd, rs2 } => [Some(rd), Some(rs2), None],
+        CAddi16sp { .. } => [Some(2), None, None],
+        CAddi4spn { rd, .. } | CLwsp { rd, .. } => [Some(rd), Some(2), None],
+        CSwsp { rs2, .. } => [Some(2), Some(rs2), None],
+        Fence | Ecall | Ebreak | Mret | Wfi | CJ { .. } | Unknown(_) => [None, None, None],
+    }
+}
+
+fn rv32e_uses_high_register(instruction: &Instruction) -> bool {
+    rv32e_reg_operands(instruction)
+        .into_iter()
+        .flatten()
+        .any(|register| register >= 16)
 }
 
 #[derive(Debug)]
@@ -693,6 +813,9 @@ impl RiscV {
                 return self.triggers.read_csr(csr)
             }
             0x300 => self.mstatus,
+            // medeleg / mideleg — M-mode only emulator; esp_intr_alloc on C6
+            // does `csrrc mideleg` when binding CPU ints. Accept as RAZ/WI.
+            0x302 | 0x303 if self.core_profile == RiscVCoreProfile::Esp32C3 => 0,
             0x304 => self.mie,
             0x344 => self.mip,
             0x305 => self.mtvec,
@@ -702,6 +825,10 @@ impl RiscV {
             0x343 => self.mtval,
             // Physical Memory Protection (PMP) configuration and address registers (stubs)
             0x3A0..=0x3A3 | 0x3B0..=0x3BF => 0,
+            // Espressif Physical Memory Attributes (PMA) — CSR_PMACFG0=0xBC0,
+            // CSR_PMAADDR0=0xBD0 (riscv/csr.h). esp_cpu_configure_invalid_regions
+            // on C6 writes these during early init; side effects are not modelled.
+            0xBC0..=0xBDF if self.core_profile == RiscVCoreProfile::Esp32C3 => 0,
             // Timer CSR stubs (Standard RISC-V shadow non-privileged? No, these are machine mode)
             0xB00 => (self.mtime & 0xFFFFFFFF) as u32,
             0xB80 => (self.mtime >> 32) as u32,
@@ -717,10 +844,22 @@ impl RiscV {
             0x7E0..=0x7E2 | 0x802 if self.core_profile == RiscVCoreProfile::Esp32C3 => {
                 (self.mtime & 0xFFFFFFFF) as u32
             }
-            0xC00 if self.core_profile == RiscVCoreProfile::StandardRv32 => {
+            // The requested RV32E profile shares the baseline profile's cycle
+            // CSR behavior; this profile choice is separate from register count.
+            0xC00
+                if matches!(
+                    self.core_profile,
+                    RiscVCoreProfile::StandardRv32 | RiscVCoreProfile::Rv32e
+                ) =>
+            {
                 (self.mtime & 0xFFFFFFFF) as u32
             }
-            0xC80 if self.core_profile == RiscVCoreProfile::StandardRv32 => {
+            0xC80
+                if matches!(
+                    self.core_profile,
+                    RiscVCoreProfile::StandardRv32 | RiscVCoreProfile::Rv32e
+                ) =>
+            {
                 (self.mtime >> 32) as u32
             }
             _ => return None,
@@ -737,6 +876,8 @@ impl RiscV {
                 return self.triggers.write_csr(csr, val)
             }
             0x300 => self.mstatus = val & 0x0000_1888, // Minimal mstatus (MIE, MPP)
+            // See read_csr: medeleg/mideleg RAZ/WI on Esp32C3 profile.
+            0x302 | 0x303 if self.core_profile == RiscVCoreProfile::Esp32C3 => {}
             0x304 => self.mie = val,
             0x344 => self.mip = val,
             0x305 => self.mtvec = val,
@@ -746,6 +887,8 @@ impl RiscV {
             0x343 => self.mtval = val,
             // Physical Memory Protection (PMP) configuration and address registers (stubs)
             0x3A0..=0x3A3 | 0x3B0..=0x3BF => {}
+            // See read_csr: accept PMA cfg/addr writes as no-ops.
+            0xBC0..=0xBDF if self.core_profile == RiscVCoreProfile::Esp32C3 => {}
             0x7E0..=0x7E2 | 0x802 if self.core_profile == RiscVCoreProfile::Esp32C3 => {}
             _ => return false,
         }
@@ -882,6 +1025,24 @@ impl RiscV {
             .and_then(|a| a.downcast_ref::<crate::bus::SystemBus>())
         {
             if sb.requires_cycle_accurate() {
+                return false;
+            }
+            // A non-default RAM `cpu_writes` policy is enforced by the
+            // interpreter's store gate; compiled blocks write `bus.ram.data`
+            // directly, so they must not run while it is in force.
+            if sb.ram_cpu_writes_gated() {
+                return false;
+            }
+            // Same reasoning, one level up: compiled blocks also bypass the
+            // accessors that latch a debug watch, and they run whole blocks
+            // without the machine getting a window boundary to stop at. Refuse
+            // while ANY watch is armed — store-only watches included, because
+            // the gate's job is to keep raw-RAM writes off the path, and the
+            // per-batch test is cheaper than reasoning about which block might
+            // touch which range. `plan_cpu_window` already clamps to one
+            // instruction while a watch is armed; this refusal is
+            // defence-in-depth for direct `step_batch` callers.
+            if !sb.debug_watches.is_empty() {
                 return false;
             }
         }
@@ -1120,6 +1281,15 @@ impl Cpu for RiscV {
             instruction,
             inst_len
         );
+
+        // RV32E reserves every integer register field above x15. Check all
+        // operands before trigger handling or instruction execution so an
+        // illegal register use cannot perform a partial memory/CSR effect.
+        if self.core_profile == RiscVCoreProfile::Rv32e && rv32e_uses_high_register(&instruction) {
+            self.mtval = 0;
+            self.handle_trap(2, self.pc);
+            return Ok(());
+        }
 
         let mut next_pc = self.pc.wrapping_add(inst_len);
 
@@ -1980,6 +2150,7 @@ impl Cpu for RiscV {
             mtval: self.mtval,
             mtime: self.mtime,
             mtimecmp: self.mtimecmp,
+            triggers: Some(self.triggers.snapshot()),
         })
     }
 
@@ -2000,12 +2171,19 @@ impl Cpu for RiscV {
             self.mtval = s.mtval;
             self.mtime = s.mtime;
             self.mtimecmp = s.mtimecmp;
+            // A snapshot from before triggers were captured carries none:
+            // the module comes back at reset, so the result does not depend
+            // on what the machine it is applied to had programmed.
+            match &s.triggers {
+                Some(t) => self.triggers.restore(t),
+                None => self.triggers = trigger::TriggerModule::default(),
+            }
         }
     }
 
     fn runtime_snapshot(&self) -> Option<(crate::runtime_snapshot::CpuKind, Vec<u8>)> {
-        use crate::runtime_snapshot::RiscVRuntimeSnapshot;
-        let snap = RiscVRuntimeSnapshot {
+        use crate::runtime_snapshot::{RiscVRuntimeSnapshot, RiscVRuntimeSnapshotV2};
+        let base = RiscVRuntimeSnapshot {
             x: self.x,
             pc: self.pc,
             mstatus: self.mstatus,
@@ -2020,6 +2198,10 @@ impl Cpu for RiscV {
             mtimecmp: self.mtimecmp,
             reservation: self.reservation,
         };
+        let snap = RiscVRuntimeSnapshotV2 {
+            base,
+            triggers: self.triggers.snapshot(),
+        };
         let bytes = bincode::serialize(&snap).expect("bincode serialize RiscVRuntimeSnapshot");
         Some((crate::runtime_snapshot::CpuKind::RiscV, bytes))
     }
@@ -2029,15 +2211,29 @@ impl Cpu for RiscV {
         kind: crate::runtime_snapshot::CpuKind,
         bytes: &[u8],
     ) -> SimResult<()> {
-        use crate::runtime_snapshot::{CpuKind, RiscVRuntimeSnapshot};
+        use crate::runtime_snapshot::{CpuKind, RiscVRuntimeSnapshot, RiscVRuntimeSnapshotV2};
         if kind != CpuKind::RiscV {
             return Err(crate::SimulationError::NotImplemented(format!(
                 "apply_runtime_snapshot: kind {kind:?} given to RiscV"
             )));
         }
-        let snap: RiscVRuntimeSnapshot = bincode::deserialize(bytes).map_err(|e| {
-            crate::SimulationError::NotImplemented(format!("RiscV snapshot decode: {e}"))
-        })?;
+        // Newest layout first: an older, shorter blob cannot decode as it, but
+        // it decodes exactly as the bare V1 layout. A V1 blob carries no
+        // trigger state, so the module comes back at reset — what a machine
+        // that never programmed a trigger has.
+        let (snap, triggers) = match bincode::deserialize::<RiscVRuntimeSnapshotV2>(bytes) {
+            Ok(v2) => (v2.base, Some(v2.triggers)),
+            Err(_) => {
+                let v1: RiscVRuntimeSnapshot = bincode::deserialize(bytes).map_err(|e| {
+                    crate::SimulationError::NotImplemented(format!("RiscV snapshot decode: {e}"))
+                })?;
+                (v1, None)
+            }
+        };
+        match &triggers {
+            Some(t) => self.triggers.restore(t),
+            None => self.triggers = trigger::TriggerModule::default(),
+        }
         self.x = snap.x;
         self.x[0] = 0; // x0 is hardwired to zero regardless of the blob.
         self.pc = snap.pc;
@@ -2079,3 +2275,11 @@ impl Cpu for RiscV {
 #[cfg(test)]
 #[path = "riscv_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "riscv_rv32e_tests.rs"]
+mod rv32e_tests;
+
+#[cfg(test)]
+#[path = "riscv_ch32v003_tests.rs"]
+mod ch32v003_tests;

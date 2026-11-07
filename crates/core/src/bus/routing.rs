@@ -76,13 +76,20 @@ impl SystemBus {
             let (gpio_name, bit) = bus.pin_map.get(&pin.to_ascii_uppercase())?;
             let idx = bus.find_peripheral_index_by_name(gpio_name)?;
             let base = bus.peripherals[idx].base;
-            let gpio = bus.peripherals[idx]
-                .dev
+            let dev = bus.peripherals[idx].dev.as_ref();
+            if let Some(gpio) = dev
                 .as_any()
-                .and_then(|a| a.downcast_ref::<crate::peripherals::gpio::GpioPort>())?;
-            let odr_off = gpio.odr_offset();
-            let bit = Self::ra_port_odr_bit(gpio, *bit)?;
-            return Some((base + odr_off, bit));
+                .and_then(|a| a.downcast_ref::<crate::peripherals::gpio::GpioPort>())
+            {
+                let odr_off = gpio.odr_offset();
+                let bit = Self::ra_port_odr_bit(gpio, *bit)?;
+                return Some((base + odr_off, bit));
+            }
+            // Generic GPIO blocks publish their latch offsets through the
+            // trait (Mi-V CoreGPIO, ATmega ports, …): pin bit N is register
+            // bit N.
+            let offsets = dev.gpio_port_offsets()?;
+            return Some((base + offsets.output, *bit));
         }
         // 2. No chip pin map → standard STM32/Nordic label parse.
         // STM32/Nordic: "PA5" / "P0.13" → per-port GpioPort with an ODR offset.
@@ -252,12 +259,16 @@ impl SystemBus {
             if let Some((gpio_name, bit)) = bus.pin_map.get(&pin.to_ascii_uppercase()) {
                 let idx = bus.find_peripheral_index_by_name(gpio_name)?;
                 let base = bus.peripherals[idx].base;
-                let idr_off = bus.peripherals[idx]
-                    .dev
+                let dev = bus.peripherals[idx].dev.as_ref();
+                if let Some(idr_off) = dev
                     .as_any()
                     .and_then(|a| a.downcast_ref::<crate::peripherals::gpio::GpioPort>())
-                    .map(|g| g.idr_offset())?;
-                return Some((base + idr_off, *bit));
+                    .map(|g| g.idr_offset())
+                {
+                    return Some((base + idr_off, *bit));
+                }
+                let offsets = dev.gpio_port_offsets()?;
+                return Some((base + offsets.input, *bit));
             }
             // Label not in map — fall through (ESP bare/GPIO labels, etc.).
         }
@@ -327,11 +338,17 @@ impl SystemBus {
             })
             .collect();
         self.peripheral_ranges.sort_by_key(|r| r.start);
-        self.legacy_tick_indices = self
+        self.rebuild_legacy_tick_indices();
+        self.legacy_tick_candidate_mask = self
+            .peripherals
+            .iter()
+            .map(Self::legacy_tick_index_eligible)
+            .collect();
+        self.legacy_tick_peer_write_indices = self
             .peripherals
             .iter()
             .enumerate()
-            .filter_map(|(index, p)| Self::legacy_tick_index_active(p).then_some(index))
+            .filter_map(|(index, p)| p.dev.legacy_tick_observes_peer_mmio().then_some(index))
             .collect();
         self.bus_tick_indices = self
             .peripherals
@@ -382,15 +399,14 @@ impl SystemBus {
         self.pin_port_ids = self
             .peripherals
             .iter()
-            .map(|p| {
-                p.dev.pins().and_then(|pins| {
-                    crate::pins::PortId::from_prefixed_name(&p.name, pins.port_name_prefix())
-                })
-            })
+            .map(|p| p.dev.pins().and_then(|pins| pins.port_id(&p.name)))
             .collect();
         // Pin ports whose pulls another block keeps: link them, and hand each
         // the pulls its block holds now.
         self.rebuild_pad_control_links();
+        // The ESP32 / ESP32-S3 RTC IO MUX and the GPIO port it shares pads
+        // with.
+        self.rebuild_rtc_io_link();
         // Cache the clock-controller peripheral index so the clock-gate check
         // on the hot read/write path is O(1).
         //
@@ -454,6 +470,18 @@ impl SystemBus {
                 .and_then(|a| a.downcast_ref::<crate::peripherals::nrf52::nvmc::Nrf52Nvmc>())
                 .is_some()
         });
+        // The peripheral that owns CPU stores into the flash region, if any.
+        self.flash_store_owner_idx = self
+            .peripherals
+            .iter()
+            .position(|p| p.dev.owns_flash_stores());
+        // Opt-in manual storage (SAMD51 NVMCTRL) needs the same per-instruction
+        // pending-op watch as the H5/U5 FLASH models, plus a boundary commit.
+        self.samd51_nvmctrl_idx = self
+            .peripherals
+            .iter()
+            .position(|p| p.dev.manual_flash_storage().is_some());
+        self.flash_models_ops = self.samd51_nvmctrl_idx.is_some() || self.flash_models_ops;
         // The GPIO edge-detection pass caches its four port indices on first
         // use. Every other index on this bus is rebuilt here when the
         // peripheral list changes; that one must be dropped for the same
@@ -483,6 +511,10 @@ impl SystemBus {
             .peripherals
             .iter()
             .position(|p| p.name == "intpri" && p.base == 0x600C_5000);
+        self.irq_fabric.esp32c3.plic_mx_idx = self
+            .peripherals
+            .iter()
+            .position(|p| p.name == "plic_mx" && p.base == 0x2000_1000);
         if self.irq_fabric.esp32c3.intpri_idx.is_some() {
             self.irq_fabric.esp32c3.routing = true;
         }
@@ -518,6 +550,38 @@ impl SystemBus {
             || self.peripherals.iter().any(|p| p.dev.observes_gpio_edges());
     }
 
+    /// C6 merged interrupt threshold, read fresh from the stored register
+    /// banks: `max(PLIC_MXINT_THRESH @0x90, INTPRI_CORE0_CPU_INT_THRESH @0x8C)`.
+    /// The single source of truth for both the full rebuild and the per-write
+    /// sync, so a write can LOWER the threshold (IDF critical-section exit
+    /// restores it) instead of ratcheting against the cached value.
+    ///
+    /// The C6 reuses the C3 IRQ-fabric slot, so these helpers read the
+    /// `irq_fabric.esp32c3.*` peripheral indices.
+    fn esp32c6_merged_int_thresh(&self) -> u8 {
+        let read = |idx: Option<usize>, off: u64| {
+            idx.and_then(|i| self.read_cached_declarative_u32(i, off))
+                .unwrap_or(0)
+        };
+        let intpri = (read(self.irq_fabric.esp32c3.intpri_idx, 0x8C) & 0xFF) as u8;
+        let plic = (read(self.irq_fabric.esp32c3.plic_mx_idx, 0x90) & 0xFF) as u8;
+        plic.max(intpri)
+    }
+
+    /// C6 merged priority of CPU line `line`, read fresh from the stored
+    /// banks: `max(PLIC_MXINT_n_PRI @0x10+4n, INTPRI_CORE0_CPU_INT_PRI_n
+    /// @0x0C+4n)`. See [`Self::esp32c6_merged_int_thresh`].
+    fn esp32c6_merged_line_pri(&self, line: usize) -> u8 {
+        let read = |idx: Option<usize>, off: u64| {
+            idx.and_then(|i| self.read_cached_declarative_u32(i, off))
+                .unwrap_or(0)
+        };
+        let off = (line as u64) * 4;
+        let intpri = (read(self.irq_fabric.esp32c3.intpri_idx, 0x0C + off) & 0xF) as u8;
+        let plic = (read(self.irq_fabric.esp32c3.plic_mx_idx, 0x10 + off) & 0xF) as u8;
+        plic.max(intpri)
+    }
+
     pub(crate) fn rebuild_esp32c3_irq_cache(&mut self) {
         let Some(int_idx) = self.irq_fabric.esp32c3.interrupt_core0_idx else {
             self.irq_fabric.esp32c3.intc = None;
@@ -538,17 +602,26 @@ impl SystemBus {
         }
 
         if let Some(p_idx) = intpri_idx {
-            // C6 layout: INTPRI @0x600C_5000 carries the controls and the
-            // `CPU_INTR_FROM_CPU_n` doorbells (0x90 + n*4, bit0), and the
-            // doorbell sources are numbered 22..25, not the C3's 50..53.
-            cache.int_enable = self.read_cached_declarative_u32(p_idx, 0x00).unwrap_or(0);
-            cache.int_thresh =
-                (self.read_cached_declarative_u32(p_idx, 0x8C).unwrap_or(0) & 0xFF) as u8;
+            // C6 layout: INTPRI @0x600C_5000 carries the `CPU_INTR_FROM_CPU_n`
+            // doorbells (0x90 + n*4, bit0; sources 22..25). IDF/ROM
+            // `esprv_intc_*` programs enable/priority/threshold at PLIC
+            // @0x2000_1000; bare-metal examples (gpio-net) still write the
+            // INTPRI SVD copies. Merge both so either path can arm a line:
+            // enable is OR'd; per-line priority and threshold take the max of
+            // the two programmed banks. For the threshold the max is the MORE
+            // RESTRICTIVE floor (a line passes only if pri >= thresh); a bank
+            // left at reset (0) therefore never relaxes the other one.
+            let intpri_en = self.read_cached_declarative_u32(p_idx, 0x00).unwrap_or(0);
+            let plic_en = self
+                .irq_fabric
+                .esp32c3
+                .plic_mx_idx
+                .and_then(|i| self.read_cached_declarative_u32(i, 0x00))
+                .unwrap_or(0);
+            cache.int_enable = plic_en | intpri_en;
+            cache.int_thresh = self.esp32c6_merged_int_thresh();
             for line in 0..cache.line_pri.len() {
-                cache.line_pri[line] = (self
-                    .read_cached_declarative_u32(p_idx, 0x0C + (line as u64) * 4)
-                    .unwrap_or(0)
-                    & 0xF) as u8;
+                cache.line_pri[line] = self.esp32c6_merged_line_pri(line);
             }
             cache.from_cpu_source_base = 22;
             for n in 0..4 {
@@ -681,24 +754,72 @@ impl SystemBus {
                     }
                 }
             }
-        } else if Some(idx) == self.irq_fabric.esp32c3.intpri_idx {
-            // C6 INTPRI @0x600C_5000: enable / priority / threshold and the
-            // CPU_INTR_FROM_CPU_n doorbells. Same decode the rebuild does, so
-            // a mid-run write reaches `irq_lines` on the next instruction.
+        } else if Some(idx) == self.irq_fabric.esp32c3.plic_mx_idx {
+            // C6 PLIC @0x2000_1000: enable / priority / threshold (IDF ROM path).
+            // Merge with INTPRI so a bare-metal enable is not wiped by a later
+            // PLIC write of a disjoint mask (and vice versa on the INTPRI path).
+            let intpri_en = self
+                .irq_fabric
+                .esp32c3
+                .intpri_idx
+                .and_then(|i| self.read_cached_declarative_u32(i, 0x00))
+                .unwrap_or(0);
+            // Threshold / priority are recomputed from BOTH stored banks (never
+            // max'd against the cached value) so a write can lower them.
+            let merged_thresh = self.esp32c6_merged_int_thresh();
+            let merged_pri = (0x10..=0x8C)
+                .contains(&aligned)
+                .then(|| self.esp32c6_merged_line_pri(((aligned - 0x10) / 4) as usize));
             if let Some(cache) = &mut self.irq_fabric.esp32c3.intc {
                 match aligned {
                     0x00 => {
-                        cache.int_enable = value;
+                        cache.int_enable = value | intpri_en;
+                        inputs_changed = true;
+                    }
+                    0x90 => {
+                        cache.int_thresh = merged_thresh;
+                        inputs_changed = true;
+                    }
+                    0x10..=0x8C if (aligned - 0x10) % 4 == 0 => {
+                        let line = ((aligned - 0x10) / 4) as usize;
+                        if let (Some(pri), Some(new)) = (cache.line_pri.get_mut(line), merged_pri) {
+                            *pri = new;
+                            inputs_changed = true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        } else if Some(idx) == self.irq_fabric.esp32c3.intpri_idx {
+            // C6 INTPRI @0x600C_5000: FROM_CPU doorbells always; enable/pri/thresh
+            // also arm the cache (bare-metal / gpio-net). When PLIC is present
+            // IDF writes go there; merge so INTPRI programming is not ignored.
+            let plic_en = self
+                .irq_fabric
+                .esp32c3
+                .plic_mx_idx
+                .and_then(|i| self.read_cached_declarative_u32(i, 0x00))
+                .unwrap_or(0);
+            // Recompute from both stored banks so a write can lower them.
+            let merged_thresh = self.esp32c6_merged_int_thresh();
+            let merged_pri = (0x0C..=0x88)
+                .contains(&aligned)
+                .then(|| self.esp32c6_merged_line_pri(((aligned - 0x0C) / 4) as usize));
+            if let Some(cache) = &mut self.irq_fabric.esp32c3.intc {
+                match aligned {
+                    0x00 => {
+                        // `value` is the new INTPRI enable; OR with live PLIC.
+                        cache.int_enable = plic_en | value;
                         inputs_changed = true;
                     }
                     0x8C => {
-                        cache.int_thresh = (value & 0xFF) as u8;
+                        cache.int_thresh = merged_thresh;
                         inputs_changed = true;
                     }
                     0x0C..=0x88 if (aligned - 0x0C) % 4 == 0 => {
                         let line = ((aligned - 0x0C) / 4) as usize;
-                        if let Some(pri) = cache.line_pri.get_mut(line) {
-                            *pri = (value & 0xF) as u8;
+                        if let (Some(pri), Some(new)) = (cache.line_pri.get_mut(line), merged_pri) {
+                            *pri = new;
                             inputs_changed = true;
                         }
                     }
@@ -804,19 +925,48 @@ impl SystemBus {
         self.rebuild_peripheral_ranges();
     }
 
+    fn rebuild_legacy_tick_indices(&mut self) {
+        self.legacy_tick_indices = self
+            .peripherals
+            .iter()
+            .enumerate()
+            .filter_map(|(index, p)| Self::legacy_tick_index_active(p).then_some(index))
+            .collect();
+    }
+
     pub(crate) fn refresh_legacy_tick_index(&mut self, idx: usize) -> bool {
-        // Walk-deleted buses never consult `legacy_tick_indices` (the walk is
-        // off). Skip the trait calls + linear index scan on every MMIO write —
-        // the post-#555 C3 OLED hot path was spending more samples here than
-        // in the write itself once fetch/route optims landed.
         if self.legacy_walk_disabled {
-            return false;
+            // Most MMIO stores on a walk-deleted bus cannot wake a legacy
+            // peripheral. Reject them by cached index before calling trait
+            // predicates; the common case stays cheap even on large buses.
+            if !self
+                .legacy_tick_candidate_mask
+                .get(idx)
+                .copied()
+                .unwrap_or(false)
+            {
+                return false;
+            }
+            let active = self
+                .peripherals
+                .get(idx)
+                .is_some_and(Self::legacy_tick_index_active);
+            // If this write enables an indexed legacy tick, restore the walk
+            // and its active set. Scheduler-capable fallbacks can be active
+            // here when the event-scheduler feature is off. In that build the
+            // full walker ignores deletion, but profiling still uses the cache.
+            if active {
+                self.rebuild_legacy_tick_indices();
+                self.legacy_walk_disabled = false;
+            }
+            return active;
         }
         let active = self
             .peripherals
             .get(idx)
             .is_some_and(Self::legacy_tick_index_active);
         let pos = self.legacy_tick_indices.iter().position(|&i| i == idx);
+        let was_active = pos.is_some();
         match (active, pos) {
             (true, None) => {
                 self.legacy_tick_indices.push(idx);
@@ -827,7 +977,27 @@ impl SystemBus {
             }
             _ => {}
         }
+        if active != was_active
+            && self
+                .legacy_tick_candidate_mask
+                .get(idx)
+                .copied()
+                .unwrap_or(false)
+        {
+            self.recompute_walk_deletable();
+        }
         active
+    }
+
+    /// Refresh the small set of dynamic models whose activity can depend on
+    /// shared state changed by a different peripheral's MMIO write.
+    pub(crate) fn refresh_legacy_tick_peer_write_observers(&mut self, changed_idx: usize) {
+        for pos in 0..self.legacy_tick_peer_write_indices.len() {
+            let idx = self.legacy_tick_peer_write_indices[pos];
+            if idx != changed_idx && self.peripherals[idx].dev.legacy_tick_dynamic() {
+                self.refresh_legacy_tick_index(idx);
+            }
+        }
     }
 
     pub(crate) fn refresh_bus_tick_index(&mut self, idx: usize) -> bool {
@@ -881,6 +1051,22 @@ impl SystemBus {
         } else {
             addr
         }
+    }
+
+    /// Rewrite an address inside a same-backing mirror
+    /// (`NamedMemoryRange::alias_of`) onto its target, or return it unchanged.
+    /// One `is_empty` test on every chip that declares no mirror.
+    #[inline]
+    pub fn resolve_mem_alias(&self, addr: u64) -> u64 {
+        if self.mem_aliases.is_empty() {
+            return addr;
+        }
+        for a in &self.mem_aliases {
+            if addr >= a.start && addr < a.end {
+                return a.target + (addr - a.start);
+            }
+        }
+        addr
     }
 
     pub(crate) fn find_peripheral_index(&self, addr: u64) -> Option<usize> {
@@ -1073,6 +1259,16 @@ impl SystemBus {
     pub fn attach_ble_air(&mut self, air: crate::peripherals::ble_air::BleAirBus) {
         for entry in &mut self.peripherals {
             entry.dev.attach_ble_air(air.clone());
+        }
+    }
+
+    /// Put every IEEE 802.15.4 radio on this bus onto `air`.
+    pub fn attach_ieee802154_air(
+        &mut self,
+        air: crate::peripherals::ieee802154_air::Ieee802154AirBus,
+    ) {
+        for entry in &mut self.peripherals {
+            entry.dev.attach_ieee802154_air(air.clone());
         }
     }
 

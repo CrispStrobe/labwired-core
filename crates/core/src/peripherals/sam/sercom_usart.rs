@@ -679,14 +679,14 @@ impl SamSercomUsart {
 }
 
 impl Peripheral for SamSercomUsart {
+    fn on_system_reset(&mut self) {
+        self.software_reset();
+    }
     fn needs_bus_tick(&self) -> bool {
         self.pads.is_some() && self.enabled()
     }
     fn tick_with_bus(&mut self, bus: &mut dyn crate::Bus) {
         self.advance(bus);
-    }
-    fn on_system_reset(&mut self) {
-        self.software_reset();
     }
     fn attach_bus_trace(&mut self, name: &str, trace: &crate::bus::bus_trace::BusTrace) {
         self.trace = trace.clone();

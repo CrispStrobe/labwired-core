@@ -17,6 +17,7 @@ class PolicyControls(unittest.TestCase):
                  "crates/core/src/machine/boundary.rs", "crates/core/src/lib.rs",
                  "crates/core/src/peripherals/sam/spi.rs", "crates/cli/src/main.rs",
                  "crates/config/src/lib.rs", "configs/chips/atmega328p.yaml",
+                 "configs/systems/pybadge.yaml",
                  "Cargo.lock", "Cargo.toml", "rust-toolchain.toml", ".cargo/config.toml",
                  "crates/core/Cargo.toml", "crates/cli/build.rs",
                  ".github/workflows/core-perf.yml", "scripts/perf/board_perf.py"]
@@ -34,7 +35,12 @@ class PolicyControls(unittest.TestCase):
         for event in ["push", "schedule", "workflow_dispatch"]:
             self.assertTrue(gate.select(event, gate.OWNED_REPOSITORY, "", [])[0])
         self.assertTrue(gate.select("pull_request", gate.OWNED_REPOSITORY, "merge/upstream-x", [])[0])
-        self.assertFalse(gate.select("pull_request", "w1ne/labwired-core", "fix/x", ["crates/core/src/lib.rs"])[0])
+        self.assertTrue(gate.select("pull_request", gate.OWNED_REPOSITORY, "up/crisp-sync", [])[0])
+        self.assertFalse(
+            gate.select(
+                "pull_request", "CrispStrobe/labwired-core", "fix/x", ["crates/core/src/lib.rs"]
+            )[0]
+        )
 
 
 class HistoryControls(unittest.TestCase):
@@ -52,9 +58,11 @@ class HistoryControls(unittest.TestCase):
         self.initial = self.sha()
 
     def run_git(self, *args):
-        return subprocess.check_output(["git", "-c", "gc.auto=0", "-c", "maintenance.auto=false",
-                                        "-c", "user.name=Guard Test", "-c", "user.email=guard@example.invalid",
-                                        *args], stderr=subprocess.PIPE).decode().strip()
+        return subprocess.check_output(
+            ["git", "-c", "gc.auto=0", "-c", "maintenance.auto=false",
+             "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null",
+             "-c", "user.name=Guard Test", "-c", "user.email=guard@example.invalid",
+             *args], stderr=subprocess.PIPE).decode().strip()
 
     def write(self, name, value):
         p = self.repo / name

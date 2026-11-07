@@ -1272,6 +1272,23 @@ pub struct SpiSpec {
     /// the other twenty-three addresses are storage.
     #[serde(default)]
     pub register_file: Option<SpiRegisterFile>,
+    /// **The reply byte of a MESSAGE part**: the name of a `vars:` entry whose
+    /// low byte is clocked out on MISO for every byte of a `frames:`-only part
+    /// (no `registers:`, no `register_file:`). Absent ⇒ such a part answers
+    /// `0x00`, which is what the shift-register display drivers it was built
+    /// for do.
+    ///
+    /// The variable is read AFTER the byte's own `frame` rules have run, so a
+    /// part declaring `frames: { length: 1 }` can answer a byte with bits that
+    /// depend on that SAME byte's MOSI. A byte-level SPI model is handed MOSI
+    /// before it returns MISO, and that is the only way to say what a
+    /// successive-approximation ADC does on the wire: the MCP3008 (DS21295D
+    /// Figure 6-1) clocks its null bit and B9:B8 out in the low three bits of
+    /// the byte whose high nibble carries the channel select. A command part
+    /// whose reply is a function of an earlier byte (ADS1256 RREG, SX1262
+    /// ReadRegister) uses the same hook with a byte counter in a variable.
+    #[serde(default)]
+    pub miso_var: Option<String>,
 }
 
 /// Flat byte storage backing an SPI part's undeclared addresses
@@ -2068,6 +2085,12 @@ pub struct I2cCommand {
     /// word plus CRC on the wire). Accepted and ignored.
     #[serde(default)]
     pub params_words: u8,
+    /// Continuous-measurement command: once dispatched, every later read phase
+    /// re-samples the response from the current inputs (BH1750 `0x10`, where
+    /// the master writes the mode once and then only reads). Default false:
+    /// the response is latched at dispatch, as for a one-shot measurement.
+    #[serde(default)]
+    pub continuous: bool,
 }
 
 /// One word of a command response — either a live measurement (`source`) or a
@@ -3213,6 +3236,14 @@ pub struct AnalogSpec {
     /// or hold the last point's voltage (`hold_last`).
     #[serde(default)]
     pub above_last: AnalogAboveLast,
+    /// A RATIOMETRIC part (a potentiometer, a divider across the supply)
+    /// outputs a fraction of whatever rail its ends sit on. The curve is then
+    /// written at this reference supply in mV, and a placed part's
+    /// `config.supply_mv` rescales it: a pot on a 5 V Uno reaches 5000 mV,
+    /// not the curve's 3300. Absent: the curve is absolute and `supply_mv`
+    /// is refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ratiometric_ref_mv: Option<f32>,
 }
 
 /// How an `analog_source`'s real millivolt value becomes the integer count the

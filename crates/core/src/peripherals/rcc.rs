@@ -22,6 +22,8 @@
 
 use crate::SimResult;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 /// Selects which chip family's RCC model to instantiate. Kept as the public
 /// config-facing selector (chip yaml `profile`); each value maps 1:1 to a
@@ -52,6 +54,15 @@ pub enum RccRegisterLayout {
     Stm32H7,
     /// STM32L4 family (RM0351). Verified on NUCLEO-L476RG over SWD.
     Stm32L4,
+    /// STM32L5 family (RM0438 RCC chapter). The L4-style clock tree (CR/ICSCR/CFGR/
+    /// PLLCFGR/PLLSAIxCFGR, BDCR@0x90, CSR@0x94, CRRCR@0x98) with the
+    /// L4/G4-shaped enable block — AHB1ENR@0x48, AHB2ENR@0x4C, AHB3ENR@0x50,
+    /// APB1ENR1@0x58, APB1ENR2@0x5C, APB2ENR@0x60. Offsets verified against
+    /// ST's CMSIS `stm32l552xx.h` RCC_TypeDef. Distinct from [`Self::Stm32L4`]
+    /// because L4 has no modeled AHB1ENR/APB1ENR2/AHB3ENR, and LPUART1 (the
+    /// NUCLEO-L552ZE-Q console) is gated on APB1ENR2 bit 0. The part boots on
+    /// MSI range 6 (4 MHz), CR reset 0x0000_0063. NOT silicon-verified.
+    Stm32L5,
     /// STM32L0 family (RM0367). Verified on NUCLEO-L073RZ over SWD.
     Stm32L0,
     /// STM32G4 family (RM0440). The modern-V2 clock tree (CR/CFGR/PLLCFGR/
@@ -77,6 +88,9 @@ pub enum RccRegisterLayout {
     /// and poll bit22; U5 (RM0456) has no such field, so the two must not
     /// share a layout.
     Stm32Wba,
+    /// WCH CH32V003 RCC register layout. Offsets and control bits are checked
+    /// against WCH's `ch32v00x.h` (see [`WchRcc`]).
+    Wch,
     /// STM32G0 family (RM0444 §5). Its own map: CR/ICSCR/CFGR/PLLCFGR at
     /// 0x00–0x0C with 3-bit SW/SWS fields in CFGR (SW[2:0] bits 0–2,
     /// SWS[2:0] bits 3–5), the clock-interrupt block at 0x18–0x20, and the
@@ -117,14 +131,16 @@ impl FromStr for RccRegisterLayout {
             "h5" | "stm32h5" => Ok(Self::Stm32H5),
             "h7" | "stm32h7" => Ok(Self::Stm32H7),
             "stm32l4" | "l4" => Ok(Self::Stm32L4),
+            "stm32l5" | "l5" => Ok(Self::Stm32L5),
             "stm32l0" | "l0" => Ok(Self::Stm32L0),
             "stm32g4" | "g4" => Ok(Self::Stm32G4),
             "stm32wb" | "wb" => Ok(Self::Stm32Wb),
             "stm32wba" | "wba" => Ok(Self::Stm32Wba),
+            "wch" => Ok(Self::Wch),
             "stm32g0" | "g0" => Ok(Self::Stm32G0),
             "stm32f0" | "f0" => Ok(Self::Stm32F0),
             _ => Err(format!(
-                "unsupported RCC register layout '{}'; supported: stm32f1, stm32f4, stm32v2, stm32h5, stm32h7, stm32l4, stm32l0, stm32g4, stm32wb, stm32wba, stm32g0, stm32f0",
+                "unsupported RCC register layout '{}'; supported: stm32f1, stm32f4, stm32v2, stm32h5, stm32h7, stm32l4, stm32l5, stm32l0, stm32g4, stm32wb, stm32wba, wch, stm32g0, stm32f0",
                 value
             )),
         }
@@ -739,9 +755,9 @@ pub struct V2Rcc {
     cier: u32,
     cifr: u32,
     cfgr1: u32, // 0x1C — U5/WBA RCC_CFGR1 (SW→SWS); G4/WB use CFGR at 0x08
-    /// WBA/U5 RCC_PLL1CFGR @ 0x28 (RM0493/RM0456). Plain storage; the
-    /// `stm32wba` layout additionally synthesizes the read-only
-    /// `PLL1RCLKPRERDY` status (see `synthesize_wba_rclk_pre_rdy`).
+    /// WBA/U5 RCC_PLL1CFGR @ 0x28 (RM0493/RM0456). The WBA layout keeps the
+    /// R-clock divider writable while PLL1 is enabled and synthesizes its
+    /// read-only `PLL1RCLKPRERDY` status; U5 is plain storage.
     pll1cfgr: u32, // 0x28
     /// WBA/U5 RCC_PLL1DIVR @ 0x34. Seeded to the vendored-SVD reset value
     /// 0x01010280 in `new()`.
@@ -764,6 +780,15 @@ pub struct V2Rcc {
     /// same reason as `map`.
     #[serde(skip)]
     u5_cr_ready: bool,
+    /// An external HSE oscillator is present on this board. HSE is a board
+    /// component (RM0456 §11): HSEON only reaches HSERDY when one is fitted.
+    /// Fixed configuration, skipped in the snapshot.
+    #[serde(skip)]
+    hse_present: bool,
+    /// PWR_DBPR.DBP on U5: the backup domain (BDCR) is write-protected until
+    /// software sets DBP. Shared with the PWR model by the bus builder.
+    #[serde(skip)]
+    dbp_flag: Option<Arc<AtomicBool>>,
     /// STM32WB RCC_EXTCFGR @ 0x108 — shared/CPU2 AHB prescalers + ready flags
     /// (RM0434: SHDHPREF bit16, C2HPREF bit17). G4 has no EXTCFGR.
     extcfgr: u32,
@@ -778,6 +803,7 @@ impl V2Rcc {
         Self {
             cr: Self::ready_classic(1 << 0),
             pll1divr: pll1divr_reset(),
+            hse_present: true,
             ..Default::default()
         }
     }
@@ -797,7 +823,10 @@ impl V2Rcc {
     /// 0x0C004400 (MSI ranges + PINRSTF|BORRSTF).
     fn new_u5() -> Self {
         Self {
-            cr: Self::ready_u5(0x35),
+            // HSE is a board component; the reference U5 platform has none
+            // fitted unless the board description says so.
+            cr: Self::ready_u5(0x35, false),
+            hse_present: false,
             icscr: 0x4400_0000,
             icscr2: 0x0008_4210,
             icscr3: 0x0010_0000,
@@ -848,13 +877,12 @@ impl V2Rcc {
     /// modelled — no shipped firmware starts it. RDY is a pure status: it
     /// follows ON on every write, exactly as the per-family parent/sibling
     /// models latch their CR ready bits.
-    fn ready_u5(mut cr: u32) -> u32 {
+    fn ready_u5(mut cr: u32, hse_present: bool) -> u32 {
         for &(on, rdy) in &[
             (0u32, 2u32),
             (4, 5),
             (8, 10),
             (12, 13),
-            (16, 17),
             (24, 25),
             (26, 27),
             (28, 29),
@@ -865,7 +893,32 @@ impl V2Rcc {
                 cr &= !(1 << rdy);
             }
         }
+        // HSEON reaches HSERDY only when an external oscillator is fitted.
+        if hse_present && cr & (1 << 16) != 0 {
+            cr |= 1 << 17;
+        } else {
+            cr &= !(1 << 17);
+        }
         cr
+    }
+
+    /// Board option: is an external HSE oscillator fitted? Re-derives the
+    /// HSEON→HSERDY status for the current control word.
+    fn set_hse_present(&mut self, present: bool) {
+        self.hse_present = present;
+        if self.u5_cr_ready {
+            self.cr = Self::ready_u5(self.cr, present);
+        }
+    }
+
+    fn set_dbp_flag(&mut self, flag: Arc<AtomicBool>) {
+        self.dbp_flag = Some(flag);
+    }
+
+    fn dbp_set(&self) -> bool {
+        self.dbp_flag
+            .as_ref()
+            .is_none_or(|flag| flag.load(Ordering::Relaxed))
     }
 }
 
@@ -1071,7 +1124,7 @@ impl RccModel for V2Rcc {
         match offset {
             0x00 => {
                 self.cr = if self.u5_cr_ready {
-                    Self::ready_u5(value)
+                    Self::ready_u5(value, self.hse_present)
                 } else {
                     Self::ready_classic(value)
                 }
@@ -1130,9 +1183,21 @@ impl RccModel for V2Rcc {
                     value & !(1 << 1)
                 };
             }
-            0x28 => self.pll1cfgr = value,
-            0x34 => self.pll1divr = value,
-            0x38 => self.pll1fracr = value,
+            // On WBA, RCLKPRE and RCLKPRESTEP remain writable while PLL1 runs
+            // (RM0493 §7.7.13); all other PLL1CFGR configuration is frozen.
+            0x28 if self.synthesize_wba_rclk_pre_rdy => {
+                const RCLK_PRE_FIELDS: u32 = 0b11 << 20;
+                if self.cr & (1 << 24) == 0 {
+                    self.pll1cfgr = value & !(1 << 22);
+                } else {
+                    self.pll1cfgr = (self.pll1cfgr & !RCLK_PRE_FIELDS) | (value & RCLK_PRE_FIELDS);
+                }
+            }
+            // U5 PLL1 configuration is frozen while PLL1ON is set (RM0456 §11.8.9).
+            0x28 if self.cr & (1 << 24) == 0 => self.pll1cfgr = value,
+            0x34 if self.cr & (1 << 24) == 0 => self.pll1divr = value,
+            0x38 if self.cr & (1 << 24) == 0 => self.pll1fracr = value,
+            0x28 | 0x34 | 0x38 => {}
             // U5 RCC_CFGR2/3 and the PLL2/PLL3 CFGR/DIVR/FRACR blocks — plain
             // storage (RM0456 §11.8.7-11).
             0x20 if self.u5_cr_ready => self.cfgr2 = value,
@@ -1186,6 +1251,11 @@ impl RccModel for V2Rcc {
             // `HAL_RCC_OscConfig` polls all three (stm32u5xx_hal_rcc.c), so a
             // partial LSE-only ack hangs the boot on bit11/bit27.
             0xF0 if self.u5_cr_ready => {
+                // BDCR is write-protected until PWR_DBPR.DBP is set
+                // (RM0456 §11.8.40).
+                if !self.dbp_set() {
+                    return;
+                }
                 let mut v = value;
                 for &(on, rdy) in &[(0u32, 1u32), (7, 11), (26, 27)] {
                     if v & (1 << on) != 0 {
@@ -1899,6 +1969,190 @@ impl RccModel for L4Rcc {
     }
 }
 
+// ── STM32L5 ─────────────────────────────────────────────────────────────────
+// RM0438 RCC register map, cross-checked against ST's CMSIS `stm32l552xx.h`
+// RCC_TypeDef. The L5 keeps the L4 clock tree (CR/ICSCR/CFGR/PLLCFGR/
+// PLLSAI1CFGR/PLLSAI2CFGR, BDCR@0x90, CSR@0x94, CRRCR@0x98) but carries the
+// L4/G4-shaped enable block in full: AHB1ENR@0x48, AHB2ENR@0x4C,
+// AHB3ENR@0x50, APB1ENR1@0x58, APB1ENR2@0x5C, APB2ENR@0x60. LPUART1 — the
+// NUCLEO-L552ZE-Q console — is gated on APB1ENR2 bit 0.
+//
+// Reset boots on MSI range 6 (4 MHz), CR = 0x0000_0063 (MSION | MSIRDY |
+// MSIRANGE=0b0110), exactly like the L4. The MSI is the bit0→bit1 ready pair;
+// HSI16 is bit8→bit10, HSE bit16→bit17 and PLL bit24→bit25 gated by PLLSRC.
+// NOT silicon-verified: no STM32L5 bench part.
+#[derive(Debug, Default, serde::Serialize)]
+pub struct L5Rcc {
+    cr: u32,        // 0x00
+    icscr: u32,     // 0x04
+    cfgr: u32,      // 0x08
+    pllcfgr: u32,   // 0x0C
+    ahb1rstr: u32,  // 0x28
+    ahb2rstr: u32,  // 0x2C
+    ahb3rstr: u32,  // 0x30
+    apb1rstr: u32,  // APB1RSTR1 0x38
+    apb1rstr2: u32, // 0x3C
+    apb2rstr: u32,  // 0x40
+    ahb1enr: u32,   // 0x48 (DMA1/DMA2/DMAMUX/CRC)
+    ahb2enr: u32,   // AHB2ENR 0x4C (GPIO ports, ADC)
+    ahb3enr: u32,   // 0x50
+    apb1enr: u32,   // APB1ENR1 0x58 (USART2..5, SPI2/3, I2C, timers)
+    apb1enr2: u32,  // APB1ENR2 0x5C (LPUART1EN bit 0)
+    apb2enr: u32,   // 0x60 (USART1, SPI1, TIM1/8/15..17)
+    bdcr: u32,      // 0x90 — LSEON bit0 → LSERDY bit1
+    csr: u32,       // 0x94 — LSION bit0 → LSIRDY bit1
+    crrcr: u32,     // 0x98 — HSI48ON bit0 → HSI48RDY bit1
+}
+
+impl L5Rcc {
+    fn new() -> Self {
+        // RM0438 RCC_CR: reset CR 0x0000_0063 (MSION | MSIRDY | MSIRANGE=6).
+        let mut s = Self {
+            cr: 0x0000_0063,
+            ..Default::default()
+        };
+        s.cr = s.ready(s.cr);
+        s
+    }
+
+    /// L5 CR ready rule (RM0438 RCC_CR): MSI bit0→bit1, HSI16 bit8→bit10,
+    /// HSE bit16→bit17 gated by HSEBYP(bit18), PLL bit24→bit25 gated by the
+    /// PLLCFGR.PLLSRC clock being ready. Same handshakes the CubeL5 HAL and
+    /// Zephyr's L5 clock driver poll.
+    ///
+    /// HSERDY only latches in bypass mode (HSEBYP set): the NUCLEO-L552ZE-Q
+    /// feeds HSE from the ST-LINK MCO, which is a bypass input. A board with a
+    /// real HSE crystal (HSEON without HSEBYP) never sees HSERDY here — the
+    /// crystal oscillator start-up is not modelled.
+    fn ready(&self, mut cr: u32) -> u32 {
+        for &(on, rdy) in &[(0u32, 1u32), (8, 10)] {
+            if cr & (1 << on) != 0 {
+                cr |= 1 << rdy;
+            } else {
+                cr &= !(1 << rdy);
+            }
+        }
+        let hsebyp = cr & (1 << 18) != 0;
+        if cr & (1 << 16) != 0 && hsebyp {
+            cr |= 1 << 17;
+        } else {
+            cr &= !(1 << 17);
+        }
+        let src = self.pllcfgr & 0x3;
+        let src_ready = match src {
+            1 => cr & (1 << 1) != 0,  // MSI
+            2 => cr & (1 << 10) != 0, // HSI16
+            3 => cr & (1 << 17) != 0, // HSE
+            _ => false,
+        };
+        if cr & (1 << 24) != 0 && src_ready {
+            cr |= 1 << 25;
+        } else {
+            cr &= !(1 << 25);
+        }
+        cr
+    }
+}
+
+impl RccModel for L5Rcc {
+    fn read_reg(&self, offset: u64) -> u32 {
+        match offset {
+            0x00 => self.cr,
+            0x04 => self.icscr,
+            0x08 => self.cfgr,
+            0x0C => self.pllcfgr,
+            0x28 => self.ahb1rstr,
+            0x2C => self.ahb2rstr,
+            0x30 => self.ahb3rstr,
+            0x38 => self.apb1rstr,
+            0x3C => self.apb1rstr2,
+            0x40 => self.apb2rstr,
+            0x48 => self.ahb1enr,
+            0x4C => self.ahb2enr,
+            0x50 => self.ahb3enr,
+            0x58 => self.apb1enr,
+            0x5C => self.apb1enr2,
+            0x60 => self.apb2enr,
+            0x90 => self.bdcr,
+            0x94 => self.csr,
+            0x98 => self.crrcr,
+            _ => {
+                crate::census_reg!("rcc:L5Rcc", offset, "read");
+                0
+            }
+        }
+    }
+
+    fn write_reg(&mut self, offset: u64, value: u32) {
+        match offset {
+            0x00 => self.cr = self.ready(value),
+            0x04 => self.icscr = value,
+            0x08 => {
+                // SW[1:0]→SWS[3:2] follows once the requested source is ready:
+                // 00 MSI (bit1), 01 HSI16 (bit10), 10 HSE (bit17), 11 PLL (bit25).
+                let prev_sws = (self.cfgr >> 2) & 0x3;
+                let sw = value & 0x3;
+                let ready = match sw {
+                    0 => self.cr & (1 << 1) != 0,
+                    1 => self.cr & (1 << 10) != 0,
+                    2 => self.cr & (1 << 17) != 0,
+                    3 => self.cr & (1 << 25) != 0,
+                    _ => false,
+                };
+                let sws = if ready { sw } else { prev_sws };
+                self.cfgr = (value & !(0x3 << 2)) | (sws << 2);
+            }
+            0x0C => {
+                self.pllcfgr = value;
+                self.cr = self.ready(self.cr);
+            }
+            0x28 => self.ahb1rstr = value,
+            0x2C => self.ahb2rstr = value,
+            0x30 => self.ahb3rstr = value,
+            0x38 => self.apb1rstr = value,
+            0x3C => self.apb1rstr2 = value,
+            0x40 => self.apb2rstr = value,
+            0x48 => self.ahb1enr = value,
+            0x4C => self.ahb2enr = value,
+            0x50 => self.ahb3enr = value,
+            0x58 => self.apb1enr = value,
+            0x5C => self.apb1enr2 = value,
+            0x60 => self.apb2enr = value,
+            // BDCR: LSEON (bit0) → LSERDY (bit1).
+            0x90 => {
+                self.bdcr = if value & 1 != 0 {
+                    value | (1 << 1)
+                } else {
+                    value & !(1 << 1)
+                };
+            }
+            // CSR: LSION (bit0) → LSIRDY (bit1).
+            0x94 => {
+                self.csr = if value & 1 != 0 {
+                    value | (1 << 1)
+                } else {
+                    value & !(1 << 1)
+                };
+            }
+            // CRRCR: HSI48ON (bit0) → HSI48RDY (bit1).
+            0x98 => {
+                self.crrcr = if value & 1 != 0 {
+                    value | (1 << 1)
+                } else {
+                    value & !(1 << 1)
+                };
+            }
+            _ => {
+                crate::census_reg!("rcc:L5Rcc", offset, "write");
+            }
+        }
+    }
+
+    fn snapshot(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
+    }
+}
+
 // ── STM32L0 ─────────────────────────────────────────────────────────────────
 // L0-only registers (CRRCR, IOPENR) live HERE and nowhere else.
 #[derive(Debug, Default, serde::Serialize)]
@@ -2177,6 +2431,8 @@ impl RccModel for G4Rcc {
 // SWS hold.
 #[derive(Debug, Default, serde::Serialize)]
 pub struct G0Rcc {
+    #[serde(skip)]
+    live_clocks: Option<Arc<super::stm32g0_clock::G0ClockRegisters>>,
     cr: u32,        // 0x00 — HSION bit8 → HSIRDY bit10
     icscr: u32,     // 0x04 — HSI16 calibration, plain storage
     cfgr: u32,      // 0x08 — SW[2:0] → SWS[5:3]
@@ -2327,6 +2583,217 @@ impl RccModel for G0Rcc {
                 crate::census_reg!("rcc:G0Rcc", offset, "write");
             }
         }
+        if let Some(live) = &self.live_clocks {
+            live.publish(self.cr, self.cfgr, self.pllcfgr, self.ccipr);
+        }
+    }
+
+    fn snapshot(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
+    }
+}
+
+// ── WCH CH32V003 ────────────────────────────────────────────────────────────
+
+/// WCH's CH32V003 clock tree.
+///
+/// Verified against WCH's standard peripheral library, openwch/ch32v003 at
+/// b35b1e54a95f (2026-10-19):
+/// - `EVT/EXAM/SRC/Peripheral/inc/ch32v00x.h` (sha256
+///   3462556b6040bfbc09139931d0da732822a4876d30b1ea015aad7d8f267a2bf3):
+///   `RCC_BASE` = 0x4002_1000; `RCC_TypeDef` gives CTLR 0x00, CFGR0 0x04,
+///   AHBPCENR 0x14, APB2PCENR 0x18, APB1PCENR 0x1C; CTLR HSION bit 0, HSIRDY
+///   bit 1, HSEON bit 16, HSERDY bit 17, PLLON bit 24, PLLRDY bit 25; CFGR0
+///   SW[1:0], SWS[3:2], HPRE[7:4], PLLSRC bit 16; `HSI_VALUE` 24 MHz.
+/// - `EVT/EXAM/SRC/Peripheral/src/ch32v00x_rcc.c` (sha256
+///   5d0ae70b301aa9dd88cacbcd4007f7c2c37d327afac7c5b4928c4c91e9c5ae12):
+///   the PLL input is HSI×2 or HSE×2 (`RCC_PLLSource_HSI_MUL2` /
+///   `RCC_PLLSource_HSE_MUL2`).
+///
+/// Not verified from those sources: `LSI_HZ` (128 kHz) and the 4–25 MHz HSE
+/// range accepted by [`WchRcc::set_hse_frequency`]. This is a register model,
+/// not silicon validation.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct WchRcc {
+    ctlr: u32,
+    cfgr0: u32,
+    ahbpcenr: u32,
+    apb2pcenr: u32,
+    apb1pcenr: u32,
+    hse_present: bool,
+    hse_hz: Option<u32>,
+}
+
+impl WchRcc {
+    pub const HSI_HZ: u32 = 24_000_000;
+    pub const LSI_HZ: u32 = 128_000;
+    pub const PLL_MULTIPLIER: u32 = 2;
+
+    // Offsets and control bits: ch32v00x.h `RCC_TypeDef` / `RCC_*` defines.
+    const CTLR: u64 = 0x00;
+    const CFGR0: u64 = 0x04;
+    const AHBPCENR: u64 = 0x14;
+    const APB2PCENR: u64 = 0x18;
+    const APB1PCENR: u64 = 0x1C;
+    const HSION: u32 = 1 << 0;
+    const HSIRDY: u32 = 1 << 1;
+    const HSEON: u32 = 1 << 16;
+    const HSERDY: u32 = 1 << 17;
+    const PLLON: u32 = 1 << 24;
+    const PLLRDY: u32 = 1 << 25;
+    const PLLSRC_HSE: u32 = 1 << 16;
+
+    pub fn new() -> Self {
+        let mut this = Self {
+            ctlr: Self::HSION,
+            cfgr0: 0,
+            ahbpcenr: 0,
+            apb2pcenr: 0,
+            apb1pcenr: 0,
+            hse_present: false,
+            hse_hz: None,
+        };
+        this.refresh();
+        this
+    }
+
+    /// Set the fitted HSE frequency. Values outside 4–25 MHz are rejected; that
+    /// range is not verified against WCH sources.
+    pub fn set_hse_frequency(&mut self, hz: u32) -> bool {
+        if !(4_000_000..=25_000_000).contains(&hz) {
+            return false;
+        }
+        self.hse_hz = Some(hz);
+        self.hse_present = true;
+        self.refresh();
+        true
+    }
+
+    pub fn set_hse_present(&mut self, present: bool) {
+        self.hse_present = present && self.hse_hz.is_some();
+        self.refresh();
+    }
+
+    fn hse_ready(&self) -> bool {
+        self.hse_present && self.ctlr & Self::HSEON != 0
+    }
+
+    fn pll_input_hz(&self) -> Option<u32> {
+        if self.cfgr0 & Self::PLLSRC_HSE != 0 {
+            if self.hse_ready() {
+                self.hse_hz
+            } else {
+                None
+            }
+        } else if self.ctlr & Self::HSIRDY != 0 {
+            Some(Self::HSI_HZ)
+        } else {
+            None
+        }
+    }
+
+    fn pll_ready(&self) -> bool {
+        self.ctlr & Self::PLLON != 0 && self.pll_input_hz().is_some()
+    }
+
+    fn source_ready(&self, source: u32) -> bool {
+        match source {
+            0 => self.ctlr & Self::HSIRDY != 0,
+            1 => self.hse_ready(),
+            2 => self.pll_ready(),
+            _ => false,
+        }
+    }
+
+    fn refresh(&mut self) {
+        if self.ctlr & Self::HSION != 0 {
+            self.ctlr |= Self::HSIRDY;
+        } else {
+            self.ctlr &= !Self::HSIRDY;
+        }
+        if self.hse_ready() {
+            self.ctlr |= Self::HSERDY;
+        } else {
+            self.ctlr &= !Self::HSERDY;
+        }
+        if self.pll_ready() {
+            self.ctlr |= Self::PLLRDY;
+        } else {
+            self.ctlr &= !Self::PLLRDY;
+        }
+        let requested = self.cfgr0 & 0x3;
+        if self.source_ready(requested) {
+            self.cfgr0 = (self.cfgr0 & !(0x3 << 2)) | (requested << 2);
+        }
+    }
+
+    /// Return the selected system clock before the AHB prescaler.
+    pub fn sysclk_hz(&self) -> u32 {
+        match (self.cfgr0 >> 2) & 0x3 {
+            0 => Self::HSI_HZ,
+            1 => self.hse_hz.unwrap_or(0),
+            2 => self
+                .pll_input_hz()
+                .unwrap_or(0)
+                .saturating_mul(Self::PLL_MULTIPLIER),
+            _ => 0,
+        }
+    }
+
+    /// Return SYSCLK after the AHB prescaler in CFGR0.HPRE[3:0] (bits 4–7).
+    ///
+    /// The divisor table is the official WCH firmware's `APBAHBPrescTable`
+    /// (`ch32v00x_rcc.c`, WCH V1.0.0): {1,2,3,4,5,6,7,8, 1,2,3,4,5,6,7,8}. The
+    /// field is NOT a plain power-of-two log: 0x1 is /2 and 0x2 is /3, and the
+    /// second half of the range repeats the first, so 0x8 is /1 again (the
+    /// `RCC_HCLK_Div1` default). The header's named macros confirm the sparse
+    /// high end: Div16 = 0xB (field 11), Div32 = 0xC, Div64 = 0xD,
+    /// Div128 = 0xE, Div256 = 0xF.
+    pub fn hclk_hz(&self) -> u32 {
+        const HPRE_DIVISOR: [u32; 16] = [1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8];
+        let hpre = ((self.cfgr0 >> 4) & 0xF) as usize;
+        self.sysclk_hz() / HPRE_DIVISOR[hpre]
+    }
+
+    fn read_reg(&self, offset: u64) -> u32 {
+        match offset {
+            Self::CTLR => self.ctlr,
+            Self::CFGR0 => self.cfgr0,
+            Self::AHBPCENR => self.ahbpcenr,
+            Self::APB2PCENR => self.apb2pcenr,
+            Self::APB1PCENR => self.apb1pcenr,
+            _ => 0,
+        }
+    }
+}
+
+impl Default for WchRcc {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RccModel for WchRcc {
+    fn read_reg(&self, offset: u64) -> u32 {
+        self.read_reg(offset)
+    }
+
+    fn write_reg(&mut self, offset: u64, value: u32) {
+        match offset {
+            Self::CTLR => self.ctlr = value,
+            Self::CFGR0 => {
+                // SWS is read-only; the requested SW field is retained and
+                // status changes only after the selected clock is ready.
+                self.cfgr0 = (value & !(0x3 << 2)) | (self.cfgr0 & (0x3 << 2));
+            }
+            Self::AHBPCENR => self.ahbpcenr = value,
+            Self::APB2PCENR => self.apb2pcenr = value,
+            Self::APB1PCENR => self.apb1pcenr = value,
+            _ => {
+                crate::census_reg!("rcc:WchRcc", offset, "write");
+            }
+        }
+        self.refresh();
     }
 
     fn snapshot(&self) -> serde_json::Value {
@@ -2346,10 +2813,12 @@ pub enum Rcc {
     Stm32H5(H5Rcc),
     Stm32H7(H7Rcc),
     Stm32L4(L4Rcc),
+    Stm32L5(L5Rcc),
     Stm32L0(L0Rcc),
     Stm32G4(G4Rcc),
     Stm32G0(G0Rcc),
     Stm32F0(F0Rcc),
+    Wch(WchRcc),
 }
 
 impl Default for Rcc {
@@ -2371,14 +2840,45 @@ impl Rcc {
             RccRegisterLayout::Stm32H5 => Self::Stm32H5(H5Rcc::new()),
             RccRegisterLayout::Stm32H7 => Self::Stm32H7(H7Rcc::new()),
             RccRegisterLayout::Stm32L4 => Self::Stm32L4(L4Rcc::new()),
+            RccRegisterLayout::Stm32L5 => Self::Stm32L5(L5Rcc::new()),
             RccRegisterLayout::Stm32L0 => Self::Stm32L0(L0Rcc::new()),
             RccRegisterLayout::Stm32G4 => Self::Stm32G4(G4Rcc::new()),
             RccRegisterLayout::Stm32G0 => Self::Stm32G0(G0Rcc::new()),
             RccRegisterLayout::Stm32F0 => Self::Stm32F0(F0Rcc::new()),
+            RccRegisterLayout::Wch => Self::Wch(WchRcc::new()),
             // Same V2 model, RM0434 enable/reset placement.
             RccRegisterLayout::Stm32Wb => Self::Stm32V2(V2Rcc::new_wb()),
             // Same V2 model, RM0493 PLL1RCLKPRE→PLL1RCLKPRERDY status.
             RccRegisterLayout::Stm32Wba => Self::Stm32V2(V2Rcc::new_wba()),
+        }
+    }
+
+    /// Board option: an external HSE oscillator is fitted. Only the U5/V2
+    /// clock tree gates HSERDY on this today; other families keep their
+    /// existing fixed-oscillator behaviour.
+    pub fn set_hse_present(&mut self, present: bool) {
+        if let Self::Stm32V2(v2) = self {
+            v2.set_hse_present(present);
+        }
+        if let Self::Wch(wch) = self {
+            wch.set_hse_present(present);
+        }
+    }
+
+    /// Set the external oscillator frequency for the WCH layout. Returns
+    /// false for a non-WCH layout or a frequency outside the task-specified
+    /// 4–25 MHz range.
+    pub fn set_wch_hse_frequency(&mut self, hz: u32) -> bool {
+        if let Self::Wch(wch) = self {
+            return wch.set_hse_frequency(hz);
+        }
+        false
+    }
+
+    /// Link the U5 RCC backup-domain write protection to PWR_DBPR.DBP.
+    pub fn set_dbp_flag(&mut self, flag: Arc<AtomicBool>) {
+        if let Self::Stm32V2(v2) = self {
+            v2.set_dbp_flag(flag);
         }
     }
 
@@ -2419,9 +2919,17 @@ impl Rcc {
             // (RM0434/RM0493) but 0x14 on U5 (RM0456 §11.8.6).
             (Self::Stm32V2(_), "cr") => return Some(0x00),
             (Self::Stm32V2(v2), "crrcr") => return Some(if v2.u5_cr_ready { 0x14 } else { 0x98 }),
+            (Self::Wch(_), "ctlr") => return Some(WchRcc::CTLR),
+            (Self::Wch(_), "cfgr0") => return Some(WchRcc::CFGR0),
             _ => {}
         }
         match self {
+            Self::Wch(_) => match r.as_str() {
+                "ahbpcenr" | "ahbenr" => Some(WchRcc::AHBPCENR),
+                "apb2pcenr" => Some(WchRcc::APB2PCENR),
+                "apb1pcenr" => Some(WchRcc::APB1PCENR),
+                _ => None,
+            },
             // F1: AHBENR@0x14, APB2ENR@0x18, APB1ENR@0x1C (RM0008 §7.3).
             Self::Stm32F1(_) => match r.as_str() {
                 "ahbenr" | "ahb1enr" => Some(0x14),
@@ -2452,6 +2960,21 @@ impl Rcc {
                 "ahbenr" | "ahb2enr" => Some(0x4C),
                 "apb1enr" | "apb1enr1" => Some(0x58),
                 "apb2enr" => Some(0x60),
+                _ => None,
+            },
+            // L5 (RM0438 RCC / CMSIS stm32l552xx.h): the full L4/G4-shaped
+            // enable block. LPUART1 is on APB1ENR2 bit 0, GPIO on AHB2ENR.
+            Self::Stm32L5(_) => match r.as_str() {
+                "cr" => Some(0x00),
+                "ahb1enr" | "ahbenr" => Some(0x48),
+                "ahb2enr" => Some(0x4C),
+                "ahb3enr" => Some(0x50),
+                "apb1enr" | "apb1enr1" => Some(0x58),
+                "apb1enr2" => Some(0x5C),
+                "apb2enr" => Some(0x60),
+                "bdcr" => Some(0x90),
+                "csr" => Some(0x94),
+                "crrcr" => Some(0x98),
                 _ => None,
             },
             // G4: AHB1ENR@0x48, AHB2ENR@0x4C, APB1ENR1@0x58, APB1ENR2@0x5C,
@@ -2568,6 +3091,19 @@ impl Rcc {
         }
     }
 
+    /// Opt-in live G0 clock contract for a fixed-operating-point transceiver.
+    /// Other RCC families are not silently treated as G0.
+    pub fn g0_clock_registers(&mut self) -> Option<Arc<super::stm32g0_clock::G0ClockRegisters>> {
+        let Self::Stm32G0(r) = self else {
+            return None;
+        };
+        let live = r
+            .live_clocks
+            .get_or_insert_with(|| Arc::new(Default::default()));
+        live.publish(r.cr, r.cfgr, r.pllcfgr, r.ccipr);
+        Some(live.clone())
+    }
+
     fn model(&self) -> &dyn RccModel {
         match self {
             Self::Stm32F1(r) => r,
@@ -2576,10 +3112,12 @@ impl Rcc {
             Self::Stm32H5(r) => r,
             Self::Stm32H7(r) => r,
             Self::Stm32L4(r) => r,
+            Self::Stm32L5(r) => r,
             Self::Stm32L0(r) => r,
             Self::Stm32G4(r) => r,
             Self::Stm32G0(r) => r,
             Self::Stm32F0(r) => r,
+            Self::Wch(r) => r,
         }
     }
 
@@ -2591,15 +3129,21 @@ impl Rcc {
             Self::Stm32H5(r) => r,
             Self::Stm32H7(r) => r,
             Self::Stm32L4(r) => r,
+            Self::Stm32L5(r) => r,
             Self::Stm32L0(r) => r,
             Self::Stm32G4(r) => r,
             Self::Stm32G0(r) => r,
             Self::Stm32F0(r) => r,
+            Self::Wch(r) => r,
         }
     }
 }
 
 impl crate::Peripheral for Rcc {
+    fn bind_backup_domain_write_enable(&mut self, enabled: Arc<AtomicBool>) {
+        self.set_dbp_flag(enabled);
+    }
+
     /// Record a supply reset in RCC_CSR. Modelled on the F4 layout; the other
     /// families' CSR reset flags stay as they were (plain storage).
     fn on_supply_reset(&mut self, cause: crate::power::SupplyResetCause) {
@@ -2671,12 +3215,57 @@ impl crate::Peripheral for Rcc {
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
     }
+
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{Rcc, RccRegisterLayout};
     use crate::Peripheral;
+
+    #[test]
+    fn wch_rcc_pll_ready_switches_sysclk() {
+        let mut rcc = Rcc::new_with_layout(RccRegisterLayout::Wch);
+        assert_eq!(
+            " WCH ".parse::<RccRegisterLayout>().unwrap(),
+            RccRegisterLayout::Wch
+        );
+
+        // Request PLL before enabling it: SWS remains on the reset HSI source.
+        rcc.write_u32(0x04, 0x2).unwrap();
+        assert_eq!(rcc.read_u32(0x04).unwrap() & 0xC, 0);
+
+        // PLLON with the default HSI source sets PLLRDY. A repeated SW=PLL
+        // request then changes SWS and the modeled SYSCLK to 48 MHz.
+        rcc.write_u32(0x00, (1 << 0) | (1 << 24)).unwrap();
+        assert_ne!(rcc.read_u32(0x00).unwrap() & (1 << 25), 0);
+        rcc.write_u32(0x04, 0x2).unwrap();
+        assert_eq!(rcc.read_u32(0x04).unwrap() & 0xC, 0x8);
+        let Rcc::Wch(wch) = &rcc else {
+            panic!("WCH layout must instantiate WchRcc");
+        };
+        assert_eq!(wch.sysclk_hz(), 48_000_000);
+        assert_eq!(wch.hclk_hz(), 48_000_000);
+
+        // HPRE field 9 divides AHB by two (official WCH APBAHBPrescTable[9]=2)
+        // while SYSCLK remains 48 MHz. Field 2 divides by three, not by one —
+        // the field is not a power-of-two log. Keep SW=PLL (bits 0–1) set.
+        rcc.write_u32(0x04, 0x2 | (0x9 << 4)).unwrap();
+        let Rcc::Wch(wch) = &rcc else {
+            unreachable!();
+        };
+        assert_eq!(wch.sysclk_hz(), 48_000_000);
+        assert_eq!(wch.hclk_hz(), 24_000_000);
+
+        rcc.write_u32(0x04, 0x2 | (0x2 << 4)).unwrap();
+        let Rcc::Wch(wch) = &rcc else {
+            unreachable!();
+        };
+        assert_eq!(wch.hclk_hz(), 16_000_000);
+    }
 
     #[test]
     fn test_rcc_f1_offsets() {
@@ -2893,6 +3482,49 @@ mod tests {
             wba.read_u32(0x28).unwrap(),
             0x0010_1400,
             "stm32wba PRERDY reads 0 while PRE is set"
+        );
+    }
+
+    #[test]
+    fn wba_pll1_rclkpre_can_change_while_pll_is_enabled() {
+        let mut wba = Rcc::new_with_layout(RccRegisterLayout::Stm32Wba);
+        wba.write_u32(0x28, 0x0010_1400).unwrap(); // RCLKPRE=1
+        wba.write_u32(0x00, 1 << 24).unwrap(); // PLL1ON
+        assert_eq!(wba.read_u32(0x28).unwrap() & (1 << 22), 0);
+
+        // RM0493 keeps PLL1RCLKPRE and PLL1RCLKPRESTEP writable while PLL1
+        // runs. The ready flag is read-only and is synthesized from PRE.
+        wba.write_u32(0x28, 0x0030_1400).unwrap(); // RCLKPRE=1, PRESTEP=1
+        assert_eq!(
+            wba.read_u32(0x28).unwrap(),
+            0x0030_1400,
+            "PRESTEP is writable while PLL1 runs"
+        );
+        wba.write_u32(0x28, 0x0070_1400).unwrap(); // software also sets RO PRERDY
+        assert_eq!(
+            wba.read_u32(0x28).unwrap(),
+            0x0030_1400,
+            "software cannot set PRERDY while PRE remains set"
+        );
+        wba.write_u32(0x28, 0x0020_1400).unwrap(); // RCLKPRE=0, PRESTEP=1
+        assert_eq!(
+            wba.read_u32(0x28).unwrap(),
+            0x0060_1400,
+            "RCLKPRE clears live, PRESTEP remains set, and PRERDY follows"
+        );
+        wba.write_u32(0x28, 0x0040_1400).unwrap(); // clear PRESTEP
+        assert_eq!(
+            wba.read_u32(0x28).unwrap(),
+            0x0040_1400,
+            "PRESTEP can be cleared while PLL1 runs"
+        );
+
+        // Other PLL configuration remains frozen while PLL1ON is set.
+        wba.write_u32(0x28, 0x0040_1402).unwrap();
+        assert_eq!(
+            wba.read_u32(0x28).unwrap(),
+            0x0040_1400,
+            "live RCLK update must not alter the PLL source"
         );
     }
 
@@ -3774,6 +4406,62 @@ mod tests {
         assert_eq!(
             "stm32g0".parse::<RccRegisterLayout>().unwrap(),
             RccRegisterLayout::Stm32G0
+        );
+    }
+
+    /// The L5 is NOT an L4 alias: the NUCLEO-L552ZE-Q console is LPUART1,
+    /// gated on APB1ENR2 bit 0 — a register the L4 model does not have. The
+    /// reset clock is MSI range 6 (CR 0x63), and GPIO lives in AHB2ENR@0x4C
+    /// while DMA/CRC live in AHB1ENR@0x48. If the L5 shared the L4 layout, the
+    /// LPUART clock enable would vanish into an unmapped offset and the console
+    /// would stay silent.
+    #[test]
+    fn test_rcc_l5_map_and_msi_reset() {
+        let mut rcc = Rcc::new_with_layout(RccRegisterLayout::Stm32L5);
+
+        // RM0438 RCC_CR: MSION | MSIRDY | MSIRANGE=6.
+        assert_eq!(
+            rcc.read_u32(0x00).unwrap(),
+            0x0000_0063,
+            "L5 boots on MSI range 6 (4 MHz)"
+        );
+
+        // LPUART1EN: APB1ENR2 bit 0 (RM0438 RCC_APB1ENR2).
+        rcc.write_u32(0x5C, 1).unwrap();
+        assert_eq!(rcc.read_u32(0x5C).unwrap(), 1);
+        assert_eq!(rcc.rcc_reg_offset("apb1enr2"), Some(0x5C));
+
+        // GPIOAEN: AHB2ENR bit 0; DMA1EN: AHB1ENR bit 0 — distinct registers.
+        rcc.write_u32(0x4C, 1).unwrap();
+        assert_eq!(rcc.read_u32(0x4C).unwrap(), 1);
+        assert_eq!(rcc.read_u32(0x48).unwrap(), 0);
+        assert_eq!(rcc.rcc_reg_offset("ahb2enr"), Some(0x4C));
+        assert_eq!(rcc.rcc_reg_offset("ahb1enr"), Some(0x48));
+        assert_eq!(rcc.rcc_reg_offset("apb1enr1"), Some(0x58));
+        assert_eq!(rcc.rcc_reg_offset("apb2enr"), Some(0x60));
+
+        // PLLRDY only latches once PLLON and the PLLSRC source are ready.
+        rcc.write_u32(0x0C, 1).unwrap(); // PLLSRC = MSI
+        rcc.write_u32(0x00, 0x0000_0063 | (1 << 24)).unwrap();
+        assert_ne!(
+            rcc.read_u32(0x00).unwrap() & (1 << 25),
+            0,
+            "PLLRDY follows PLLON with MSI ready"
+        );
+
+        // CFGR.SW follows only while the requested source is ready: with the
+        // PLL off, a write asking for PLL leaves SWS on MSI (RM0438 RCC_CFGR).
+        rcc.write_u32(0x00, 0x0000_0063).unwrap();
+        rcc.write_u32(0x08, 0x3).unwrap();
+        assert_eq!(
+            (rcc.read_u32(0x08).unwrap() >> 2) & 0x3,
+            0,
+            "SWS stays MSI until the PLL is running"
+        );
+
+        assert_eq!(
+            "stm32l5".parse::<RccRegisterLayout>().unwrap(),
+            RccRegisterLayout::Stm32L5
         );
     }
 }

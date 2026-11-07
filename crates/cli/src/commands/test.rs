@@ -26,7 +26,10 @@ fn arm_test_family(
     };
     let chip = system.chip_with_plugins(&crate::plugin_chip_yaml(plugins))?;
     let family = machine_family(&chip)?;
-    if !matches!(family, MachineFamily::CortexM | MachineFamily::CortexA) {
+    if !matches!(
+        family,
+        MachineFamily::CortexM | MachineFamily::CortexA | MachineFamily::CortexR
+    ) {
         anyhow::bail!("ARM ELF does not match chip '{}' ({family:?})", chip.name);
     }
     Ok(family)
@@ -91,10 +94,16 @@ fn apply_run_speed_opts<C: labwired_core::Cpu>(machine: &mut labwired_core::Mach
     let arm_jit = std::env::var("LABWIRED_CORTEX_M_JIT").as_deref() == Ok("1");
     machine.config.cortex_m_jit_enabled = arm_jit;
     machine.bus.config.cortex_m_jit_enabled = arm_jit;
+    // Loop traces ride on top of the JIT and are opt-in too: the differential
+    // in `crates/cli/tests/cortex_m_loop_trace_lab.rs` runs both sides of
+    // LABWIRED_CORTEX_M_JIT_TRACES. Without the JIT armed they are inert.
+    let arm_traces = arm_jit && std::env::var("LABWIRED_CORTEX_M_JIT_TRACES").as_deref() == Ok("1");
+    machine.config.cortex_m_jit_loop_traces = arm_traces;
+    machine.bus.config.cortex_m_jit_loop_traces = arm_traces;
     // Only say so when the setting can actually do something, so the line is
     // never a claim the build cannot honour.
     if cfg!(feature = "event-scheduler") {
-        eprintln!(
+        crate::log_ts::eventln!(
             "labwired-cli test: idle_ff={} (event_scheduler=on{})",
             if opted_out { "off" } else { "on" },
             if opted_out {
@@ -339,6 +348,7 @@ fn run_s3_rom_boot_no_elf(
     let mut app_cpu = labwired_core::cpu::xtensa_lx7::XtensaLx7::new_app_cpu();
     app_cpu.faithful_windows = true;
     let mut machine = labwired_core::Machine::new(cpu, bus).with_secondary_cpu(app_cpu);
+    crate::log_ts::set_hz(machine.bus.cpu_hz);
     // BOTH consoles, because the boot and the sketch do not share one. The mask
     // ROM and the 2nd-stage bootloader talk on UART0 (attached above); an
     // Arduino sketch built with ARDUINO_USB_CDC_ON_BOOT=1 — which is every
@@ -378,6 +388,8 @@ fn run_s3_rom_boot_no_elf(
         uart_injections,
         // Xtensa is never JIT-eligible (the JIT is RISC-V only).
         jit_eligible: false,
+        counter_metrics: false,
+        machine_metrics: false,
         arch: labwired_core::Arch::XtensaLx7,
         stack_paint,
         chip_mem,
@@ -612,6 +624,7 @@ fn run_c3_rom_boot_no_elf(
             Err(code) => return code,
         }
     };
+    crate::log_ts::set_hz(machine.bus.cpu_hz);
 
     // Universal WiFi adapter: if the diagram carries a `wifi_ap`, attach every
     // real WiFi MAC to a per-lab virtual-WiFi medium so the device associates →
@@ -690,6 +703,8 @@ fn run_c3_rom_boot_no_elf(
         uart_injections,
         // rom-boot is never JIT-eligible (it forces cycle-accurate stepping).
         jit_eligible: false,
+        counter_metrics: false,
+        machine_metrics: false,
         arch: labwired_core::Arch::RiscV,
         stack_paint,
         chip_mem,
@@ -1318,6 +1333,7 @@ pub(crate) fn run_test(
                     cpu.faithful_windows = true;
                     bus.attach_uart_tx_sink(uart_tx.clone(), !args.no_uart_stdout);
                     let mut machine = labwired_core::Machine::new(cpu, bus);
+                    crate::log_ts::set_hz(machine.bus.cpu_hz);
                     machine.add_observer(metrics.clone());
                     machine
                 } else {
@@ -1561,6 +1577,7 @@ pub(crate) fn run_test(
                     app_cpu.set_sp(0x3FCD_8000);
                     let mut machine =
                         labwired_core::Machine::new(pro_cpu, bus).with_secondary_cpu(app_cpu);
+                    crate::log_ts::set_hz(machine.bus.cpu_hz);
                     // Fast boot: the mask ROM is a thunk harness, so core 1's
                     // reset vector holds no startup code. Wait for
                     // `ets_set_appcpu_boot_addr`.
@@ -1633,7 +1650,11 @@ pub(crate) fn run_test(
                 // flash-thunks, no forged s_cpu_up — APP_CPU runs call_start_cpu1.
                 let mut machine =
                     labwired_core::Machine::new(pro_cpu, esp_bus).with_secondary_cpu(app_cpu);
-                machine.add_observer(metrics.clone());
+                crate::log_ts::set_hz(machine.bus.cpu_hz);
+                // Idle and CCOUNT poll-loop skips, as every other `test` path
+                // (opt out with LABWIRED_IDLE_FAST_FORWARD=0). No per-step
+                // observer: `counter_metrics` below.
+                apply_run_speed_opts(&mut machine);
                 if let Err(e) = machine.load_firmware(&program) {
                     return handle_load_error(
                         &args,
@@ -1746,8 +1767,12 @@ pub(crate) fn run_test(
                 stimuli: &stimuli,
                 uart_injections: &uart_injections,
                 // Xtensa (ESP32) path: never JIT-eligible (the RV32IMC JIT is
-                // RISC-V only), so keep the exact current observer-based metrics.
+                // RISC-V only). Metrics come from the machine's counters: a
+                // per-step observer would count the skipped iterations it
+                // never sees, and its presence costs every instruction.
                 jit_eligible: false,
+                counter_metrics: true,
+                machine_metrics: false,
                 arch: labwired_core::Arch::XtensaLx7,
                 stack_paint,
                 chip_mem,
@@ -1814,6 +1839,38 @@ pub(crate) fn run_test(
     // resolves peripherals by name to the FIRST match — misroutes the 512-entry
     // blob onto the 128-entry stub and fails ("snapshot has 512 entries, table
     // has 128"). Only install the fast-boot stubs on the plain ELF path.
+    // Cortex-R5F: the RPU platform (GIC, UARTs, TTC) must be on the bus before
+    // the console sink attaches below; the prepared CPU is consumed by the ARM
+    // arm of the run dispatch.
+    #[cfg(feature = "qemu-arm-system")]
+    let mut cortex_r_cpu = None;
+    if let Some(chip) = resolved_system
+        .as_ref()
+        .and_then(|s| s.chip_with_plugins(&crate::plugin_chip_yaml(plugins)).ok())
+        .filter(|chip| {
+            labwired_core::system::arch_policy::machine_family(chip).ok()
+                == Some(labwired_core::system::arch_policy::MachineFamily::CortexR)
+        })
+    {
+        #[cfg(feature = "qemu-arm-system")]
+        match labwired_core::system::cortex_r::attach(&mut bus, &chip) {
+            Ok(cpu) => cortex_r_cpu = Some(cpu),
+            Err(error) => {
+                write_config_error_outputs(
+                    &args,
+                    Some(&firmware_path),
+                    system_path.as_ref(),
+                    Some(&firmware_bytes),
+                    Some(&resolved_limits),
+                    format!("{error:#}"),
+                );
+                return ExitCode::from(EXIT_CONFIG_ERROR);
+            }
+        }
+        #[cfg(not(feature = "qemu-arm-system"))]
+        let _ = chip;
+    }
+
     let rom_boot_path =
         args.rom_boot || args.capture_app_entry.is_some() || args.resume_snapshot.is_some();
     if !rom_boot_path {
@@ -1840,6 +1897,22 @@ pub(crate) fn run_test(
                 &mut bus,
                 std::path::Path::new(&firmware_path),
             );
+        }
+        // ESP32-C6: SPI_MEM + partition seed + ROM .data pointers (CLI RISC-V
+        // path does not go through builder/riscv.rs).
+        if let Some(sys_path) = system_path.as_ref() {
+            if let Ok(manifest) = labwired_config::SystemManifest::from_file(sys_path) {
+                let chip_dir = sys_path
+                    .parent()
+                    .unwrap_or_else(|| std::path::Path::new("."));
+                if let Ok(chip) = labwired_config::ChipDescriptor::resolve_with(
+                    &manifest.chip,
+                    chip_dir,
+                    &crate::plugin_chip_yaml(plugins),
+                ) {
+                    labwired_core::boot::esp32c6_rom::maybe_install_arduino_flash(&mut bus, &chip);
+                }
+            }
         }
     }
 
@@ -1921,9 +1994,10 @@ pub(crate) fn run_test(
             .chip_with_plugins(&crate::plugin_chip_yaml(plugins))
             .and_then(|chip| labwired_core::system::arch_policy::machine_family(&chip));
         match declaration {
-            Ok(labwired_core::system::arch_policy::MachineFamily::CortexA)
-                if program.arch != labwired_core::Arch::Arm =>
-            {
+            Ok(
+                labwired_core::system::arch_policy::MachineFamily::CortexA
+                | labwired_core::system::arch_policy::MachineFamily::CortexR,
+            ) if program.arch != labwired_core::Arch::Arm => {
                 write_config_error_outputs(
                     &args,
                     Some(&firmware_path),
@@ -1951,6 +2025,16 @@ pub(crate) fn run_test(
 
     let metrics = std::sync::Arc::new(labwired_core::metrics::PerformanceMetrics::new());
 
+    // The RV64 hart has no per-instruction observer of its own to feed and
+    // no JIT, so it takes the same counter-metrics / exact-window path as a
+    // Cortex-M bare-ELF run (`hosted_fast` below).
+    let rv64_chip = resolved_system
+        .as_ref()
+        .and_then(|s| {
+            s.chip_with_plugins(&|name| plugins.iter().find_map(|p| p.chip_yaml(name)))
+                .ok()
+        })
+        .is_some_and(|c| labwired_core::cpu::riscv64::is_rv64_chip(&c));
     macro_rules! run_machine {
         ($machine:expr) => {{
             let mut machine = $machine;
@@ -1977,8 +2061,38 @@ pub(crate) fn run_test(
                     &machine,
                     program.arch,
                 );
-            if !jit_eligible {
+            // Cortex-M bare-ELF runs (the hosted labwired_run path for every
+            // STM32/nRF/RP/EFR board): metrics from the machine's counters
+            // instead of a per-step observer (which costs every instruction
+            // and disables the core's fast batch paths), and CPU windows
+            // planned at the bus's max-safe interval with exact boundaries
+            // (`Machine::exact_batch_boundaries`). The bus keeps interval 1,
+            // so peripherals pace their events exactly as before. Outputs are
+            // the same as the per-instruction run; only `cycles` in
+            // result.json changes, to the machine clock. Opt out with
+            // LABWIRED_HOSTED_FAST=0.
+            let hosted_fast = !jit_eligible
+                && (program.arch == labwired_core::Arch::Arm
+                    || program.arch == labwired_core::Arch::Rx
+                    || program.arch == labwired_core::Arch::Mips
+                    || program.arch == labwired_core::Arch::Aarch64
+                    || rv64_chip)
+                && std::env::var("LABWIRED_HOSTED_FAST").as_deref() != Ok("0");
+            if !jit_eligible && !hosted_fast {
                 machine.add_observer(metrics.clone());
+            }
+            if hosted_fast {
+                // Only where the per-cycle tick has no work of its own (no CAN
+                // tester or bridge, no GPIO device needing service): those are
+                // serviced per tick and would see the wide window.
+                let wide = machine.max_safe_tick_interval();
+                if wide > 1 && machine.bus.per_cycle_tick_is_trivial() {
+                    machine.config.peripheral_tick_interval = wide;
+                    machine.exact_batch_boundaries = true;
+                    crate::log_ts::eventln!(
+                        "labwired-cli test: hosted fast path (exact windows up to {wide} cycles)"
+                    );
+                }
             }
             if itm_enabled {
                 machine.bus.attach_itm_output(Some(itm_tx.clone()), false);
@@ -2003,6 +2117,8 @@ pub(crate) fn run_test(
                 stimuli: &stimuli,
                 uart_injections: &uart_injections,
                 jit_eligible,
+                counter_metrics: false,
+                machine_metrics: hosted_fast,
                 arch: program.arch,
                 stack_paint,
                 chip_mem,
@@ -2015,6 +2131,7 @@ pub(crate) fn run_test(
     macro_rules! setup_and_run {
         ($cpu:expr) => {{
             let mut machine = labwired_core::Machine::new($cpu, bus);
+            crate::log_ts::set_hz(machine.bus.cpu_hz);
             // FreeRTOS on ESP32-C3 is interrupt-driven (yield + SYSTIMER tick).
             // Instruction batching freezes peripheral tick / IRQ delivery
             // across large step batches and strands the scheduler — same
@@ -2037,12 +2154,48 @@ pub(crate) fn run_test(
                     e,
                 );
             }
+            // RX starts at the fixed reset vector, as the silicon does.
+            if matches!(program.arch, labwired_core::Arch::Rx) {
+                match labwired_core::system::rx::reset_pc(&machine.bus) {
+                    Ok(pc) => machine.cpu.set_pc(pc),
+                    Err(e) => error!("{e:#}"),
+                }
+            }
+            // MIPS starts at the reset vector 0xBFC00000 once the image's
+            // boot ISA has been checked.
+            if matches!(program.arch, labwired_core::Arch::Mips) {
+                use labwired_core::Cpu as _;
+                match machine.cpu.reset(&mut machine.bus) {
+                    Ok(()) => machine.cpu.set_pc(labwired_core::cpu::mips::RESET_VECTOR),
+                    Err(e) => error!("{e:#}"),
+                }
+            }
             // RISC-V Arduino-ESP32 images enter at `call_start_cpu0`, which
             // assumes the second-stage bootloader already left a DRAM stack.
             // Cortex-M gets SP from the vector table in `load_firmware`; RISC-V
             // does not — seed SP at the top of chip RAM (16B aligned) and force
             // PC to the ELF entry so we don't start at SP=0 → fault @ 0xfffffffc.
             if matches!(program.arch, labwired_core::Arch::RiscV) {
+                // C6: re-seed ROM interface pointers after ELF load. Mask-ROM
+                // unpack never ran; without this multi_heap_register_impl
+                // jalrs through garbage at heap_tlsf_table_ptr. No-op on
+                // non-C6 (writes are to C6 HP-SRAM interface addresses).
+                if let Some(sys_path) = system_path.as_ref() {
+                    if let Ok(manifest) = labwired_config::SystemManifest::from_file(sys_path) {
+                        let chip_dir = sys_path
+                            .parent()
+                            .unwrap_or_else(|| std::path::Path::new("."));
+                        if let Ok(chip) = labwired_config::ChipDescriptor::resolve_with(
+                            &manifest.chip,
+                            chip_dir,
+                            &crate::plugin_chip_yaml(plugins),
+                        ) {
+                            if labwired_core::boot::esp32c6_rom::is_esp32c6(&chip) {
+                                labwired_core::boot::esp32c6_rom::seed_rom_data(&mut machine.bus);
+                            }
+                        }
+                    }
+                }
                 // Fast-boot skips mask-ROM reset's `.data` unpack into high
                 // DRAM (`ets_ops_table_ptr` / `rom_spiflash_legacy_*` /
                 // `g_flash_guard_ops` @ 0x3FCD_FFxx). Without that copy, ROM
@@ -2086,6 +2239,12 @@ pub(crate) fn run_test(
                                 if chip.name == "esp32c3" {
                                     const C3_BOOT_STACK_TOP: u32 = 0x3FCD_C000;
                                     sp_top = C3_BOOT_STACK_TOP;
+                                }
+                                // C6: stay below ROM-reserved HP SRAM so the
+                                // boot stack cannot smash heap_tlsf_table_ptr
+                                // @ 0x4087_ffd8 (and friends).
+                                if chip.name.to_ascii_lowercase().contains("esp32c6") {
+                                    sp_top = labwired_core::boot::esp32c6_rom::app_stack_top();
                                 }
                                 machine.cpu.set_sp(sp_top & !0xF);
                             }
@@ -2253,6 +2412,97 @@ pub(crate) fn run_test(
                                     );
                                 }
                             }
+                            // C6: bootloader-equivalent factory layout + SPI_MEM MMU
+                            // + FlashXip. IROM/DROM share 0x4200_0000; MMU lives in
+                            // SPI0 MMU_ITEM_INDEX/CONTENT (VALID=BIT(9), 256×64KiB).
+                            // Leave unused entries invalid so spi_flash_mmap can
+                            // allocate free pages for the partition table @ 0x8000.
+                            if labwired_core::boot::esp32c6_rom::is_esp32c6(&chip) {
+                                use labwired_core::boot::esp32c6_rom::{
+                                    install_arduino_flash, install_xip_window, write_mmu_entry,
+                                    FACTORY_APP_OFFSET, MMU_VALID,
+                                };
+                                const PAGE: usize = 64 * 1024;
+                                let factory_off = FACTORY_APP_OFFSET as usize;
+                                let factory_page = (factory_off / PAGE) as u32; // 1
+                                let flash_page_has_payload = |page: &[u8]| -> bool {
+                                    !(page.iter().all(|&b| b == 0)
+                                        || page.iter().all(|&b| b == 0xFF))
+                                };
+                                let mut virt_pages: Vec<u32> = Vec::new();
+                                let irom_len = machine.bus.flash.data.len();
+                                for page in 0..irom_len.div_ceil(PAGE) {
+                                    if page >= 256 {
+                                        break;
+                                    }
+                                    let start = page * PAGE;
+                                    let end = (start + PAGE).min(irom_len);
+                                    if flash_page_has_payload(
+                                        &machine.bus.flash.data[start..end],
+                                    ) {
+                                        virt_pages.push(page as u32);
+                                    }
+                                }
+                                // Re-install for (flash, mmu) handles — avoids a
+                                // new as_any/downcast site (ratchet stays at 195).
+                                // Fresh backing is then filled from bus.flash.
+                                let partitions = resolve_esp_partitions_bin(
+                                    std::path::Path::new(&firmware_path),
+                                )
+                                .and_then(|p| std::fs::read(p).ok());
+                                let (flash, mmu) = install_arduino_flash(
+                                    &mut machine.bus,
+                                    partitions.as_deref(),
+                                );
+                                {
+                                    let mut f = flash.lock().unwrap();
+                                    // Full page copy — unlike C3 (execute
+                                    // stays on bus.flash), C6 FlashXip
+                                    // serves fetches from this backing, so
+                                    // sparse skip-0x00 would corrupt code.
+                                    for page in virt_pages.clone() {
+                                        let start = page as usize * PAGE;
+                                        let end = (start + PAGE).min(irom_len);
+                                        let dst = factory_off + start;
+                                        if start >= irom_len || dst >= f.len() {
+                                            continue;
+                                        }
+                                        let n = (end - start).min(f.len() - dst);
+                                        f[dst..dst + n].copy_from_slice(
+                                            &machine.bus.flash.data[start..start + n],
+                                        );
+                                    }
+                                    // App image magic at start of factory partition.
+                                    // VA 0x4200_0000 maps here, so only stamp the
+                                    // 0x20-byte image-header slot when the ELF left
+                                    // it empty (IDF/Arduino). A bare-metal ELF
+                                    // linked at 0x4200_0000 owns it — stamping
+                                    // would clobber its first instruction.
+                                    let header_slot_free = !flash_page_has_payload(
+                                        &machine.bus.flash.data[..irom_len.min(0x20)],
+                                    );
+                                    if header_slot_free && f.len() > factory_off {
+                                        f[factory_off] = 0xE9;
+                                    }
+                                }
+                                virt_pages.sort_unstable();
+                                virt_pages.dedup();
+                                for vp in &virt_pages {
+                                    let phys = factory_page + *vp;
+                                    write_mmu_entry(&mut machine.bus, *vp, phys);
+                                }
+                                install_xip_window(&mut machine.bus, flash, mmu);
+                                if !virt_pages.is_empty() {
+                                    eprintln!(
+                                        "labwired-cli test: C6 MMU factory@{:#x} mapped {} virt page(s) {:?} → phys+{}; VALID={:#x}; free entries for PT mmap",
+                                        factory_off,
+                                        virt_pages.len(),
+                                        virt_pages,
+                                        factory_page,
+                                        MMU_VALID
+                                    );
+                                }
+                            }
                         }
                     }
                 }
@@ -2262,7 +2512,16 @@ pub(crate) fn run_test(
         }};
     }
 
-    let exit_code = match program.arch {
+    // EM_MCHP_PIC images read as PIC18 until the chip names PIC16.
+    let program_arch = resolved_system
+        .as_ref()
+        .and_then(|s| {
+            s.chip_with_plugins(&|name| plugins.iter().find_map(|p| p.chip_yaml(name)))
+                .ok()
+        })
+        .map(|c| labwired_core::system::arch_policy::image_arch_for_chip(program.arch, c.arch))
+        .unwrap_or(program.arch);
+    let exit_code = match program_arch {
         labwired_core::Arch::Arm => {
             use labwired_core::system::arch_policy::MachineFamily;
             let family = match arm_test_family(resolved_system.as_ref(), plugins) {
@@ -2279,7 +2538,38 @@ pub(crate) fn run_test(
                     return ExitCode::from(EXIT_CONFIG_ERROR);
                 }
             };
-            if family == MachineFamily::CortexA {
+            if family == MachineFamily::CortexR {
+                if args.rom_boot || args.resume_snapshot.is_some() {
+                    write_config_error_outputs(
+                        &args,
+                        Some(&firmware_path),
+                        system_path.as_ref(),
+                        Some(&firmware_bytes),
+                        Some(&resolved_limits),
+                        "Cortex-R5F boot ROM/FSBL boot and snapshot resume are not implemented; use an initialized-memory ELF without --rom-boot or --resume-snapshot".into(),
+                    );
+                    return ExitCode::from(EXIT_CONFIG_ERROR);
+                }
+                #[cfg(feature = "qemu-arm-system")]
+                {
+                    let cpu = cortex_r_cpu
+                        .take()
+                        .expect("Cortex-R5F CPU is prepared with the bus");
+                    setup_and_run!(cpu)
+                }
+                #[cfg(not(feature = "qemu-arm-system"))]
+                {
+                    write_config_error_outputs(
+                        &args,
+                        Some(&firmware_path),
+                        system_path.as_ref(),
+                        Some(&firmware_bytes),
+                        Some(&resolved_limits),
+                        "Cortex-R5F needs a native build with --features qemu-arm-system".into(),
+                    );
+                    ExitCode::from(EXIT_CONFIG_ERROR)
+                }
+            } else if family == MachineFamily::CortexA {
                 if args.rom_boot || args.resume_snapshot.is_some() {
                     write_config_error_outputs(
                         &args,
@@ -2396,6 +2686,7 @@ pub(crate) fn run_test(
                     Ok(m) => m,
                     Err(code) => return code,
                 };
+                crate::log_ts::set_hz(machine.bus.cpu_hz);
                 if let Err(e) = machine.apply_runtime_snapshot(&snap) {
                     // The snapshot self-keyed clean (same chip + firmware) but is
                     // structurally incompatible with the freshly-built machine —
@@ -2428,7 +2719,18 @@ pub(crate) fn run_test(
                     Ok(m) => m,
                     Err(code) => return code,
                 };
+                crate::log_ts::set_hz(machine.bus.cpu_hz);
                 run_machine!(machine)
+            } else if let Some(chip) = resolved_system
+                .as_ref()
+                .and_then(|s| {
+                    s.chip_with_plugins(&|name| plugins.iter().find_map(|p| p.chip_yaml(name)))
+                        .ok()
+                })
+                .filter(labwired_core::cpu::riscv64::is_rv64_chip)
+            {
+                // `core: rv64…` runs the 64-bit hart, not the RV32 core.
+                setup_and_run!(labwired_core::cpu::RiscV64::for_chip(&chip))
             } else {
                 let mut cpu = labwired_core::system::riscv::configure_riscv(&mut bus);
                 // C3 has no standard CLINT (line 7 is an ESP matrix line).
@@ -2449,27 +2751,130 @@ pub(crate) fn run_test(
             // AVR is Harvard: code lives in the CPU flash image, not bus.flash.
             // Machine::load_firmware only walks bus memory maps, so seed the
             // interpreter with load_program_image (same as build_avr_node).
-            let mut cpu = labwired_core::cpu::Avr::new();
+            // The chip names the part (ATmega328P by default, ATmega2560).
+            let avr_chip_name = resolved_system
+                .as_ref()
+                .and_then(|s| {
+                    s.chip_with_plugins(&|name| plugins.iter().find_map(|p| p.chip_yaml(name)))
+                        .ok()
+                })
+                .map(|c| c.name)
+                .unwrap_or_default();
+            let mut cpu = labwired_core::cpu::Avr::for_chip_name(&avr_chip_name);
             cpu.load_program_image(&program);
             // USART TX is on the CPU, not a bus UART peripheral.
             cpu.set_serial_sink(uart_tx.clone());
-            // SPI/I2C kits park on bus controllers; SPDR/TWCR clock them from
-            // the CPU model (same as build_avr_node).
-            for name in ["spi", "spi0", "spi1"] {
-                for dev in bus.take_spi_devices(name) {
-                    cpu.push_spi_device(dev);
-                }
-            }
+            // SPI kits stay on the bus parking controller (SPDR clocks via
+            // SystemBus::clock_parking_spi) so inspect can see the panel.
+            // I²C slaves still move onto the CPU TWI model.
             for name in ["i2c", "i2c0", "twi"] {
                 for dev in bus.take_i2c_slaves(name) {
                     cpu.push_i2c_slave(dev);
                 }
             }
             let machine = labwired_core::Machine::new(cpu, bus);
+            crate::log_ts::set_hz(machine.bus.cpu_hz);
             run_machine!(machine)
         }
+        labwired_core::Arch::Pic24 => {
+            // PIC24 is Harvard: code lives in the CPU flash image.
+            // UART1 TX is on the CPU, not a bus UART peripheral.
+            let mut cpu = labwired_core::cpu::Pic24::new();
+            cpu.load_program_image(&program);
+            cpu.set_serial_sink(uart_tx.clone());
+            let machine = labwired_core::Machine::new(cpu, bus);
+            run_machine!(machine)
+        }
+        labwired_core::Arch::Pic18 => {
+            // PIC18 is Harvard too: program memory is CPU-local and sized
+            // from the chip; the EUSART TX register is on the CPU.
+            let pic18_chip_name = resolved_system
+                .as_ref()
+                .and_then(|s| {
+                    s.chip_with_plugins(&|name| plugins.iter().find_map(|p| p.chip_yaml(name)))
+                        .ok()
+                })
+                .map(|c| c.name)
+                .unwrap_or_else(|| {
+                    // `for_chip_name("")` falls back to the 0x60 Access Bank
+                    // split and the default flash size; say so rather than
+                    // run a PIC18F4520 image on the wrong geometry silently.
+                    warn!(
+                        "PIC18: could not resolve the chip from the system manifest; \
+                         using the default PIC18 geometry"
+                    );
+                    String::new()
+                });
+            let mut cpu = labwired_core::cpu::Pic18::for_chip_name(&pic18_chip_name);
+            cpu.load_program_image(&program);
+            cpu.set_serial_sink(uart_tx.clone());
+            let machine = labwired_core::Machine::new(cpu, bus);
+            run_machine!(machine)
+        }
+        labwired_core::Arch::Rx => {
+            // RX is von Neumann: code flash and RAM are on the bus, and the
+            // ICU is part of the core.
+            setup_and_run!(labwired_core::cpu::Rx::new())
+        }
+        labwired_core::Arch::Mips => {
+            // PIC32MZ: physical bus (RAM, program and boot flash, SFRs); the
+            // EVIC is part of the core.
+            setup_and_run!(labwired_core::cpu::Mips32::new())
+        }
+        labwired_core::Arch::Aarch64 => {
+            // The PE's GICv3 and generic timer are part of the core; its
+            // per-chip parameters (MPIDR, GIC bases, counter rate) come from
+            // the chip name. Entry is the ELF entry, at EL3.
+            let chip = resolved_system.as_ref().and_then(|s| {
+                s.chip_with_plugins(&|name| plugins.iter().find_map(|p| p.chip_yaml(name)))
+                    .ok()
+            });
+            let cpu = match &chip {
+                Some(c) => labwired_core::cpu::Aarch64::for_chip(c),
+                None => {
+                    warn!("AArch64: could not resolve the chip; running without a GIC");
+                    labwired_core::cpu::Aarch64::default()
+                }
+            };
+            setup_and_run!(cpu)
+        }
+        labwired_core::Arch::Pic16 => {
+            // PIC16 is Harvard as well: word-addressed program memory sized
+            // from the chip, USART TX on the CPU. Reaching this arm means the
+            // chip resolved (that is what retargeted the image).
+            let pic16_chip_name = resolved_system
+                .as_ref()
+                .and_then(|s| {
+                    s.chip_with_plugins(&|name| plugins.iter().find_map(|p| p.chip_yaml(name)))
+                        .ok()
+                })
+                .map(|c| c.name)
+                .unwrap_or_default();
+            let mut cpu = labwired_core::cpu::Pic16::for_chip_name(&pic16_chip_name);
+            match cpu.load_program_image(&program) {
+                Ok(()) => {
+                    cpu.set_serial_sink(uart_tx.clone());
+                    let machine = labwired_core::Machine::new(cpu, bus);
+                    run_machine!(machine)
+                }
+                // Bytes the part has no home for (e.g. an enhanced mid-range
+                // image on a classic part) are a firmware/config mismatch.
+                Err(msg) => {
+                    error!("{}", msg);
+                    write_config_error_outputs(
+                        &args,
+                        Some(&firmware_path),
+                        system_path.as_ref(),
+                        Some(&firmware_bytes),
+                        Some(&resolved_limits),
+                        msg,
+                    );
+                    ExitCode::from(EXIT_CONFIG_ERROR)
+                }
+            }
+        }
         _ => {
-            let msg = format!("Unsupported architecture: {:?}", program.arch);
+            let msg = format!("Unsupported architecture: {:?}", program_arch);
             error!("{}", msg);
             write_config_error_outputs(
                 &args,

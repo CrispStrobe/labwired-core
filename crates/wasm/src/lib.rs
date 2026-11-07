@@ -20,6 +20,9 @@ mod inspect;
 mod install;
 mod jit_browser;
 mod lab_tools;
+mod ngspice;
+#[cfg(test)]
+mod pic24_wasm_tests;
 #[cfg(test)]
 mod playground_repro;
 #[cfg(test)]
@@ -431,6 +434,54 @@ impl WasmSimulator {
             blobs: parse_named_blobs(&blobs),
         }))
     }
+
+    /// Construct a browser simulator with a host-owned persistent ngspice solver.
+    #[wasm_bindgen]
+    pub fn new_from_config_with_ngspice_callback(
+        system_yaml: &str,
+        chip_yaml: &str,
+        firmware: &[u8],
+        blobs: JsValue,
+        callback: JsValue,
+    ) -> Result<WasmSimulator, JsValue> {
+        use wasm_bindgen::JsCast;
+        let callback = callback
+            .dyn_into::<js_sys::Function>()
+            .map_err(|_| JsValue::from_str("ngspice callback must be a function"))?;
+        let inputs = std::rc::Rc::new(lab_tools::CtorInputs {
+            system_yaml: system_yaml.to_string(),
+            chip_yaml: chip_yaml.to_string(),
+            firmware: firmware.to_vec(),
+            blobs: parse_named_blobs(&blobs),
+        });
+        let mut sim = Self::build_from_config(
+            &inputs.system_yaml,
+            &inputs.chip_yaml,
+            &inputs.firmware,
+            &inputs.blobs,
+            Some(&callback),
+        )?;
+        sim.tools.get_mut().ctor = Some(inputs);
+        sim.untracked("connected to an external ngspice solver");
+        Ok(sim)
+    }
+}
+
+/// PIC24 UART1 is implemented inside the CPU, so it cannot be attached as a
+/// named `SystemBus` UART. Keep the browser constructor's console contract
+/// explicit rather than asking the generic bus resolver to find it.
+fn validate_pic24_console(console: &HostConsole) -> Result<(), String> {
+    match console {
+        HostConsole::Undeclared => Ok(()),
+        HostConsole::Uart(name) if name.eq_ignore_ascii_case("uart1") => Ok(()),
+        HostConsole::Uart(name) => Err(format!(
+            "PIC24 browser support only models CPU-internal UART1, not bus UART '{name}'; declare `debug_uart: uart1`"
+        )),
+        HostConsole::UsbSerialJtag => Err(
+            "PIC24 browser support does not model USB-Serial-JTAG; declare `debug_uart: uart1` for the CPU-internal UART1 console"
+                .to_string(),
+        ),
+    }
 }
 
 impl WasmSimulator {
@@ -445,6 +496,7 @@ impl WasmSimulator {
             &inputs.chip_yaml,
             &inputs.firmware,
             &inputs.blobs,
+            None,
         )?;
         sim.tools.get_mut().ctor = Some(inputs);
         Ok(sim)
@@ -455,6 +507,7 @@ impl WasmSimulator {
         chip_yaml: &str,
         firmware: &[u8],
         blob_map: &std::collections::HashMap<String, Vec<u8>>,
+        ngspice_callback: Option<&js_sys::Function>,
     ) -> Result<WasmSimulator, JsValue> {
         // Same reason as `new()`: the fidelity log is thread-local and outlives
         // the machine, so scope it to this one.
@@ -472,6 +525,9 @@ impl WasmSimulator {
         let mut sim = match family {
             MachineFamily::CortexA => return Err(JsValue::from_str(
                 "Cortex-A7 requires the native qemu-arm backend; browser execution is unavailable",
+            )),
+            MachineFamily::CortexR => return Err(JsValue::from_str(
+                "Cortex-R5F requires the native qemu-arm-system backend; browser execution is unavailable",
             )),
             MachineFamily::CortexM => {
                 Self::new_from_config_arm(&chip, &manifest, firmware, blob_map)
@@ -515,10 +571,26 @@ impl WasmSimulator {
             MachineFamily::Xtensa => Self::new_from_config_xtensa_esp32(&manifest, firmware),
             // Classic Arduino Nano / ATmega328P — same shape as `build_avr_node`.
             MachineFamily::Avr => Self::new_from_config_avr(&chip, &manifest, firmware),
+            MachineFamily::Pic24 => Self::new_from_config_pic24(&chip, &manifest, firmware),
+            MachineFamily::Pic18 => Err(JsValue::from_str(
+                "PIC18 (M0) is not available in the browser build yet",
+            )),
+            MachineFamily::Pic16 => Err(JsValue::from_str(
+                "PIC16 is not available in the browser build yet",
+            )),
+            MachineFamily::Aarch64 => Err(JsValue::from_str(
+                "AArch64 is not available in the browser build yet",
+            )),
+            MachineFamily::Rx => Err(JsValue::from_str(
+                "RX is not available in the browser build yet",
+            )),
+            MachineFamily::Mips => Err(JsValue::from_str(
+                "MIPS is not available in the browser build yet",
+            )),
         }?;
         // Every architecture's machine is built by now, so co-simulation binds
         // here once rather than in each constructor above.
-        sim.attach_cosim(&manifest)
+        sim.attach_cosim_with_ngspice(&manifest, ngspice_callback)
             .map_err(|e| JsValue::from_str(&e))?;
         Ok(sim)
     }
@@ -603,20 +675,16 @@ impl WasmSimulator {
 
         let program_image = load_elf_bytes(firmware)
             .map_err(|e| JsValue::from_str(&format!("Loader Error: {}", e)))?;
-        let mut cpu = labwired_core::cpu::Avr::new();
+        let mut cpu = labwired_core::cpu::Avr::for_chip_name(&chip.name);
         cpu.load_program_image(&program_image);
         // USART0 is modelled on the CPU, not as a bus UART, so the host
         // console above reaches nothing on this part: the Serial pane only
         // hears the Nano if the CPU writes UDR0 bytes into the same sink
         // (the CLI does the same with its capture buffer).
         cpu.set_serial_sink(uart_sink.clone());
-        // SPI/I2C kits park on bus controllers; SPDR/TWCR clock them from
-        // the CPU model (same as build_avr_node / CLI).
-        for name in ["spi", "spi0", "spi1"] {
-            for dev in bus.take_spi_devices(name) {
-                cpu.push_spi_device(dev);
-            }
-        }
+        // SPI kits stay on the bus parking controller (SPDR clocks via
+        // SystemBus::clock_parking_spi) so inspect can see the panel.
+        // I²C slaves still move onto the CPU TWI model.
         for name in ["i2c", "i2c0", "twi"] {
             for dev in bus.take_i2c_slaves(name) {
                 cpu.push_i2c_slave(dev);
@@ -634,6 +702,67 @@ impl WasmSimulator {
             console,
             uart_rx_bufs,
             arch: MachineFamily::Avr,
+            esp32_ipi: None,
+            jit_browser_enabled: false,
+            jit_browser_cache: None,
+            cosim: None,
+            tools: Default::default(),
+        })
+    }
+
+    /// PIC24 M0 (ELF boot, CPU UART1 TX, and the declared GPIO pad models).
+    ///
+    /// Like the core's PIC24 builder, the UART is part of the CPU rather than
+    /// a bus UART, so it writes directly to the same sink the Serial pane
+    /// drains. M0 browser support deliberately rejects external devices: the
+    /// PIC24 I2C1/SPI1 controllers are CPU-internal and need the later M3
+    /// attachment path, while the current browser constructor only promises
+    /// firmware boot, UART1, and GPIO.
+    fn new_from_config_pic24(
+        chip: &ChipDescriptor,
+        manifest: &SystemManifest,
+        firmware: &[u8],
+    ) -> Result<WasmSimulator, JsValue> {
+        if !manifest.external_devices.is_empty() {
+            return Err(JsValue::from_str(
+                "PIC24 browser support currently accepts no external devices (M0: CPU UART1 and GPIO only)",
+            ));
+        }
+
+        let bus = SystemBus::from_config(chip, manifest)
+            .map_err(|e| JsValue::from_str(&format!("Bus config error: {e:#}")))?;
+
+        let console = ConsoleCapture::for_manifest(manifest);
+        validate_pic24_console(console.tapped()).map_err(|e| JsValue::from_str(&e))?;
+        let uart_sink = console.heard_sink();
+        // PIC24 UART1 is CPU-internal and writes directly to this sink below.
+        // There is no bus UART or USB-Serial-JTAG console to attach here.
+        let uart_rx_bufs = bus.attach_uart_rx_source();
+
+        let program_image = load_elf_bytes(firmware)
+            .map_err(|e| JsValue::from_str(&format!("Loader Error: {e}")))?;
+        if program_image.arch != CoreArch::Pic24 {
+            return Err(JsValue::from_str(&format!(
+                "firmware architecture {:?} is incompatible with PIC24 chip '{}'",
+                program_image.arch, chip.name
+            )));
+        }
+
+        let mut cpu = labwired_core::cpu::Pic24::new();
+        cpu.set_port_masks(labwired_core::system::builder::pic24_port_masks(chip));
+        cpu.load_program_image(&program_image);
+        cpu.set_serial_sink(uart_sink.clone());
+
+        let boxed: Box<dyn Cpu> = Box::new(cpu);
+        let machine = Machine::new(boxed, bus);
+
+        Ok(WasmSimulator {
+            machine: Some(machine),
+            board_io: manifest.board_io.clone(),
+            uart_sink,
+            console,
+            uart_rx_bufs,
+            arch: MachineFamily::Pic24,
             esp32_ipi: None,
             jit_browser_enabled: false,
             jit_browser_cache: None,
@@ -1904,6 +2033,30 @@ impl WasmSimulator {
         }
     }
 
+    /// Enable/disable Cortex-M loop TRACES on top of the browser JIT.
+    ///
+    /// When on, a counted pure-ALU loop whose conditional backedge targets
+    /// its own entry compiles to a single wasm `loop` that runs many
+    /// iterations per dispatch, instead of one dispatch per iteration (see
+    /// `labwired_core`'s `emit_loop_trace`). Only meaningful with
+    /// `set_jit_enabled(true)`. Off by default; the RP2040 demo opts in.
+    ///
+    /// Toggling drops the compiled-block cache: a block keeps the mode it
+    /// was compiled under, so a cached untraced block would otherwise
+    /// survive the switch.
+    #[wasm_bindgen]
+    pub fn set_jit_loop_traces_enabled(&mut self, on: bool) -> Result<(), JsValue> {
+        self.record(lab_tools::Op::SetJitLoopTraces(on));
+        let machine = self.machine();
+        machine.config.cortex_m_jit_loop_traces = on;
+        // The window runner reads the bus copy for IRQ decisions and the
+        // machine copy for the span; keep them in step like the tick
+        // interval setter does.
+        machine.bus.config.cortex_m_jit_loop_traces = on;
+        self.jit_browser_cache = None;
+        Ok(())
+    }
+
     /// Enable/disable scheduler-safe CPU idle fast-forwarding. Off by default;
     /// browser callers opt in explicitly after comparing accelerated and
     /// non-accelerated traces for the target firmware.
@@ -2004,6 +2157,31 @@ impl WasmSimulator {
             .unwrap_or(0)
     }
 
+    /// Loop-trace iterations the browser JIT retired inside traced runs.
+    ///
+    /// Zero after a batch through the loop-trace path means either no trace
+    /// was compiled or every trace dispatch retired nothing; non-zero is the
+    /// non-vacuity proof for the browser-layer gate and the bench.
+    #[wasm_bindgen]
+    pub fn jit_trace_iters(&self) -> Result<u64, JsValue> {
+        Ok(self
+            .jit_browser_cache
+            .as_ref()
+            .map(|c| c.trace_iters())
+            .unwrap_or(0))
+    }
+
+    /// Number of loop-trace dispatches (one per entry of a counted-loop
+    /// trace), the companion of [`Self::jit_trace_iters`].
+    #[wasm_bindgen]
+    pub fn jit_trace_runs(&self) -> Result<u64, JsValue> {
+        Ok(self
+            .jit_browser_cache
+            .as_ref()
+            .map(|c| c.trace_runs())
+            .unwrap_or(0))
+    }
+
     /// Bench runner: execute `cycles` `step_with_esp32_aids` iterations
     /// and return elapsed milliseconds (measured via
     /// `performance.now()`). The caller drives this twice — once with
@@ -2035,6 +2213,8 @@ impl WasmSimulator {
     /// and permanently disabled idle FF for the classic-aids playground path.
     #[wasm_bindgen]
     pub fn step_with_esp32_aids(&mut self, cycles: u32) -> Result<(), JsValue> {
+        self.ensure_cosim_healthy()
+            .map_err(AdvanceFailure::into_js)?;
         self.record(lab_tools::Op::StepEsp32Aids(cycles));
         // Real dual-core: a genuine APP_CPU is attached, so the handshake
         // keep-alive and the FROM_CPU IPI bridge below are unnecessary — the
@@ -2125,7 +2305,7 @@ impl WasmSimulator {
             // regular step picks up at the post-block callx8.
             // CCOUNT advance happens inside the JIT helper to keep
             // CCOMPARE0 edge detection honest.
-            if self.jit_browser_enabled {
+            if self.jit_browser_enabled && self.cosim.is_none() {
                 let machine = self.machine.as_mut().unwrap();
                 if self.jit_browser_cache.is_none() {
                     self.jit_browser_cache = Some(Box::new(jit_browser::BrowserJitCache::new()));
@@ -3195,6 +3375,136 @@ mod disasm_arch_tests {
     }
 }
 
+/// Browser-path speed and timing harness for a CCOUNT-timed ESP32 sketch
+/// (the four-servo drawing-robot trajectory, share d26Wk2eXNiFS). Runs the
+/// same `WasmSimulator` calls the playground makes, natively, and prints wall
+/// time per simulated second plus the servo pulse widths. Needs the ELF:
+/// `LABWIRED_SERVO_TRAJECTORY_ELF=... cargo test --release -p labwired-wasm
+/// servo_trajectory_browser_path -- --ignored --nocapture`.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod esp32_servo_trajectory_harness {
+    use super::*;
+    use labwired_core::logic_capture::LogicSource;
+    use std::time::Instant;
+
+    pub(crate) struct Run {
+        pub wall_s: f64,
+        pub sim_s: f64,
+        pub skipped: u64,
+        pub poll_skipped: u64,
+        pub poll_skips: u64,
+        pub deferred: u64,
+        /// Per channel: (rise cycle, fall cycle) pairs.
+        pub pulses: Vec<Vec<(u64, u64)>>,
+        pub done_cycle: Option<u64>,
+    }
+
+    pub(crate) fn run(fw: &[u8], ff: bool, sim_cycles: u64) -> Run {
+        let sys = std::fs::read_to_string("../../configs/systems/esp32-wroom-32.yaml").unwrap();
+        let chip = std::fs::read_to_string("../../configs/chips/esp32.yaml").unwrap();
+        let mut sim = WasmSimulator::new_from_config(&sys, &chip, fw, JsValue::NULL)
+            .expect("new_from_config");
+        sim.install_arduino_esp32_quirks(fw).expect("quirks");
+        sim.set_idle_fast_forward_enabled(ff);
+        let rec = sim.recommended_tick_interval();
+        sim.set_peripheral_tick_interval(rec);
+        let pins = [25u8, 26, 27, 33, 23];
+        {
+            let m = sim.machine.as_mut().unwrap();
+            let gpio = m.bus.find_peripheral_index_by_name("gpio").expect("gpio");
+            let refs: Vec<_> = pins
+                .iter()
+                .map(|p| Some(LogicSource::pad(gpio, *p)))
+                .collect();
+            m.logic_watch(&refs);
+        }
+        let start = Instant::now();
+        let mut edges = Vec::new();
+        let mut cursor = 0;
+        loop {
+            sim.step_with_esp32_aids(2_000_000).expect("step");
+            let m = sim.machine.as_mut().unwrap();
+            let batch = m.logic_read_edges(cursor);
+            cursor = batch.cursor;
+            edges.extend(batch.edges);
+            if m.total_cycles >= sim_cycles {
+                break;
+            }
+        }
+        let wall_s = start.elapsed().as_secs_f64();
+        let m = sim.machine.as_ref().unwrap();
+        let mut pulses = vec![Vec::new(); 4];
+        let mut rise = [None; 4];
+        let mut done_cycle = None;
+        for e in &edges {
+            let ch = e.ch as usize;
+            if ch == 4 {
+                if e.value && done_cycle.is_none() {
+                    done_cycle = Some(e.cycle);
+                }
+                continue;
+            }
+            if e.value {
+                rise[ch] = Some(e.cycle);
+            } else if let Some(r) = rise[ch].take() {
+                pulses[ch].push((r, e.cycle));
+            }
+        }
+        Run {
+            wall_s,
+            sim_s: m.total_cycles as f64 / 240e6,
+            skipped: m.idle_fast_forward_cycles_skipped,
+            poll_skipped: m.poll_loop_cycles_skipped,
+            poll_skips: m.poll_loop_skips,
+            deferred: m.poll_loop_cycles_deferred,
+            pulses,
+            done_cycle,
+        }
+    }
+
+    #[test]
+    #[ignore = "needs LABWIRED_SERVO_TRAJECTORY_ELF; a measurement harness, not a gate"]
+    fn servo_trajectory_browser_path() {
+        let path = std::env::var("LABWIRED_SERVO_TRAJECTORY_ELF")
+            .expect("set LABWIRED_SERVO_TRAJECTORY_ELF");
+        let fw = std::fs::read(path).unwrap();
+        let cycles: u64 = std::env::var("LABWIRED_SERVO_SIM_CYCLES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(240_000_000);
+        let ff = std::env::var("LABWIRED_SERVO_FF").as_deref() != Ok("0");
+        let r = run(&fw, ff, cycles);
+        eprintln!(
+            "SERVO ff={ff} wall={:.2}s sim={:.3}s ratio={:.3}x skipped={} poll_skipped={} poll_skips={} deferred={} done_cycle={:?}",
+            r.wall_s,
+            r.sim_s,
+            r.sim_s / r.wall_s,
+            r.skipped,
+            r.poll_skipped,
+            r.poll_skips,
+            r.deferred,
+            r.done_cycle
+        );
+        for (ch, p) in r.pulses.iter().enumerate() {
+            let widths: Vec<f64> = p.iter().map(|(a, b)| (b - a) as f64 / 240.0).collect();
+            let periods: Vec<f64> = p
+                .windows(2)
+                .map(|w| (w[1].0 - w[0].0) as f64 / 240.0)
+                .collect();
+            eprintln!(
+                "SERVO ch{ch} n={} widths_us={:?} periods_us(first 5)={:?}",
+                p.len(),
+                widths,
+                &periods[..periods.len().min(5)]
+            );
+        }
+        if let Ok(out) = std::env::var("LABWIRED_SERVO_OUT") {
+            let json: Vec<Vec<(u64, u64)>> = r.pulses.clone();
+            std::fs::write(out, format!("{:?}\n{:?}", json, r.done_cycle)).unwrap();
+        }
+    }
+}
+
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod esp32_classic_aids_stability_tests {
     use super::*;
@@ -3380,6 +3690,41 @@ external_devices:
             "idle FF should engage on waiti while primary parks"
         );
         drop(sim);
+    }
+
+    /// The browser boot path must read the partition table and bring up NVS,
+    /// as the CLI path does (`crates/core/tests/e2e_labwired_ereader.rs`).
+    /// Before the browser ran the real esp_flash driver and seeded
+    /// `g_rom_flashchip`, every classic-ESP32 lab printed these two lines.
+    #[test]
+    fn wasm_simulator_ereader_boot_finds_nvs_and_coredump_partitions() {
+        let Some(fw) = ereader_elf_bytes() else {
+            eprintln!("[skip] no ereader elf");
+            return;
+        };
+        let mut sim =
+            WasmSimulator::new_from_config(&system_yaml(), &chip_yaml(), &fw, JsValue::NULL)
+                .expect("new_from_config");
+        sim.install_arduino_esp32_quirks(&fw).expect("quirks");
+        sim.set_idle_fast_forward_enabled(true);
+        let rec = sim.recommended_tick_interval();
+        sim.set_peripheral_tick_interval(rec);
+        let mut uart = Vec::new();
+        for _ in 0..20 {
+            sim.step_with_esp32_aids(1_000_000).expect("step");
+            uart.extend(sim.drain_uart_output());
+        }
+        let text = String::from_utf8_lossy(&uart);
+        assert!(
+            !text.is_empty(),
+            "the ereader prints its own markers; empty serial means the boot did not run"
+        );
+        for bad in ["Failed to initialize NVS", "No core dump partition found"] {
+            assert!(
+                !text.contains(bad),
+                "browser boot printed {bad:?}. Serial:\n{text}"
+            );
+        }
     }
 
     /// PR-I: sequential WasmSimulator sessions in one process must not inherit

@@ -88,7 +88,7 @@
 //! Each of the six channels' outputs is a real waveform ([`LedcPads`], shared
 //! with the classic and S3 models), published on its matrix wire
 //! (`LEDC_LS_SIG_OUT0..5` = 45..50) and bound to every pad by
-//! `SystemBus::wire_esp_matrix_outputs`, so `analogWrite`/`ledcWrite` duty
+//! `SystemBus::wire_esp32c3_ledc_pads`, so `analogWrite`/`ledcWrite` duty
 //! reaches the pad `ledc_channel_config` routed. The waveform is clocked by the
 //! real source (`LEDC_CONF.APB_CLK_SEL`: 1 = APB 80 MHz, 2 = RC_FAST 17.5 MHz,
 //! 3 = XTAL 40 MHz) through the full Q8 `CLK_DIV`, converted to CPU cycles via
@@ -118,10 +118,15 @@ pub(crate) const LEDC_LINES: &[&str] = &[
 ];
 /// `LEDC_CONF` — `APB_CLK_SEL` [1:0] (`soc/esp32c3/include/soc/ledc_struct.h`).
 const LEDC_CONF: u64 = 0xD0;
-/// Per-channel register offsets (`CH_STRIDE`/`CH_DUTY`/`CH_CONF1` below).
+/// Per-channel register block, stride 0x14: CONF0, HPOINT, DUTY, CONF1, DUTY_R.
+const CH_STRIDE: u64 = 0x14;
 const CH_CONF0: u64 = 0x00;
 const CH_HPOINT: u64 = 0x04;
+const CH_DUTY: u64 = 0x08;
+const CH_CONF1: u64 = 0x0C;
 const CH_DUTY_R: u64 = 0x10;
+/// `CHn_CONF1.DUTY_START`: the strobe `ledc_update_duty` sets to commit a duty.
+const CONF1_DUTY_START_BIT: u32 = 1 << 31;
 const DUTY_MASK: u32 = 0x7_FFFF;
 const HPOINT_MASK: u32 = 0x3FFF;
 /// C3 core clock until the bus hands over the chip's own `cpu_hz`.
@@ -146,12 +151,6 @@ const NUM_CHANNELS: usize = 6;
 /// value matches the silicon capture without changing timer behavior.
 const CH_CONF1_RESET: u32 = 0x4000_0000;
 
-/// Channel register block stride: CONF0, HPOINT, DUTY, CONF1, DUTY_R.
-const CH_STRIDE: u64 = 0x14;
-const CH_DUTY: u64 = 0x08;
-const CH_CONF1: u64 = 0x0C;
-/// `CHn_CONF1.DUTY_START`: the strobe `ledc_update_duty` sets to commit a duty.
-const CONF1_DUTY_START_BIT: u32 = 1 << 31;
 /// `CHn_CONF0.TIMER_SEL` [1:0]: which timer clocks the channel.
 const CONF0_TIMER_SEL_MASK: u32 = 0b11;
 
@@ -374,11 +373,36 @@ impl Esp32c3Ledc {
             arm_seq: 0,
             ovf_target: None,
             clock: None,
-            duty_observers: Vec::new(),
             pads: LedcPads::new(LEDC_LINES),
             timer_origin: [0; NUM_TIMERS],
             cpu_hz: DEFAULT_CPU_HZ,
+            duty_observers: Vec::new(),
         }
+    }
+
+    /// Register an observer for committed channel duties. See
+    /// [`LedcDutyObserver`].
+    pub fn add_duty_observer(&mut self, obs: Arc<dyn LedcDutyObserver>) {
+        self.duty_observers.push(obs);
+    }
+
+    /// Channel `ch`'s duty as a fraction of its timer period:
+    /// `(DUTY >> 4) / 2^DUTY_RES` (DUTY carries 4 fractional bits).
+    pub fn channel_duty_fraction(&self, ch: u64) -> f64 {
+        let base = ch * CH_STRIDE;
+        let timer = &self.timers[(self.reg(base) & CONF0_TIMER_SEL_MASK) as usize];
+        if timer.duty_res() == 0 {
+            return 0.0; // unconfigured timer: no PWM
+        }
+        let duty = (self.reg(base + CH_DUTY) >> 4) as f64;
+        (duty / timer.period() as f64).clamp(0.0, 1.0)
+    }
+
+    /// The six channel outputs' wire, created on first call. The C3 GPIO
+    /// model binds its lines to the output-matrix signals
+    /// `LEDC_LS_SIG_OUT0..5` (45..50); see `SystemBus::wire_esp32c3_ledc_pads`.
+    pub(crate) fn pad_lines_arc(&mut self) -> Arc<PadLines> {
+        self.pads.lines_arc()
     }
 
     fn wave_now(&self) -> u64 {
@@ -419,24 +443,6 @@ impl Esp32c3Ledc {
             );
             self.pads.set_drive(ch, d, now);
         }
-    }
-
-    /// Register an observer for committed channel duties. See
-    /// [`LedcDutyObserver`].
-    pub fn add_duty_observer(&mut self, obs: Arc<dyn LedcDutyObserver>) {
-        self.duty_observers.push(obs);
-    }
-
-    /// Channel `ch`'s duty as a fraction of its timer period:
-    /// `(DUTY >> 4) / 2^DUTY_RES` (DUTY carries 4 fractional bits).
-    pub fn channel_duty_fraction(&self, ch: u64) -> f64 {
-        let base = ch * CH_STRIDE;
-        let timer = &self.timers[(self.reg(base) & CONF0_TIMER_SEL_MASK) as usize];
-        if timer.duty_res() == 0 {
-            return 0.0; // unconfigured timer: no PWM
-        }
-        let duty = (self.reg(base + CH_DUTY) >> 4) as f64;
-        (duty / timer.period() as f64).clamp(0.0, 1.0)
     }
 
     crate::cycle_clock::scheduler_mode!();
@@ -538,17 +544,6 @@ impl Esp32c3Ledc {
                 if let Some(slot) = self.regs.get_mut((o / 4) as usize) {
                     *slot = value;
                 }
-                let ch = o / CH_STRIDE;
-                if ch < NUM_CHANNELS as u64
-                    && o % CH_STRIDE == CH_CONF1
-                    && value & CONF1_DUTY_START_BIT != 0
-                    && !self.duty_observers.is_empty()
-                {
-                    let fraction = self.channel_duty_fraction(ch);
-                    for obs in &self.duty_observers {
-                        obs.on_duty_change(ch, fraction);
-                    }
-                }
             }
         }
         Ok(())
@@ -633,6 +628,13 @@ impl Peripheral for Esp32c3Ledc {
                 {
                     *slot = duty;
                 }
+                if !self.duty_observers.is_empty() {
+                    let ch = off / CH_STRIDE;
+                    let fraction = self.channel_duty_fraction(ch);
+                    for obs in &self.duty_observers {
+                        obs.on_duty_change(ch, fraction);
+                    }
+                }
             }
             self.redrive(now);
         }
@@ -658,6 +660,10 @@ impl Peripheral for Esp32c3Ledc {
                 }
             }
             self.int_raw.set(raw);
+            // No edge wakes on the legacy walk: publish the pad waveform up
+            // to the bus clock here instead.
+            let now = self.wave_now();
+            self.pads.advance_to(now);
         }
         PeripheralTickResult {
             explicit_irqs: if self.int_st() != 0 {
@@ -720,12 +726,6 @@ impl Peripheral for Esp32c3Ledc {
 
     fn line_names(&self) -> &'static [&'static str] {
         LEDC_LINES
-    }
-
-    /// The channel outputs reach pads only through the GPIO matrix:
-    /// `LEDC_LS_SIG_OUT0_IDX` = 45 (esp-idf `soc/esp32c3/include/soc/gpio_sig_map.h` :85); the six outputs are contiguous.
-    fn matrix_output_lines(&mut self) -> Option<(u32, Arc<PadLines>)> {
-        Some((45, self.pads.lines_arc()))
     }
 
     fn wire_lines(&self) -> Option<&PadLines> {

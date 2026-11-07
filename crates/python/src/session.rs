@@ -111,6 +111,7 @@ impl NativeSession {
                 blobs: &BlobMap::new(),
                 options: BuildOptions {
                     uart_rx: system.debug_uart.clone(),
+                    rtt: None,
                     ..Default::default()
                 },
             },
@@ -156,6 +157,9 @@ impl NativeSession {
             StopReason::Reached => ("reached", None),
             StopReason::Halted => ("halted", None),
             StopReason::Breakpoint(pc) => ("breakpoint", Some(pc)),
+            // Same two-field surface as the machine-level stop reason: the
+            // watched address has no slot, so only the kind is reported.
+            StopReason::Watchpoint(_) => ("watchpoint", None),
             StopReason::Error => ("error", None),
         };
         Ok(super::PyStopReason {
@@ -302,6 +306,7 @@ impl NativeSession {
             symbols
                 .as_ref()
                 .map(|p| p as &dyn labwired_core::fault_verdict::FaultSymbolizer),
+            None,
         );
         verdict
             .map(|v| serde_json::to_string(&v).map_err(|e| PyRuntimeError::new_err(e.to_string())))

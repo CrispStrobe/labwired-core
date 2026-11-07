@@ -16,6 +16,11 @@ const BLOCK: usize = 8192;
 const DONE: u16 = 1;
 const ADDRE: u16 = 2;
 const PROGE: u16 = 4;
+const INT_MASK: u16 = 0x07ff;
+/// Hardware CTRLA mask (`0xFFFC`) without WMODE. The model only implements
+/// manual writes, but AUTOWS/SUSPEN/PRM/RWS/AHBNS/CACHEDIS are accepted and
+/// ignored so a normal clock/wait-state setup does not hard-fail.
+const CTRLA_WRITE_MASK: u16 = 0xffcc;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Operation {
@@ -36,6 +41,7 @@ pub struct Samd51Nvmctrl {
     control: u16,
     address: u32,
     flags: u16,
+    enables: u16,
     page_address: Option<u64>,
     page: [u8; PAGE],
     holding_address: Option<u64>,
@@ -57,6 +63,7 @@ impl Samd51Nvmctrl {
             control: 4,
             address: 0,
             flags: 0,
+            enables: 0,
             page_address: None,
             page: [0xff; PAGE],
             holding_address: None,
@@ -188,6 +195,8 @@ impl Samd51Nvmctrl {
             0..=1 => (0, (self.control as u32).to_le_bytes()),
             4..=5 => (4, [0; 4]),
             8..=11 => (8, 0x00060400u32.to_le_bytes()), // PSZ=512, NVMP=1024
+            0x0c..=0x0d => (0x0c, (self.enables as u32).to_le_bytes()),
+            0x0e..=0x0f => (0x0e, (self.enables as u32).to_le_bytes()),
             0x10..=0x11 => (0x10, (self.flags as u32).to_le_bytes()),
             0x12..=0x13 => (
                 0x12,
@@ -234,13 +243,21 @@ impl Peripheral for Samd51Nvmctrl {
     fn write_u16(&mut self, offset: u64, value: u16) -> SimResult<()> {
         match offset {
             0 => {
-                if value & !0xc004 != 0 {
+                if value & !CTRLA_WRITE_MASK != 0 {
                     return Self::refuse();
                 }
                 self.control = value;
                 Ok(())
             }
             4 => self.command(value),
+            0x0c => {
+                self.enables &= !value;
+                Ok(())
+            }
+            0x0e => {
+                self.enables |= value & INT_MASK;
+                Ok(())
+            }
             0x10 => {
                 if value & !7 != 0 {
                     return Self::refuse();
@@ -368,5 +385,16 @@ mod tests {
         assert!(nvm.store(STORAGE_START, 4, 0).is_err());
         assert_eq!(finish(&mut nvm), Operation::Clear);
         assert!(!nvm.pending());
+    }
+    #[test]
+    fn ctrla_wait_states_and_interrupt_enables_are_admitted() {
+        let mut nvm = Samd51Nvmctrl::new();
+        nvm.write_u16(0, 0x0f04).unwrap(); // AUTOWS + RWS=0xF
+        assert_eq!(nvm.read_u16(0).unwrap(), 0x0f04);
+        nvm.write_u16(0x0e, 0x0007).unwrap();
+        assert_eq!(nvm.read_u16(0x0e).unwrap(), 7);
+        nvm.write_u16(0x0c, 0x0002).unwrap();
+        assert_eq!(nvm.read_u16(0x0e).unwrap(), 5);
+        assert!(nvm.write_u16(0, 0x0010).is_err()); // WMODE automatic is outside the slice
     }
 }

@@ -7,7 +7,7 @@
 use crate::memory::LinearMemory;
 use crate::peripherals::nvic::NvicState;
 use crate::peripherals::uart::Uart;
-use crate::{Bus, Peripheral, SimResult};
+use crate::{Peripheral, SimResult};
 use labwired_config::{parse_size, ChipDescriptor, PeripheralConfig, SystemManifest};
 use std::cell::Cell;
 use std::collections::VecDeque;
@@ -18,23 +18,31 @@ use std::sync::Mutex;
 
 mod accessors;
 mod analog_mux;
+mod trait_def;
+
+pub use trait_def::{Bus, FetchPermission};
 mod attach;
 mod attached_devices;
 pub mod bus_trace;
 mod can_bridge_service;
 mod can_devices;
 mod construct;
+mod debug_watch;
 mod declarative_device;
 mod device_hooks;
 pub(crate) mod embedded_descriptors;
 pub(crate) mod external_devices;
 mod faults;
 mod from_config;
+pub use from_config::merged_peripheral_configs;
+mod ina219_circuit;
 pub mod interrupt_fabric;
 pub mod known_stubs;
+mod memory_policy;
 mod mmio_activity;
 mod mmio_words;
 mod motors;
+pub(crate) use motors::classify_logic_rail;
 mod observed_device;
 pub mod open_drain;
 pub(crate) mod part_pack;
@@ -54,11 +62,14 @@ pub use observed_device::ObservedDevice;
 pub use resident_device::{BusResidentDevice, DevicePinPad, DevicePins};
 
 pub use bus_trace::{new_log, BusPayload, BusTraceEvent, BusTraceLog, I2cSym};
+pub(crate) use ina219_circuit::CircuitIna219Lookup;
 pub use interrupt_fabric::{
     Esp32c3Fabric, Esp32c3IntcCache, Esp32s3Fabric, Esp32s3IrqAudit, Esp32s3IrqDivergence,
     InterruptFabric,
 };
-pub use motors::MotorSnapshot;
+pub use memory_policy::{CpuWritePolicy, MemoryPolicyReport, RegionPolicyStats, RegionViolation};
+pub(crate) use motors::CircuitMotorLookup;
+pub use motors::{MotorSnapshot, STEPPER_SNAPSHOT_KIND};
 
 impl SystemBus {
     /// Cycles until the earliest event an MMIO write armed in the running CPU
@@ -95,11 +106,20 @@ impl SystemBus {
     }
 
     #[inline]
-    fn legacy_tick_index_active(p: &PeripheralEntry) -> bool {
-        if cfg!(feature = "event-scheduler") && p.dev.uses_scheduler() {
-            return false;
+    fn legacy_tick_index_eligible(p: &PeripheralEntry) -> bool {
+        let uses_scheduler = p.dev.uses_scheduler();
+        if cfg!(feature = "event-scheduler") {
+            !uses_scheduler && p.dev.needs_legacy_walk()
+        } else {
+            // Scheduler-capable peripherals still use their legacy tick
+            // fallback here (for example, RP2040 USB host polling).
+            uses_scheduler || p.dev.needs_legacy_walk()
         }
-        p.dev.legacy_tick_active()
+    }
+
+    #[inline]
+    fn legacy_tick_index_active(p: &PeripheralEntry) -> bool {
+        Self::legacy_tick_index_eligible(p) && p.dev.legacy_tick_active()
     }
 
     /// True when CPU idle fast-forward can skip the legacy peripheral walk for
@@ -147,6 +167,28 @@ pub(crate) struct PadControlLink {
     /// Bus index of the pin port.
     pub(crate) port: usize,
     pub(crate) control: crate::pins::PadControl,
+}
+
+/// An RTC_IO block and the GPIO port that follows its pad mux: both bus
+/// indices (see `SystemBus::rtc_io_link`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RtcIoLink {
+    /// Bus index of the RTC_IO block.
+    pub(crate) rtc: usize,
+    /// Bus index of the GPIO port.
+    pub(crate) gpio: usize,
+}
+
+/// Peripherals that name the pads they drive (nRF `PSEL`) and the pin ports
+/// that read those claims, resolved when a world `gpio_net` first joins a pad
+/// (`join_net_pads`). A write to an owner can move a pad between its GPIO
+/// latch and a peripheral line, so it is bracketed like an RP2040 IO_BANK0
+/// write: the ports report what moved, re-register their line taps and hand
+/// the net's levels to newly routed lines. Empty on every bus without a net.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct PadClaimLinks {
+    pub(crate) owners: Vec<usize>,
+    pub(crate) ports: Vec<usize>,
 }
 
 /// One clock-enable bit a peripheral's clock depends on, resolved to a concrete
@@ -269,12 +311,100 @@ pub(crate) fn with_clr_alias_write<R>(f: impl FnOnce() -> R) -> R {
     })
 }
 
+/// Ends a CPU batch on the instruction that could change another core: any
+/// access to a device (not plain memory), or a store into a watched byte
+/// range. Armed by the machine around a primary batch beside a deferred
+/// secondary core ([`crate::Machine::secondary_defer`]); inert
+/// otherwise. While armed, the store-spin coalescers refuse, so the batch
+/// stops on the exact store.
+#[derive(Default)]
+pub struct BatchStop {
+    armed: std::cell::Cell<bool>,
+    hit: std::cell::Cell<bool>,
+    watch: std::cell::RefCell<Vec<(u64, u64)>>,
+}
+
+impl BatchStop {
+    pub(crate) fn arm(&self, watch: &[(u64, u64)]) {
+        let mut w = self.watch.borrow_mut();
+        w.clear();
+        w.extend_from_slice(watch);
+        self.hit.set(false);
+        self.armed.set(true);
+    }
+
+    /// Disarm; true when the batch was stopped.
+    pub(crate) fn disarm(&self) -> bool {
+        self.armed.set(false);
+        self.hit.replace(false)
+    }
+
+    #[inline]
+    pub(crate) fn armed(&self) -> bool {
+        self.armed.get()
+    }
+
+    #[inline]
+    pub(crate) fn hit(&self) -> bool {
+        self.hit.get()
+    }
+
+    #[inline]
+    pub(crate) fn note_device_access(&self) {
+        if self.armed.get() {
+            self.hit.set(true);
+        }
+    }
+
+    #[inline]
+    pub(crate) fn note_store(&self, addr: u64, len: u64) {
+        if self.armed.get()
+            && self
+                .watch
+                .borrow()
+                .iter()
+                .any(|&(lo, hi)| addr < hi && addr + len > lo)
+        {
+            self.hit.set(true);
+        }
+    }
+}
+
+/// One mirror window `[start, end)` whose bytes are the bytes at `target..`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MemAlias {
+    pub start: u64,
+    pub end: u64,
+    pub target: u64,
+}
+
 pub struct SystemBus {
     /// Audited software assembly may try checked RAM/register-only chunks
     /// while every legacy and bus-aware resident is inactive. Not a timing waiver.
     pub(crate) samd_native_quiescent_chunks: bool,
     pub(crate) supply_domains: crate::peripherals::components::supply_domain::SupplyDomains,
     pub flash: LinearMemory,
+    /// Violation record + counts + mirrored PC/cycle for the policy gate.
+    pub(crate) memory_policy: crate::bus::memory_policy::MemoryPolicyState,
+    /// Scoped bypass for the CPU-write policy gate. Set by the generic DMA
+    /// request path (`execute_dma_request`) and by device engines/host RTT
+    /// transfers through [`crate::with_device_write_bypass`], which are
+    /// hardware, not CPU. Loader writes bypass by construction (direct
+    /// `LinearMemory`); debugger/session writes through the bus ARE gated.
+    /// JIT lanes refuse to run while the RAM policy is non-default
+    /// (`jit_gate_allows`), so they cannot bypass the gate.
+    /// See [`SystemBus::with_memory_policy_bypass`].
+    pub(crate) memory_policy_bypass: bool,
+    /// Software debug watch ranges (GDB watchpoints) checked by the memory
+    /// accessors. Empty on every bus with no debugger — one `is_empty` branch.
+    pub(crate) debug_watches: Vec<crate::bus::debug_watch::DebugWatch>,
+    /// Address of the first watched access since the last
+    /// [`SystemBus::take_debug_watch_hit`]. `Cell` because loads run on `&self`.
+    pub(crate) debug_watch_hit: Cell<Option<u64>>,
+    /// While true the accessors skip watch tracking: the watches are DWT-style
+    /// comparators for CPU accesses, so host, debugger and DMA transfers must
+    /// not fire them. `Cell` because debugger memory reads run on `&self`.
+    pub(crate) debug_watch_host_bypass: Cell<bool>,
     pub ram: LinearMemory,
     /// Extra CPU-visible RAM/ROM windows beyond `flash`/`ram` (e.g. ESP32 IRAM
     /// `0x4037C000` and flash-DROM `0x3C000000`), from the chip's
@@ -318,6 +448,13 @@ pub struct SystemBus {
     /// YAML predating [`labwired_config::ChipDescriptor::cpu_hz`] behaves
     /// exactly as it did.
     pub cpu_hz: u64,
+    /// RISC-V core profile this bus's chip runs, resolved once at config-build
+    /// from the chip descriptor (name + `core:`, see
+    /// [`crate::cpu::RiscVCoreProfile::for_chip`]) and read by
+    /// [`crate::system::riscv::configure_riscv`]. Every RISC-V caller — CLI,
+    /// browser, debugger, tests — therefore gets the chip's own profile
+    /// instead of a hardcoded one.
+    pub riscv_profile: crate::cpu::RiscVCoreProfile,
     /// Enable Cortex-M peripheral/SRAM bit-band alias translation.
     /// False for architectures (e.g. RISC-V) whose memory maps collide with
     /// the bit-band alias ranges 0x42000000–0x44000000 / 0x22000000–0x24000000.
@@ -335,6 +472,15 @@ pub struct SystemBus {
     /// into that memory would land in flash instead. See
     /// `ChipDescriptor::flash_boot_alias`.
     pub flash_boot_alias: bool,
+    /// RP2350 double-precision coprocessor state (p4/p5), present only when
+    /// the chip descriptor lists `coprocessors: [rp2350_dcp]`. Held here, not
+    /// in `CortexM`, so a core without one carries nothing extra on its step
+    /// path; the core reaches it through `Bus::rp2350_dcp_mut` only from the
+    /// cold coprocessor-instruction path.
+    pub rp2350_dcp: Option<Box<crate::cpu::cortex_m::rp2350_dcp::Rp2350Dcp>>,
+    /// The chip lists `coprocessors: [rp2350_gpioc]`: p0 instructions run as
+    /// SIO GPIO accesses (see `cpu::cortex_m::rp2350_gpioc`).
+    pub rp2350_gpioc: bool,
     /// Which family's atomic register aliases this chip implements (see
     /// `ChipDescriptor::atomic_register_aliases`). When enabled, word accesses
     /// in the peripheral window whose address has bits [13:12] set decode as a
@@ -347,6 +493,10 @@ pub struct SystemBus {
     /// `addr + offset`; the translated address is what both the range lookup
     /// and the `addr - base` offset math use. See [`Self::resolve_ns_alias`].
     pub ns_alias_offset: Option<u64>,
+    /// Same-backing address mirrors from `NamedMemoryRange::alias_of` (empty on
+    /// every chip that declares none). Every accessor first rewrites an
+    /// address inside a mirror onto its target. See [`Self::resolve_mem_alias`].
+    pub mem_aliases: Vec<MemAlias>,
     /// Plan 3: per-core bitmask of pending cpu IRQ slots (32 bits each;
     /// index 0 = PRO_CPU, 1 = APP_CPU). Aggregated by
     /// `tick_peripherals_with_costs` from peripheral `explicit_irqs` source
@@ -448,6 +598,13 @@ pub struct SystemBus {
     /// like the C3 IO_MUX one, and the port takes the decoded pulls. Empty
     /// on every other bus.
     pad_control_links: Vec<PadControlLink>,
+    /// The ESP32 / ESP32-S3 RTC_IO block and the GPIO port that took its
+    /// pads ([`Peripheral::attach_rtc_io_pads`](crate::Peripheral::attach_rtc_io_pads)),
+    /// resolved in `rebuild_peripheral_ranges`. A write to the block is
+    /// bracketed with the port's push capture. `None` on every other bus.
+    pub(crate) rtc_io_link: Option<RtcIoLink>,
+    /// See [`PadClaimLinks`].
+    pub(crate) pad_claim_links: PadClaimLinks,
     /// Per bus index: the [`PortId`](crate::pins::PortId) of a pin port,
     /// assigned when the port is attached (`rebuild_peripheral_ranges`). Edge
     /// sinks are addressed by it; `None` for everything else.
@@ -535,6 +692,8 @@ pub struct SystemBus {
     /// Batch-local count of [`MmioAccessClass::SideEffecting`] accesses.
     /// Any non-zero value disqualifies timer-poll coalesce for that batch.
     side_effecting_mmio: std::cell::Cell<u32>,
+    /// See [`BatchStop`].
+    pub(crate) batch_stop: BatchStop,
     /// Run-lifetime successful RAM / flash / extra_mem reads (any width).
     /// Always-on, cheap; not MMIO (see [`Self::peripheral_accesses`]).
     memory_reads: std::cell::Cell<u64>,
@@ -556,6 +715,16 @@ pub struct SystemBus {
     /// Read only under the `event-scheduler` feature; flag-off the walk always
     /// runs, so the shipped build is unchanged.
     pub legacy_walk_disabled: bool,
+    /// `walk_deleted: false` from the system manifest is a hard opt-out from
+    /// automatic walk deletion, retained across dynamic activity changes.
+    pub(crate) legacy_walk_pinned_on: bool,
+    /// Peripherals eligible for the legacy index at range rebuild, including
+    /// scheduler fallbacks when the feature is off. Indexed by slot to reject
+    /// unrelated MMIO writes before calling activity predicates.
+    legacy_tick_candidate_mask: Vec<bool>,
+    /// Dynamic legacy-tick observers whose activity can change after a write
+    /// to a different peripheral's MMIO window.
+    legacy_tick_peer_write_indices: Vec<usize>,
     /// Differential audit of the walk-free ESP32-S3 interrupt path, installed
     /// only by [`Self::install_esp32s3_irq_audit`]. `None` in every production
     /// build and every other test, where the cost is one null check per
@@ -605,6 +774,10 @@ pub struct SystemBus {
     motors: Vec<motors::MotorRuntime>,
     /// Last simulator-cycle boundary applied to `motors`.
     motor_cycle_anchor: u64,
+    /// Circuit-coupled INA219 breakouts: shunt current / bus voltage samples
+    /// from the analog island, averaged over the conversion window before
+    /// latching into SimInput. Empty when no `board.ina219.*` route binds.
+    ina219_senses: Vec<ina219_circuit::Ina219CircuitSense>,
     /// Analog stimulus sources (potentiometer, NTC thermistor). Unlike a bus
     /// slave these do not sit on I2C/SPI/UART - they drive one ADC channel's
     /// injected millivolt level. They are held here so the generic stimulus
@@ -709,7 +882,14 @@ pub struct SystemBus {
     /// (bits only flip 1→0) when it is. `None` on every non-nRF52 bus, so
     /// that path is unchanged everywhere else.
     nrf52_nvmc_idx: Option<usize>,
-    /// Opt-in SAMD51 manual storage controller; absent on every default board.
+    /// Index of the peripheral that owns CPU stores into the flash region
+    /// ([`crate::Peripheral::owns_flash_stores`]), if any. Cached in
+    /// `rebuild_peripheral_ranges`. `None` on every bus without such a
+    /// controller, so the flash-region store path costs one test.
+    flash_store_owner_idx: Option<usize>,
+    /// Index of the opt-in SAMD51 manual-storage controller, if any. Cached in
+    /// `rebuild_peripheral_ranges` and used by the instruction-boundary commit
+    /// and the pending-op watch. `None` on every default board.
     samd51_nvmctrl_idx: Option<usize>,
     /// Universal bus-transaction trace (logic analyzer): a shared, ring-
     /// buffered log that `I2c`/`Spi` peripherals record into once wrapped via

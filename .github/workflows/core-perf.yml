@@ -4,10 +4,12 @@ name: Core Perf (simulator throughput)
 #
 # The gate measures host instructions retired per simulated CPU step, per
 # board, under callgrind — see scripts/perf/board_perf.py for why that metric
-# and not wall clock. Owned-fork PRs affecting the engine's hot paths, build
-# settings or perf inputs run the full unchanged gate before merge. Docs-only
-# PRs get a cheap selection check. Main/manual/schedule policy is preserved.
-# Main regressions are tracked in one issue rather than lost in old run logs.
+# and not wall clock. Main pushes and nightly runs keep the full unchanged
+# gate. Owned-repository PRs affecting the engine's hot paths, build settings
+# or perf inputs run the same gate before merge; docs-only PRs pay only the
+# cheap selection check. A main regression is tracked in a single issue, so a
+# slowdown is noticed the day it lands rather than months later when someone
+# reports "the blinky looks frozen".
 #
 # The issue is a live status page, not a log: each run rewrites its body with
 # the current state and only comments when the set of failing boards actually
@@ -15,11 +17,18 @@ name: Core Perf (simulator throughput)
 # body — not one comment per push to main. When the gate goes green the issue
 # is closed automatically, which is also the only thing that ever closed it.
 #
-# Selection uses the actual tested merge's first-parent diff, including runtime
-# deletions and renames. Incomplete source admission fails the selection check.
-
-# Scheduled admission remains upstream-only. A fork's copied cron must not
-# notify an upstream maintainer about a run they cannot see or stop.
+# Scheduled runs are gated to this repository. GitHub attributes a cron run to
+# whoever last edited the schedule, so a fork with Actions enabled mails this
+# workflow's failures to a maintainer here, about a run they can neither see
+# nor stop. Pushes and manual dispatch are untouched — a fork still gets this
+# workflow on its own changes.
+#
+# PR selection uses the actual tested merge's first-parent diff, including
+# runtime deletions and renames. Source-admission or Git failures fail the
+# scope job instead of turning into a silent skip. `perf-verdict` is the
+# fail-closed aggregate: it fails when the scope job fails, or when a required
+# full run is skipped/fails. Make `perf-verdict` (not `board-throughput`) the
+# required check if this lane should block merges.
 on:
   push:
     branches:
@@ -29,6 +38,7 @@ on:
       - "crates/cli/**"
       - "crates/config/**"
       - "configs/chips/**"
+      - "configs/systems/**"
       # All THREE fixture crates, not just the unsuffixed one. This lane builds
       # firmware-perf-spin-xtensa and -riscv as well, and `firmware-perf-spin/**`
       # matches neither — so a change to a fixture never re-ran the lane that
@@ -86,7 +96,7 @@ jobs:
           persist-credentials: false
       - name: Test path and source-history admission
         run: python3 scripts/perf/test_pr_hotpath_gate.py
-      - name: Select unchanged full gate
+      - name: Select the unchanged full gate
         id: select
         env:
           EVENT: ${{ github.event_name }}
@@ -103,17 +113,15 @@ jobs:
   board-throughput:
     name: board-throughput
     needs: perf-scope
-    if: >-
-      ${{ needs.perf-scope.outputs.required == 'true'
-          && !(github.event_name == 'workflow_dispatch'
-               && github.ref == 'refs/heads/fix/issue251-storage-boundary-20261019')
-          && !(github.event_name == 'workflow_dispatch' && inputs.samd_profile_only
-               && github.repository == 'CrispStrobe/labwired-core') }}
+    if: ${{ needs.perf-scope.outputs.required == 'true' }}
     # Keep absolute RTx and relative Ir/step receipts on one stable image.
     # `ubuntu-latest` moves to Ubuntu 26 on 2026-10-19, which would silently
     # change both the compiler output and host throughput under our baselines.
+    # main at cc0ac6b2 finished this job in 44m58s. A later run printed
+    # "no throughput regression" and was cancelled at 45 minutes, which
+    # fails perf-verdict closed. The Ir/step gate is unchanged.
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
 
@@ -348,259 +356,27 @@ jobs:
               });
             }
 
-  issue251-pair:
-    name: issue251 (${{ matrix.role }})
-    if: >-
-      ${{ github.repository == 'CrispStrobe/labwired-core'
-          && github.event_name == 'workflow_dispatch'
-          && github.ref == 'refs/heads/fix/issue251-storage-boundary-20261019' }}
+  perf-verdict:
+    name: perf-verdict
+    needs: [perf-scope, board-throughput]
+    if: ${{ always() && (github.event_name != 'schedule' || github.repository == 'w1ne/labwired-core') }}
     permissions:
       contents: read
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - role: control
-            source: 1c580dcb4e906b197778caa9dabe2ddb2db614c4
-          - role: candidate
-            source: ${{ github.sha }}
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v5
-        with:
-          ref: ${{ matrix.source }}
-          persist-credentials: false
-
-      - name: Bind measured source and toolchain
+      - name: Fail closed on incomplete perf admission
         env:
-          ROLE: ${{ matrix.role }}
-          SOURCE: ${{ matrix.source }}
-          CONTROLLER: ${{ github.sha }}
-          RUN_ID: ${{ github.run_id }}
-          ATTEMPT: ${{ github.run_attempt }}
+          SCOPE_RESULT: ${{ needs.perf-scope.result }}
+          BOARD_RESULT: ${{ needs.board-throughput.result }}
+          REQUIRED: ${{ needs.perf-scope.outputs.required }}
         run: |
-          test "$(git rev-parse HEAD)" = "$SOURCE"
-          python3 - <<'PYTHON'
-          import hashlib, json, os, subprocess
-          from pathlib import Path
-          def git(*args):
-              return subprocess.check_output(['git', *args], text=True).strip()
-          names = git('ls-files', 'scripts/perf', 'configs/chips', 'crates/firmware-perf-spin', 'crates/firmware-perf-spin-riscv', 'crates/firmware-perf-spin-xtensa', 'crates/firmware-perf-spin-avr', 'Cargo.lock', 'Cargo.toml').splitlines()
-          packet = dict(role=os.environ['ROLE'], source=git('rev-parse', 'HEAD'), tree=git('rev-parse', 'HEAD^{tree}'), parents=git('show', '-s', '--format=%P', 'HEAD').split(), controller=os.environ['CONTROLLER'], run=os.environ['RUN_ID'], attempt=os.environ['ATTEMPT'], runner_image=os.environ.get('ImageVersion'), inputs={n: hashlib.sha256(Path(n).read_bytes()).hexdigest() for n in names})
-          Path('source-identity.json').write_text(json.dumps(packet, indent=2) + '\n')
-          PYTHON
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.95.0
-        with:
-          targets: thumbv6m-none-eabi,riscv32imc-unknown-none-elf
-
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: issue251-${{ matrix.role }}
-          workspaces: |
-            . -> target
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - name: Install valgrind + PyYAML
-        run: |
-          sudo apt-get update && sudo apt-get install -y valgrind gcc-avr binutils-avr avr-libc
-          python -m pip install --quiet pyyaml
-
-      # Xtensa has no rustup target — esp32, esp32s3 and esp32s3-zero need the
-      # esp-rs LLVM fork. This step is `continue-on-error` so a flaky espup
-      # download cannot take the other chips down with it. --require-all still
-      # refuses to call the run green if those fixtures cannot be rebuilt.
-      # Same install core-nightly's esp32s3-fixtures-e2e job already uses.
-      - name: Install Xtensa toolchain (espup)
-        continue-on-error: true
-        # espup asks the GitHub API for the latest Xtensa release. Unauthenticated,
-        # that call shares the runner IP's 60/h budget and 403s at random. The
-        # token spends the job's own authenticated budget instead.
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          cargo install espup --locked
-          espup install
-          # NOTHING gets added to PATH here, deliberately. Putting
-          # ~/.rustup/toolchains/esp/bin on PATH makes every later `cargo`
-          # resolve to the esp fork's binary directly instead of the rustup
-          # shim, and that fork carries no std for thumbv6m or riscv32imc — so
-          # the FIRST fixture build dies with "can't find crate for `core`"
-          # before a single board is measured (issue #843, run 31183553289).
-          # board_perf.py already asks for this toolchain the correct way, with
-          # `cargo +esp build`, which the shim resolves without help.
-          rustup toolchain list
-
-      # Fails in seconds if a chip descriptor exists that no fixture covers and
-      # no waiver names, rather than after a 40-minute build and measure.
-      - name: Check every chip is covered or waived
-        run: python3 scripts/perf/board_perf.py --check-coverage
-
-      # The browser ships labwired-core with `event-scheduler` (see
-      # crates/wasm/Cargo.toml). Measuring without it would gate a build
-      # configuration no user ever runs.
-      - name: Build simulator CLI (browser feature set)
-        run: cargo build --release -p labwired-cli --features event-scheduler
-
-      - name: Record installed tools and measured CLI
-        run: |
-          {
-            rustc -Vv
-            cargo -V
-            valgrind --version
-            avr-gcc --version
-          } > toolchain.txt
-          sha256sum target/release/labwired > cli.sha256
-          nm -C target/release/labwired > cli-symbols.txt
-          objdump -d -C target/release/labwired > cli-disassembly.txt
-
-      - name: Require real time on every chip
-        run: |
-          set -o pipefail
-          python3 scripts/perf/board_rtx.py --min-rtx 1.0 \
-            --status-json rtx-status.json 2>&1 \
-            | tee rtx-report.txt | tee perf-report.txt
-
-      # The fixture firmware is linked by board_perf.py itself, once per memory
-      # map in the matrix (STM32 / nRF / Kinetis / RP2xxx), so a chip on a new
-      # memory map is covered by adding it to FIXTURES rather than by editing a
-      # build step here. Run this after RTx: deterministic receipt drift must
-      # never hide whether the product actually meets real time.
-      - name: Measure per-board throughput
-        id: perf
-        continue-on-error: ${{ matrix.role == 'control' }}
-        run: |
-          set -o pipefail
-          python3 scripts/perf/board_perf.py --require-all \
-            --status-json perf-status.json 2>&1 | tee -a perf-report.txt
-
-      - name: Validate full gate and expected negative control
-        env:
-          ROLE: ${{ matrix.role }}
-          OUTCOME: ${{ steps.perf.outcome }}
-        run: |
-          python3 - <<'PYTHON'
-          import json, os
-          from pathlib import Path
-          perf = json.loads(Path('perf-status.json').read_text())
-          rtx = json.loads(Path('rtx-status.json').read_text())
-          assert rtx['ok'] is True, 'native real-time gate failed'
-          assert not perf['contract_failures'] and not perf['unmeasurable'] and not perf['skipped'], 'incomplete full matrix'
-          assert sum(map(len, perf['measured'].values())) == 82 and len(perf['matched']) == 42, 'unexpected coverage'
-          if os.environ['ROLE'] == 'control':
-              assert os.environ['OUTCOME'] == 'failure' and perf['ok'] is False
-              assert len(perf['regressions']) == 30 and all(r['mode'] == 'step' for r in perf['regressions']), 'original regression not reproduced'
-          else:
-              assert os.environ['OUTCOME'] == 'success' and perf['ok'] is True and not perf['regressions'], 'candidate must pass unchanged gate'
-          PYTHON
-
-      - name: Upload report
-        if: always()
-        uses: actions/upload-artifact@v5
-        with:
-          name: issue251-${{ matrix.role }}
-          path: |
-            source-identity.json
-            toolchain.txt
-            cli.sha256
-            cli-symbols.txt
-            cli-disassembly.txt
-            perf-report.txt
-            perf-status.json
-            rtx-report.txt
-            rtx-status.json
-
-  samd-native-profile:
-    name: samd-native-profile
-    needs: perf-scope
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.samd_profile_only && github.repository == 'CrispStrobe/labwired-core' }}
-    permissions:
-      contents: read
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@1.95.0
-        with:
-          targets: thumbv6m-none-eabi
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: core-perf
-          workspaces: |
-            . -> target
-          cache-on-failure: true
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-      - name: Install selected measurement tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends valgrind
-          python -m pip install --quiet pyyaml
-      - name: Freeze source and compiler identities
-        run: |
-          mkdir samd-profile-evidence
-          git rev-parse HEAD > samd-profile-evidence/source.txt
-          rustc --version --verbose > samd-profile-evidence/rustc.txt
-          cargo --version > samd-profile-evidence/cargo.txt
-          git ls-files -z Cargo.toml Cargo.lock crates/core/Cargo.toml crates/cli/Cargo.toml crates/cli/src crates/firmware-perf-spin crates/config crates/core/src crates/core/tests/samd_native_quiescent.rs crates/core/tests/samd_native_simulation_bundle.rs configs/chips/samd51-no-asf-simulation.yaml scripts/perf .github/workflows/core-perf.yml | xargs -0 sha256sum > samd-profile-evidence/source-sha256.txt
-      - name: Check inactive chunks and all strict architectural boundaries
-        run: |
-          set -o pipefail
-          cargo test --release --locked -p labwired-core --features event-scheduler --test samd_native_quiescent --test samd_native_simulation_bundle -- --nocapture 2>&1 | tee samd-profile-evidence/controls.log
-      - name: Require the external-runner cadence control to reject its old widening
-        run: |
-          python3 - <<'PYCONTROL'
-          from pathlib import Path
-          import hashlib,json,subprocess
-          source=Path('crates/core/src/machine/advance.rs')
-          before=source.read_bytes()
-          old=b'self.quiescent_chunk_enabled = false;'
-          new=b'self.quiescent_chunk_enabled = !request.is_single() && self.bus.samd_native_quiescent_chunks;'
-          assert before.count(old)==1
-          try:
-              source.write_bytes(before.replace(old,new))
-              result=subprocess.run(['cargo','test','--release','--locked','-p','labwired-core','--features','event-scheduler','--test','samd_native_quiescent','external_window_runner_keeps_the_strict_service_grid','--','--exact','--nocapture'],stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
-              Path('samd-profile-evidence/external-runner-mutation.log').write_bytes(result.stdout)
-          finally:
-              source.write_bytes(before)
-          assert source.read_bytes()==before
-          subprocess.run(['git','diff','--exit-code','--',str(source)],check=True)
-          text=result.stdout.decode(errors='replace')
-          detected=result.returncode==101 and 'running 1 test' in text and 'test external_window_runner_keeps_the_strict_service_grid ... FAILED' in text and 'test result: FAILED. 0 passed; 1 failed;' in text
-          Path('samd-profile-evidence/external-runner-mutation.json').write_text(json.dumps({'mutation':'restore external runner widening','detected':detected,'exit_code':result.returncode,'tests':1,'candidate_source_sha256':hashlib.sha256(before).hexdigest(),'restored_source_sha256':hashlib.sha256(source.read_bytes()).hexdigest(),'log_sha256':hashlib.sha256(result.stdout).hexdigest()},indent=2)+'\n')
-          assert detected,'external-runner cadence mutation escaped or never executed'
-          print('EXTERNAL_RUNNER_CADENCE_MUTATION_DETECTED; candidate bytes restored before CLI build')
-          PYCONTROL
-      - name: Build the unchanged production CLI feature set
-        run: |
-          cargo build --release -p labwired-cli --features event-scheduler
-          sha256sum target/release/labwired > samd-profile-evidence/cli-sha256.txt
-      - name: Require the original real-time threshold on this actual profile
-        run: |
-          set -o pipefail
-          python3 scripts/perf/board_rtx.py --boards samd51-no-asf-simulation --min-rtx 1.0 --status-json samd-profile-evidence/rtx-status.json 2>&1 | tee samd-profile-evidence/rtx-report.txt
-      - name: Measure both actual deterministic modes without changing a baseline
-        env:
-          LABWIRED_PERF_EVIDENCE_DIR: samd-profile-evidence/raw-measurements
-        run: |
-          valgrind --version > samd-profile-evidence/valgrind.txt
-          set -o pipefail
-          python3 scripts/perf/board_perf.py --boards samd51-no-asf-simulation --status-json samd-profile-evidence/perf-status.json 2>&1 | tee samd-profile-evidence/perf-report.txt
-      - uses: actions/upload-artifact@v5
-        if: always()
-        with:
-          name: samd-native-profile-source-and-measurements
-          path: samd-profile-evidence/
-          if-no-files-found: error
-          retention-days: 14
+          if [[ "$SCOPE_RESULT" != success ]]; then
+            echo "perf-scope did not succeed ($SCOPE_RESULT)" >&2
+            exit 1
+          fi
+          if [[ "$REQUIRED" == true && "$BOARD_RESULT" != success ]]; then
+            echo "required board-throughput did not succeed ($BOARD_RESULT)" >&2
+            exit 1
+          fi
+          echo "perf admission complete: required=$REQUIRED board=$BOARD_RESULT"

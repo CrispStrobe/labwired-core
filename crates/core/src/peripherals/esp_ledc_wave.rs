@@ -1,8 +1,9 @@
 // LabWired - Firmware Simulation Platform
 // SPDX-License-Identifier: MIT
 
-//! The ESP LEDC channel OUTPUT, as a waveform in CPU cycles — shared by the
-//! classic-ESP32, ESP32-C3 and ESP32-S3 LEDC models.
+//! A channel OUTPUT as a waveform in CPU cycles — shared by the STM32F1
+//! timer channel outputs here, and by the fork's classic-ESP32, ESP32-C3 and
+//! ESP32-S3 LEDC models.
 //!
 //! Every ESP LEDC channel is the same machine (ESP32 TRM v5 §14.2, C3 TRM
 //! §26.3, S3 TRM §31.3): a timer counts `0 .. 2^DUTY_RES - 1` at its source
@@ -17,10 +18,9 @@
 //! here once. A chip model decodes each channel into a [`LedcDrive`] and hands
 //! it to [`LedcPads::set_drive`]; this type publishes every edge on the
 //! channel's wire ([`PadLines`]) at its EXACT cycle (`set_line_at`) and asks
-//! the scheduler to wake it on each edge, so a pad routed to the channel
-//! through the GPIO matrix (`GPIO_FUNCn_OUT_SEL_CFG`, bound with
-//! [`PadRoutes::bind_span`](super::pad_routing::PadRoutes::bind_span)) reads
-//! the live level and push capture sees every transition.
+//! the scheduler to wake it on each edge, so a pad routed to the channel (the
+//! GPIO matrix on the ESPs, a conditional F1 timer-output route on the STM32s)
+//! reads the live level and push capture sees every transition.
 //!
 //! Hold semantics (as the nRF52 PWM, B6): a channel keeps generating its last
 //! committed duty until firmware changes it; a new duty on a RUNNING channel
@@ -338,6 +338,13 @@ impl LedcPads {
         best
     }
 
+    /// The first cycle after the advanced-to cycle at which an edge or a
+    /// staged change is due, for a chip model that keeps its own single
+    /// scheduler wake instead of [`Self::take_scheduled_events`] (RA GPT).
+    pub fn next_change(&self) -> Option<u64> {
+        self.next_change_after(self.anchor)
+    }
+
     /// Advance to `now`, publishing every edge on its own cycle and applying
     /// staged changes at their period boundaries.
     pub fn advance_to(&mut self, now: u64) {
@@ -361,14 +368,6 @@ impl LedcPads {
             }
         }
         self.anchor = now;
-    }
-
-    /// Restart from cycle `at` with every channel idle-low and nothing staged
-    /// (snapshot restore; the chip model re-decodes its registers after).
-    pub fn reset_to(&mut self, at: u64) {
-        self.anchor = at;
-        self.pending.iter_mut().for_each(|p| *p = None);
-        self.armed_target = None;
     }
 
     /// The scheduler wake request, under the nRF52 PWM's token discipline: a

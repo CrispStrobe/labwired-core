@@ -7,12 +7,13 @@ from pathlib import Path
 import re
 import subprocess
 
-OWNED_REPOSITORY = "CrispStrobe/labwired-core"
+OWNED_REPOSITORY = "w1ne/labwired-core"
 RUNTIME_PREFIXES = (
     "crates/core/src/",
     "crates/cli/src/",
     "crates/config/src/",
     "configs/chips/",
+    "configs/systems/",
     "scripts/perf/",
     ".cargo/",
 )
@@ -40,7 +41,7 @@ def select(event, repository, head_ref, paths):
         return True, "existing main/manual/schedule gate"
     if repository != OWNED_REPOSITORY:
         return False, "existing upstream PR policy"
-    if head_ref.startswith("merge/upstream-"):
+    if head_ref.startswith(("merge/upstream-", "up/")):
         return True, "existing upstream-sync PR gate"
     return any(map(hotpath, paths)), "tested PR changed-path policy"
 

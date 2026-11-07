@@ -601,7 +601,7 @@ pub fn build_rom_boot_machine<C: crate::Cpu, F: FnOnce(crate::cpu::RiscV) -> C>(
     // behavior byte-identical to before the migration.
     #[cfg(feature = "event-scheduler")]
     {
-        bus.legacy_walk_disabled = bus.derive_walk_deletable();
+        bus.recompute_walk_deletable();
     }
     // Every die has a factory MAC. There is no such thing as a shipped ESP32
     // whose eFuse base MAC reads zero, and a zero one is not neutral: it makes
@@ -703,11 +703,18 @@ pub fn install_fast_boot_rom(bus: &mut crate::bus::SystemBus, images: &RomImages
     if images.irom.is_empty() || !inject_rom_regions(bus, images) {
         return false;
     }
-    for (dst, bytes) in c3_rom_data_init_writes(&images.irom) {
-        for (i, b) in bytes.iter().enumerate() {
-            let _ = bus.write_u8(dst as u64 + i as u64, *b);
-        }
-    }
+    // Host boot replay of the ROM's `.data` copy, not a CPU store: bypass
+    // the CPU-write policy gate and debug-watch latching (see
+    // `Machine::load_firmware`).
+    bus.with_debug_watch_bypass(|bus| {
+        bus.with_memory_policy_bypass(|bus| {
+            for (dst, bytes) in c3_rom_data_init_writes(&images.irom) {
+                for (i, b) in bytes.iter().enumerate() {
+                    let _ = bus.write_u8(dst as u64 + i as u64, *b);
+                }
+            }
+        })
+    });
     bus.add_peripheral(
         "rtc_i2c_ana",
         0x6000_E000,

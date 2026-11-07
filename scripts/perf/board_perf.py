@@ -169,6 +169,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BASELINE_PATH = Path(__file__).resolve().parent / "baselines.json"
 CHIP_DIR = REPO_ROOT / "configs/chips"
+USE_CHIP_NAME = False
 
 FIXTURE_DIR = REPO_ROOT / "target/perf-fixtures"
 
@@ -295,12 +296,23 @@ SPIN_AVR = Spin(
 FIXTURES = {
     ("arm", 0x08000000, 0x20000000): ("stm32", SPIN_CORTEX_M),
     ("arm", 0x00000000, 0x20000000): ("nrf", SPIN_CORTEX_M),
+    # NXP K32W041: flash at 0, SRAM_CTRL0 at 0x04000000. Closed model, private
+    # CLI/chip dir; the public rating pipeline can still link and measure it.
+    ("arm", 0x00000000, 0x04000000): ("k32w041z", SPIN_CORTEX_M),
     # nRF51822 as configs/chips/nrf51822.yaml maps it: the S110 application
     # window only (flash from 0x18000; the MBR/SoftDevice range is not loaded).
     ("arm", 0x00018000, 0x20000000): ("nrf51-app", SPIN_CORTEX_M),
     ("arm", 0x00000000, 0x1FFF8000): ("kinetis", SPIN_CORTEX_M),
     ("arm", 0x10000000, 0x20000000): ("rp2xxx", SPIN_CORTEX_M),
-    # i.MX RT1064's smoke image executes directly from DTCM.  It is still an
+    # TI CC2538: flash at 0x00200000 (the ROM, not flash, is at 0x0).
+    ("arm", 0x00200000, 0x20000000): ("cc2538", SPIN_CORTEX_M),
+    # Microchip SAM E70: flash at 0x00400000, SRAM at 0x20400000.
+    ("arm", 0x00400000, 0x20400000): ("same70", SPIN_CORTEX_M),
+    # Renesas RA8M1: code flash at 0x02000000, SRAM at 0x22000000.
+    ("arm", 0x02000000, 0x22000000): ("ra8m1", SPIN_CORTEX_M),
+    # Ambiq Apollo4 Plus: MRAM at 0x0, RAM (TCM first) at 0x10000000.
+    ("arm", 0x00000000, 0x10000000): ("apollo4p", SPIN_CORTEX_M),
+    # i.MX RT1064's smoke image executes directly from DTCM. It is still an
     # ordinary Cortex-M ELF to the runner; only its link origins differ.
     ("arm", 0x20000000, 0x20010000): ("imxrt", SPIN_CORTEX_M),
     ("riscv", 0x42000000, 0x3FC80000): ("esp32c3", SPIN_RISCV),
@@ -324,6 +336,154 @@ FIXTURES = {
 # their own chip config and get their own baseline. A generic CPU-only smoke
 # fixture must not stand in for an unimplemented board platform.
 WAIVED: dict[str, str] = {
+    "ch32v003f4p6": (
+        "The CH32V003 model uses RV32EC, but CI has no RV32E-specific perf-spin "
+        "fixture or compiler. Reusing the RV32IMC fixture could execute "
+        "registers x16–x31 that this core does not implement. No throughput "
+        "claim is made for this part yet."
+    ),
+    "atmega1281": (
+        "The committed -mmcu=atmega1281 firmware validates boot, USART0 and GPIO, "
+        "but no representative AVR6 throughput fixture is built. The available "
+        "AVR spin ELF is linked for atmega328p with SRAM at 0x100; this part's "
+        "SRAM starts at 0x200. No separate throughput claim is made yet."
+    ),
+    "atmega2561": (
+        "Runs on the same AVR interpreter as atmega328p (AvrModel::Atmega2560: "
+        "3-byte PC, RAM at 0x200), but the AVR spin fixture is linked with "
+        "-mmcu=atmega328p for RAM at 0x100 and no avr6 build of it exists yet. "
+        "No separate throughput claim is made for the 64-pin ATmega2561."
+    ),
+    "atmega2560": (
+        "Runs on the same AVR interpreter as atmega328p (AvrModel::Atmega2560: "
+        "3-byte PC, RAM at 0x200), but the AVR spin fixture is linked with "
+        "-mmcu=atmega328p for RAM at 0x100 and no avr6 build of it exists yet. "
+        "No separate throughput claim is made for the Mega 2560."
+    ),
+    "dspic33fj32mc204": (
+        "PIC24 M0 bring-up: boot + UART1 TX only, with the UART modelled on the "
+        "CPU (not a bus peripheral), so this gate's MMIO spin fixture cannot "
+        "represent it. A perf fixture needs M1+ peripherals and proven timing; "
+        "no throughput claim is made for this part yet "
+        "(docs/pic24-m0-reference.md)."
+    ),
+    "dspic33fj32mc202": (
+        "PIC24 M0 bring-up: boot + UART1 TX only, with the UART modelled on the "
+        "CPU (not a bus peripheral), so this gate's MMIO spin fixture cannot "
+        "represent it. No perf-spin fixture or throughput claim for this part yet "
+        "(docs/pic24-m0-reference.md)."
+    ),
+    "pic24f04ka200": (
+        "PIC24 M0 bring-up: boot, UART1 TX and GPIO smoke only. The checked-in "
+        "XC16 image is not a representative perf-spin workload, and this gate "
+        "has no XC16 fixture builder; no throughput claim is made for this part."
+    ),
+    "pic24f04ka201": (
+        "PIC24 M0 bring-up: boot, UART1 TX and GPIO smoke only. The checked-in "
+        "XC16 image is not a representative perf-spin workload, and this gate "
+        "has no XC16 fixture builder; no throughput claim is made for this part."
+    ),
+    "pic24f08ka101": (
+        "PIC24 M0 bring-up: boot, UART1 TX and GPIO smoke only. The checked-in "
+        "XC16 image is not a representative perf-spin workload, and this gate "
+        "has no XC16 fixture builder; no throughput claim is made for this part."
+    ),
+    "pic24f08ka102": (
+        "PIC24 M0 bring-up: boot, UART1 TX and GPIO smoke only. The checked-in "
+        "XC16 image is not a representative perf-spin workload, and this gate "
+        "has no XC16 fixture builder; no throughput claim is made for this part."
+    ),
+    "pic24f16ka101": (
+        "PIC24 M0 bring-up: boot, UART1 TX and GPIO smoke only. The checked-in "
+        "XC16 image is not a representative perf-spin workload, and this gate "
+        "has no XC16 fixture builder; no throughput claim is made for this part."
+    ),
+    "pic24f16ka102": (
+        "PIC24 M0 bring-up: boot, UART1 TX and GPIO smoke only. The checked-in "
+        "XC16 image is not a representative perf-spin workload, and this gate "
+        "has no XC16 fixture builder; no throughput claim is made for this part."
+    ),
+    "pic16f1829": (
+        "PIC16 enhanced mid-range L1 bring-up: boot, EUSART TX, LATA and "
+        "INT/TMR0 interrupts, with the EUSART modelled on the CPU (not a bus "
+        "peripheral), so this gate's MMIO spin fixture cannot represent it. "
+        "The checked-in SDCC image is not a representative perf-spin workload "
+        "and this gate has no SDCC fixture builder; no throughput claim is "
+        "made for this part."
+    ),
+    "pic16f877a": (
+        "PIC16 L1 bring-up: boot, USART TX and the PORTB latch, with the USART "
+        "modelled on the CPU (not a bus peripheral), so this gate's MMIO spin "
+        "fixture cannot represent it. The checked-in SDCC image is not a "
+        "representative perf-spin workload and this gate has no SDCC fixture "
+        "builder; no throughput claim is made for this part."
+    ),
+    "pic18f4520": (
+        "PIC18 L1 bring-up: boot, EUSART TX and the PORTB latch, with the "
+        "EUSART modelled on the CPU (not a bus peripheral), so this gate's MMIO "
+        "spin fixture cannot represent it. The checked-in SDCC image is not a "
+        "representative perf-spin workload and this gate has no SDCC fixture "
+        "builder; no throughput claim is made for this part."
+    ),
+    "litex-vexriscv": (
+        "L1 smoke, SIM-DERIVED: CPU + integrated SRAM + the LiteX UART console and "
+        "countdown timer only, with no silicon capture and no executing-fidelity "
+        "differential. No perf fixture is built for its memory map (flash "
+        "0x20000000, RAM 0x10000000), and no throughput claim is made for this SoC "
+        "(docs/boards/litex-vexriscv.md)."
+    ),
+    "arty-litex-vexriscv": (
+        "L1 smoke, SIM-DERIVED: CPU + integrated SRAM + the LiteX UART/timer and the "
+        "board's Control-and-Status LED/switch/button CSR, with no silicon capture "
+        "and no executing-fidelity differential. No perf fixture is built for its "
+        "memory map (flash 0x20000000, RAM 0x10000000), and no throughput claim is "
+        "made for this board (docs/boards/arty-litex-vexriscv.md)."
+    ),
+    "am6234": (
+        "First AArch64 part (SK-AM62, Cortex-A53). This gate's perf-spin "
+        "fixtures are ARM-M/RISC-V images and no A64 spin is built; the Zephyr "
+        "fixtures are not representative perf-spin workloads. No throughput "
+        "claim is made for this part (docs/boards/sk-am62.md)."
+    ),
+    "r5f52618bgfp": (
+        "First Renesas RX part (EK-RX261, RXv3). This gate's perf-spin "
+        "fixtures are ARM/RISC-V images and no RX spin is built; the Zephyr "
+        "fixtures are not representative perf-spin workloads. No throughput "
+        "claim is made for this part (docs/boards/ek-rx261.md)."
+    ),
+    "pic32mz2048efm144": (
+        "First MIPS part (Curiosity PIC32MZ EF 2.0, MIPS32r2). This gate's "
+        "perf-spin fixtures are ARM/RISC-V images and no MIPS spin is built; "
+        "the NuttX fixtures are not representative perf-spin workloads. No "
+        "throughput claim is made for this part "
+        "(docs/boards/curiosity-pic32mz-ef.md)."
+    ),
+    "mpfs095t": (
+        "First RV64 part (PolarFire SoC U54 hart, RV64IMAC). This gate's RISC-V "
+        "perf-spin fixture is an RV32 image and no RV64 spin is built; the "
+        "Zephyr fixtures are not representative perf-spin workloads. No "
+        "throughput claim is made for this part (docs/boards/mpfs-disco-kit.md)."
+    ),
+    "vegaboard-ri5cy": (
+        "L1 smoke, SIM-DERIVED: CPU + flash/SRAM + the LPUART0 console only, with "
+        "no silicon capture and no executing-fidelity differential. No perf fixture "
+        "is built for the Vega SoC map (flash 0x0, RAM 0x20000000), and no "
+        "throughput claim is made for this board (docs/boards/vegaboard-ri5cy.md)."
+    ),
+    "sam4s16c": (
+        "L1 smoke, SIM-DERIVED: Cortex-M4 + flash/SRAM + UART0 and the SAM4S "
+        "PIO LED/button path only, with no silicon capture and no "
+        "executing-fidelity differential. No perf fixture is built for the "
+        "SAM4S map (flash 0x00400000, RAM 0x20000000), and no throughput claim "
+        "is made for this board (docs/boards/sam4s-xplained.md)."
+    ),
+    "xck26-rpu": (
+        "First Cortex-R part (Zynq UltraScale+ RPU, Cortex-R5F) on the optional "
+        "native qemu-arm-system engine, which single-steps the pinned tlib core "
+        "through the bus; the default CLI this gate builds cannot run it, and the "
+        "Zephyr fixtures are not representative perf-spin workloads. No "
+        "throughput claim is made for this part."
+    ),
     "rv1103": (
         "The old Cortex-A7 CPU subset fixture is not representative perf evidence. "
         "Optional native reduced Linux direct boot and joint I2C3/UART4 basket "
@@ -437,6 +597,8 @@ def discover_chips() -> dict[str, dict]:
     """Every modelled chip descriptor, by board id (the file stem)."""
     chips: dict[str, dict] = {}
     for path in sorted(CHIP_DIR.glob("*.yaml")):
+        if path.name.endswith("-system.yaml"):
+            continue
         if path.stem.startswith(CHIP_EXCLUDE_PREFIX):
             continue
         chips[path.stem] = yaml.safe_load(path.read_text()) or {}
@@ -829,8 +991,9 @@ def retain_measurement(root: Path, command: list[str], env: dict[str, str],
         roster.write(json.dumps({"packet": packet.name, "sha256": hashlib.sha256(raw).hexdigest()}) + "\n")
 
 
-def measure_once(cli: Path, chip: Path, firmware: Path, steps: int, mode: str) -> Run:
+def measure_once(cli: Path, chip_arg: str, firmware: Path, steps: int, mode: str) -> Run:
     """Retired host instructions for a full run of `steps` simulated steps."""
+    chip_label = Path(chip_arg).name
     # `--batched` does not select the ARM loop. `run_firmware_arm` takes
     # `run_arm_batched_loop` whenever `LABWIRED_ARM_SINGLE_STEP` is unset,
     # and prints the `[batched]` summary only when `--batched` was passed.
@@ -851,7 +1014,7 @@ def measure_once(cli: Path, chip: Path, firmware: Path, steps: int, mode: str) -
             str(cli),
             "run",
             "--chip",
-            str(chip),
+            chip_arg,
             "--firmware",
             str(firmware),
             "--max-steps",
@@ -867,13 +1030,13 @@ def measure_once(cli: Path, chip: Path, firmware: Path, steps: int, mode: str) -
         evidence = env.get("LABWIRED_PERF_EVIDENCE_DIR")
         if evidence:
             retain_measurement(Path(evidence), command, env, proc,
-                               Path(tmp) / "cg.out", cli, chip, firmware, steps, mode)
+                               Path(tmp) / "cg.out", cli, Path(chip_arg), firmware, steps, mode)
     if proc.returncode != 0:
         raise RuntimeError(f"measurement exited {proc.returncode}: {proc.stderr[-2000:]}")
     match = IREFS_RE.search(proc.stderr)
     if not match:
         raise RuntimeError(
-            f"callgrind produced no instruction count for {chip.name} "
+            f"callgrind produced no instruction count for {chip_label} "
             f"[{mode}]:\n{proc.stderr[-2000:]}"
         )
     irefs = int(match.group(1).replace(",", ""))
@@ -884,7 +1047,7 @@ def measure_once(cli: Path, chip: Path, firmware: Path, steps: int, mode: str) -
         strayed = BATCHED_RE.search(proc.stderr)
         if strayed:
             raise ModeNotTakenError(
-                f"{chip.stem}: asked for the STEP loop but the CLI printed a "
+                f"{chip_label}: asked for the STEP loop but the CLI printed a "
                 f"'[batched] ...' line, so it took the batched one. The number "
                 f"would be for the loop this mode exists to avoid.\n"
                 f"{proc.stderr[-2000:]}"
@@ -898,7 +1061,7 @@ def measure_once(cli: Path, chip: Path, firmware: Path, steps: int, mode: str) -
     proof = BATCHED_RE.search(proc.stderr)
     if not proof:
         raise ModeNotTakenError(
-            f"{chip.stem}: asked for the batched loop but the CLI printed no "
+            f"{chip_label}: asked for the batched loop but the CLI printed no "
             f"'[batched] ...' line, so the run did not take it. Is the CLI "
             f"older than `--batched`?\n{proc.stderr[-2000:]}"
         )
@@ -955,11 +1118,12 @@ def measure_board(cli: Path, board: str, firmware: Path, mode: str) -> Measureme
     chip = CHIP_DIR / f"{board}.yaml"
     if not chip.exists():
         raise FileNotFoundError(f"no chip descriptor for board '{board}': {chip}")
+    chip_arg = board if USE_CHIP_NAME else str(chip)
     samples: list[Measurement] = []
     repeats = BATCH_REPEATS if mode == MODE_BATCH else 1
     for _ in range(repeats):
-        low = measure_once(cli, chip, firmware, STEPS_LOW, mode)
-        high = measure_once(cli, chip, firmware, STEPS_HIGH, mode)
+        low = measure_once(cli, chip_arg, firmware, STEPS_LOW, mode)
+        high = measure_once(cli, chip_arg, firmware, STEPS_HIGH, mode)
         samples.append(
             Measurement(
                 (high.irefs - low.irefs) / (STEPS_HIGH - STEPS_LOW),
@@ -987,6 +1151,7 @@ def measure_board(cli: Path, board: str, firmware: Path, mode: str) -> Measureme
 
 
 def main() -> int:
+    global CHIP_DIR, BASELINE_PATH, USE_CHIP_NAME
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--update",
@@ -1001,6 +1166,26 @@ def main() -> int:
         "--cli",
         default=str(REPO_ROOT / "target/release/labwired"),
         help="path to the labwired CLI built with --features event-scheduler",
+    )
+    parser.add_argument(
+        "--chip-dir",
+        default=str(CHIP_DIR),
+        help="directory of chip YAMLs (default: configs/chips; use a private dir for closed models)",
+    )
+    parser.add_argument(
+        "--baselines",
+        default=str(BASELINE_PATH),
+        help="baseline JSON (default: scripts/perf/baselines.json)",
+    )
+    parser.add_argument(
+        "--chip-name",
+        action="store_true",
+        help="pass the board name to --chip instead of the YAML path (private plugin builds)",
+    )
+    parser.add_argument(
+        "--rating-out",
+        type=Path,
+        help="write measured Ir/step per board/mode as JSON (no baselines)",
     )
     parser.add_argument(
         "--status-json",
@@ -1025,6 +1210,10 @@ def main() -> int:
         "Halves the run while iterating; not for CI, which needs both",
     )
     args = parser.parse_args()
+
+    CHIP_DIR = Path(args.chip_dir).resolve()
+    BASELINE_PATH = Path(args.baselines).resolve()
+    USE_CHIP_NAME = args.chip_name
 
     modes_filter = set(args.modes.split(",")) if args.modes else None
     if modes_filter and not modes_filter <= set(ALL_MODES):
@@ -1100,8 +1289,16 @@ def main() -> int:
         )
         return 2
 
+    chips = discover_chips()
+    if args.boards:
+        requested = set(args.boards.split(","))
+        missing = requested - set(chips)
+        if missing:
+            print(f"error: unknown/uncovered boards: {', '.join(sorted(missing))}", file=sys.stderr)
+            return 2
+        chips = {board: chip for board, chip in chips.items() if board in requested}
     try:
-        covered, waived = plan_coverage(discover_chips())
+        covered, waived = plan_coverage(chips)
     except CoverageError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -1233,6 +1430,20 @@ def main() -> int:
         f"measured this run: {measured_bms} board-modes across {len(measured)} chips / "
         f"{len({covered[b] for b in measured})} memory maps"
     )
+    if args.rating_out:
+        args.rating_out.write_text(
+            json.dumps(
+                {
+                    "schema": 1,
+                    "chip_dir": str(CHIP_DIR),
+                    "cli": str(cli),
+                    "models": measured,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+
     if unmeasurable:
         print("MODES THAT DID NOT EXECUTE (measured nothing):")
         for note in unmeasurable:

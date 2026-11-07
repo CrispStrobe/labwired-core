@@ -1,3 +1,5 @@
+// LabWired - Firmware Simulation Platform
+// Copyright (C) 2026 Andrii Shylenko
 // SPDX-License-Identifier: MIT
 //! Opt-in SAMD51 OSCCTRL slice (DS60001507F 28): the reset-enabled DFLL48M and
 //! the two DPLLs referenced from a generic clock channel. Lock is reached only
@@ -130,6 +132,11 @@ impl Samd51Oscctrl {
 impl Peripheral for Samd51Oscctrl {
     fn on_system_reset(&mut self) {
         *self = Self::new();
+    }
+    /// No `tick()` work: state moves on MMIO and the bus tick only, so the
+    /// legacy walk can be deleted on a scheduler build.
+    fn needs_legacy_walk(&self) -> bool {
+        false
     }
     fn read(&self, offset: u64) -> SimResult<u8> {
         let word = self.read_reg(offset & !3)?;
