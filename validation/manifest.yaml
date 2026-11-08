@@ -465,7 +465,7 @@ boards:
     # 2026-11-01 (feat/rp2350-dcp, perf): DCP state moved off CortexM onto the
     # bus (Bus::rp2350_dcp_mut, default None) and its dispatch made cold and
     # out of line; no change for chips without a DCP. ACK, NOT A SILICON CAPTURE.
-    drift_ack_digest: 358a434cc84e49767bcafd0ae2953840c701e1095f069f5b77263dd96a08c767
+    drift_ack_digest: a8c5b013b83bd3aebad848360a2bc0481bb23b4d63c13ea8ebe2db778db969f6
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -683,7 +683,14 @@ boards:
     # decoded as no-op hints instead of loads into PC. Decoder and firmware
     # regressions cover this shared Cortex-M behavior; ACK, NOT A SILICON
     # CAPTURE, and live re-capture remains pending.
-    drift_ack: 2026-11-07
+    # 2026-11-08 (fork re-sync onto w1ne/main 277ea9dee, owner-approved in
+    # chat): the fork's own model changes on top of upstream move this
+    # digest - SAMD checked quiescent chunks (cortex_m/machine/bus hooks,
+    # inert off the SAMD assembly), the parked-WFI shared-NVIC wake check,
+    # micro:bit open-drain/GPIOTE/DRDY plumbing and the S040 LCD_CAM/GDMA RGB
+    # path. No register map or reset value of this board changes. ACK, NOT A
+    # SILICON CAPTURE; live re-capture remains pending.
+    drift_ack: 2026-11-08
     # 2026-11-07 (feat/arduino-matrix-pico2-rp2350): cortex_m exec/misc.rs
     # adds a cold p0 (GPIO coprocessor) path, reached only when the chip
     # declares `coprocessors: [rp2350_gpioc]` (RP2350 only); every other
@@ -1046,7 +1053,7 @@ boards:
     # 2026-11-01 (feat/rp2350-dcp, perf): DCP state moved off CortexM onto the
     # bus (Bus::rp2350_dcp_mut, default None) and its dispatch made cold and
     # out of line; no change for chips without a DCP. ACK, NOT A SILICON CAPTURE.
-    drift_ack_digest: 358a434cc84e49767bcafd0ae2953840c701e1095f069f5b77263dd96a08c767
+    drift_ack_digest: a8c5b013b83bd3aebad848360a2bc0481bb23b4d63c13ea8ebe2db778db969f6
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -1264,7 +1271,14 @@ boards:
     # decoded as no-op hints instead of loads into PC. Decoder and firmware
     # regressions cover this shared Cortex-M behavior; ACK, NOT A SILICON
     # CAPTURE, and live re-capture remains pending.
-    drift_ack: 2026-11-07
+    # 2026-11-08 (fork re-sync onto w1ne/main 277ea9dee, owner-approved in
+    # chat): the fork's own model changes on top of upstream move this
+    # digest - SAMD checked quiescent chunks (cortex_m/machine/bus hooks,
+    # inert off the SAMD assembly), the parked-WFI shared-NVIC wake check,
+    # micro:bit open-drain/GPIOTE/DRDY plumbing and the S040 LCD_CAM/GDMA RGB
+    # path. No register map or reset value of this board changes. ACK, NOT A
+    # SILICON CAPTURE; live re-capture remains pending.
+    drift_ack: 2026-11-08
     # 2026-11-07 (feat/arduino-matrix-pico2-rp2350): cortex_m exec/misc.rs
     # adds a cold p0 (GPIO coprocessor) path, reached only when the chip
     # declares `coprocessors: [rp2350_gpioc]` (RP2350 only); every other
@@ -2448,8 +2462,15 @@ boards:
     # (diode/BJT/MOSFET/JFET + misc) touched shared files on this board's
     # watch list. Re-acked by owner 2026-11-07 during PR triage. ACK, NOT A
     # SILICON CAPTURE; live re-capture remains pending.
-    drift_ack: 2026-11-07
-    drift_ack_digest: 0b25393d311c2c3a038ce6e03ad0856e7d36776a28f151bf5a53570b044f05f4
+    # 2026-11-08 (fork re-sync onto w1ne/main 277ea9dee, owner-approved in
+    # chat): the fork's own model changes on top of upstream move this
+    # digest - SAMD checked quiescent chunks (cortex_m/machine/bus hooks,
+    # inert off the SAMD assembly), the parked-WFI shared-NVIC wake check,
+    # micro:bit open-drain/GPIOTE/DRDY plumbing and the S040 LCD_CAM/GDMA RGB
+    # path. No register map or reset value of this board changes. ACK, NOT A
+    # SILICON CAPTURE; live re-capture remains pending.
+    drift_ack: 2026-11-08
+    drift_ack_digest: 61aa0795b36b6593dd49815745cf3747499921ceffe085ae6ee2cab62cc23829
     # 2026-11-01 (feat/rv64-core): uart.rs gained the 16550 LCR.DLAB divisor
     # latches (DLL/DLM), reached only by the `ns16550` / `dw_apb_uart`
     # layouts. STM32 UART register maps, byte paths and IRQ timing are
@@ -3542,7 +3563,14 @@ boards:
     # the real FreeRTOS routine runs so IDF5 tx_mux spinlocks are initialised.
     # Firmware-library thunk only: no peripheral register map, reset value
     # or captured reset-state window changes. ACK, NOT A CAPTURE.
-    drift_ack: 2026-11-06
+    # 2026-11-08 (fork re-sync onto w1ne/main 277ea9dee, owner-approved in
+    # chat): the fork's own model changes on top of upstream move this
+    # digest - SAMD checked quiescent chunks (cortex_m/machine/bus hooks,
+    # inert off the SAMD assembly), the parked-WFI shared-NVIC wake check,
+    # micro:bit open-drain/GPIOTE/DRDY plumbing and the S040 LCD_CAM/GDMA RGB
+    # path. No register map or reset value of this board changes. ACK, NOT A
+    # SILICON CAPTURE; live re-capture remains pending.
+    drift_ack: 2026-11-08
 
   - id: nucleo-l476rg
     # 2026-11-05: reviewed G0 DMA extension in shared UART/DMA source. Strict
@@ -4651,8 +4679,15 @@ boards:
     # (diode/BJT/MOSFET/JFET + misc) touched shared files on this board's
     # watch list. Re-acked by owner 2026-11-07 during PR triage. ACK, NOT A
     # SILICON CAPTURE; live re-capture remains pending.
-    drift_ack: 2026-11-07
-    drift_ack_digest: 983045bcaae89f1c6acf27a43248dfacbc7400cc40f841f1ec7e99ee00f0aa0f
+    # 2026-11-08 (fork re-sync onto w1ne/main 277ea9dee, owner-approved in
+    # chat): the fork's own model changes on top of upstream move this
+    # digest - SAMD checked quiescent chunks (cortex_m/machine/bus hooks,
+    # inert off the SAMD assembly), the parked-WFI shared-NVIC wake check,
+    # micro:bit open-drain/GPIOTE/DRDY plumbing and the S040 LCD_CAM/GDMA RGB
+    # path. No register map or reset value of this board changes. ACK, NOT A
+    # SILICON CAPTURE; live re-capture remains pending.
+    drift_ack: 2026-11-08
+    drift_ack_digest: 60a96bbc8aa674ea77bc187b4488e02180b8d60795fe57dba8476a116ca21ff1
     # 2026-11-01 (feat/rv64-core): uart.rs gained the 16550 LCR.DLAB divisor
     # latches (DLL/DLM), reached only by the `ns16550` / `dw_apb_uart`
     # layouts. STM32 UART register maps, byte paths and IRQ timing are
@@ -5148,7 +5183,7 @@ boards:
     # gained a `stm32g0b1` layout (G0 map + HSI48ON 22 -> HSI48RDY 23, CCIPR2 @0x58),
     # selected only by configs/chips/stm32g0b1re.yaml. No other layout changed; this board
     # does not use it. ACK, NOT A SILICON CAPTURE.
-    drift_ack_digest: b80d2e3e65890e4964818135bddd7c7ffd2eeb02190e4f2794742592aa3998bc
+    drift_ack_digest: cecbc00523cfdd41a2431af12c42db968d84ae1d0873072a0463204cfebc1a48
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5704,7 +5739,14 @@ boards:
     #   Evidence: ch32v003_compiled_firmware 3/3 locally. The --lib run was
     #   OOM-killed on the authoring host, so the full --lib result is the PR's
     #   CI. ACK, NOT A SILICON CAPTURE; live re-capture remains pending.
-    drift_ack: 2026-11-07
+    # 2026-11-08 (fork re-sync onto w1ne/main 277ea9dee, owner-approved in
+    # chat): the fork's own model changes on top of upstream move this
+    # digest - SAMD checked quiescent chunks (cortex_m/machine/bus hooks,
+    # inert off the SAMD assembly), the parked-WFI shared-NVIC wake check,
+    # micro:bit open-drain/GPIOTE/DRDY plumbing and the S040 LCD_CAM/GDMA RGB
+    # path. No register map or reset value of this board changes. ACK, NOT A
+    # SILICON CAPTURE; live re-capture remains pending.
+    drift_ack: 2026-11-08
     # 2026-11-07 (feat/arduino-matrix-pico2-rp2350): cortex_m exec/misc.rs
     # adds a cold p0 (GPIO coprocessor) path, reached only when the chip
     # declares `coprocessors: [rp2350_gpioc]` (RP2350 only); every other
@@ -6905,8 +6947,15 @@ boards:
     # (diode/BJT/MOSFET/JFET + misc) touched shared files on this board's
     # watch list. Re-acked by owner 2026-11-07 during PR triage. ACK, NOT A
     # SILICON CAPTURE; live re-capture remains pending.
-    drift_ack: 2026-11-07
-    drift_ack_digest: 7a043bd038ddd21849f776d1045751c51539548e502b89e513411cb5cb00bf24
+    # 2026-11-08 (fork re-sync onto w1ne/main 277ea9dee, owner-approved in
+    # chat): the fork's own model changes on top of upstream move this
+    # digest - SAMD checked quiescent chunks (cortex_m/machine/bus hooks,
+    # inert off the SAMD assembly), the parked-WFI shared-NVIC wake check,
+    # micro:bit open-drain/GPIOTE/DRDY plumbing and the S040 LCD_CAM/GDMA RGB
+    # path. No register map or reset value of this board changes. ACK, NOT A
+    # SILICON CAPTURE; live re-capture remains pending.
+    drift_ack: 2026-11-08
+    drift_ack_digest: be5baf4b661f9d46742d32addfafc4a1904b0ad90aedf3214dc7365c59975287
     # 2026-11-01 (feat/rv64-core): uart.rs gained the 16550 LCR.DLAB divisor
     # latches (DLL/DLM), reached only by the `ns16550` / `dw_apb_uart`
     # layouts. STM32 UART register maps, byte paths and IRQ timing are
@@ -7423,7 +7472,7 @@ boards:
     # gained a `stm32g0b1` layout (G0 map + HSI48ON 22 -> HSI48RDY 23, CCIPR2 @0x58),
     # selected only by configs/chips/stm32g0b1re.yaml. No other layout changed; this board
     # does not use it. ACK, NOT A SILICON CAPTURE.
-    drift_ack_digest: 99095c94a36c9666ae2a203f56c5a9b2889d6a72e160c0b23bab05e4a5a973c1
+    drift_ack_digest: e1c5cfca428f9fe3e4b62f2c4c3ddf4d272a96f20bb644c1092013eb20bbfc79
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -7981,7 +8030,14 @@ boards:
     #   Evidence: ch32v003_compiled_firmware 3/3 locally. The --lib run was
     #   OOM-killed on the authoring host, so the full --lib result is the PR's
     #   CI. ACK, NOT A SILICON CAPTURE; live re-capture remains pending.
-    drift_ack: 2026-11-07
+    # 2026-11-08 (fork re-sync onto w1ne/main 277ea9dee, owner-approved in
+    # chat): the fork's own model changes on top of upstream move this
+    # digest - SAMD checked quiescent chunks (cortex_m/machine/bus hooks,
+    # inert off the SAMD assembly), the parked-WFI shared-NVIC wake check,
+    # micro:bit open-drain/GPIOTE/DRDY plumbing and the S040 LCD_CAM/GDMA RGB
+    # path. No register map or reset value of this board changes. ACK, NOT A
+    # SILICON CAPTURE; live re-capture remains pending.
+    drift_ack: 2026-11-08
     # 2026-11-07 (feat/arduino-matrix-pico2-rp2350): cortex_m exec/misc.rs
     # adds a cold p0 (GPIO coprocessor) path, reached only when the chip
     # declares `coprocessors: [rp2350_gpioc]` (RP2350 only); every other
@@ -8893,8 +8949,15 @@ boards:
     # the real FreeRTOS routine runs so IDF5 tx_mux spinlocks are initialised.
     # Firmware-library thunk only: no peripheral register map, reset value
     # or captured reset-state window changes. ACK, NOT A CAPTURE.
-    drift_ack: 2026-11-06
-    drift_ack_digest: 688e14f97c4f031e6adceca987640b45b5f96d450292dd4c8ab7201429f55d38
+    # 2026-11-08 (fork re-sync onto w1ne/main 277ea9dee, owner-approved in
+    # chat): the fork's own model changes on top of upstream move this
+    # digest - SAMD checked quiescent chunks (cortex_m/machine/bus hooks,
+    # inert off the SAMD assembly), the parked-WFI shared-NVIC wake check,
+    # micro:bit open-drain/GPIOTE/DRDY plumbing and the S040 LCD_CAM/GDMA RGB
+    # path. No register map or reset value of this board changes. ACK, NOT A
+    # SILICON CAPTURE; live re-capture remains pending.
+    drift_ack: 2026-11-08
+    drift_ack_digest: 3793c3eaa7829129eb172bea36171d0f05a53e5dfce50e17a8a5457b40c82f84
 
   - id: esp32s3-zero
     # Board variant of esp32s3: same silicon (LX7), 4 MiB flash / 480 KiB RAM.
