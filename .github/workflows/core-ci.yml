@@ -2030,7 +2030,10 @@ jobs:
     # for the wrong reason.
     # 45, not 30: the job took 24-29 min on the ten main runs up to 40fb1308,
     # and the last two were cancelled at 30 min in their final steps.
-    timeout-minutes: 45
+    # Fork: 70, not 45. On the fork's own runners the job takes 43-46 min on
+    # push runs and is repeatedly cancelled a minute short of finishing; the
+    # work is the same as upstream's, so the ceiling moves, not the gate.
+    timeout-minutes: 70
     steps:
       - uses: actions/checkout@v4
         with:
