@@ -14,14 +14,14 @@ same fields but never their source, chip YAML, binary or build paths.
 | litex-vexriscv | open | L1 | 5 | — | — | ≥1× (CI) | [doc](docs/boards/litex-vexriscv.md) |
 | arty-litex-vexriscv | open | L1 | 6 | — | — | ≥1× (CI) | [doc](docs/boards/arty-litex-vexriscv.md) |
 | vegaboard-ri5cy | open | L1 | 9 | — | — | ≥1× (CI) | [doc](docs/boards/vegaboard-ri5cy.md) |
-| stm32l552 | open | L1 | 50 | 904.1 | 1.6 | ≥1× (CI) | [doc](docs/boards/stm32l552.md) |
+| stm32l552 | open | L1 | 50 | 937.8 | 1.6 | ≥1× (CI) | [doc](docs/boards/stm32l552.md) |
 | cc2538sf53 | open | L1 | 28 | 892.0 | 1.4 | ≥1× (CI) | [doc](docs/boards/cc2538sf53.md) |
 | mpfs095t | open | L1 | 14 | — | — | ≥1× (CI) | [doc](docs/boards/mpfs095t.md) |
 | am6234 | open | L1 | 9 | — | — | ≥1× (CI) | [doc](docs/boards/am6234.md) |
 | r5f52618bgfp | open | L1 | 10 | — | — | ≥1× (CI) | [doc](docs/boards/r5f52618bgfp.md) |
 | pic32mz2048efm144 | open | L1 | 10 | — | — | ≥1× (CI) | [doc](docs/boards/pic32mz2048efm144.md) |
-| r7fa6m5bh | open | L1 | 48 | 892.0 | 1.4 | ≥1× (CI) | [doc](docs/boards/r7fa6m5bh.md) |
-| r7fa8m1ah | open | L1 | 44 | 892.0 | 1.4 | ≥1× (CI) | [doc](docs/boards/r7fa8m1ah.md) |
+| r7fa6m5bh | open | L1 | 48 | 937.4 | 1.4 | ≥1× (CI) | [doc](docs/boards/r7fa6m5bh.md) |
+| r7fa8m1ah | open | L1 | 44 | 934.8 | 1.4 | ≥1× (CI) | [doc](docs/boards/r7fa8m1ah.md) |
 | amap42kp | open | L1 | 46 | 892.0 | 1.4 | ≥1× (CI) | [doc](docs/boards/amap42kp.md) |
 | mk64f12 | open | L1 | 25 | 892.0 | 1.4 | ≥1× (CI) | [doc](docs/boards/mk64f12.md) |
 | same70q21b | open | L1 | 24 | 892.0 | 1.4 | ≥1× (CI) | [doc](docs/boards/same70q21b.md) |
@@ -88,7 +88,7 @@ same fields but never their source, chip YAML, binary or build paths.
 | stm32f407vg | open | L0 | 34 | 935.8 | 1.6 | ≥1× (CI) | — |
 | stm32f407ze | open | L0 | 34 | 935.8 | 1.6 | ≥1× (CI) | — |
 | stm32f407zg | open | L0 | 34 | 935.8 | 1.6 | ≥1× (CI) | — |
-| stm32g0b1re | open | L0 | 21 | 895.0 | 1.4 | ≥1× (CI) | [doc](docs/boards/stm32g0b1re.md) |
+| stm32g0b1re | open | L0 | 21 | 957.9 | 1.4 | ≥1× (CI) | [doc](docs/boards/stm32g0b1re.md) |
 | stm32g474re | open | L1 | 22 | 936.3 | 1.5 | ≥1× (CI) | [doc](docs/boards/stm32g474re.md) |
 | stm32g431rb | open | L0 | 22 | 931.9 | 1.6 | ≥1× (CI) | [doc](docs/boards/stm32g431rb.md) |
 | stm32h563 | open | L1 | 37 | 986.5 | 1.8 | ≥1× (CI) | [doc](docs/boards/stm32h563.md) |
@@ -109,7 +109,7 @@ same fields but never their source, chip YAML, binary or build paths.
 | atmega1281 | open | L1 | 11 | — | — | ≥1× (CI) | [doc](docs/boards/atmega1281.md) |
 | atsamd21 | open | L1 | 7 | 895.0 | 1.4 | ≥1× (CI) | — |
 | atsamd51 | open | L1 | 27 | 1240.0 | 1.4 | ≥1× (CI) | — |
-| samd51-no-asf-simulation | open | L0 | 32 | — | — | ≥1× (CI) | — |
+| samd51-no-asf-simulation | open | L0 | 32 | 1339.0 | 1.9 | ≥1× (CI) | — |
 | atsamd51-pybadge | open | L0 | 28 | 1251.8 | 1.5 | ≥1× (CI) | — |
 | ra4m1 | open | L1 | 7 | 895.0 | 1.4 | ≥1× (CI) | — |
 | imxrt1064 | open | L1 | 6 | 895.0 | 1.4 | ≥1× (CI) | [doc](docs/boards/imxrt1064.md) |
