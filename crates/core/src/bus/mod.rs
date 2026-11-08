@@ -55,6 +55,7 @@ mod samd51_storage;
 pub mod sim_inputs;
 mod tick;
 mod timed_can;
+mod timer_kernel_clock;
 pub(crate) use tick::reconcile_nvic_level;
 
 pub use can_devices::*;
