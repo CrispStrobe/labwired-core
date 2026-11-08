@@ -73,3 +73,37 @@ feature removes the cost, so it is accepted. Re-locked from
 | stm32g0b1re | step | 957.9 | already +4.8 % on upstream main |
 | samd51-no-asf-simulation | step | 1339.0 | stale (faster) |
 | samd51-no-asf-simulation | batch | 1.9 | stale (faster) |
+
+### What the delta is not
+
+The three machine files (`machine/{advance,plan,boundary}.rs`) differ from
+upstream's only by the `WindowHooks` marker (a single `const CHECKED: bool`)
+and the `_with::<H>` dispatch names; every checked block sits behind
+`H::CHECKED`, so the `Ordinary` instantiation folds them away. Release
+binaries of fork `main` and upstream `main` were disassembled
+(`llvm-objdump -d`, arm64 macOS):
+
+- `advance_inner` instantiations: 4043 / 3700 / … instructions (fork) vs
+  4033 / 3971 / … (upstream); the largest pair differs by 10 instructions in
+  4000.
+- Calls made from the loop: identical counts for every callee
+  (`try_idle_fast_forward`, `read_u32`, `pace`, `synchronize`, …), 389 vs 390.
+- No extra per-step work exists in the `Ordinary` path: `advance` adds one
+  load-and-branch on `bus.samd_native_quiescent_chunks`, and the checked
+  planner, window and commit hooks are all const-gated.
+
+So the step cost is not an inefficiency in the loop's code; it is the x86-64
+CI toolchain's code layout for the same source. That matches the AVR precedent
+above (unrelated upstream commits moved `atmega328p` step cost +7 %, and a
+cold-path helper that helped on one tree hurt on the other), and it explains
+why all three restructured variants came out *worse*: they change layout
+without removing instructions.
+
+Two ways to remove the cost remain, and both are a decision rather than a
+patch:
+
+1. Drop the SAMD checked chunks. Not worth it: the feature is why the PyBadge
+   native game runs at ~4.4× instead of 0.02× real time.
+2. Upstream the SAMD profile, so the cost is reviewed and accepted upstream
+   instead of re-baselined here. That is the only permanent answer, and the
+   probe table above gives such a PR a credible story.
