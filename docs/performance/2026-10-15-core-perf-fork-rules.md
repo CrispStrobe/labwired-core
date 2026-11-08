@@ -55,3 +55,21 @@ lowered the cost on upstream's tree raised it on the fork's (1002.7), so it was 
    tolerance. Otherwise record here why layout noise of this size is accepted.
 
 A per-chip waiver is not an option: runnable chips refuse waivers.
+
+## 2026-11-08: re-sync onto upstream main
+
+After the [upstream re-sync](../engineering/upstream-sync-2026-11.md) the
+fork's monomorphised SAMD checked-chunk split costs about 19 Ir per single step
+on Cortex-M over upstream's current loop. Three restructurings were probed in
+CI (runtime checks, out-of-line loop, upstream loop) and only dropping the
+feature removes the cost, so it is accepted. Re-locked from
+[run 42448980319](https://github.com/CrispStrobe/labwired-core/actions/runs/42448980319):
+
+| board | mode | Ir/step | note |
+|---|---|---|---|
+| r7fa6m5bh | step | 937.4 | SAMD split cost |
+| r7fa8m1ah | step | 934.8 | SAMD split cost |
+| stm32l552 | step | 937.8 | SAMD split cost |
+| stm32g0b1re | step | 957.9 | already +4.8 % on upstream main |
+| samd51-no-asf-simulation | step | 1339.0 | stale (faster) |
+| samd51-no-asf-simulation | batch | 1.9 | stale (faster) |

@@ -1,5 +1,12 @@
 # Board completion lanes — 2026-10-08
 
+> **2026-11-08:** historical lane log. Since the
+> [upstream re-sync](upstream-sync-2026-11.md) the fork is upstream main plus
+> only its unmerged work; several lanes below (SAMD51 board models, SERCOM
+> timing, USB, DMAC, ESP32-C3/S3 LEDC pads, Tier1 UART fixtures) now ship in
+> upstream in upstream's own form. PR numbers and SHAs below refer to the
+> pre-sync history (`backup/pre-upstream-sync-20261107`).
+
 These are proposed task contracts, not ownership claims or passing receipts.
 Refresh the default branch and open PRs before starting; shared behavior lands
 in the engine first, followed by an explicit qualified consumer pin.

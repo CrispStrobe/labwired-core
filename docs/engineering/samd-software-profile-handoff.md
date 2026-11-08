@@ -1,5 +1,13 @@
 # SAMD software-profile handoff — updated 2026-10-28
 
+> **2026-11-08:** the fork was rebuilt on upstream main
+> ([upstream re-sync](upstream-sync-2026-11.md)). The checked-chunk split
+> survives unchanged; on upstream's current loop it costs ~19 Ir per single
+> step, accepted and re-baselined. The drift ACK below was superseded by a new
+> owner-approved ACK of nine boards dated 2026-11-08 (expires 2026-12-08).
+> Commit SHAs below refer to the pre-sync history, preserved on
+> `backup/pre-upstream-sync-20261107`.
+
 **Core work for this lane is complete and merged.** The downstream engine
 release (bw-board) and Lite adoption are still open; see the
 [producer handoff](https://github.com/CrispStrobe/bw-board/blob/master/docs/SAMD-ENGINE-RELEASE-HANDOFF.md)
