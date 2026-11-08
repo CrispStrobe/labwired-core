@@ -3,7 +3,7 @@
 This is the [CrispStrobe](https://github.com/CrispStrobe) fork of
 [w1ne/labwired-core](https://github.com/w1ne/labwired-core), the deterministic
 firmware simulator behind [labwired.com](https://labwired.com/). We use it as
-the "real silicon" engine of [Brickwright-lite](https://github.com/CrispStrobe/brickwright-lite),
+one "real silicon" engine of [Brickwright-lite](https://github.com/CrispStrobe/brickwright-lite),
 compiled to WebAssembly and driven from a circuit designer and a debugger in
 the browser and in the Tauri app.
 
