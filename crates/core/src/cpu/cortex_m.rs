@@ -2403,6 +2403,14 @@ impl CortexM {
         local || shared
     }
 
+    /// A parked WFI core whose bus work refused the idle skip stays parked
+    /// instead of executing the instruction after WFI. Off the awake path.
+    #[cold]
+    #[inline(never)]
+    fn stays_parked(&self, config: &SimulationConfig) -> bool {
+        config.idle_fast_forward_enabled && !self.wfi_wake_pending()
+    }
+
     fn wfe_wake_pending(&self) -> bool {
         if self.event_pending() || self.shared_irq_wake_pending(true) {
             return true;
@@ -4087,12 +4095,10 @@ impl CortexM {
         // Leave WFI sleep before this step commits: the flag is re-armed only if
         // this instruction is itself a WFI with no wake event pending. The
         // ordinary awake step tests the same flag `set_core_sleeping` tests.
-        if self.sleeping {
-            if config.idle_fast_forward_enabled && !self.wfi_wake_pending() {
-                return Ok(());
-            }
-            self.set_core_sleeping(false);
+        if self.sleeping && self.stays_parked(config) {
+            return Ok(());
         }
+        self.set_core_sleeping(false);
         // Check for pending exceptions before executing instruction.
         // Use real ARMv7-M priority dispatch: pick the highest-priority
         // pending exception (smallest numeric priority value), and only
