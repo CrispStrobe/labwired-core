@@ -428,6 +428,7 @@ canonical `type:`; the table below is rendered from that file by
 | `ds3231` | I²C | I²C real-time clock with temperature-compensated crystal |
 | `ens160` | I²C | ScioSense ENS160 MOx multi-gas sensor (TVOC, eCO2, AQI-UBA) over I²C |
 | `fxos8700` | I²C | NXP FXOS8700 6-axis accelerometer + magnetometer over I2C |
+| `gt911` | I²C | 480x480 single-contact GT911 register and ready/ack model |
 | `ht16k33` | I²C | 16×8 LED matrix / 7-segment I²C controller (display RAM, setup commands) |
 | `icm20948` | I²C | TDK InvenSense ICM-20948 motion sensor (accel + gyro + temperature; magnetometer not modelled) over I²C |
 | `icm42688` | I²C | TDK InvenSense ICM-42688-P 6-axis IMU (accel + gyro + temperature) over I²C |
@@ -495,6 +496,7 @@ canonical `type:`; the table below is rendered from that file by
 | `sn74hc165` | SPI | 8-bit parallel-in / serial-out shift register over SPI |
 | `ssd1680_tricolor_290` | SPI | 2.9" tri-color (black/white/red) e-paper over SPI. Driver class GxEPD2_290_C90c -- the WeAct / Waveshare 2.9" B/W/R module. Not interchangeable with the UC8151D part |
 | `st7735` | SPI | 1.8in 128x160 RGB565 TFT on a Sitronix ST7735R, 4-wire SPI |
+| `st7735r-memory-simulation` | SPI | Explicit RGBSET-dependent controller-memory simulation |
 | `st7789-170x320` | SPI | 1.9in 170x320 IPS TFT on a Sitronix ST7789V, 4-wire SPI |
 | `sx1262` | SPI | Semtech SX1262 LoRa transceiver, SPI command interface (status, standby/RX/TX, registers, IRQ) — no RF air link |
 | `sx1276` | SPI | Semtech SX1276 LoRa transceiver, SPI register model of the LoRa page (no RF air link) |
@@ -531,6 +533,7 @@ canonical `type:`; the table below is rendered from that file by
 | `servo` | GPIO | RC hobby servo driven by a single PWM control pin (GPIO edges and/or LEDC duty) |
 | `seven-segment` | GPIO | Bare single-digit 7-segment LED display driven straight from nine GPIO pins |
 | `sk6812` | GPIO | Addressable RGBW LED strip on one data pin (32-bit edge-timed frames) |
+| `st7701-rgb` | GPIO | S040 16-bit RGB frame receiver and 9-bit GPIO control |
 | `tm1637-7seg` | GPIO | 4-digit 7-segment LED display with the TM1637 2-wire (CLK/DIO) driver |
 | `tm1638` | GPIO | 8-digit 7-segment + 8 LED display with the TM1638 3-wire (STB/CLK/DIO) driver |
 | `uln2003` | GPIO | Four-phase unipolar stepper twin (IN1..IN4) |

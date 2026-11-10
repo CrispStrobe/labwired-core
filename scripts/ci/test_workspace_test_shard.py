@@ -24,6 +24,20 @@ import workspace_test_aggregate as agg
 import workspace_test_shard as shard
 
 
+def assert_python_is_pinned_before_use(job):
+    """A job that runs Python (a script, python/python3, pip) must set up 3.12 first."""
+    import re
+    uses_python = re.compile(r"(^|[\s;&|(])(python3?|pip3?)(\s|$)|\.py(\s|$)")
+    pinned = False
+    for step in job["steps"]:
+        if step.get("uses", "").startswith("actions/setup-python@"):
+            pinned = str(step.get("with", {}).get("python-version")) == "3.12"
+            continue
+        run = step.get("run") or ""
+        if any(uses_python.search(line) for line in run.splitlines()):
+            assert pinned, f"step {step.get('name')!r} runs Python before setup-python 3.12"
+
+
 def core_workflow_jobs():
     root = Path(__file__).resolve().parents[2]
     return yaml.safe_load((root / ".github/workflows/core-ci.yml").read_text())["jobs"]
@@ -32,8 +46,8 @@ def core_workflow_jobs():
 def test_core_pr_lanes_pin_the_existing_ubuntu_24_image_without_changing_nightly_lanes():
     jobs = core_workflow_jobs()
     for name in (
-        "release-runner-contract", "fmt-autofix", "pr-default-members",
-        "pr-feature-off", "pr-gate", "pr-gate-warm", "apt-warm", "browser-layer",
+        "release-runner-contract", "fmt-autofix", "pr-default-members-lib",
+        "pr-core-feature-off-tests", "pr-core-feature-off", "pr-gate", "pr-gate-warm", "apt-warm", "browser-layer",
         "pr-scheduler-observable", "xtensa-flash-boot", "pr-workspace-tests",
         "pr-workspace-tests-aggregate",
     ):
@@ -44,8 +58,10 @@ def test_core_pr_lanes_pin_the_existing_ubuntu_24_image_without_changing_nightly
 
 def test_core_split_preserves_configuration_commands_and_read_only_cache():
     jobs = core_workflow_jobs()
-    default = jobs["pr-default-members"]
-    feature_off = jobs["pr-feature-off"]
+    # Upstream (cc3fa7292 lineage) renamed the split: default-members lib tests,
+    # FEATURE-OFF tests, and the fail-closed aggregate `pr-core-feature-off`.
+    default = jobs["pr-default-members-lib"]
+    feature_off = jobs["pr-core-feature-off-tests"]
     trigger = "github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'"
     for child in (default, feature_off):
         assert child["if"] == trigger
@@ -60,11 +76,12 @@ def test_core_split_preserves_configuration_commands_and_read_only_cache():
         cache = next(step for step in child["steps"] if step.get("name") == "Cache dependencies")
         assert cache["uses"] == "Swatinem/rust-cache@v2"
         assert cache["with"] == {"shared-key": "core-pr-gate", "workspaces": ". -> target\n", "save-if": False}
-        python = next(step for step in child["steps"] if step.get("name") == "Set up Python")
-        assert python["uses"] == "actions/setup-python@v5"
-        assert python["with"]["python-version"] == "3.12"
+        # Any step that runs Python must come after a setup-python pinned to 3.12.
+        assert_python_is_pinned_before_use(child)
+    # Clippy for the default members moved from the default child to pr-gate upstream.
+    gate = {step.get("name"): step.get("run") for step in jobs["pr-gate"]["steps"]}
+    assert gate["Clippy (default-members)"] == "cargo clippy --all-targets -- -D warnings"
     commands = {step.get("name"): step.get("run") for step in default["steps"]}
-    assert commands["Clippy (default-members)"] == "cargo clippy --all-targets -- -D warnings"
     assert commands["Unit tests (default-members lib)"] == "cargo test --lib"
     commands = {step.get("name"): step.get("run") for step in feature_off["steps"]}
     assert commands["Unit tests (labwired-core, FEATURE-OFF)"] == "cargo test -p labwired-core --lib"
@@ -83,15 +100,16 @@ def test_core_split_preserves_configuration_commands_and_read_only_cache():
 @pytest.mark.parametrize("default_result", ["success", "failure", "cancelled", "skipped", ""])
 @pytest.mark.parametrize("feature_off_result", ["success", "failure", "cancelled", "skipped", ""])
 def test_core_split_aggregate_fails_closed(default_result, feature_off_result):
-    gate = core_workflow_jobs()["pr-gate"]
-    assert gate["needs"] == ["pr-default-members", "pr-feature-off"]
-    assert gate["if"] == (
-        "${{ always() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}"
+    gate = core_workflow_jobs()["pr-core-feature-off"]
+    assert gate["needs"] == ["pr-default-members-lib", "pr-core-feature-off-tests"]
+    assert gate["if"].strip() in (
+        "always() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')",
+        "${{ always() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}",
     )
     step = gate["steps"][0]
     assert step["env"] == {
-        "DEFAULT_MEMBERS_RESULT": "${{ needs.pr-default-members.result }}",
-        "FEATURE_OFF_RESULT": "${{ needs.pr-feature-off.result }}",
+        "DEFAULT_MEMBERS_RESULT": "${{ needs.pr-default-members-lib.result }}",
+        "FEATURE_OFF_RESULT": "${{ needs.pr-core-feature-off-tests.result }}",
     }
     completed = subprocess.run(
         ["bash", "-e", "-o", "pipefail", "-c", step["run"]],
@@ -101,34 +119,56 @@ def test_core_split_aggregate_fails_closed(default_result, feature_off_result):
     assert (completed.returncode == 0) == (default_result == feature_off_result == "success")
 
 
-def test_workspace_cross_compiler_does_not_pull_unused_cxx_archives():
+APT_ACTION = "./.github/actions/apt-install-cached"
+
+
+def apt_action_run():
     root = Path(__file__).resolve().parents[2]
-    workflow = yaml.safe_load((root / ".github/workflows/core-ci.yml").read_text())
-    steps = workflow["jobs"]["pr-workspace-tests"]["steps"]
+    action = yaml.safe_load((root / ".github/actions/apt-install-cached/action.yml").read_text())
+    return "\n".join(step.get("run", "") for step in action["runs"]["steps"])
+
+
+def apt_packages(job):
+    return [step["with"]["packages"] for step in core_workflow_jobs()[job]["steps"]
+            if step.get("uses") == APT_ACTION]
+
+
+def test_workspace_cross_compiler_does_not_pull_unused_cxx_archives():
+    steps = core_workflow_jobs()["pr-workspace-tests"]["steps"]
     install = next(
         step for step in steps
         if step.get("name") == "Add the C cross-compiler (OBD2 ECU firmware)"
     )
-    assert "install -y --no-install-recommends gcc-arm-none-eabi" in install["run"]
+    # Installed through the shared action, which installs exactly the named
+    # packages plus hard Depends: gcc-arm-none-eabi without the C++ archives.
+    assert install["uses"] == APT_ACTION
+    assert "gcc-arm-none-eabi" in install["with"]["packages"].split()
+    assert "install -y --no-install-recommends $PACKAGES" in apt_action_run()
 
 
 def test_cross_compiler_packages_are_seeded_on_main_and_restored_by_the_shards():
     jobs = core_workflow_jobs()
 
-    def cache_keys(job, uses):
-        return [step["with"]["key"] for step in jobs[job]["steps"]
-                if step.get("uses", "").startswith(uses)]
+    # The shared action keys its cache by image, arch, the sorted package set
+    # and month, in one fixed directory. apt-warm runs that same action on main
+    # for every package set the PR jobs install, so each PR restores exactly
+    # what main saved for its runner image (one key per package set).
+    def key(packages):
+        return tuple(sorted(packages.split()))
 
-    restored = cache_keys("pr-workspace-tests", "actions/cache/restore")
-    saved = cache_keys("apt-warm", "actions/cache/save")
-    # One key, so a PR restores exactly what main saved for its runner image.
-    assert restored and restored == saved
-    assert jobs["apt-warm"]["if"] == "github.event_name == 'push'"
-    warm = next(step["run"] for step in jobs["apt-warm"]["steps"]
-                if step.get("name") == "Download the packages")
-    # The same package set, without the recommended archives.
-    assert "--download-only --no-install-recommends" in warm
-    assert "gcc-arm-none-eabi device-tree-compiler" in warm
+    restored = {key(p) for job in ("pr-workspace-tests", "pr-core-feature-off-tests")
+                for p in apt_packages(job)}
+    warm = jobs["apt-warm"]
+    seeded = {key(p) for p in warm["strategy"]["matrix"]["packages"]}
+    seed_steps = [step for step in warm["steps"] if step.get("uses") == APT_ACTION]
+    assert len(seed_steps) == 1 and seed_steps[0]["with"]["packages"] == "${{ matrix.packages }}"
+    assert restored and restored <= seeded
+    assert warm["if"] == "github.event_name == 'push'"
+    assert warm["runs-on"] == jobs["pr-workspace-tests"]["runs-on"] == "ubuntu-24.04"
+    # The same package set the old seed carried.
+    assert {"gcc-arm-none-eabi", "device-tree-compiler"} <= set(key(apt_packages("pr-workspace-tests")[0]))
+    # Without the recommended archives.
+    assert "--no-install-recommends" in apt_action_run()
 
 
 # ── libtest output parsing ───────────────────────────────────────────────────

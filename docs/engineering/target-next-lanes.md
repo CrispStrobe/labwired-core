@@ -23,6 +23,20 @@ cycle (final PC 0x32), the 15717d9f ROM 1.0 (PC in flash). The baseline is
 re-measured on the gate's runner with `--update-rtf`; the tolerance and every
 other baseline are unchanged. A per-workload hang guard (half the measured
 instructions/cycles ratio) now refuses such a run. No engine change.
+## Fork-main drift restore (nrf5340 models, device catalog) — claimed 2026-11-10
+
+Claim and change in one PR. Scope: `validation/manifest.yaml` (upstream d9ccc262
+hunk, dropped by fork merge c9e4937a), generator outputs
+`docs/boards/VALIDATION_STATUS.md` and `docs/configuration_reference.md`.
+No hand edits to generated files and no test changes.
+## SAM DMAC SERCOM4 TX NOACT test expectation — claimed 2026-11-10
+
+Claim and change in one PR. Scope: only `crates/core/tests/sam_dmac_sercom4_tx.rs`.
+Reverts the test hunk of b627fafc4 (noact descriptor 0x0407 -> 0x0401; noact no
+longer expected to deliver TCMPL) so the test again matches the deliberate
+product gating of upstream 84cfc9c22: the SERCOM4 TX profile latches TCMPL only
+for BLOCKACT=INT, the Board profile latches it for NOACT and INT (CODAL). No
+product change.
 
 ## PR performance guard — qualified and merged — 2026-10-19
 
