@@ -124,8 +124,12 @@ jobs:
     # main at cc0ac6b2 finished this job in 44m58s. A later run printed
     # "no throughput regression" and was cancelled at 45 minutes, which
     # fails perf-verdict closed. The Ir/step gate is unchanged.
+    # Issue #272: the pico_oled_pwm workload now really runs (its old baseline
+    # ran a guest hung in the old RP2040 ROM, ~3 s). Run 42801453414 measured
+    # CLI build 6.7 min, RTx+RTF 20.6 min, and Ir/step still running at the
+    # 60-minute limit (24+ min), twice. 80 is runner budget, not a threshold.
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 80
     steps:
       - uses: actions/checkout@v5
 
