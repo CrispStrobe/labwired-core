@@ -34,7 +34,11 @@ jobs:
   publish:
     name: Publish through GitHub OIDC
     needs: validate
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    # Fork: the registry entry is upstream's identity. `login github-oidc`
+    # authenticates as whoever pushed, so a fork push to main would publish (or
+    # fail to publish) under the wrong repository. Validate still runs here;
+    # only upstream publishes.
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && github.repository == 'w1ne/labwired-core'
     runs-on: ubuntu-latest
     permissions:
       contents: read
