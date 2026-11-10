@@ -11,6 +11,18 @@ These are proposed task contracts, not ownership claims or passing receipts.
 Refresh the default branch and open PRs before starting; shared behavior lands
 in the engine first, followed by an explicit qualified consumer pin.
 
+## Issue 272 — pico_oled_pwm RTF baseline and hang guard — claimed 2026-11-10
+
+Claim and change in one PR (lane owner: Brickwright labwired lane). Scope:
+`scripts/perf/board_rtf.py`, its tests, `scripts/perf/rtf_baselines.json`
+(pico_oled_pwm only), the fixture README and a dispatch-only re-baseline step
+in `core-perf.yml`. The 0.0776 pico baseline (run 42653202653, before
+15717d9f) measured a guest parked in the old RP2040 ROM's `wfi; b .` stub after
+`RTF_READY`: same ELF, 1e9-cycle budget, old ROM retired 0.019 instructions per
+cycle (final PC 0x32), the 15717d9f ROM 1.0 (PC in flash). The baseline is
+re-measured on the gate's runner with `--update-rtf`; the tolerance and every
+other baseline are unchanged. A per-workload hang guard (half the measured
+instructions/cycles ratio) now refuses such a run. No engine change.
 ## Fork-main drift restore (nrf5340 models, device catalog) — claimed 2026-11-10
 
 Claim and change in one PR. Scope: `validation/manifest.yaml` (upstream d9ccc262

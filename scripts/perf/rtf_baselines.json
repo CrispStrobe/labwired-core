@@ -8,8 +8,8 @@
     "source": "CI board-throughput run 42653202653 (main 02d50a5 + this PR)"
   },
   "pico_oled_pwm": {
-    "index": 0.0776,
-    "source": "CI board-throughput run 42653202653 (main 02d50a5 + this PR)"
+    "index": 0.000603,
+    "source": "CI board-throughput run 42788708964 (--update-rtf, rp2040, head 428cfe29 on c9e4937a). Replaces 0.0776 from run 42653202653, which predated 15717d9f: that guest hung in the old RP2040 ROM's wfi stub after RTF_READY (same ELF, 1e9 cycles: old ROM 0.019 instructions/cycle, final PC 0x32; 15717d9f ROM 1.0, PC in flash). Issue #272."
   },
   "uno_feeder": {
     "index": 0.0003379,

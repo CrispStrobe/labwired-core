@@ -51,6 +51,17 @@ class Workload:
     chip: str
     cpu_hz: int
     guest_s: float
+    # Hang guard: the least share of simulated cycles that must retire an
+    # instruction (result.json `instructions / cycles`). These sketches poll in
+    # loop() and never sleep for long, so a run that idles most of its budget
+    # is a guest stuck after RTF_READY, whose cheap idle cycles would pass as a
+    # fast simulator (issue #272: the old RP2040 ROM's `wfi; b .` stub gave a
+    # hung pico_oled_pwm 0.019 and a baseline 130x too high). Each floor is
+    # HALF the ratio measured on c9e4937a with the release CLI
+    # (event-scheduler): uno 0.708, c3 0.311, f411 1.0, pico 1.0 (hung 0.019).
+    # Instruction counts are deterministic, so the margin is for intended
+    # engine or firmware changes, not run-to-run noise.
+    min_active: float
 
     @property
     def dir(self) -> Path:
@@ -58,10 +69,10 @@ class Workload:
 
 
 WORKLOADS = (
-    Workload("uno_feeder", "Arduino Uno", "atmega328p", 16_000_000, 2.0),
-    Workload("pico_oled_pwm", "Raspberry Pi Pico", "rp2040", 125_000_000, 8.0),
-    Workload("c3_i2c_uart", "ESP32-C3 DevKitM-1", "esp32c3", 160_000_000, 0.5),
-    Workload("f411_timer_uart", "Black Pill F411", "stm32f411ceu6", 100_000_000, 0.5),
+    Workload("uno_feeder", "Arduino Uno", "atmega328p", 16_000_000, 2.0, 0.35),
+    Workload("pico_oled_pwm", "Raspberry Pi Pico", "rp2040", 125_000_000, 8.0, 0.5),
+    Workload("c3_i2c_uart", "ESP32-C3 DevKitM-1", "esp32c3", 160_000_000, 0.5, 0.15),
+    Workload("f411_timer_uart", "Black Pill F411", "stm32f411ceu6", 100_000_000, 0.5, 0.5),
 )
 
 
@@ -130,7 +141,16 @@ def parse_result(w: Workload, result: dict, wall: float, returncode: int) -> dic
     # inflated RTF for less guest time, so it is refused.
     if result.get("stop_reason") != "max_cycles":
         raise RuntimeError(f"{w.id}: stopped on {result.get('stop_reason')!r}, not max_cycles")
-    return {"cycles": want, "wall_s": wall}
+    instructions, cycles = result.get("instructions"), result.get("cycles")
+    if not isinstance(instructions, int) or not isinstance(cycles, int) or cycles <= 0:
+        raise RuntimeError(f"{w.id}: result has no instructions/cycles for the hang guard")
+    active = instructions / cycles
+    if active < w.min_active:
+        raise RuntimeError(
+            f"{w.id}: only {active:.3f} of cycles retired an instruction "
+            f"(floor {w.min_active}); the guest idled or hung after RTF_READY"
+        )
+    return {"cycles": want, "wall_s": wall, "active": round(active, 4)}
 
 
 def measure(cli: Path, w: Workload, repeats: int) -> dict:
