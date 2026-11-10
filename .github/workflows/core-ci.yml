@@ -713,7 +713,7 @@ jobs:
   pr-default-members-lib:
     name: pr-default-members-lib
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # fork pin: PR lanes stay on the 24.04 image
     timeout-minutes: 20
     steps:
       # Full history: `cargo test -p labwired-core --lib` includes the bus-proof
@@ -955,7 +955,7 @@ jobs:
     if: >
       always() &&
       (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # fork pin: PR lanes stay on the 24.04 image
     timeout-minutes: 5
     steps:
       - name: Both library feature graphs and firmware checks must pass
@@ -1028,39 +1028,28 @@ jobs:
     name: apt-warm
     # push-to-main only, for the reason pr-gate-warm gives: a cache saved on a
     # PR ref is readable by that PR alone, one saved on main by every PR.
-    # Seeds the cross-compiler packages pr-workspace-tests installs, keyed by
-    # the runner image so an image update re-seeds on the next main push.
+    # Seeds the apt packages the PR jobs install through the composite
+    # apt-install-cached action, by running that same action with the same
+    # package list: its actions/cache then saves under exactly the key and
+    # directory the PR jobs restore (key: image, arch, package-set hash, month).
+    # A separate download-only cache under its own key restored nothing once the
+    # PR jobs moved to the composite action, so every PR hit the mirror.
     if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     continue-on-error: true
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        packages:
+          - gcc-arm-none-eabi libnewlib-arm-none-eabi device-tree-compiler
+          - gcc-arm-none-eabi
     steps:
-      - name: Name the runner image
-        id: image
-        run: echo "id=$ImageOS-$ImageVersion" >> "$GITHUB_OUTPUT"
-      - name: Look for this image's packages
-        id: apt-debs
-        uses: actions/cache/restore@v4
+      - uses: actions/checkout@v4
+      - name: Seed the packages the PR jobs install
+        uses: ./.github/actions/apt-install-cached
         with:
-          path: ~/apt-debs
-          key: apt-arm-dtc-${{ steps.image.outputs.id }}-v1
-          lookup-only: true
-      - name: Download the packages
-        if: steps.apt-debs.outputs.cache-hit != 'true'
-        run: |
-          sudo apt-get update
-          mkdir -p ~/apt-debs/partial
-          sudo apt-get install -y --download-only --no-install-recommends \
-            -o Dir::Cache::archives="$HOME/apt-debs" gcc-arm-none-eabi device-tree-compiler
-          sudo chown -R "$USER" ~/apt-debs
-          rm -rf ~/apt-debs/partial ~/apt-debs/lock
-          ls ~/apt-debs
-      - name: Save them on main
-        if: steps.apt-debs.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: ~/apt-debs
-          key: apt-arm-dtc-${{ steps.image.outputs.id }}-v1
+          packages: ${{ matrix.packages }}
 
   pr-gate-warm:
     name: pr-gate-warm

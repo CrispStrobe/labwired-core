@@ -876,7 +876,9 @@ def test_retention_keeps_the_same_callgrind_execution_and_binds_originals(tmp_pa
         return subprocess.CompletedProcess(argv, 0, "original stdout", _IREFS)
 
     monkeypatch.setattr(bp.subprocess, "run", run)
-    measured = bp.measure_once(cli, chip, firmware, 200_000, bp.MODE_STEP)
+    # The real caller passes the chip as a string (`chip_arg = ... str(chip)`); a
+    # Path here put a non-JSON object into the retained argv (fork 9146a7414).
+    measured = bp.measure_once(cli, str(chip), firmware, 200_000, bp.MODE_STEP)
     assert measured.irefs == 1000 and len(calls) == 1
     roster = [json.loads(line) for line in (root / "samples.jsonl").read_text().splitlines()]
     assert len(roster) == 1

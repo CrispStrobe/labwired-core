@@ -11,6 +11,21 @@ These are proposed task contracts, not ownership claims or passing receipts.
 Refresh the default branch and open PRs before starting; shared behavior lands
 in the engine first, followed by an explicit qualified consumer pin.
 
+## Fork-main drift restore (nrf5340 models, device catalog) — claimed 2026-11-10
+
+Claim and change in one PR. Scope: `validation/manifest.yaml` (upstream d9ccc262
+hunk, dropped by fork merge c9e4937a), generator outputs
+`docs/boards/VALIDATION_STATUS.md` and `docs/configuration_reference.md`.
+No hand edits to generated files and no test changes.
+## SAM DMAC SERCOM4 TX NOACT test expectation — claimed 2026-11-10
+
+Claim and change in one PR. Scope: only `crates/core/tests/sam_dmac_sercom4_tx.rs`.
+Reverts the test hunk of b627fafc4 (noact descriptor 0x0407 -> 0x0401; noact no
+longer expected to deliver TCMPL) so the test again matches the deliberate
+product gating of upstream 84cfc9c22: the SERCOM4 TX profile latches TCMPL only
+for BLOCKACT=INT, the Board profile latches it for NOACT and INT (CODAL). No
+product change.
+
 ## PR performance guard — qualified and merged — 2026-10-19
 
 [PR253](https://github.com/CrispStrobe/labwired-core/pull/253) merged as
