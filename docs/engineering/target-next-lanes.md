@@ -11,6 +11,13 @@ These are proposed task contracts, not ownership claims or passing receipts.
 Refresh the default branch and open PRs before starting; shared behavior lands
 in the engine first, followed by an explicit qualified consumer pin.
 
+## Fork-main drift restore (nrf5340 models, device catalog) — claimed 2026-11-10
+
+Claim and change in one PR. Scope: `validation/manifest.yaml` (upstream d9ccc262
+hunk, dropped by fork merge c9e4937a), generator outputs
+`docs/boards/VALIDATION_STATUS.md` and `docs/configuration_reference.md`.
+No hand edits to generated files and no test changes.
+
 ## PR performance guard — qualified and merged — 2026-10-19
 
 [PR253](https://github.com/CrispStrobe/labwired-core/pull/253) merged as
