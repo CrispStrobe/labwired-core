@@ -37,5 +37,8 @@ This writes `rtf.json` (board, workload, guest_s, wall_s, Mcycles/s, rtf,
 commit, runner). The gate compares `index = best workload RTF / best spin RTx of the same chip`
 against `scripts/perf/rtf_baselines.json`, so a faster or slower runner does
 not move it; a drop of more than 25% (`--rtf-tolerance`) fails. The
-deterministic Ir/step gate (`board_perf.py`) stays the fine-grained detector. After an intended change,
+deterministic Ir/step gate (`board_perf.py`) stays the fine-grained detector.
+A run must also retire an instruction on at least `min_active` of its cycles
+(half the measured ratio per workload, see `board_rtf.py`), so a guest that
+hangs after `RTF_READY` cannot pass as a fast simulator (issue #272). After an intended change,
 re-baseline with `--update-rtf`.

@@ -175,14 +175,36 @@ def test_rtf_workloads_have_committed_inputs():
 
 def test_rtf_refuses_a_run_that_stopped_early():
     w = rtf.WORKLOADS[0]
-    ok = rtf.parse_result(w, {"status": "pass", "stop_reason": "max_cycles"}, 2.0, 0)
+    ok = rtf.parse_result(w, {"status": "pass", "stop_reason": "max_cycles",
+                              "instructions": 90, "cycles": 100}, 2.0, 0)
     assert ok["cycles"] == round(w.cpu_hz * w.guest_s)
     for result, code in (
         ({"status": "pass", "stop_reason": "assertions_passed"}, 0),
         ({"status": "fail", "stop_reason": "max_cycles"}, 1),
+        ({"status": "pass", "stop_reason": "max_cycles"}, 0),
     ):
         with pytest.raises(RuntimeError):
             rtf.parse_result(w, result, 2.0, code)
+
+
+def test_rtf_hang_guard_refuses_the_old_rom_hung_pico_and_admits_the_live_one():
+    # Measured result.json counts (issue #272), same ELF and 8 s budget:
+    # current ROM runs the loop; the old ROM parks the guest in `wfi; b .`.
+    w = next(x for x in rtf.WORKLOADS if x.id == "pico_oled_pwm")
+    live = {"status": "pass", "stop_reason": "max_cycles",
+            "instructions": 1_000_000_000, "cycles": 1_000_000_000}
+    assert rtf.parse_result(w, live, 286.0, 0)["active"] == 1.0
+    hung = dict(live, instructions=19_306_475)
+    with pytest.raises(RuntimeError, match="hung after RTF_READY"):
+        rtf.parse_result(w, hung, 18.0, 0)
+
+
+def test_rtf_hang_floors_sit_at_half_the_measured_ratios():
+    measured = {"uno_feeder": 22_640_585 / 31_982_664, "c3_i2c_uart": 79_320_206 / 255_152_186,
+                "f411_timer_uart": 1.0, "pico_oled_pwm": 1.0}
+    for w in rtf.WORKLOADS:
+        assert w.min_active <= measured[w.id] / 2 + 0.01
+        assert w.min_active >= measured[w.id] / 2 - 0.01
 
 
 def test_rtf_gate_is_host_independent_and_flags_a_20_percent_slowdown():

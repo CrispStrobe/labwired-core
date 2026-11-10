@@ -69,6 +69,10 @@ on:
         description: 'Owned SAMD source controls and initial selected measurements; normal PR gates are unchanged'
         type: boolean
         default: false
+      rtf_update_boards:
+        description: 'Comma-separated chips whose realistic-workload RTF baseline to re-measure (board_rtx.py --update-rtf); writes an artifact only, never the gate input'
+        type: string
+        default: ''
 
 concurrency:
   group: core-perf-${{ github.ref }}
@@ -183,6 +187,21 @@ jobs:
       - name: Build simulator CLI (browser feature set)
         run: cargo build --release -p labwired-cli --features event-scheduler
 
+      # Documented re-baseline (tests/fixtures/rtf/README.md) on the gate's own
+      # runner image. The measured file is uploaded for review and the
+      # checkout is restored, so the gate below still judges the committed
+      # baselines.
+      - name: Re-measure RTF baselines (dispatch only)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.rtf_update_boards != '' }}
+        env:
+          BOARDS: ${{ inputs.rtf_update_boards }}
+        run: |
+          set -o pipefail
+          python3 scripts/perf/board_rtx.py --boards "$BOARDS" --update-rtf \
+            --rtf-json rtf-update.json 2>&1 | tee rtf-update-report.txt
+          cp scripts/perf/rtf_baselines.json rtf_baselines.updated.json
+          git checkout -- scripts/perf/rtf_baselines.json
+
       - name: Require real time on every chip
         run: |
           set -o pipefail
@@ -212,6 +231,9 @@ jobs:
             perf-status.json
             rtx-report.txt
             rtx-status.json
+            rtf-update.json
+            rtf-update-report.txt
+            rtf_baselines.updated.json
 
       # A regression is a real product defect (every extra host instruction per
       # simulated step slows the browser twin by the same proportion), so it
