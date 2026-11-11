@@ -1051,6 +1051,45 @@ jobs:
         with:
           packages: ${{ matrix.packages }}
 
+  pr-cortex-m-perf-suites:
+    name: pr-cortex-m-perf-suites
+    # The three Cortex-M performance-evidence suites guard board_perf.py,
+    # baselines.json and the core-identity qualifier, but only a manual
+    # core-identity dispatch ran one of them, so their pins drifted unseen for
+    # weeks. Run all three on every PR that can move what they guard.
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Does this PR touch what the suites guard?
+        id: scope
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -z "$BASE" ]; then echo "run=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          changed="$(git diff --name-only "$BASE"...HEAD)"
+          if printf '%s\n' "$changed" | grep -qE '^(scripts/perf/|scripts/ci/(test_)?cortex_m_|scripts/ci/fixtures/cortex_m_|\.github/workflows/(core-ci|core-identity)\.yml$)'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No guarded path changed; suites not needed."
+          fi
+      - name: Set up Python
+        if: steps.scope.outputs.run == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Cortex-M perf evidence, diagnostics and raw-profile suites
+        if: steps.scope.outputs.run == 'true'
+        working-directory: scripts/ci
+        run: |
+          python -m pip install --quiet pyyaml
+          # One unittest invocation: a red test in any of the three fails the step.
+          python -m unittest -v test_cortex_m_perf_evidence test_cortex_m_perf_diagnostics test_cortex_m_raw_profiles
+
   pr-gate-warm:
     name: pr-gate-warm
     # push-to-main only. Not `pull_request` (a PR-ref save is the problem this

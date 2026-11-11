@@ -4,6 +4,7 @@ import hashlib
 import ast
 import importlib.util
 import json
+import re
 import os
 from pathlib import Path
 import struct
@@ -221,6 +222,9 @@ class DiagnosticsControls(unittest.TestCase):
         import re
         from collections import namedtuple
         node=next(n for n in ast.parse((ROOT/'scripts/perf/board_perf.py').read_text()).body if isinstance(n,ast.FunctionDef) and n.name=='measure_once')
+        # measure_once now hands the strict-grid witness to parse_quiescent_witness
+        # (reviewed board_perf re-pin); run the actual helper beside it.
+        witness=next(n for n in ast.parse((ROOT/'scripts/perf/board_perf.py').read_text()).body if isinstance(n,ast.FunctionDef) and n.name=='parse_quiescent_witness')
         common,modules,sources,calls,out=self.prepare()
         paths=[];commands=[]
         module=types.SimpleNamespace(IREFS_RE=re.compile(r'^==\d+== I refs: ([\d,]+)',re.M),
@@ -237,13 +241,15 @@ class DiagnosticsControls(unittest.TestCase):
             self.assertTrue(path.is_file(),'temporary file already deleted');self.assertEqual(ir,10)
             return dict(total_ir=10,function_count=2)
         cli=self.elf('cli')
-        namespace=dict(Path=Path,Run=namedtuple('Run','irefs instructions steps_per_batch tick_interval',defaults=(None,None,None)),
-            os=os,tempfile=tempfile,subprocess=runner,MODE_BATCH='batch',MODE_STEP='step',
+        namespace=dict(Path=Path,Run=namedtuple('Run','irefs instructions steps_per_batch tick_interval quiescent_max_retired',defaults=(None,None,None,None)),
+            os=os,re=re,tempfile=tempfile,subprocess=runner,MODE_BATCH='batch',MODE_STEP='step',
             IREFS_RE=module.IREFS_RE,BATCHED_RE=module.BATCHED_RE,ModeNotTakenError=ValueError,
             MIN_RECOMMENDED_TICK_INTERVAL=1024)
-        exec(compile(ast.Module(body=[node],type_ignores=[]),'original-measure-once','exec'),namespace)
+        exec(compile(ast.Module(body=[node,witness],type_ignores=[]),'original-measure-once','exec'),namespace)
         with mock.patch.object(self.perf,'collect',side_effect=produce),mock.patch.object(self.diag,'annotate_call',side_effect=annotate),mock.patch.dict(sys.modules,cortex_m_perf_diagnostics=self.diag):
-            result=namespace['measure_once'](cli,Path('configs/chips/stm32l476.yaml'),common.paths['stm32'],200000,'batch')
+            # The real caller passes the chip as a string (chip_arg = str(chip));
+            # a Path is refused by the bounded argv guard (near-miss below).
+            result=namespace['measure_once'](cli,'configs/chips/stm32l476.yaml',common.paths['stm32'],200000,'batch')
         self.assertEqual(result.irefs,10);self.assertFalse(paths[0].exists())
         self.assertEqual(commands[0][:2],['valgrind','--tool=callgrind'])
         self.assertEqual(commands[0][3:],['--cache-sim=no','--branch-sim=no',str(cli),'run','--chip','configs/chips/stm32l476.yaml','--firmware',str(common.paths['stm32']),'--max-steps','200000','--batched'])
@@ -419,7 +425,10 @@ class DiagnosticsControls(unittest.TestCase):
         # Historical393 is immutable provenance, never relabelled as successor.
         # `scripts/perf/board_perf.py` grew reviewed onboarding waivers after
         # 393b5310; its digest is the current baseline, not the historical one.
-        self.assertEqual(hashlib.sha256(fixture.read_bytes()).hexdigest(), '0e5d07ea3fa7f9b9bb5c83a5af4b0ddeb210227ed32e724709d6f6a10791d3d7', 'historical393 fixture')
+        # Re-pinned 2026-11-11 after review of fadae7337..d543a46b (board_perf.py
+        # a5e8f141 -> 28f2cc02) and 693a6ad6d..d543a46b (baselines.json 527cea1b ->
+        # ca6f3003); historical393 function and workflow pins are unchanged.
+        self.assertEqual(hashlib.sha256(fixture.read_bytes()).hexdigest(), '612eb951e25be7cc6c24a2b9bbeb5c7c5e97654a6f3b6c4f6ca070df1505dfc1', 'historical393 fixture')
         manifest = json.loads(fixture.read_text())
         # Exact382034f4ec62bd66154f0675001bde3894a73c12 retains original393 collect AST.
         predecessor_collect_382 = '6649690b5fee77f69af0174dd3a8d1ba6472e09463f354b0cfd4ac6f9b395529'
@@ -436,7 +445,10 @@ class DiagnosticsControls(unittest.TestCase):
             self.assertRegex(digest, r'^[0-9a-f]{64}$')
         current=(root/'scripts/ci/cortex_m_perf_evidence.py').read_text()
         def functions(source):
-            return {n.name:ast.dump(n,include_attributes=False) for n in ast.parse(source).body if isinstance(n,ast.FunctionDef)}
+            # Python 3.13 made ast.dump omit empty fields by default, which changes
+            # every digest; show_empty=True reproduces the 3.12 dump the pins use.
+            canonical={'show_empty':True} if sys.version_info>=(3,13) else {}
+            return {n.name:ast.dump(n,include_attributes=False,**canonical) for n in ast.parse(source).body if isinstance(n,ast.FunctionDef)}
         current_functions=functions(current)
         for name in names:
             digest = hashlib.sha256(current_functions[name].encode()).hexdigest()
@@ -484,6 +496,13 @@ class DiagnosticsControls(unittest.TestCase):
         self.assertEqual(manifest['source_sha256']['.github/workflows/core-identity.yml'], hashlib.sha256(workflow.encode()).hexdigest(), 'workflow')
         self.assertIn('action="store_true"',current)
         self.assertIn('budget = Budget(5 * 1024 * 1024)',current)
+
+    def test_bounded_argv_still_refuses_a_path_chip(self):
+        # Near-miss for the str(chip) callers above: the guard must keep
+        # refusing a non-string argument rather than coerce it.
+        with self.assertRaisesRegex(ValueError,'oversized/invalid performance invocation arguments'):
+            self.perf.bounded_argv(['valgrind','run','--chip',Path('configs/chips/stm32l476.yaml')])
+        self.assertEqual(self.perf.bounded_argv(['valgrind','run','--chip','configs/chips/stm32l476.yaml'])[-1],'configs/chips/stm32l476.yaml')
 
     def test_defaults_workflow_tool_and_strict_guards_are_unchanged(self):
         self.assert_preservation(ROOT)
