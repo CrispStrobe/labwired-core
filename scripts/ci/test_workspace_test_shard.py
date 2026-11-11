@@ -48,7 +48,7 @@ def test_core_pr_lanes_pin_the_existing_ubuntu_24_image_without_changing_nightly
     for name in (
         "release-runner-contract", "fmt-autofix", "pr-default-members-lib",
         "pr-core-feature-off-tests", "pr-core-feature-off", "pr-gate", "pr-gate-warm", "apt-warm", "browser-layer",
-        "pr-scheduler-observable", "xtensa-flash-boot", "pr-workspace-tests",
+        "pr-scheduler-observable", "xtensa-flash-boot", "pr-workspace-tests", "pr-cortex-m-perf-suites",
         "pr-workspace-tests-aggregate",
     ):
         assert jobs[name]["runs-on"] == "ubuntu-24.04"
@@ -131,6 +131,19 @@ def apt_action_run():
 def apt_packages(job):
     return [step["with"]["packages"] for step in core_workflow_jobs()[job]["steps"]
             if step.get("uses") == APT_ACTION]
+
+
+def test_cortex_m_perf_suites_run_on_prs_and_fail_on_any_red_suite():
+    job = core_workflow_jobs()["pr-cortex-m-perf-suites"]
+    assert job["if"] == "github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'"
+    assert_python_is_pinned_before_use(job)
+    run = next(step["run"] for step in job["steps"]
+               if step.get("name") == "Cortex-M perf evidence, diagnostics and raw-profile suites")
+    command = next(line for line in run.splitlines() if "-m unittest" in line).split()
+    # All three suites in one unittest process, so any red test fails the step.
+    assert {"test_cortex_m_perf_evidence", "test_cortex_m_perf_diagnostics",
+            "test_cortex_m_raw_profiles"} <= set(command)
+    assert "|| true" not in run and "continue-on-error" not in job
 
 
 def test_workspace_cross_compiler_does_not_pull_unused_cxx_archives():

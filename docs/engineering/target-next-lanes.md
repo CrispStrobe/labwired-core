@@ -11,6 +11,13 @@ These are proposed task contracts, not ownership claims or passing receipts.
 Refresh the default branch and open PRs before starting; shared behavior lands
 in the engine first, followed by an explicit qualified consumer pin.
 
+## Cortex-M perf suites: deterministic, re-pinned, run on PRs — claimed 2026-11-11
+
+Claim and change in one PR. Scope: `scripts/ci/test_cortex_m_perf_{diagnostics,evidence}.py`,
+`scripts/ci/test_cortex_m_raw_profiles.py`, the preservation fixture's two source pins
+(board_perf.py and baselines.json, after review), a new `pr-cortex-m-perf-suites` job in
+`core-ci.yml` and its census test. No assertion loosened; product code unchanged.
+
 ## Issue 272 — pico_oled_pwm RTF baseline and hang guard — claimed 2026-11-10
 
 Claim and change in one PR (lane owner: Brickwright labwired lane). Scope:
