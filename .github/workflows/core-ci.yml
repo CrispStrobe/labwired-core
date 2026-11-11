@@ -1090,6 +1090,65 @@ jobs:
           # One unittest invocation: a red test in any of the three fails the step.
           python -m unittest -v test_cortex_m_perf_evidence test_cortex_m_perf_diagnostics test_cortex_m_raw_profiles
 
+  pr-ci-scripts-py313:
+    name: pr-ci-scripts-py313
+    # pr-gate runs the CI-script tests on Python 3.12 only. This leg runs the
+    # same files on a clean Python 3.13 so a 3.13 behaviour change (for
+    # example ast.dump omitting empty fields) shows up in CI, not on a
+    # developer machine. The file list must equal pr-gate's (census test).
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Does this PR touch the CI scripts?
+        id: scope
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -z "$BASE" ]; then echo "run=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          if git diff --name-only "$BASE"...HEAD | grep -qE '^(scripts/|validation/matrix_lib/|\.github/workflows/core-ci\.yml$)'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No CI script changed; the 3.13 leg is not needed."
+          fi
+      - name: Set up Python
+        if: steps.scope.outputs.run == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: CI-script tests on Python 3.13
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          python -m pip install --quiet pytest pyyaml
+          python3 --version
+          python3 -m pytest -q \
+            scripts/perf/test_board_perf.py \
+            scripts/perf/test_board_rtx.py \
+            scripts/perf/test_workload_perf.py \
+            scripts/ci/test_board_matrix.py \
+            scripts/ci/test_chip_coverage.py \
+            scripts/ci/test_part_coverage.py \
+            scripts/ci/test_matrix_external_cache.py \
+            scripts/ci/test_matrix_verdict.py \
+            scripts/ci/test_cheat_ratchet.py \
+            scripts/ci/test_ignore_reasons.py \
+            scripts/ci/test_linker_script_single_source.py \
+            scripts/ci/test_host_clippy_scope.py \
+            scripts/ci/test_git_hooks.py \
+            scripts/ci/test_workspace_test_shard.py \
+            scripts/test_gen_debug_schemas.py \
+            scripts/test_generate_chip_catalog.py \
+            scripts/test_generate_firmware_exercise_matrix.py \
+            scripts/test_generate_model_ratings.py \
+            scripts/test_generate_validation_status.py \
+            scripts/test_labwired_audit.py \
+            validation/matrix_lib/test_invoke.py
+          python3 -m unittest discover -s scripts/tests -p test_cli_release_tag.py
+
   pr-gate-warm:
     name: pr-gate-warm
     # push-to-main only. Not `pull_request` (a PR-ref save is the problem this
