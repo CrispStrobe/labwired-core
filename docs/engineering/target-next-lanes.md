@@ -11,6 +11,12 @@ These are proposed task contracts, not ownership claims or passing receipts.
 Refresh the default branch and open PRs before starting; shared behavior lands
 in the engine first, followed by an explicit qualified consumer pin.
 
+## board_perf.py duplicate is_stale/is_regression removal — claimed 2026-11-11
+
+Claim and change in one PR. Removes the second, byte-identical `is_stale` and `is_regression` definitions in
+`scripts/perf/board_perf.py` and re-pins its preservation digest (28f2cc02 -> de4b5af5)
+with that one change as the review. No behaviour change.
+
 ## Cortex-M perf suites: deterministic, re-pinned, run on PRs — claimed 2026-11-11
 
 Claim and change in one PR. Scope: `scripts/ci/test_cortex_m_perf_{diagnostics,evidence}.py`,
