@@ -48,7 +48,7 @@ def test_core_pr_lanes_pin_the_existing_ubuntu_24_image_without_changing_nightly
     for name in (
         "release-runner-contract", "fmt-autofix", "pr-default-members-lib",
         "pr-core-feature-off-tests", "pr-core-feature-off", "pr-gate", "pr-gate-warm", "apt-warm", "browser-layer",
-        "pr-scheduler-observable", "xtensa-flash-boot", "pr-workspace-tests", "pr-cortex-m-perf-suites",
+        "pr-scheduler-observable", "xtensa-flash-boot", "pr-workspace-tests", "pr-cortex-m-perf-suites", "pr-ci-scripts-py313",
         "pr-workspace-tests-aggregate",
     ):
         assert jobs[name]["runs-on"] == "ubuntu-24.04"
@@ -144,6 +144,26 @@ def test_cortex_m_perf_suites_run_on_prs_and_fail_on_any_red_suite():
     assert {"test_cortex_m_perf_evidence", "test_cortex_m_perf_diagnostics",
             "test_cortex_m_raw_profiles"} <= set(command)
     assert "|| true" not in run and "continue-on-error" not in job
+
+
+def test_ci_scripts_also_run_on_python_313_with_the_same_files():
+    jobs = core_workflow_jobs()
+    leg = jobs["pr-ci-scripts-py313"]
+    setup = next(step for step in leg["steps"] if step.get("uses", "").startswith("actions/setup-python@"))
+    assert str(setup["with"]["python-version"]) == "3.13"
+    names = [step.get("name") or step.get("uses") for step in leg["steps"]]
+    assert names.index(setup.get("name") or setup["uses"]) < names.index("CI-script tests on Python 3.13")
+
+    def files(run):
+        return [token for token in run.split() if token not in ("\\", "-q", "-m", "-s", "-p", "python3", "pytest", "unittest", "discover")
+                and ("test" in token)]
+
+    gate = next(step["run"] for step in jobs["pr-gate"]["steps"]
+                if step.get("name") == "Perf gate — every chip covered or waived")
+    mine = next(step["run"] for step in leg["steps"] if step.get("name") == "CI-script tests on Python 3.13")
+    # Same test files and commands as the 3.12 gate, so the legs cannot drift.
+    assert files(gate) and files(gate) == files(mine)
+    assert "|| true" not in mine and "continue-on-error" not in leg
 
 
 def test_workspace_cross_compiler_does_not_pull_unused_cxx_archives():

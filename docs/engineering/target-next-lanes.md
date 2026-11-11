@@ -11,6 +11,13 @@ These are proposed task contracts, not ownership claims or passing receipts.
 Refresh the default branch and open PRs before starting; shared behavior lands
 in the engine first, followed by an explicit qualified consumer pin.
 
+## Python 3.13 leg for the CI-script tests — claimed 2026-11-11
+
+Claim and change in one PR. Adds `pr-ci-scripts-py313` to `core-ci.yml`: the same
+CI-script test files pr-gate runs on 3.12, on a clean `actions/setup-python` 3.13,
+path-filtered to `scripts/`, `validation/matrix_lib/` and `core-ci.yml`. A census test
+keeps its file list equal to pr-gate's. No test or assertion changes.
+
 ## board_perf.py duplicate is_stale/is_regression removal — claimed 2026-11-11
 
 Claim and change in one PR. Removes the second, byte-identical `is_stale` and `is_regression` definitions in
