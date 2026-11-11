@@ -428,9 +428,9 @@ class DiagnosticsControls(unittest.TestCase):
         # Re-pinned 2026-11-11 after review of fadae7337..d543a46b (board_perf.py
         # a5e8f141 -> 28f2cc02) and 693a6ad6d..d543a46b (baselines.json 527cea1b ->
         # ca6f3003); historical393 function and workflow pins are unchanged.
-        # Re-pinned again for board_perf.py 28f2cc02 -> 9470ca63: the only change is
-        # removing a byte-identical duplicate is_stale definition.
-        self.assertEqual(hashlib.sha256(fixture.read_bytes()).hexdigest(), '5e5d9fba9624b02d4bdec89504c0a3c19dfbb1af72e88e6bb82350dd4dead9bb', 'historical393 fixture')
+        # Re-pinned again for board_perf.py 28f2cc02 -> de4b5af5: the only changes are
+        # removing the byte-identical duplicate is_stale and is_regression definitions.
+        self.assertEqual(hashlib.sha256(fixture.read_bytes()).hexdigest(), 'e32a7686541ec46b60a7fad661c19097a3a53010d87548a97be0415431da5291', 'historical393 fixture')
         manifest = json.loads(fixture.read_text())
         # Exact382034f4ec62bd66154f0675001bde3894a73c12 retains original393 collect AST.
         predecessor_collect_382 = '6649690b5fee77f69af0174dd3a8d1ba6472e09463f354b0cfd4ac6f9b395529'

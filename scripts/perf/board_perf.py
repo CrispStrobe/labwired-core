@@ -560,12 +560,6 @@ def gate_is_ok(
 STALE_TOLERANCE = 0.10
 
 
-def is_regression(measured: float, baseline: float, mode: str) -> bool:
-    relative = (measured - baseline) / baseline
-    absolute_floor = BATCH_ABSOLUTE_NOISE_FLOOR if mode == MODE_BATCH else 0.0
-    return relative > REGRESSION_TOLERANCE and measured - baseline > absolute_floor
-
-
 # Step and batch costs closer than this measured one loop twice. The duplicated
 # ARM pairs sat at ~1.00. The narrowest honest pair seen once step mode
 # actually ran the step loop was about 2.4 (classic ESP32, on a fork). 1.25
