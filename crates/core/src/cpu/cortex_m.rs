@@ -17,6 +17,12 @@ use crate::{Bus, Cpu, SimResult, SimulationConfig, SimulationError, SimulationOb
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 
+#[cfg(feature = "cortex-m-dispatch-probe")]
+#[path = "cortex_m/dispatch_probe.rs"]
+pub mod dispatch_probe;
+#[cfg(feature = "cortex-m-dispatch-probe")]
+use dispatch_probe::{Reason as ProbeReason, Stage as ProbeStage};
+
 /// `step_execute`'s instruction match arm bodies, one method per arm, grouped
 /// by instruction class. The single dispatch `match instruction` stays in
 /// `step_execute`; each arm calls one `exec_*` method. `#[path]` keeps the
@@ -251,6 +257,8 @@ pub struct CortexM {
     /// Last observer-free Thumb-1 RAM loop admitted by the generic block
     /// executor. This is derived execution state, never part of a snapshot.
     t16_fast_block: Option<T16FastBlock>,
+    #[cfg(feature = "cortex-m-dispatch-probe")]
+    dispatch_probe: std::cell::RefCell<Option<Box<dispatch_probe::DispatchProbe>>>,
     /// FPU single-precision register file (VFPv4 single — S0..S31).
     /// Each S register is the IEEE-754 binary32 bit pattern; reads via
     /// `f32::from_bits` and writes via `f32::to_bits`. Double-precision
@@ -363,6 +371,8 @@ impl Default for CortexM {
             poll: poll_loop::PollDetector::default(),
             t16_discovery_misses: [(0, 0); T16_DISCOVERY_MISS_SLOTS],
             t16_fast_block: None,
+            #[cfg(feature = "cortex-m-dispatch-probe")]
+            dispatch_probe: std::cell::RefCell::new(None),
             fpu_s: [0u32; 32],
             fpscr: 0,
             sleeping: false,
@@ -692,15 +702,29 @@ impl CortexM {
     /// caller retains the observer/debug/IRQ/IT and scheduler-budget guards.
     #[inline(always)]
     fn run_t16_cached_fast_paths(&mut self, bus: &mut SystemBus, max_count: u32) -> u32 {
+        #[cfg(feature = "cortex-m-dispatch-probe")]
+        self.record_dispatch_probe(ProbeStage::Dispatch, ProbeReason::Enter, 0);
         let Some(op) = self.cached_t16(self.pc) else {
+            #[cfg(feature = "cortex-m-dispatch-probe")]
+            self.record_dispatch_probe(ProbeStage::Dispatch, ProbeReason::CacheUnavailable, 0);
+            #[cfg(feature = "cortex-m-dispatch-probe")]
+            self.record_dispatch_probe(ProbeStage::Dispatch, ProbeReason::Returned, 0);
             return 0;
         };
         let mut fast = 0;
         if op & 0xf800 == 0xe000 {
+            #[cfg(feature = "cortex-m-dispatch-probe")]
+            self.record_dispatch_probe(ProbeStage::SelfBranch, ProbeReason::Enter, 0);
             fast = self.run_t16_self_branch(max_count);
+            #[cfg(feature = "cortex-m-dispatch-probe")]
+            self.record_dispatch_probe(ProbeStage::SelfBranch, ProbeReason::Returned, fast);
         }
         if fast == 0 && op & 0xf8ff == 0x3801 {
+            #[cfg(feature = "cortex-m-dispatch-probe")]
+            self.record_dispatch_probe(ProbeStage::Countdown, ProbeReason::Enter, 0);
             fast = self.run_t16_countdown(max_count);
+            #[cfg(feature = "cortex-m-dispatch-probe")]
+            self.record_dispatch_probe(ProbeStage::Countdown, ProbeReason::Returned, fast);
         }
         if fast == 0
             && (op & 0xf800 == 0x9000
@@ -708,10 +732,18 @@ impl CortexM {
                 || op & 0xfe00 == 0x1c00
                 || op & 0xf800 == 0xe000)
         {
+            #[cfg(feature = "cortex-m-dispatch-probe")]
+            self.record_dispatch_probe(ProbeStage::StoreSpin, ProbeReason::Enter, 0);
             fast = self.run_t16_store_spin(bus, max_count);
+            #[cfg(feature = "cortex-m-dispatch-probe")]
+            self.record_dispatch_probe(ProbeStage::StoreSpin, ProbeReason::Returned, fast);
         }
         if fast == 0 && matches!(op & 0xf800, 0x3000 | 0x6000 | 0x6800 | 0xe000) {
+            #[cfg(feature = "cortex-m-dispatch-probe")]
+            self.record_dispatch_probe(ProbeStage::RamFast, ProbeReason::Enter, 0);
             fast = self.run_t16_ram_fast(bus, max_count, true);
+            #[cfg(feature = "cortex-m-dispatch-probe")]
+            self.record_dispatch_probe(ProbeStage::RamFast, ProbeReason::Returned, fast);
         }
         if fast == 0 {
             fast = self.run_t16_fast_block(bus, max_count);
@@ -723,6 +755,8 @@ impl CortexM {
         if fast == 0 {
             fast = self.run_t16_cached_run(bus, max_count);
         }
+        #[cfg(feature = "cortex-m-dispatch-probe")]
+        self.record_dispatch_probe(ProbeStage::Dispatch, ProbeReason::Returned, fast);
         fast
     }
 
@@ -737,23 +771,49 @@ impl CortexM {
     #[cfg(any(target_arch = "wasm32", test))]
     #[inline(never)]
     fn run_t16_cached_run(&mut self, bus: &mut SystemBus, max_count: u32) -> u32 {
+        #[cfg(feature = "cortex-m-dispatch-probe")]
+        self.record_dispatch_probe(ProbeStage::CachedRun, ProbeReason::Enter, 0);
         if max_count == 0 || self.sleeping || self.waiting_for_event {
+            #[cfg(feature = "cortex-m-dispatch-probe")]
+            self.record_dispatch_probe(ProbeStage::CachedRun, ProbeReason::EntryGuard, 0);
+            #[cfg(feature = "cortex-m-dispatch-probe")]
+            self.record_dispatch_probe(ProbeStage::CachedRun, ProbeReason::Returned, 0);
             return 0;
         }
         let mut retired = 0;
         while retired < max_count.min(16) {
             let Some(entry) = self.decode_cache[((self.pc >> 1) & 0x0fff) as usize].as_ref() else {
+                #[cfg(feature = "cortex-m-dispatch-probe")]
+                self.record_dispatch_probe(ProbeStage::CachedRun, ProbeReason::Cold, retired);
                 break;
             };
             if entry.tag != self.pc || entry.pc_increment != 2 {
+                #[cfg(feature = "cortex-m-dispatch-probe")]
+                self.record_dispatch_probe(
+                    ProbeStage::CachedRun,
+                    if entry.tag != self.pc {
+                        ProbeReason::TagMismatch
+                    } else {
+                        ProbeReason::Wide
+                    },
+                    retired,
+                );
                 break;
             }
             let instruction = entry.instruction;
             if !self.execute_t16_fast_op(bus, instruction) {
+                #[cfg(feature = "cortex-m-dispatch-probe")]
+                self.record_dispatch_probe(
+                    ProbeStage::CachedRun,
+                    Self::probe_op_refusal(instruction),
+                    retired,
+                );
                 break;
             }
             retired += 1;
         }
+        #[cfg(feature = "cortex-m-dispatch-probe")]
+        self.record_dispatch_probe(ProbeStage::CachedRun, ProbeReason::Returned, retired);
         retired
     }
 
@@ -1277,6 +1337,8 @@ impl CortexM {
         let mut end = None;
         for i in 0..T16_FAST_BLOCK_MAX {
             let pc = start.wrapping_add((i as u32) * 2);
+            #[cfg(feature = "cortex-m-dispatch-probe")]
+            self.probe_discovery_entry(pc);
             let entry = self.decode_cache[((pc >> 1) & 0x0fff) as usize].as_ref()?;
             if entry.tag != pc || entry.pc_increment != 2 {
                 return None;
@@ -1285,14 +1347,42 @@ impl CortexM {
                 Instruction::Branch { offset } | Instruction::BranchCond { offset, .. } => {
                     let target = (pc as i32).wrapping_add(4).wrapping_add(offset) as u32;
                     if i == 0 || target != start {
+                        #[cfg(feature = "cortex-m-dispatch-probe")]
+                        self.record_dispatch_probe_at(
+                            ProbeStage::Discovery,
+                            ProbeReason::BranchShape,
+                            pc,
+                            0,
+                        );
                         return None;
                     }
                     end = Some((pc, i + 1));
                     break;
                 }
                 op if Self::t16_block_op_supported(op) => {}
+                #[cfg(feature = "cortex-m-dispatch-probe")]
+                _ => {
+                    #[cfg(feature = "cortex-m-dispatch-probe")]
+                    self.record_dispatch_probe_at(
+                        ProbeStage::Discovery,
+                        ProbeReason::Unsupported,
+                        pc,
+                        0,
+                    );
+                    return None;
+                }
+                #[cfg(not(feature = "cortex-m-dispatch-probe"))]
                 _ => return None,
             }
+        }
+        #[cfg(feature = "cortex-m-dispatch-probe")]
+        if end.is_none() {
+            self.record_dispatch_probe_at(
+                ProbeStage::Discovery,
+                ProbeReason::WindowLimit,
+                start,
+                0,
+            );
         }
         let (end, len) = end?;
         let mut ops = [Instruction::Nop; T16_FAST_BLOCK_MAX];
@@ -1727,21 +1817,49 @@ impl CortexM {
     }
 
     fn run_t16_fast_block(&mut self, bus: &mut SystemBus, max_count: u32) -> u32 {
+        #[cfg(feature = "cortex-m-dispatch-probe")]
+        self.record_dispatch_probe(ProbeStage::Block, ProbeReason::Enter, 0);
         let cached = self.t16_fast_block.as_ref().is_some_and(|block| {
             self.pc >= block.start && self.pc <= block.end && (self.pc - block.start) % 2 == 0
         });
+        #[cfg(feature = "cortex-m-dispatch-probe")]
+        self.record_dispatch_probe(
+            ProbeStage::Block,
+            if cached {
+                ProbeReason::BlockHit
+            } else {
+                ProbeReason::BlockMiss
+            },
+            0,
+        );
         if !cached {
             // Do not copy the payload of Option::None on the common rejection
             // path. Only successful discovery materializes a block.
             self.t16_fast_block = None;
             let miss_index = ((self.pc >> 1) as usize) % T16_DISCOVERY_MISS_SLOTS;
             if self.t16_discovery_misses[miss_index] == (self.pc, self.decode_generation) {
+                #[cfg(feature = "cortex-m-dispatch-probe")]
+                self.record_dispatch_probe(ProbeStage::Block, ProbeReason::MemoizedMiss, 0);
+                #[cfg(feature = "cortex-m-dispatch-probe")]
+                self.record_dispatch_probe(ProbeStage::Block, ProbeReason::Returned, 0);
                 return 0;
             }
             if !self.t16_block_entry_admitted(self.pc) {
+                #[cfg(feature = "cortex-m-dispatch-probe")]
+                self.probe_admission_rejection(self.pc);
+                #[cfg(feature = "cortex-m-dispatch-probe")]
+                self.record_dispatch_probe(
+                    ProbeStage::Block,
+                    ProbeReason::InitialAdmissionRejected,
+                    0,
+                );
                 self.memoize_t16_discovery_miss();
+                #[cfg(feature = "cortex-m-dispatch-probe")]
+                self.record_dispatch_probe(ProbeStage::Block, ProbeReason::Returned, 0);
                 return 0;
             }
+            #[cfg(feature = "cortex-m-dispatch-probe")]
+            self.record_dispatch_probe(ProbeStage::Block, ProbeReason::InitialAdmissionPassed, 0);
             let mut found = None;
             // Batch boundaries can land anywhere within a loop. Search the small
             // decoded window behind PC so a rotated entry still discovers the
@@ -1755,8 +1873,32 @@ impl CortexM {
                 // T32/MMIO poll loops that cannot qualify. No guest execution,
                 // timing, MMIO observation or scheduler deadline is skipped.
                 if !self.t16_block_entry_admitted(start) {
+                    #[cfg(feature = "cortex-m-dispatch-probe")]
+                    self.probe_admission_rejection(start);
+                    #[cfg(feature = "cortex-m-dispatch-probe")]
+                    self.record_dispatch_probe_at(
+                        ProbeStage::Block,
+                        if back == 0 {
+                            ProbeReason::DuplicateAdmissionRejected
+                        } else {
+                            ProbeReason::SearchAdmissionRejected
+                        },
+                        start,
+                        0,
+                    );
                     break;
                 }
+                #[cfg(feature = "cortex-m-dispatch-probe")]
+                self.record_dispatch_probe_at(
+                    ProbeStage::Block,
+                    if back == 0 {
+                        ProbeReason::DuplicateAdmissionPassed
+                    } else {
+                        ProbeReason::SearchAdmissionPassed
+                    },
+                    start,
+                    0,
+                );
                 found = self.compile_t16_fast_block(start).filter(|candidate| {
                     self.pc >= candidate.start
                         && self.pc <= candidate.end
@@ -1767,9 +1909,15 @@ impl CortexM {
                 }
             }
             let Some(block) = found else {
+                #[cfg(feature = "cortex-m-dispatch-probe")]
+                self.record_dispatch_probe(ProbeStage::Block, ProbeReason::ShapeNotFound, 0);
                 self.memoize_t16_discovery_miss();
+                #[cfg(feature = "cortex-m-dispatch-probe")]
+                self.record_dispatch_probe(ProbeStage::Block, ProbeReason::Returned, 0);
                 return 0;
             };
+            #[cfg(feature = "cortex-m-dispatch-probe")]
+            self.record_dispatch_probe(ProbeStage::Block, ProbeReason::ShapeFound, 0);
             self.t16_fast_block = Some(block);
         }
         // Keep the large instruction array in its cache slot. Execution only
@@ -1783,11 +1931,15 @@ impl CortexM {
         while executed < max_count {
             let op = self.t16_fast_block.as_ref().unwrap().ops[index];
             if !self.execute_t16_fast_op(bus, op) {
+                #[cfg(feature = "cortex-m-dispatch-probe")]
+                self.record_dispatch_probe(ProbeStage::Block, Self::probe_op_refusal(op), executed);
                 self.t16_fast_block = None;
                 break;
             }
             executed += 1;
             if matches!(op, Instruction::BranchCond { .. }) && self.pc != start {
+                #[cfg(feature = "cortex-m-dispatch-probe")]
+                self.record_dispatch_probe(ProbeStage::Block, ProbeReason::BranchExit, 0);
                 break;
             }
             index += 1;
@@ -1795,6 +1947,8 @@ impl CortexM {
                 index = 0;
             }
         }
+        #[cfg(feature = "cortex-m-dispatch-probe")]
+        self.record_dispatch_probe(ProbeStage::Block, ProbeReason::Returned, executed);
         executed
     }
 
