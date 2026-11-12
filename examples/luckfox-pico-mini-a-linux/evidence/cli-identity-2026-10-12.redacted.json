@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "kind": "redacted-historical-observation",
+  "original": {
+    "bytes": 472,
+    "sha256": "37beaf927d1fae43fde0d0f934c4528298d8201a1f8ff3682ce86c38be0573b4"
+  },
+  "redacted_fields": [
+    "cli",
+    "build_log"
+  ],
+  "observation": {
+    "cli": "[REDACTED_LOCAL_PATH]",
+    "sha256": "d2d11eef64c9879ab97adf164e7cae0b45fa08c5556ea19f55f1da7b490c0055",
+    "bytes": 56807416,
+    "source_head": "28bb66c5dbcc52ead1311664551d400db51026ec",
+    "profile": "native-system",
+    "features": "qemu-arm-system",
+    "build_log": "[REDACTED_LOCAL_PATH]",
+    "build_exit": 0,
+    "task4_runtime_rust_changes": false,
+    "preserved_at": "2026-10-12T16:56:21.298569+00:00"
+  },
+  "limits": "Public derivative, not intact original evidence, fresh execution, or proof of derivation. Original bytes are retained privately."
+}

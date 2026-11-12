@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "kind": "redacted-historical-observation",
+  "original": {
+    "bytes": 445,
+    "sha256": "38ed9688fb247b9af42a68963a1ef0abd8affcc7f31cda1adc57292d00e7b9a5"
+  },
+  "redacted_fields": [
+    "artifacts_directory",
+    "boot_receipt",
+    "cli_path"
+  ],
+  "observation": {
+    "artifacts_directory": "[REDACTED_LOCAL_PATH]",
+    "boot_receipt": "[REDACTED_LOCAL_PATH]",
+    "cli_path": "[REDACTED_LOCAL_PATH]",
+    "cli_sha256": "d2d11eef64c9879ab97adf164e7cae0b45fa08c5556ea19f55f1da7b490c0055",
+    "gate": "production_zimage_reaches_pid1_and_advancing_guest_uptime",
+    "guest_boot": "NOT_RUN",
+    "schema": 1
+  },
+  "limits": "Public derivative, not intact original evidence, fresh execution, or proof of derivation. Original bytes are retained privately."
+}

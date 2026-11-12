@@ -4,7 +4,7 @@ Paths in the commands below are operator-selected; use fresh output and receipt 
 
 Preparation, loader qualification, guest boot, publication and physical acceptance are separate results.
 
-Production direct zImage acceptance **passed locally on 2026-10-12** through the shipped optimized native CLI. The complete [UART/boot receipt](evidence/production-boot-2026-10-12.json), [independent CLI identity](evidence/cli-identity-2026-10-12.json) and [gate input provenance](evidence/gate-inputs-2026-10-12.json) are retained. Input provenance is written before launch and deliberately says `guest_boot: NOT_RUN`; only the separate boot receipt records `ACCEPTED`.
+Production direct zImage acceptance **passed locally on 2026-10-12** through the shipped optimized native CLI. The complete [UART/boot receipt](evidence/production-boot-2026-10-12.json), [redacted CLI identity observation](evidence/cli-identity-2026-10-12.redacted.json) and [redacted gate input observation](evidence/gate-inputs-2026-10-12.redacted.json) are available. The two linked sidecars are public derivatives with local path fields replaced, not intact originals. Exact original sidecar bytes are retained privately; the [provenance index](evidence/historical-sidecars-provenance.json) records their original byte counts and hashes, the redacted fields, and each derivative identity. These commitments are not independent proof of derivation or fresh qualification. Previous Git history and artifacts are unchanged. Input provenance is written before launch and deliberately says `guest_boot: NOT_RUN`; only the separate boot receipt records `ACCEPTED`.
 
 | Accepted production run | Evidence |
 |---|---|

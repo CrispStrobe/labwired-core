@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "kind": "historical-sidecar-provenance-index",
+  "limits": "Identity commitments and redaction inventory only; not intact original receipts, independent proof of derivation, or fresh qualification. Previous Git history and artifacts are unchanged.",
+  "entries": [
+    {
+      "original_file": "gate-inputs-2026-10-12.json",
+      "original": {
+        "bytes": 445,
+        "sha256": "38ed9688fb247b9af42a68963a1ef0abd8affcc7f31cda1adc57292d00e7b9a5"
+      },
+      "original_availability": "private-offline",
+      "public_derivative": "gate-inputs-2026-10-12.redacted.json",
+      "derivative": {
+        "bytes": 783,
+        "sha256": "9f46dcc0cf64f5b17ace51882b937821737003b702ac8c778b035dfffb656c8b"
+      },
+      "redacted_fields": [
+        "artifacts_directory",
+        "boot_receipt",
+        "cli_path"
+      ]
+    },
+    {
+      "original_file": "cli-identity-2026-10-12.json",
+      "original": {
+        "bytes": 472,
+        "sha256": "37beaf927d1fae43fde0d0f934c4528298d8201a1f8ff3682ce86c38be0573b4"
+      },
+      "original_availability": "private-offline",
+      "public_derivative": "cli-identity-2026-10-12.redacted.json",
+      "derivative": {
+        "bytes": 836,
+        "sha256": "f296056883e9d1d71d4f226fd94c407c20b9d318a56dd3863abfe21a271ad9eb"
+      },
+      "redacted_fields": [
+        "cli",
+        "build_log"
+      ]
+    }
+  ]
+}
