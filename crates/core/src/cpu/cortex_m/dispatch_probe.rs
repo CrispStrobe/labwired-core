@@ -477,4 +477,168 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn full_dispatch_matches_probe_off_at_rotated_entries_and_all_executor_shapes() {
+        use crate::{bus::SystemBus, Cpu};
+        let cases: &[&[u16]] = &[
+            &[0xe7fe],
+            &[0x3801, 0xd1fd],
+            &[0x3001, 0x6008, 0x680a, 0xe7fb],
+            &[0x9000, 0x4669, 0x1c40, 0xe7fb],
+            &[0x2001, 0x3001, 0xe7fc],
+            &[0x6808, 0xe7fd],
+            &[0xbf30, 0xe7fd],
+        ];
+        for &ops in cases {
+            for phase in 0..ops.len() {
+                for budget in [0, 1, 2, 3, 16, 65, 128] {
+                    for mmio in [false, true] {
+                        for cap in [1, 3, 1000] {
+                            let mut observed = CortexM::new();
+                            let mut plain = CortexM::new();
+                            let mut a = SystemBus::new();
+                            let mut b = SystemBus::new();
+                            for cpu in [&mut observed, &mut plain] {
+                                cpu.pc = 0x100 + phase as u32 * 2;
+                                cpu.r0 = 50;
+                                cpu.r1 = if mmio { 0x40000000 } else { 0x20000100 };
+                                cpu.sp = 0x20000200;
+                                for (j, &op) in ops.iter().enumerate() {
+                                    cache(cpu, 0x100 + j as u32 * 2, op);
+                                }
+                            }
+                            observed.enable_dispatch_probe(cap);
+                            let retired = observed.run_t16_cached_fast_paths(&mut a, budget);
+                            assert_eq!(
+                                retired,
+                                plain.run_t16_cached_fast_paths(&mut b, budget),
+                                "ops={ops:x?} phase={phase} budget={budget} mmio={mmio} cap={cap}"
+                            );
+                            assert_eq!(
+                                serde_json::to_value(observed.snapshot()).unwrap(),
+                                serde_json::to_value(plain.snapshot()).unwrap()
+                            );
+                            assert_eq!(a.ram.data, b.ram.data);
+                            assert_eq!(a.access_counts(), b.access_counts());
+                            let p = observed.take_dispatch_probe().unwrap();
+                            assert!(p.recorded() <= cap);
+                            if cap == 1000 {
+                                assert!(!p.exhausted());
+                                let c = p.counts(Stage::Dispatch, Reason::Returned);
+                                assert_eq!(c.events, 1);
+                                assert_eq!(c.retired, u64::from(retired));
+                                assert_eq!(c.zero_returns, u64::from(retired == 0));
+                                if ops == [0xe7fe] {
+                                    assert_eq!(retired, budget);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn dispatcher_refusal_preserves_live_read_clear_irq_and_mmio_hooks() {
+        use crate::{bus::SystemBus, peripherals::nvic::NvicState, Peripheral, SimResult};
+        use std::sync::{
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+            Arc,
+        };
+        #[derive(Debug, Default)]
+        struct Hooks {
+            read_count: AtomicUsize,
+            capability_count: AtomicUsize,
+            level_count: AtomicUsize,
+            deassert_capability: AtomicBool,
+            line: AtomicBool,
+        }
+        #[derive(Debug)]
+        struct ReadClear(Arc<Hooks>);
+        impl Peripheral for ReadClear {
+            fn read(&self, _offset: u64) -> SimResult<u8> {
+                panic!("word read must use word hook")
+            }
+            fn read_u32(&self, _offset: u64) -> SimResult<u32> {
+                self.0.read_count.fetch_add(1, Ordering::SeqCst);
+                self.0.line.store(false, Ordering::SeqCst);
+                Ok(0x12345678)
+            }
+            fn write(&mut self, _offset: u64, _value: u8) -> SimResult<()> {
+                panic!("no write expected")
+            }
+            fn reads_can_deassert_irq(&self) -> bool {
+                self.0.capability_count.fetch_add(1, Ordering::SeqCst);
+                self.0.deassert_capability.load(Ordering::SeqCst)
+            }
+            fn irq_line_level(&self) -> Option<bool> {
+                self.0.level_count.fetch_add(1, Ordering::SeqCst);
+                Some(self.0.line.load(Ordering::SeqCst))
+            }
+        }
+        for enabled in [false, true] {
+            for optimized in [false, true] {
+                let mut cpu = CortexM::new();
+                let mut bus = SystemBus::new();
+                bus.config.optimized_bus_access = optimized;
+                let hooks = Arc::new(Hooks::default());
+                let nvic = Arc::new(NvicState::default());
+                bus.nvic = Some(nvic.clone());
+                bus.add_peripheral(
+                    "read-clear-probe-control",
+                    0x40000000,
+                    0x100,
+                    Some(5),
+                    Box::new(ReadClear(hooks.clone())),
+                );
+                bus.refresh_peripheral_index();
+                cpu.r1 = 0x40000000;
+                cache(&mut cpu, 0x100, 0x6808);
+                cache(&mut cpu, 0x102, 0xe7fd);
+                assert!(bus.flash.write_u16(0x100, 0x6808));
+                assert!(bus.flash.write_u16(0x102, 0xe7fd));
+                if enabled {
+                    cpu.enable_dispatch_probe(1000);
+                }
+                for (read_index, capability) in [true, false, true].into_iter().enumerate() {
+                    cpu.pc = 0x100;
+                    hooks
+                        .deassert_capability
+                        .store(capability, Ordering::SeqCst);
+                    hooks.line.store(true, Ordering::SeqCst);
+                    nvic.ispr[0].store(1 << 5, Ordering::SeqCst);
+                    nvic.level_pended[0].store(1 << 5, Ordering::SeqCst);
+                    let accesses = bus.access_counts();
+                    let reads = hooks.read_count.load(Ordering::SeqCst);
+                    let caps = hooks.capability_count.load(Ordering::SeqCst);
+                    let levels = hooks.level_count.load(Ordering::SeqCst);
+                    assert_eq!(cpu.run_t16_cached_fast_paths(&mut bus, 16), 0);
+                    assert_eq!(bus.access_counts(), accesses);
+                    assert_eq!(hooks.read_count.load(Ordering::SeqCst), reads);
+                    assert_eq!(hooks.capability_count.load(Ordering::SeqCst), caps);
+                    assert_eq!(hooks.level_count.load(Ordering::SeqCst), levels);
+                    assert_eq!(nvic.ispr[0].load(Ordering::SeqCst), 1 << 5);
+                    let config = bus.config.clone();
+                    cpu.step_internal(&mut bus, &[], &config).unwrap();
+                    assert_eq!(cpu.r0, 0x12345678);
+                    assert_eq!(hooks.read_count.load(Ordering::SeqCst), read_index + 1);
+                    assert_eq!(hooks.capability_count.load(Ordering::SeqCst), caps + 1);
+                    assert_eq!(
+                        hooks.level_count.load(Ordering::SeqCst),
+                        levels + usize::from(capability)
+                    );
+                    assert_eq!(
+                        nvic.ispr[0].load(Ordering::SeqCst),
+                        if capability { 0 } else { 1 << 5 }
+                    );
+                    assert_eq!(
+                        nvic.level_pended[0].load(Ordering::SeqCst),
+                        if capability { 0 } else { 1 << 5 }
+                    );
+                    assert_eq!(bus.access_counts().2, accesses.2 + 1);
+                }
+            }
+        }
+    }
 }

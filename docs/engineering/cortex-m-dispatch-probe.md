@@ -64,3 +64,12 @@ source and own guest, collect one finite prefix, and retain source/toolchain/
 input identities with the output. Instrumented timing cannot establish a
 speedup. Any later optimization needs independent review, uninstrumented
 same-runner A/B qualification and unchanged qualification thresholds.
+
+The prepared integrated controls include the complete cached dispatcher across
+rotated entries, executor shapes, budgets, RAM/MMIO addresses and cap cutoffs.
+A separate authored read-clear peripheral checks that a declined dispatcher
+performs no read, capability or IRQ-level hook, then exercises the actual
+interpreter fallback. Its live read-deassert capability changes true/false/true;
+word-read counts, MMIO accounting and level-marked NVIC pends must follow the
+current capability with the probe both enabled and disabled and with optimized
+bus access on and off. These controls are prepared, not yet compiled or run.
