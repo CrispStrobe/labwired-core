@@ -1,5 +1,7 @@
 # Optional matching Linux driver preparation
 
+Paths in the commands below are operator-selected; use fresh output and receipt paths where required.
+
 `scripts/prepare-rv1103-modules.py` builds the unchanged upstream Linux6.18.56
 RK3x I2C driver against the exact pinned Alpine ARMv7 headers and symbol versions,
 and extracts matching stock `i2c-dev`. This is an optional host preparation step.
@@ -9,8 +11,8 @@ does not accept this module manifest as a boot manifest.
 
 ```sh
 python3 scripts/prepare-rv1103-modules.py \
-  --cache /tmp/rv1103-apk-cache \
-  --output /tmp/rv1103-linux-modules
+  --cache "$MODULE_CACHE" \
+  --output "$MODULE_OUTPUT"
 ```
 
 The output must be a fresh directory with no symlink parents. `--offline` forbids
