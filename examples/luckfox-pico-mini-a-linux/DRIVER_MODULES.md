@@ -105,8 +105,10 @@ and cpio323580 bytes, SHA256
 These identify that verified host build, not arbitrary compatible modules or
 the earlier ad-hoc experiment. Downloaded inputs, generated headers and binaries
 stay outside the repository for fresh preparation. The exact reviewed historical
-module receipt/payload is also retained in [basket/reviewed-modules/](basket/reviewed-modules/README.md),
-with its historical build provenance preserved. This host preparation receipt
+module payload and original identity index remain in [basket/reviewed-modules/](basket/reviewed-modules/README.md).
+The intact historical receipt and build logs are private offline inputs; the public
+directory cannot satisfy preparation by itself. Original-byte admission and
+source/package/preparer checks remain unchanged. This host preparation receipt
 still records guest insertion `NOT_RUN`; later [native joint acceptance](BASKET.md)
 records successful guest insertion and shared-circuit evidence separately.
 Physical hardware remains unavailable.

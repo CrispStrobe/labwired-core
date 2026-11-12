@@ -257,6 +257,11 @@ jobs:
       CARGO_BUILD_JOBS: "2"
       CARGO_INCREMENTAL: "0"
     steps:
+      - name: Refuse public basket preparation without private original input
+        run: |
+          printf '%s\n' 'Basket qualification unavailable: intact original module receipt is a private offline input.' >&2
+          printf '%s\n' 'Public checkout cannot prepare this profile. No guest qualification has run.' >&2
+          exit 1
       - uses: actions/checkout@v4
       - name: Initialize evidence before any opt-in failure
         env:
@@ -338,15 +343,3 @@ jobs:
       - name: Run actual joint guest once with explicit positive bounds
         run: |
           target/native-system/labwired rv1103-basket --artifacts "$RUNNER_TEMP/basket-prepared"             --receipt "$RUNNER_TEMP/basket-evidence/actual-basket.json"             --max-cycles 4000000000 --max-fuel 4000000000 --max-retirements 2000000000             --wall-seconds 3600 --console-bytes 65536             > "$RUNNER_TEMP/basket-evidence/guest-stdout.log" 2> "$RUNNER_TEMP/basket-evidence/guest-stderr.log"
-      - name: Archive complete success/failure console, receipts, hashes and preparation
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: rv1103-linux-basket-${{ github.run_id }}
-          if-no-files-found: warn
-          retention-days: 14
-          path: |
-            ${{ runner.temp }}/basket-evidence/
-            ${{ runner.temp }}/basket-prepared/
-            ${{ runner.temp }}/basket-base/artifact-manifest.json
-            examples/luckfox-pico-mini-a-linux/basket/reviewed-modules/

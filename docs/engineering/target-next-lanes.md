@@ -11,6 +11,17 @@ These are proposed task contracts, not ownership claims or passing receipts.
 Refresh the default branch and open PRs before starting; shared behavior lands
 in the engine first, followed by an explicit qualified consumer pin.
 
+## Basket original-input privacy — claimed 2026-11-12
+
+Claim and change in one PR, separately from prepared-profile redaction. Remove
+current public intact module receipt/log copies after verifying private retained
+bytes; retain original identity commitments, all pins and producer source bytes.
+Fail hosted basket preparation before private input access or work, remove its
+raw uploader, document unavailable public preparation and add explicit public
+privacy/private positive-input controls. No guest qualification, private execution
+route or historical rewrite is claimed. Private exact-original input and affected
+qualification remain required; never substitute redacted bytes for originals.
+
 ## Basket prepared-profile privacy — claimed 2026-11-12
 
 Claim and change in one PR. Scope: redact inherited PATH and temporary

@@ -1,0 +1,28 @@
+{
+  "availability": "private-offline-input-required",
+  "files": {
+    "build-a.log": {
+      "bytes": 5916,
+      "sha256": "2706d98218883221e6a6226a9a763631eb9c3f6b2bb99fd72e0ceaf25ed54801"
+    },
+    "build-b.log": {
+      "bytes": 5916,
+      "sha256": "b78194395e669670d914f1f8bac89a5c90e10152bb8ecf0094609e97a40e3b94"
+    },
+    "i2c-dev.ko": {
+      "bytes": 21719,
+      "sha256": "6381d4a9b257a836ce7f14a80ad1386ae5471e82a0b23715c848ba5362c159aa"
+    },
+    "i2c-rk3x.ko": {
+      "bytes": 300952,
+      "sha256": "1b3404627ffae4a66d0d126bc14c0fee76127609455c52d44137d7db82257efa"
+    },
+    "module-manifest.json": {
+      "bytes": 64632,
+      "sha256": "f5fab55c5d3cecb9713d277b9c19f3b215d781467ad91971219e35cf8e503ab6"
+    }
+  },
+  "kind": "historical-original-identities-not-a-preparation-receipt",
+  "note": "These hashes identify intact historical originals. This index cannot replace module-manifest.json or authorize preparation. Private originals are not bundled or fetched.",
+  "schema": 1
+}
