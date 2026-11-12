@@ -1,11 +1,13 @@
 # Luckfox Pico Mini A: reduced RV1103 Linux direct boot
 
+Paths in the commands below are operator-selected; use fresh output and receipt paths where required.
+
 This fixture runs an official pinned Alpine ARMv7 Linux zImage and static BusyBox through LabWired's privileged Cortex-A7, SystemBus, GIC400, architectural timer and DW UART2. It qualifies a reduced virtual Linux boot. Physical board, smartbasket application, I2C, ESP and RF acceptance remain separate gates.
 
 Prepare without committing downloaded binaries:
 
 ```sh
-python3 scripts/prepare-rv1103-linux.py --cache /tmp/rv1103-apk-cache --output /tmp/rv1103-linux
+python3 scripts/prepare-rv1103-linux.py --cache "$LINUX_CACHE" --output "$LINUX_ARTIFACTS"
 ```
 
 The output must be fresh. A hash-addressed cache is rehashed on every use; `--offline` forbids downloads. Preparation checks official package identities, exact members, kernel builtins, deterministic initramfs and the compiled DTB before issuing a `VERIFIED` preparation receipt. This does not claim guest acceptance.
@@ -14,7 +16,7 @@ Build and run the explicit optional native mode (x86_64 Linux GNU, panic unwind)
 
 ```sh
 CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 cargo +1.95.0 build --locked -p labwired-cli --bin labwired --profile native-system --features qemu-arm-system,event-scheduler
-./target/native-system/labwired rv1103-linux --artifacts /tmp/rv1103-linux --receipt /tmp/rv1103-boot.json --cpu-hz 24000000 --wall-seconds 1800
+./target/native-system/labwired rv1103-linux --artifacts "$LINUX_ARTIFACTS" --receipt "$BOOT_RECEIPT" --cpu-hz 24000000 --wall-seconds 1800
 ```
 
 CPU Hz defaults to 1.2 GHz; boot at that default has not been verified here. One retired instruction advances one functional CPU tick; this is not physical timing. The accepted run and reproduction command explicitly use `--cpu-hz 24000000`, a functional calibration override recorded in the receipt. The architectural timer remains 24 MHz in both cases. Idle fast-forward and the existing event scheduler are enabled explicitly; the runner uses small bounded `Machine::advance` windows.
@@ -22,9 +24,9 @@ CPU Hz defaults to 1.2 GHz; boot at that default has not been verified here. One
 The [2026-10-12 production receipt](evidence/production-boot-2026-10-12.json) passed with the explicit 24 MHz CPU calibration. To reproduce that bounded acceptance gate, use a fresh receipt path and the actual shipped optimized CLI:
 
 ```sh
-LABWIRED_RV1103_ARTIFACTS=/tmp/rv1103-linux \
+LABWIRED_RV1103_ARTIFACTS="$LINUX_ARTIFACTS" \
 LABWIRED_RV1103_CLI="$PWD/target/native-system/labwired" \
-LABWIRED_RV1103_BOOT_RECEIPT=/tmp/rv1103-boot-new.json \
+LABWIRED_RV1103_BOOT_RECEIPT="$BOOT_RECEIPT" \
 CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 \
 cargo +1.95.0 test --locked -p labwired-core --profile native-system --features qemu-arm-system,event-scheduler --test rv1103_linux_boot -- --ignored --nocapture
 ```

@@ -1,4 +1,6 @@
 This is a distinct prepared Linux profile. Guest execution is **NOT_RUN**;
+
+Paths in the commands below are operator-selected; use fresh output and receipt paths where required.
 Task4C must prove the phases on the shared canonical circuit. Base `/init`,
 its ten-node DT and base loader keep their original meaning.
 
@@ -99,10 +101,10 @@ original base/module artifacts:
 
 ```sh
 python3 scripts/prepare-rv1103-basket.py \
-  --output /tmp/rv1103-basket-prepared \
-  --cache /tmp/labwired-rv1103-verified-apk-cache-20261012 \
-  --base-artifacts /tmp/labwired-rv1103-strict-artifacts-root-physical-20261012 \
-  --module-artifacts /tmp/labwired-rv1103-strict-modules-task1-version-fix-20261012
+  --output "$BASKET_OUTPUT" \
+  --cache "$BASKET_CACHE" \
+  --base-artifacts "$BASE_ARTIFACTS" \
+  --module-artifacts "$MODULE_ARTIFACTS"
 ```
 
 The output is published atomically only after guards pass. It contains no
