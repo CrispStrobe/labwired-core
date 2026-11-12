@@ -9,7 +9,7 @@ use std::{collections::BTreeMap, path::Path};
 pub const FUNCTIONAL_CPU_HZ: u64 = 24_000_000;
 pub const PROFILE: &str = "rv1103-linux-basket-v1";
 pub const TRUSTED_MANIFEST_SHA256: &str =
-    "73688dfd91cf2786f8b2a2e4b10fde8c86d197c8c9d74e18fcf71d8c10e66426";
+    "8a603e7296d27184155e858da67b13ca686a216f7870b8f7402f80c52dee1555";
 const TRUSTED_MANIFEST: &str =
     include_str!("../../../../examples/luckfox-pico-mini-a-linux/basket/trusted-prepared.json");
 const TRUSTED_NEWC: &str =

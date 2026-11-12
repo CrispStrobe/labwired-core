@@ -94,6 +94,25 @@ actual helper/DT/archive bytes must agree between the two builds and with the
 checked-in reviewed expected pins. The manifest reports these observations;
 a user-edited manifest cannot authorize arbitrary content.
 
+The checked-in `trusted-prepared.json` is a **redacted loader profile**, not
+an intact original preparation receipt. Its build observations replace inherited
+PATH values with `<redacted-inherited-PATH>` and temporary preparation roots with
+`<redacted-preparation-root>`. These are disclosure markers, not executable
+paths or claims that the original commands ran with those values. Original
+`command_identity` byte counts and digests still identify the unredacted commands;
+they do not hash the displayed redacted command arrays. Tool binary/version
+identities, source/output identities, artifact/log pins and all other fields
+remain unchanged. The embedded whole-file digest identifies this redacted file;
+it is not the original receipt digest and does not requalify historical results.
+
+The loader already treats build paths, environments and tool captures as bounded
+observations. Only their structure and bounds, plus each build's exact `source`,
+`generated_header`, `output`, `dtb` and `initramfs` identities, affect admission.
+Redaction preserves those requirements and every stable profile field. Fresh
+preparation still records its actual local observations; keep original receipts
+private and review any public copy before publication. No historical receipt,
+producer behavior or guest acceptance assertion is replaced by this redaction.
+
 Run preparation with fresh output, verified offline APK/source cache and
 original base/module artifacts:
 

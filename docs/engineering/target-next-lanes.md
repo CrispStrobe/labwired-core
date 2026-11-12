@@ -11,6 +11,17 @@ These are proposed task contracts, not ownership claims or passing receipts.
 Refresh the default branch and open PRs before starting; shared behavior lands
 in the engine first, followed by an explicit qualified consumer pin.
 
+## Basket prepared-profile privacy — claimed 2026-11-12
+
+Claim and change in one PR. Scope: redact inherited PATH and temporary
+preparation-root strings only in the trusted prepared profile's build
+observations, update its exact embedded-file digest, and document the redaction
+boundary. Preserve every authorization field, original command/tool identity,
+artifact/log pin, source pin, observation shape and bound. No producer, loader
+predicate, historical receipt, guest, dependency or canonical export changes.
+Affected compilation/guest qualification remains pending; local observation
+invariance controls alone do not qualify a new executable or guest run.
+
 ## Python 3.13 leg for the CI-script tests — claimed 2026-11-11
 
 Claim and change in one PR. Adds `pr-ci-scripts-py313` to `core-ci.yml`: the same

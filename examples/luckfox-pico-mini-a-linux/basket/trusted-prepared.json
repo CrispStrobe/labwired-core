@@ -119,13 +119,13 @@
         "-fno-unwind-tables",
         "-fno-asynchronous-unwind-tables",
         "-fno-ident",
-        "-ffile-prefix-map=/tmp/.rv1103-basket-50w23lsv/build-a=/rv1103-basket",
-        "-fdebug-prefix-map=/tmp/.rv1103-basket-50w23lsv/build-a=/rv1103-basket",
-        "-fmacro-prefix-map=/tmp/.rv1103-basket-50w23lsv/build-a=/rv1103-basket",
+        "-ffile-prefix-map=<redacted-preparation-root>/build-a=/rv1103-basket",
+        "-fdebug-prefix-map=<redacted-preparation-root>/build-a=/rv1103-basket",
+        "-fmacro-prefix-map=<redacted-preparation-root>/build-a=/rv1103-basket",
         "-Wl,--build-id=none,-e,_start,-Ttext=0x10000",
         "-o",
-        "/tmp/.rv1103-basket-50w23lsv/build-a/basket-helper",
-        "/tmp/.rv1103-basket-50w23lsv/build-a/helper.c"
+        "<redacted-preparation-root>/build-a/basket-helper",
+        "<redacted-preparation-root>/build-a/helper.c"
       ],
       "command_identity": {
         "bytes": 659,
@@ -145,7 +145,7 @@
         ],
         "version_environment": {
           "LC_ALL": "C",
-          "PATH": "/home/andrii/.local/bin:/home/andrii/.local/bin:/home/andrii/bin:/home/andrii/.codex/packages/app-server-daemon/releases/0.162.1-x86_64-unknown-linux-musl/codex-path:/home/andrii/.codex/tmp/arg0/codex-arg0GZAWAg:/home/andrii/.codex/tmp/arg0/codex-arg070dqba:/home/andrii/.codex/packages/app-server-daemon/releases/0.162.0-x86_64-unknown-linux-musl/codex-path:/home/andrii/.codex/tmp/arg0/codex-arg0DcqWuG:/home/andrii/.codex/packages/app-server-daemon/releases/0.161.0-x86_64-unknown-linux-musl/codex-path:/home/andrii/.codex/tmp/arg0/codex-arg0fg7LVI:/home/andrii/.codex/packages/app-server-daemon/releases/0.160.1-x86_64-unknown-linux-musl/codex-path:/home/andrii/.codex/tmp/arg0/codex-arg0lE0C9E:/home/andrii/.nvm/versions/node/v20.20.2/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/codex-path:/home/andrii/.opencode/bin:/home/andrii/.local/google-cloud-sdk/bin:/home/andrii/.grok/bin:/home/andrii/.local/bin:/home/andrii/.nvm/versions/node/v20.20.2/bin:/home/andrii/.local/bin:/home/andrii/.local/bin:/home/andrii/.local/bin:/home/andrii/.local/bin:/home/andrii/bin:/home/andrii/.local/bin:/home/andrii/.deno/bin:/home/andrii/.cargo/bin:/home/andrii/.local/bin:/home/andrii/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin",
+          "PATH": "<redacted-inherited-PATH>",
           "TZ": "UTC"
         },
         "version_output": {
@@ -154,7 +154,7 @@
         },
         "version_timeout_seconds": 10
       },
-      "directory": "/tmp/.rv1103-basket-50w23lsv/build-a",
+      "directory": "<redacted-preparation-root>/build-a",
       "dtb": {
         "bytes": 2062,
         "sha256": "d83aacde44192069b04f33c7b2980464d475ba8e362b5d925f6c85e7bbc1efab"
@@ -173,7 +173,7 @@
         ],
         "version_environment": {
           "LC_ALL": "C",
-          "PATH": "/home/andrii/.local/bin:/home/andrii/.local/bin:/home/andrii/bin:/home/andrii/.codex/packages/app-server-daemon/releases/0.162.1-x86_64-unknown-linux-musl/codex-path:/home/andrii/.codex/tmp/arg0/codex-arg0GZAWAg:/home/andrii/.codex/tmp/arg0/codex-arg070dqba:/home/andrii/.codex/packages/app-server-daemon/releases/0.162.0-x86_64-unknown-linux-musl/codex-path:/home/andrii/.codex/tmp/arg0/codex-arg0DcqWuG:/home/andrii/.codex/packages/app-server-daemon/releases/0.161.0-x86_64-unknown-linux-musl/codex-path:/home/andrii/.codex/tmp/arg0/codex-arg0fg7LVI:/home/andrii/.codex/packages/app-server-daemon/releases/0.160.1-x86_64-unknown-linux-musl/codex-path:/home/andrii/.codex/tmp/arg0/codex-arg0lE0C9E:/home/andrii/.nvm/versions/node/v20.20.2/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/codex-path:/home/andrii/.opencode/bin:/home/andrii/.local/google-cloud-sdk/bin:/home/andrii/.grok/bin:/home/andrii/.local/bin:/home/andrii/.nvm/versions/node/v20.20.2/bin:/home/andrii/.local/bin:/home/andrii/.local/bin:/home/andrii/.local/bin:/home/andrii/.local/bin:/home/andrii/bin:/home/andrii/.local/bin:/home/andrii/.deno/bin:/home/andrii/.cargo/bin:/home/andrii/.local/bin:/home/andrii/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin",
+          "PATH": "<redacted-inherited-PATH>",
           "TZ": "UTC"
         },
         "version_output": {
@@ -189,12 +189,12 @@
         "-O",
         "dtb",
         "-o",
-        "/tmp/.rv1103-basket-50w23lsv/build-a/rv1103-basket.dtb",
-        "/tmp/.rv1103-basket-50w23lsv/build-a/rv1103-basket.dts"
+        "<redacted-preparation-root>/build-a/rv1103-basket.dtb",
+        "<redacted-preparation-root>/build-a/rv1103-basket.dts"
       ],
       "environment": {
         "LC_ALL": "C",
-        "PATH": "/home/andrii/.local/bin:/home/andrii/.local/bin:/home/andrii/bin:/home/andrii/.codex/packages/app-server-daemon/releases/0.162.1-x86_64-unknown-linux-musl/codex-path:/home/andrii/.codex/tmp/arg0/codex-arg0GZAWAg:/home/andrii/.codex/tmp/arg0/codex-arg070dqba:/home/andrii/.codex/packages/app-server-daemon/releases/0.162.0-x86_64-unknown-linux-musl/codex-path:/home/andrii/.codex/tmp/arg0/codex-arg0DcqWuG:/home/andrii/.codex/packages/app-server-daemon/releases/0.161.0-x86_64-unknown-linux-musl/codex-path:/home/andrii/.codex/tmp/arg0/codex-arg0fg7LVI:/home/andrii/.codex/packages/app-server-daemon/releases/0.160.1-x86_64-unknown-linux-musl/codex-path:/home/andrii/.codex/tmp/arg0/codex-arg0lE0C9E:/home/andrii/.nvm/versions/node/v20.20.2/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/codex-path:/home/andrii/.opencode/bin:/home/andrii/.local/google-cloud-sdk/bin:/home/andrii/.grok/bin:/home/andrii/.local/bin:/home/andrii/.nvm/versions/node/v20.20.2/bin:/home/andrii/.local/bin:/home/andrii/.local/bin:/home/andrii/.local/bin:/home/andrii/.local/bin:/home/andrii/bin:/home/andrii/.local/bin:/home/andrii/.deno/bin:/home/andrii/.cargo/bin:/home/andrii/.local/bin:/home/andrii/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin",
+        "PATH": "<redacted-inherited-PATH>",
         "SOURCE_DATE_EPOCH": "0",
         "TZ": "UTC"
       },
@@ -240,13 +240,13 @@
         "-fno-unwind-tables",
         "-fno-asynchronous-unwind-tables",
         "-fno-ident",
-        "-ffile-prefix-map=/tmp/.rv1103-basket-50w23lsv/build-b=/rv1103-basket",
-        "-fdebug-prefix-map=/tmp/.rv1103-basket-50w23lsv/build-b=/rv1103-basket",
-        "-fmacro-prefix-map=/tmp/.rv1103-basket-50w23lsv/build-b=/rv1103-basket",
+        "-ffile-prefix-map=<redacted-preparation-root>/build-b=/rv1103-basket",
+        "-fdebug-prefix-map=<redacted-preparation-root>/build-b=/rv1103-basket",
+        "-fmacro-prefix-map=<redacted-preparation-root>/build-b=/rv1103-basket",
         "-Wl,--build-id=none,-e,_start,-Ttext=0x10000",
         "-o",
-        "/tmp/.rv1103-basket-50w23lsv/build-b/basket-helper",
-        "/tmp/.rv1103-basket-50w23lsv/build-b/helper.c"
+        "<redacted-preparation-root>/build-b/basket-helper",
+        "<redacted-preparation-root>/build-b/helper.c"
       ],
       "command_identity": {
         "bytes": 659,
@@ -266,7 +266,7 @@
         ],
         "version_environment": {
           "LC_ALL": "C",
-          "PATH": "/home/andrii/.local/bin:/home/andrii/.local/bin:/home/andrii/bin:/home/andrii/.codex/packages/app-server-daemon/releases/0.162.1-x86_64-unknown-linux-musl/codex-path:/home/andrii/.codex/tmp/arg0/codex-arg0GZAWAg:/home/andrii/.codex/tmp/arg0/codex-arg070dqba:/home/andrii/.codex/packages/app-server-daemon/releases/0.162.0-x86_64-unknown-linux-musl/codex-path:/home/andrii/.codex/tmp/arg0/codex-arg0DcqWuG:/home/andrii/.codex/packages/app-server-daemon/releases/0.161.0-x86_64-unknown-linux-musl/codex-path:/home/andrii/.codex/tmp/arg0/codex-arg0fg7LVI:/home/andrii/.codex/packages/app-server-daemon/releases/0.160.1-x86_64-unknown-linux-musl/codex-path:/home/andrii/.codex/tmp/arg0/codex-arg0lE0C9E:/home/andrii/.nvm/versions/node/v20.20.2/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/codex-path:/home/andrii/.opencode/bin:/home/andrii/.local/google-cloud-sdk/bin:/home/andrii/.grok/bin:/home/andrii/.local/bin:/home/andrii/.nvm/versions/node/v20.20.2/bin:/home/andrii/.local/bin:/home/andrii/.local/bin:/home/andrii/.local/bin:/home/andrii/.local/bin:/home/andrii/bin:/home/andrii/.local/bin:/home/andrii/.deno/bin:/home/andrii/.cargo/bin:/home/andrii/.local/bin:/home/andrii/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin",
+          "PATH": "<redacted-inherited-PATH>",
           "TZ": "UTC"
         },
         "version_output": {
@@ -275,7 +275,7 @@
         },
         "version_timeout_seconds": 10
       },
-      "directory": "/tmp/.rv1103-basket-50w23lsv/build-b",
+      "directory": "<redacted-preparation-root>/build-b",
       "dtb": {
         "bytes": 2062,
         "sha256": "d83aacde44192069b04f33c7b2980464d475ba8e362b5d925f6c85e7bbc1efab"
@@ -294,7 +294,7 @@
         ],
         "version_environment": {
           "LC_ALL": "C",
-          "PATH": "/home/andrii/.local/bin:/home/andrii/.local/bin:/home/andrii/bin:/home/andrii/.codex/packages/app-server-daemon/releases/0.162.1-x86_64-unknown-linux-musl/codex-path:/home/andrii/.codex/tmp/arg0/codex-arg0GZAWAg:/home/andrii/.codex/tmp/arg0/codex-arg070dqba:/home/andrii/.codex/packages/app-server-daemon/releases/0.162.0-x86_64-unknown-linux-musl/codex-path:/home/andrii/.codex/tmp/arg0/codex-arg0DcqWuG:/home/andrii/.codex/packages/app-server-daemon/releases/0.161.0-x86_64-unknown-linux-musl/codex-path:/home/andrii/.codex/tmp/arg0/codex-arg0fg7LVI:/home/andrii/.codex/packages/app-server-daemon/releases/0.160.1-x86_64-unknown-linux-musl/codex-path:/home/andrii/.codex/tmp/arg0/codex-arg0lE0C9E:/home/andrii/.nvm/versions/node/v20.20.2/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/codex-path:/home/andrii/.opencode/bin:/home/andrii/.local/google-cloud-sdk/bin:/home/andrii/.grok/bin:/home/andrii/.local/bin:/home/andrii/.nvm/versions/node/v20.20.2/bin:/home/andrii/.local/bin:/home/andrii/.local/bin:/home/andrii/.local/bin:/home/andrii/.local/bin:/home/andrii/bin:/home/andrii/.local/bin:/home/andrii/.deno/bin:/home/andrii/.cargo/bin:/home/andrii/.local/bin:/home/andrii/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin",
+          "PATH": "<redacted-inherited-PATH>",
           "TZ": "UTC"
         },
         "version_output": {
@@ -310,12 +310,12 @@
         "-O",
         "dtb",
         "-o",
-        "/tmp/.rv1103-basket-50w23lsv/build-b/rv1103-basket.dtb",
-        "/tmp/.rv1103-basket-50w23lsv/build-b/rv1103-basket.dts"
+        "<redacted-preparation-root>/build-b/rv1103-basket.dtb",
+        "<redacted-preparation-root>/build-b/rv1103-basket.dts"
       ],
       "environment": {
         "LC_ALL": "C",
-        "PATH": "/home/andrii/.local/bin:/home/andrii/.local/bin:/home/andrii/bin:/home/andrii/.codex/packages/app-server-daemon/releases/0.162.1-x86_64-unknown-linux-musl/codex-path:/home/andrii/.codex/tmp/arg0/codex-arg0GZAWAg:/home/andrii/.codex/tmp/arg0/codex-arg070dqba:/home/andrii/.codex/packages/app-server-daemon/releases/0.162.0-x86_64-unknown-linux-musl/codex-path:/home/andrii/.codex/tmp/arg0/codex-arg0DcqWuG:/home/andrii/.codex/packages/app-server-daemon/releases/0.161.0-x86_64-unknown-linux-musl/codex-path:/home/andrii/.codex/tmp/arg0/codex-arg0fg7LVI:/home/andrii/.codex/packages/app-server-daemon/releases/0.160.1-x86_64-unknown-linux-musl/codex-path:/home/andrii/.codex/tmp/arg0/codex-arg0lE0C9E:/home/andrii/.nvm/versions/node/v20.20.2/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/codex-path:/home/andrii/.opencode/bin:/home/andrii/.local/google-cloud-sdk/bin:/home/andrii/.grok/bin:/home/andrii/.local/bin:/home/andrii/.nvm/versions/node/v20.20.2/bin:/home/andrii/.local/bin:/home/andrii/.local/bin:/home/andrii/.local/bin:/home/andrii/.local/bin:/home/andrii/bin:/home/andrii/.local/bin:/home/andrii/.deno/bin:/home/andrii/.cargo/bin:/home/andrii/.local/bin:/home/andrii/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin",
+        "PATH": "<redacted-inherited-PATH>",
         "SOURCE_DATE_EPOCH": "0",
         "TZ": "UTC"
       },
