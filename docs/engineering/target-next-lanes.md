@@ -436,16 +436,17 @@ Nordic GPIO/GPIOTE/SAADC scheduler, authored guests and
 `.github/workflows/microbit-board-io.yml`.
 
 Start from the selected LSM303AGR variant, not a silent FXOS8700 substitute.
-The combined sensor candidate wires selected DRDY outputs through explicit
-V2.0 collectors to P0.25; final-head hosted qualification is still required.
+The landed shared-line implementation wires selected DRDY outputs through
+explicit V2.0 collectors to P0.25. Its bounded guest qualification is recorded
+below; remaining M1 work does not follow automatically from that result.
 Do not implement shared interrupts by attaching two ordinary Boolean outputs to one pad: legacy
 routes apply queued outputs directly, so the last writer can incorrectly
 release another asserted source. Explicitly selected pulled-up open-drain
 routes retain state per device instance and role; ordinary routes keep their
-existing behavior. The electrical candidate requires the qualification below
-before it supports any sensor interrupt claim.
+existing behavior. This digital model does not establish physical electrical
+behavior.
 
-**First bounded implementation:** an opt-in shared open-drain resolver for
+**Landed foundation:** an opt-in shared open-drain resolver for
 resident-device outputs, plus only the required attachment/configuration seam.
 Retain state by device instance and output role; either asserted driver holds
 the line low, releasing one cannot override the other, and both released yield
@@ -471,12 +472,8 @@ model floating nets, analog behavior, delay or contention.
 CPU reset does not itself reset external devices; device reset and output
 release must be qualified separately.
 
-**Then, separately:** freeze the selected sensor's register/output polarity,
-pin, routing, masking, clearing and clock ownership from its published source.
-TWIM advances attached-device time, but `declarative_i2c.rs` currently promotes
-data-ready state before I2C reads. An IRQ requires autonomous state promotion
-and output delivery while the I2C caller is idle, not host-forced data-ready or
-an extra read that manufactures an edge. A declarative rule can subscribe with
+**Landed sensor behavior:** an IRQ requires autonomous state promotion and
+output delivery while the I2C caller is idle. A declarative rule can subscribe with
 `on: { data_ready: NAME }` to a uniquely named I2C conversion; the device clock
 promotes that subscribed conversion at its deadline and fires the rule once.
 Conversions with no such listener retain the existing read-driven behavior.
@@ -489,9 +486,8 @@ Rule actions that write, set or clear a subscribed conversion's start register
 are also rejected: they bypass the master-write conversion lifecycle. This
 conservatively includes unrelated bits of that register. Unsubscribed
 read-driven conversions retain their existing behavior.
-Review selected sensor cancellation and clear semantics before using the event. Wire P0.25 only after those contracts
-are implemented and prove sensor assertion/deassertion and mask/reset through
-real GPIO/GPIOTE guest observations in both scheduler profiles. Event-mode
+Selected sensor cancellation and clear semantics, P0.25 routing and authored
+GPIO/GPIOTE observations are qualified within the bounds below. Event-mode
 GPIOTE must recognize the first reported transition even if the selected input
 was already high before the channel was enabled. The authored shared-line
 guest checks falling-event counts, rising-edge masking and a second falling
@@ -826,7 +822,10 @@ and LSM303AGR accelerometer and magnetometer DRDY routing. The earlier stacked
 PR269 and PR270 were folded into that candidate. PR268 merged as
 `9085e828e905a4843d182b341fd97530c7949dbc` on 2026-10-29; the reviewed
 head `2220357dd34254c918adc71e9799dcb7543d8c30` had 37 successful checks and
-nine declared skips. Refresh main and checks before subsequent work.
+nine declared skips. Its final-head [board qualification](https://github.com/CrispStrobe/labwired-core/actions/runs/40948778471),
+[Rust CI](https://github.com/CrispStrobe/labwired-core/actions/runs/40948778531)
+and [Core Perf](https://github.com/CrispStrobe/labwired-core/actions/runs/40948778447)
+workflows succeeded. Refresh main and checks before subsequent work.
 
 The [board run 40860731752](https://github.com/CrispStrobe/labwired-core/actions/runs/40860731752)
 passed on an earlier candidate, including sensor guests, synthetic nRF52840 DK
