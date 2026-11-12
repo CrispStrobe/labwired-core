@@ -438,13 +438,13 @@ Nordic GPIO/GPIOTE/SAADC scheduler, authored guests and
 Start from the selected LSM303AGR variant, not a silent FXOS8700 substitute.
 The landed shared-line implementation wires selected DRDY outputs through
 explicit V2.0 collectors to P0.25. Its bounded guest qualification is recorded
-below; the remaining M1 work does not follow automatically from that result.
+below; remaining M1 work does not follow automatically from that result.
 Do not implement shared interrupts by attaching two ordinary Boolean outputs to one pad: legacy
 routes apply queued outputs directly, so the last writer can incorrectly
 release another asserted source. Explicitly selected pulled-up open-drain
 routes retain state per device instance and role; ordinary routes keep their
-existing behavior. This is a digital model and does not establish physical
-electrical behavior.
+existing behavior. This digital model does not establish physical electrical
+behavior.
 
 **Landed foundation:** an opt-in shared open-drain resolver for
 resident-device outputs, plus only the required attachment/configuration seam.
@@ -814,28 +814,34 @@ motion needs its own scoped evidence; the successful original campaign is not
 replayed to inspect it. The historical PyBadge module/glass contract remains
 unresolved: this authored software assembly does not establish physical accuracy.
 
-### M1 shared-line and sensor DRDY landing
+### M1 combined shared-line and sensor DRDY landing
 
-[Core PR268](https://github.com/CrispStrobe/labwired-core/pull/268) landed as
-`9085e828e905a4843d182b341fd97530c7949dbc` on 2026-10-29. It combines the
+[Core PR268](https://github.com/CrispStrobe/labwired-core/pull/268) combines the
 open-drain foundation, autonomous conversion events, GPIOTE first-edge repair,
-and selected LSM303AGR accelerometer and magnetometer DRDY routing. The earlier
-PR269 and PR270 were folded into that change. The final PR head had 37 successful
-checks and nine conditional skips; its [board qualification](https://github.com/CrispStrobe/labwired-core/actions/runs/40948778471),
+and LSM303AGR accelerometer and magnetometer DRDY routing. The earlier stacked
+PR269 and PR270 were folded into that candidate. PR268 merged as
+`9085e828e905a4843d182b341fd97530c7949dbc` on 2026-10-29; the reviewed
+head `2220357dd34254c918adc71e9799dcb7543d8c30` had 37 successful checks and
+nine declared skips. Its final-head [board qualification](https://github.com/CrispStrobe/labwired-core/actions/runs/40948778471),
 [Rust CI](https://github.com/CrispStrobe/labwired-core/actions/runs/40948778531)
 and [Core Perf](https://github.com/CrispStrobe/labwired-core/actions/runs/40948778447)
-workflows succeeded. The source-built guest scope includes the selected sensor
-and synthetic nRF52840 DK/XIAO GPIOTE profiles with and without the scheduler.
+workflows succeeded. Refresh main and checks before subsequent work.
 
-Earlier [feature-off](https://github.com/CrispStrobe/labwired-core/actions/runs/40860731556/job/123411849699)
-and [AVR performance](https://github.com/CrispStrobe/labwired-core/actions/runs/40838497588)
-failures remain historical evidence; the final checks above do not turn those
-original failures into passes. Consult [validation status](../boards/VALIDATION_STATUS.md)
-for current model-drift acknowledgements and recapture obligations.
+The [board run 40860731752](https://github.com/CrispStrobe/labwired-core/actions/runs/40860731752)
+passed on an earlier candidate, including sensor guests, synthetic nRF52840 DK
+and XIAO GPIOTE guests, both scheduler profiles, and active/polled throughput.
+It does not qualify later source or test changes. The subsequent
+[feature-off job](https://github.com/CrispStrobe/labwired-core/actions/runs/40860731556/job/123411849699)
+failed a timer fixture and the conditional-compilation ratchet; the candidate
+repaired the fixture and retained both guest profiles without raising the ratchet.
+Preserve that original failure and the final-head qualification separately.
 
-This is bounded simulated guest evidence. It does not establish a CPU NVIC
-handler, arbitrary ODR/grid, software-reset closure, threshold IRQ, timed
-microphone/audio, physical behavior or consumer adoption. See the
-[sensor contract](microbit-lsm303agr.md). WASM motion has a separate performance
-qualification: investigate its retained failed 1x run in the bw-board lane
-before a new dispatch, release or consumer-pin claim.
+The earlier [Core Perf run](https://github.com/CrispStrobe/labwired-core/actions/runs/40838497588)
+failed its existing AVR step threshold; retain this historical failure separately
+from later qualifications. Future changes must qualify against the applicable
+unchanged baseline. Recompute watched nRF52840 and XIAO model digests after affected
+guest qualification and obtain explicit human acknowledgement before updating
+either silicon-verified digest; retain ACK dates, expiry, captures and watch lists.
+See the [sensor contract](microbit-lsm303agr.md) for the selected source,
+routing, acknowledgement and exclusions. Threshold IRQ, microphone/audio,
+physical behavior and consumer adoption remain separate work.
