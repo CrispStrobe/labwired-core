@@ -10,7 +10,7 @@ diffs the mnemonic + operands against our decoder's `Instruction` variant.
 
 ## Usage
 ```
-. /home/andrii/export-esp.sh
+. ./path/to/your-env-file
 ./scripts/hw-oracle/b7-sweep.sh
 ```
 
