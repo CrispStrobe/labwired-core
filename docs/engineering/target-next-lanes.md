@@ -818,13 +818,15 @@ motion needs its own scoped evidence; the successful original campaign is not
 replayed to inspect it. The historical PyBadge module/glass contract remains
 unresolved: this authored software assembly does not establish physical accuracy.
 
-### M1 combined shared-line and sensor DRDY candidate
+### M1 combined shared-line and sensor DRDY landing
 
 [Core PR268](https://github.com/CrispStrobe/labwired-core/pull/268) combines the
 open-drain foundation, autonomous conversion events, GPIOTE first-edge repair,
 and LSM303AGR accelerometer and magnetometer DRDY routing. The earlier stacked
-PR269 and PR270 are folded into that candidate; their closure does not mean the
-combined source landed on main. Refresh the PR head and main before acting.
+PR269 and PR270 were folded into that candidate. PR268 merged as
+`9085e828e905a4843d182b341fd97530c7949dbc` on 2026-10-29; the reviewed
+head `2220357dd34254c918adc71e9799dcb7543d8c30` had 37 successful checks and
+nine declared skips. Refresh main and checks before subsequent work.
 
 The [board run 40860731752](https://github.com/CrispStrobe/labwired-core/actions/runs/40860731752)
 passed on an earlier candidate, including sensor guests, synthetic nRF52840 DK
@@ -832,18 +834,15 @@ and XIAO GPIOTE guests, both scheduler profiles, and active/polled throughput.
 It does not qualify later source or test changes. The subsequent
 [feature-off job](https://github.com/CrispStrobe/labwired-core/actions/runs/40860731556/job/123411849699)
 failed a timer fixture and the conditional-compilation ratchet; the candidate
-repairs the fixture and retains both guest profiles without raising the ratchet.
-Require fresh exact-head board and Rust CI, verify named profile observations and
-source/artifact bindings, and preserve the original failure.
+repaired the fixture and retained both guest profiles without raising the ratchet.
+Preserve that original failure and the final-head qualification separately.
 
 The earlier [Core Perf run](https://github.com/CrispStrobe/labwired-core/actions/runs/40838497588)
-failed its existing AVR step threshold; a candidate fast-path repair is not yet
-qualified. Require a fresh exact-head performance result against the unchanged
-baseline. Recompute watched nRF52840 and XIAO model digests after affected guest
-qualification and obtain explicit human acknowledgement before updating either
-silicon-verified digest; retain ACK dates, expiry, captures and watch lists.
-After all enabled final-head checks succeed, review the exact merge parents and
-resulting tree, then merge by matched head. Update this handoff with the actual
-result. See the [sensor contract](microbit-lsm303agr.md) for the selected source,
+failed its existing AVR step threshold; retain this historical failure separately
+from later qualifications. Future changes must qualify against the applicable
+unchanged baseline. Recompute watched nRF52840 and XIAO model digests after affected
+guest qualification and obtain explicit human acknowledgement before updating
+either silicon-verified digest; retain ACK dates, expiry, captures and watch lists.
+See the [sensor contract](microbit-lsm303agr.md) for the selected source,
 routing, acknowledgement and exclusions. Threshold IRQ, microphone/audio,
 physical behavior and consumer adoption remain separate work.
