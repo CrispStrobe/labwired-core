@@ -27,6 +27,16 @@ legacy path, with corresponding clock-driven scheduler cases. Focused module
 controls are insufficient for full bus/guest or physical timing qualification;
 normal hosted checks and affected guest qualification remain required.
 
+## nRF52 watchdog documented reset defaults — claimed 2026-11-13
+
+Claim and change in one PR. Scope: `crates/core/src/peripherals/nrf52/wdt.rs`
+and required validation metadata. Restore RREN=1 (RR0 enabled) and CONFIG=1
+(run during sleep, pause during debug halt), matching the Nordic product
+[specification](https://docs.nordicsemi.com/r/bundle/ps_nrf52832/page/wdt.html)
+and existing WDT descriptors. Add default feed, timeout/IRQ,
+explicit override and scheduler-deadline controls. No clock-rate, reset delivery,
+sleep/halt execution, duplicate START or guest qualification claim is added.
+
 ## Python 3.13 leg for the CI-script tests — claimed 2026-11-11
 
 Claim and change in one PR. Adds `pr-ci-scripts-py313` to `core-ci.yml`: the same
