@@ -65,7 +65,23 @@ Their enabled bits raise
 the level IRQ. Nordic event bits use `(event offset-0x100)/4`, so STARTED=0,
 END=1, DONE=2, RESULTDONE=3, CALIBRATEDONE=4 and STOPPED=5. Event clear and
 INTENCLR deassert the line. Acquisition time, oversampling/BURST, local timed
-sampling, calibration, limit events and resistor networks are not modeled.
+sampling, calibration and resistor networks are not modeled.
+
+Channel limit monitoring compares the converted signed 16-bit result with
+CH[n].LIMIT: LOW in bits 15:0 and HIGH in bits 31:16. The reset value is
+`0x7fff8000`. Per the nRF52833 specification's
+[limit events and registers](https://docs.nordicsemi.com/r/bundle/ps_nrf52833/page/saadc.html),
+LIMITH latches for `result >= HIGH`, LIMITL for `result <= LOW`; both can latch
+when the thresholds are equal. Comparison runs independently of interrupt
+enables. The corresponding IRQ bits are `6+2*n` and `7+2*n`; event clear or
+interrupt masking releases the level IRQ when no other enabled event remains. Sparse scans retain converter slot
+identity for monitoring, independently of the packed DMA buffer position.
+Monitoring follows the existing functional partial-scan boundary: only results
+retained before MAXCNT are compared. Limit behavior beyond the final retained
+result is unsupported. Disconnected slots and canceled pending scans produce
+no limit events. LOW greater than HIGH is outside the documented configuration
+contract and produces no new limit events in this model. These functional
+comparisons add no sampling cadence or microphone bias model.
 
 START/scan unit gates cover bare bus and scheduled completion, sparse channels,
 partial buffers/sentinels, pointer edits, amount/events/IRQ and canceled-event

@@ -1243,9 +1243,10 @@ fn cycle_limit_allows_atomic_boundary_tick_cost_overshoot() {
     assert_eq!(machine.step_profile().peripheral_ticks, 1);
 }
 
-#[cfg(feature = "event-scheduler")]
-#[test]
-fn idle_fast_forward_is_reconciled_in_report_and_cpu() {
+// Registered by the shared scheduler-only countdown boundary test module.
+// Keep this helper feature-independent so the feature-off tests still compile.
+#[allow(dead_code)] // The scheduler-only test registration is absent without the feature.
+pub(crate) fn idle_fast_forward_is_reconciled_in_report_and_cpu() {
     let mut bus = SystemBus::new();
     bus.peripherals.clear();
     let mut machine = Machine::new(
