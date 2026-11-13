@@ -28,6 +28,14 @@ PSELP=0 disables a slot; invalid selectors are skipped. PSELN is ignored in
 single-ended mode. In differential mode NC is modeled as ground. Selector9
 uses the explicit modeled 3300mV supply, also used by VDD/4 reference.
 
+The RESOLUTION reset value is `1` (10 bits), per the
+[nRF52833 register specification](https://docs.nordicsemi.com/r/bundle/ps_nrf52833/page/saadc.html).
+Drivers can explicitly select 8, 10, 12 or 14 bits. ENABLE toggles do not reset
+this selection. Functional reset controls omit a driver RESOLUTION write and
+check actual DMA codes, limit events and IRQs on both completion paths; signed
+conversion and explicit resolution overrides have separate controls. These
+peripheral controls do not qualify firmware initialization or timed sampling.
+
 The configured gain choices are 1/6, 1/5, 1/4, 1/3, 1/2, 1, 2 and 4.
 Reference is 600mV internal or 825mV modeled VDD/4. Integer rational arithmetic
 computes `(VP-VN) * gain/reference * 2^(resolution-m)`, where m=0 for
