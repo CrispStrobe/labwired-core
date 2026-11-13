@@ -381,7 +381,9 @@ impl Session {
     /// Unread bytes are matched first, so output a previous call ran past is
     /// never lost. On a match the cursor moves to the end of it. The budget is
     /// `timeout` of simulated time; if it runs out, or the machine stops before
-    /// a match, the result is [`SessionError::ExpectTimeout`].
+    /// a match, the result is [`SessionError::ExpectTimeout`]. Unlike
+    /// [`Self::run_for`], a zero timeout still allows a minimum one-cycle
+    /// wait when no buffered match exists.
     pub fn expect(&mut self, pattern: &str, timeout: Duration) -> SessionResult<Match> {
         let re = regex::bytes::Regex::new(pattern)
             .map_err(|e| SessionError::Other(format!("invalid expect pattern /{pattern}/: {e}")))?;

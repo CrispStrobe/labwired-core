@@ -108,7 +108,7 @@ fn zero_duration_preserves_execution_and_uart_like_zero_cycles() {
     assert_eq!(s.cycles(), cycles);
     assert_eq!(s.uart_transcript(), transcript);
 
-    // Both no-op calls remain in the journal and must replay as no-ops.
+    // Restoring a snapshot taken after no-op calls must preserve this state.
     let snapshot = s.snapshot();
     s.run_for(Duration::from_millis(1)).unwrap();
     s.restore(&snapshot).unwrap();
