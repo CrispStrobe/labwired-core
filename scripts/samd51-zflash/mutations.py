@@ -16,9 +16,71 @@ MUTATIONS = {
   b'let _ = (old, new); // isolated actual model program commit removed'),
 }
 
+def rust_code_only(source):
+ """Keep byte offsets, but hide Rust comments and literals from site matching.
+
+ This is a lexer, not a Rust parser. Unsupported/unterminated literals fail
+ closed; nested block comments and arbitrary raw-string hash counts matter
+ because model documentation can contain complete executable-looking lines.
+ """
+ masked = bytearray(source)
+ i = 0
+ while i < len(source):
+  start = i
+  if source.startswith(b'//', i):
+   end = source.find(b'\n', i)
+   i = len(source) if end < 0 else end
+  elif source.startswith(b'/*', i):
+   depth = 1
+   i += 2
+   while i < len(source) and depth:
+    if source.startswith(b'/*', i):
+     depth += 1; i += 2
+    elif source.startswith(b'*/', i):
+     depth -= 1; i += 2
+    else:
+     i += 1
+   if depth:
+    raise ValueError('unterminated Rust block comment')
+  else:
+   raw = re.match(rb'(?:br|cr|r)(#*)"', source[i:])
+   if raw:
+    delimiter = b'"' + raw.group(1)
+    end = source.find(delimiter, i + raw.end())
+    if end < 0:
+     raise ValueError('unterminated Rust raw string')
+    i = end + len(delimiter)
+   elif source[i:i+1] == b'"':
+    i += 1
+    while i < len(source):
+     if source[i:i+1] == b'\\':
+      i += 2
+     elif source[i:i+1] == b'"':
+      i += 1
+      break
+     else:
+      i += 1
+    else:
+     raise ValueError('unterminated Rust string')
+   elif source[i:i+1] == b"'":
+    # Distinguish character literals (including escaped quotes) from lifetimes.
+    char = re.match(rb"'(?:\\(?:x[0-9a-fA-F]{2}|u\{[0-9a-fA-F_]+\}|[^\r\n])|[^'\\\r\n])'", source[i:])
+    if not char:
+     i += 1
+     continue
+    i += char.end()
+   else:
+    i += 1
+    continue
+  # Non-whitespace sentinels also prevent matching across a hidden token.
+  for offset in range(start, i):
+   if source[offset:offset+1] not in (b'\r', b'\n'):
+    masked[offset] = ord('~')
+ return bytes(masked)
+
 def mutate_source(original, name):
  pattern, replacement = MUTATIONS[name]
- matches = list(re.finditer(pattern, original))
+ matches = list(re.finditer(pattern, rust_code_only(original)))
  if len(matches) != 1:
   raise ValueError(f'unique actual model mutation site: {name} ({len(matches)} matches)')
  start, end = matches[0].span(1)
