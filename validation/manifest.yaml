@@ -701,6 +701,10 @@ boards:
     # enabled IRQ bits; LIMIT reset becomes 0x7fff8000 per Nordic's register table.
     # Focused peripheral source controls cover the change; affected engine/guest
     # qualification and live re-capture remain pending. ACK, NOT A SILICON CAPTURE.
+    # 2026-11-13: SAADC RESOLUTION now resets to 1 (10 bits), as documented;
+    # prior model reset selected 8 bits. Exact-module controls check DMA,
+    # limits/IRQs and signed codes without a driver override. Engine/guest
+    # qualification and live re-capture remain pending. ACK, NOT A SILICON CAPTURE.
     drift_ack: 2026-11-13
     # 2026-11-07 (feat/arduino-matrix-pico2-rp2350): cortex_m exec/misc.rs
     # adds a cold p0 (GPIO coprocessor) path, reached only when the chip
@@ -1299,6 +1303,10 @@ boards:
     # channel limits (inclusive bounds), latches limit events and routes their
     # enabled IRQ bits; LIMIT reset becomes 0x7fff8000 per Nordic's register table.
     # Focused peripheral source controls cover the change; affected engine/guest
+    # qualification and live re-capture remain pending. ACK, NOT A SILICON CAPTURE.
+    # 2026-11-13: SAADC RESOLUTION now resets to 1 (10 bits), as documented;
+    # prior model reset selected 8 bits. Exact-module controls check DMA,
+    # limits/IRQs and signed codes without a driver override. Engine/guest
     # qualification and live re-capture remain pending. ACK, NOT A SILICON CAPTURE.
     drift_ack: 2026-11-13
     # 2026-11-07 (feat/arduino-matrix-pico2-rp2350): cortex_m exec/misc.rs

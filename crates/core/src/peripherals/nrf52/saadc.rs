@@ -149,7 +149,8 @@ impl Default for Nrf52Saadc {
             inten: 0,
             status: 0,
             enable: 0,
-            resolution: 0,
+            // nRF52833 PS, RESOLUTION reset = 1 (10 bits).
+            resolution: 1,
             oversample: 0,
             samplerate: 0,
             result_ptr: 0,
@@ -547,6 +548,66 @@ mod tests {
         let value = u32::from(low as u16) | (u32::from(high as u16) << 16);
         s.write_u32(OFF_CH_FIRST + channel * 0x10 + 12, value)
             .unwrap();
+    }
+
+    #[test]
+    fn reset_resolution_drives_dma_limits_and_irq_without_driver_override() {
+        // Do not use convert(): it explicitly selects 12 bits and would hide
+        // an incorrect reset value. Exercise both conversion delivery paths.
+        for scheduled in [false, true] {
+            let mut s = Nrf52Saadc::new();
+            let mut bus = FlatRam::new();
+            assert_eq!(s.read_u32(OFF_RESOLUTION).unwrap(), 1);
+            s.set_adc_channel_input(0, 1350);
+            s.write_u32(OFF_CH_FIRST, 1).unwrap();
+            // The reset 10-bit code is 384; an erroneous 8-bit reset gives 96.
+            s.write_u32(OFF_CH_FIRST + 12, (384 << 16) | 100).unwrap();
+            s.write_u32(OFF_INTENSET, 1 << 6).unwrap(); // CH[0].LIMITH
+            s.write_u32(OFF_ENABLE, 1).unwrap();
+            s.write_u32(OFF_RESULT_PTR, 0x2000_0000).unwrap();
+            s.write_u32(OFF_RESULT_MAXCNT, 1).unwrap();
+            s.write_u32(OFF_TASKS_START, 1).unwrap();
+            s.write_u32(OFF_TASKS_SAMPLE, 1).unwrap();
+            if scheduled {
+                let token = s.take_scheduled_events()[0].1;
+                assert!(
+                    s.on_event(token, &mut crate::sched::EventScheduler::new(), &mut bus)
+                        .raise_own_irq
+                );
+            } else {
+                s.tick_with_bus(&mut bus);
+            }
+            assert_eq!(bus.read_slice(0x2000_0000, 2), 384i16.to_le_bytes());
+            assert_eq!(s.read_u32(OFF_RESULT_AMOUNT).unwrap(), 1);
+            assert_eq!(s.read_u32(OFF_EVENTS_END).unwrap(), 1);
+            assert_eq!(s.read_u32(OFF_EVENTS_CH_FIRST).unwrap(), 1);
+            assert_eq!(s.read_u32(OFF_EVENTS_CH_FIRST + 4).unwrap(), 0);
+            assert_eq!(s.irq_line_level(), Some(true));
+        }
+    }
+
+    #[test]
+    fn reset_resolution_preserves_signed_codes_and_explicit_overrides() {
+        let mut s = Nrf52Saadc::default();
+        s.set_adc_channel_input(0, 450);
+        s.set_adc_channel_input(1, 1350);
+        s.write_u32(OFF_CH_FIRST, 1).unwrap();
+        s.write_u32(OFF_CH_FIRST + 4, 2).unwrap();
+        s.write_u32(OFF_CH_FIRST + 8, 1 << 20).unwrap(); // differential
+        assert_eq!(s.channel_sample(0), Some(-128));
+        // Drivers retain the full supported selection, including explicit 8-bit.
+        for (selection, expected) in [(0, -32), (1, -128), (2, -512), (3, -2048)] {
+            s.write_u32(OFF_RESOLUTION, selection).unwrap();
+            assert_eq!(s.channel_sample(0), Some(expected));
+        }
+        s.write_u32(OFF_ENABLE, 1).unwrap();
+        s.write_u32(OFF_ENABLE, 0).unwrap();
+        assert_eq!(
+            s.read_u32(OFF_RESOLUTION).unwrap(),
+            3,
+            "disable is not reset"
+        );
+        assert_eq!(Nrf52Saadc::new().read_u32(OFF_RESOLUTION).unwrap(), 1);
     }
 
     #[test]
