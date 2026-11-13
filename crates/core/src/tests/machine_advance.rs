@@ -1243,9 +1243,32 @@ fn cycle_limit_allows_atomic_boundary_tick_cost_overshoot() {
     assert_eq!(machine.step_profile().peripheral_ticks, 1);
 }
 
-#[cfg(all(test, feature = "event-scheduler"))]
-#[path = "machine_advance_scheduler.rs"]
-mod scheduler;
+// Registered by the shared scheduler-only countdown boundary test module.
+// Keep this helper feature-independent so the feature-off tests still compile.
+#[allow(dead_code)] // The scheduler-only test registration is absent without the feature.
+pub(crate) fn idle_fast_forward_is_reconciled_in_report_and_cpu() {
+    let mut bus = SystemBus::new();
+    bus.peripherals.clear();
+    let mut machine = Machine::new(
+        CountingCpu {
+            idle_budget: Some(5),
+            ..Default::default()
+        },
+        bus,
+    );
+    machine.config.idle_fast_forward_enabled = true;
+
+    let report = machine.advance(AdvanceRequest::run(Some(5))).unwrap();
+
+    assert_eq!(report.stop, AdvanceStop::FuelLimit);
+    assert_eq!(report.fuel_consumed, 5);
+    assert_eq!(report.idle_cycles, 5);
+    assert_eq!(report.primary_steps, 0);
+    assert_eq!(report.cpu_batches, 0);
+    assert_eq!(report.elapsed_cycles, 5);
+    assert_eq!(machine.cpu.idle_skipped, 5);
+    assert_eq!(machine.idle_fast_forward_cycles_skipped, 5);
+}
 
 /// The skip moves machine time without stepping either core. With the
 /// secondary running (an ESP32 loopTask on APP_CPU while PRO_CPU sits in
