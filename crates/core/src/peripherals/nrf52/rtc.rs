@@ -681,13 +681,6 @@ mod tests {
         assert_eq!(r.read_u32(OFF_COUNTER).unwrap(), 0x00ff_fff0);
     }
 
-    #[cfg(feature = "event-scheduler")]
-    #[test]
-    fn tasks_restart_prescaler_on_scheduler_path() {
-        start_restarts_partial_divider(true);
-        trigovrflw_restarts_partial_divider(true);
-    }
-
     #[test]
     fn prescaler_masks_to_12_bits() {
         let mut r = Nrf52Rtc::new();
@@ -837,6 +830,12 @@ mod tests {
     #[cfg(feature = "event-scheduler")]
     mod scheduler_mode {
         use super::*;
+
+        #[test]
+        fn tasks_restart_prescaler_on_scheduler_path() {
+            start_restarts_partial_divider(true);
+            trigovrflw_restarts_partial_divider(true);
+        }
 
         #[test]
         fn counter_read_syncs_from_cycle_clock() {

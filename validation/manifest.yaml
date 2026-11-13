@@ -465,7 +465,11 @@ boards:
     # 2026-11-01 (feat/rp2350-dcp, perf): DCP state moved off CortexM onto the
     # bus (Bus::rp2350_dcp_mut, default None) and its dispatch made cold and
     # out of line; no change for chips without a DCP. ACK, NOT A SILICON CAPTURE.
-    drift_ack_digest: 7e4bde9cd9fe5540808e6b07f96bf5cc72b637c8b166a90c8a4fb311327c6dfd
+    # 2026-11-13: RTC START/TRIGOVRFLW restart the partial prescaler
+    # interval per the Nordic specification. Focused source controls pass;
+    # affected hosted engine/guest qualification and re-capture remain pending.
+    # Content acknowledgement only; capture/date/expiry are unchanged.
+    drift_ack_digest: b257adca53753d3da7801db182bd32d72150870122af5ae1981175ae217856e9
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -1071,7 +1075,11 @@ boards:
     # 2026-11-01 (feat/rp2350-dcp, perf): DCP state moved off CortexM onto the
     # bus (Bus::rp2350_dcp_mut, default None) and its dispatch made cold and
     # out of line; no change for chips without a DCP. ACK, NOT A SILICON CAPTURE.
-    drift_ack_digest: 7e4bde9cd9fe5540808e6b07f96bf5cc72b637c8b166a90c8a4fb311327c6dfd
+    # 2026-11-13: RTC START/TRIGOVRFLW restart the partial prescaler
+    # interval per the Nordic specification. Focused source controls pass;
+    # affected hosted engine/guest qualification and re-capture remain pending.
+    # Content acknowledgement only; capture/date/expiry are unchanged.
+    drift_ack_digest: b257adca53753d3da7801db182bd32d72150870122af5ae1981175ae217856e9
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     models:
       - crates/core/src/cpu/cortex_m.rs
