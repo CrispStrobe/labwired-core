@@ -58,6 +58,48 @@ class MutationSourceTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     M.mutate_source(ORIGINAL.replace(ERASE, replacement), "omit-erase-commit")
 
+    def test_multiline_comments_and_strings_are_never_mutation_sites(self):
+        for name, statement in (("omit-erase-commit", ERASE), ("omit-program-commit", PROGRAM)):
+            decoys = (
+                b"/*\n" + statement + b"\n*/",
+                b"/* outer /* nested */\n" + statement + b"\n*/",
+                b'let text = "\n' + statement + b'\n";',
+                b'let text = b"\n' + statement + b'\n";',
+                b'let text = r"\n' + statement + b'\n";',
+                b'let text = r###"embedded " and "##\n' + statement + b'\n"###;',
+                b'let text = br##"\n' + statement + b'\n"##;',
+                b'let text = cr#"\n' + statement + b'\n"#;',
+                b'let quote = \'"\'; /*\n' + statement + b'\n*/',
+                b'let text = "escaped \\"\n' + statement + b'\n";',
+            )
+            for decoy in decoys:
+                with self.subTest(name=name, decoy=decoy):
+                    # With no executable target left, a decoy must not count.
+                    raw = ORIGINAL.replace(statement, decoy)
+                    with self.assertRaisesRegex(ValueError, "0 matches"):
+                        M.mutate_source(raw, name)
+                    # Alongside the real target it must remain byte-for-byte
+                    # intact and must not make the executable site ambiguous.
+                    raw = ORIGINAL + b"\n" + decoy + b"\n"
+                    self.assertEqual(
+                        M.mutate_source(raw, name),
+                        M.mutate_source(ORIGINAL, name) + b"\n" + decoy + b"\n",
+                    )
+
+    def test_unterminated_comments_and_strings_fail_closed(self):
+        for suffix in (b"/*", b'let s = "', b'let s = r###"'):
+            with self.subTest(suffix=suffix):
+                with self.assertRaisesRegex(ValueError, "unterminated Rust"):
+                    M.mutate_source(ORIGINAL + b"\n" + suffix, "omit-erase-commit")
+
+    def test_mask_keeps_byte_offsets_and_lifetimes(self):
+        raw = b"fn borrow<'a>(x: &'a str) { let c = '\\''; }\n/* nested /* a */ b */\n"
+        masked = M.rust_code_only(raw)
+        self.assertEqual(len(masked), len(raw))
+        self.assertEqual([i for i, value in enumerate(masked) if value == 10],
+                         [i for i, value in enumerate(raw) if value == 10])
+        self.assertTrue(masked.startswith(b"fn borrow<'a>(x: &'a str)"))
+
 
 class MutationRunnerTests(unittest.TestCase):
     def run_control(self, outcome, profile="default"):
