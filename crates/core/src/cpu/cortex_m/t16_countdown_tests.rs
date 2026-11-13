@@ -323,7 +323,10 @@ mod deadline_boundaries {
             4,
             None,
             Box::new(DeadlineIrq {
-                delay: u64::from(offset) + 2,
+                // The write executes at cycle 0. Bus collection anchors
+                // relative delays at current_cycle + 1, so offset + 1
+                // places the wake at countdown entry (cycle 2) + offset.
+                delay: u64::from(offset) + 1,
                 armed: false,
                 deliveries: deliveries.clone(),
             }),
