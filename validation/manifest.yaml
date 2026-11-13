@@ -469,7 +469,9 @@ boards:
     # interval per the Nordic specification. Focused source controls pass;
     # affected hosted engine/guest qualification and re-capture remain pending.
     # Content acknowledgement only; capture/date/expiry are unchanged.
-    drift_ack_digest: a3dae0666acabaf0c89cd0c0ebbc8153d9674ca9278c1741f0d6981092b5adc1
+    # TEMP result writes ignored and STOP preserves DATARDY; six focused
+    # source controls pass. No new silicon capture or guest qualification.
+    drift_ack_digest: 1f81a7265ec859b7eade0d4d06ee51c20ff18c4a31ba359d6fe49af0617dd2af
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -1082,7 +1084,9 @@ boards:
     # interval per the Nordic specification. Focused source controls pass;
     # affected hosted engine/guest qualification and re-capture remain pending.
     # Content acknowledgement only; capture/date/expiry are unchanged.
-    drift_ack_digest: a3dae0666acabaf0c89cd0c0ebbc8153d9674ca9278c1741f0d6981092b5adc1
+    # TEMP result writes ignored and STOP preserves DATARDY; six focused
+    # source controls pass. No new silicon capture or guest qualification.
+    drift_ack_digest: 1f81a7265ec859b7eade0d4d06ee51c20ff18c4a31ba359d6fe49af0617dd2af
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     models:
       - crates/core/src/cpu/cortex_m.rs

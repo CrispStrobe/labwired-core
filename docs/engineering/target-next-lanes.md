@@ -11,6 +11,20 @@ These are proposed task contracts, not ownership claims or passing receipts.
 Refresh the default branch and open PRs before starting; shared behavior lands
 in the engine first, followed by an explicit qualified consumer pin.
 
+## nRF52 TEMP result and event-latch semantics — candidate 2026-11-13
+
+Claim and implementation in one change. Scope: `nrf52/temp.rs`, this contract
+and generated validation status. The Nordic
+[TEMP register specification](https://docs.nordicsemi.com/r/bundle/ps_nrf52840/page/temp.html)
+marks the measurement result read-only; firmware writes now leave it intact.
+The [peripheral interface](https://docs.nordicsemi.com/r/bundle/ps_nrf52840/page/peripheral_interface.html)
+requires explicit firmware clearing of event latches, so STOP now preserves an
+already-generated DATARDY event. Tests cover result writes before/after START,
+STOP followed by explicit clear/restart, zero task writes and interrupt-enable
+alias preservation. The immediate 25 °C conversion, calibration registers,
+interrupt delivery and timing remain unchanged. Focused module controls do not
+qualify full-bus/guest execution or physical sensor behavior.
+
 ## nRF52 RTC task prescaler restart — candidate 2026-11-13
 
 Claim and implementation in one change. Scope:
