@@ -13,8 +13,9 @@ in the engine first, followed by an explicit qualified consumer pin.
 
 ## nRF52 RTC task prescaler restart — candidate 2026-11-13
 
-Claim and implementation in one change. Scope: only
-`crates/core/src/peripherals/nrf52/rtc.rs` and this contract. Nordic's
+Claim and implementation in one change. Scope:
+`crates/core/src/peripherals/nrf52/rtc.rs`, this contract and the affected
+validation content digests/generated status; capture facts remain unchanged. Nordic's
 [nRF52840 specification](https://docs.nordicsemi.com/r/bundle/ps_nrf52840/page/rtc.html),
 "Resolution versus overflow and the PRESCALER", requires START, CLEAR and
 TRIGOVRFLW to restart the divider. START and TRIGOVRFLW now discard a partial
