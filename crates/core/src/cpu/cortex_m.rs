@@ -3401,6 +3401,12 @@ impl Cpu for CortexM {
                             sysbus.current_cycle += live_step * u64::from(fast);
                         }
                         executed += fast;
+                        // A chunk can land exactly on a wake armed earlier in
+                        // this batch. Return for delivery before another
+                        // instruction retires, just like the ordinary arm.
+                        if sysbus.pending_wake_left() == Some(0) {
+                            break;
+                        }
                         // RAM chunks cannot store DHCSR. A halt or a step
                         // armed before the chunk still ends the batch here.
                         if self.debug_batch_break() {
