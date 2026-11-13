@@ -1326,6 +1326,9 @@ boards:
     # interpreter's decoded instruction stream and state are unchanged;
     # Core Identity and the perf evidence pin it. ACK, NOT A CAPTURE.
   - id: stm32h563
+    # 2026-11-13: shared gpio.rs fixes only Nordic DIR/PIN_CNF and SET/CLR
+    # aliases, including narrow action stores. STM32 family paths are unchanged.
+    # Source-module controls only; no new silicon capture. Re-capture remains owed.
     # 2026-11-05: reviewed G0 DMA extension in shared UART/DMA source. Strict
     # channel completion/circular/IRQ semantics are opt-in (profile: stm32g0);
     # existing constructors retain their legacy profile. The bus completion
@@ -2469,8 +2472,8 @@ boards:
     # micro:bit open-drain/GPIOTE/DRDY plumbing and the S040 LCD_CAM/GDMA RGB
     # path. No register map or reset value of this board changes. ACK, NOT A
     # SILICON CAPTURE; live re-capture remains pending.
-    drift_ack: 2026-11-08
-    drift_ack_digest: 11332c4a84ecf95bceec109bca9256bf1bf4653a88ee616b90c8c523e7a7ba79
+    drift_ack: 2026-11-13
+    drift_ack_digest: f73883c0b68520af9071320e23c593ef531860a9b7ea4ca55c9bbe5342852d9f
     # 2026-11-01 (feat/rv64-core): uart.rs gained the 16550 LCR.DLAB divisor
     # latches (DLL/DLM), reached only by the `ns16550` / `dw_apb_uart`
     # layouts. STM32 UART register maps, byte paths and IRQ timing are
@@ -3585,6 +3588,9 @@ boards:
     drift_ack: 2026-11-08
 
   - id: nucleo-l476rg
+    # 2026-11-13: shared gpio.rs fixes only Nordic DIR/PIN_CNF and SET/CLR
+    # aliases, including narrow action stores. STM32 family paths are unchanged.
+    # Source-module controls only; no new silicon capture. Re-capture remains owed.
     # 2026-11-05: reviewed G0 DMA extension in shared UART/DMA source. Strict
     # channel completion/circular/IRQ semantics are opt-in (profile: stm32g0);
     # existing constructors retain their legacy profile. The bus completion
@@ -4698,8 +4704,8 @@ boards:
     # micro:bit open-drain/GPIOTE/DRDY plumbing and the S040 LCD_CAM/GDMA RGB
     # path. No register map or reset value of this board changes. ACK, NOT A
     # SILICON CAPTURE; live re-capture remains pending.
-    drift_ack: 2026-11-08
-    drift_ack_digest: 1f6c5d576d3f3562db5affd65948a8da149aa2ce0927bf2ecbb3a70b8ce6d55e
+    drift_ack: 2026-11-13
+    drift_ack_digest: 972801ae7b22b006a06cfb2bedc05707660b5b4075ac2813792de2dd3c86eac8
     # 2026-11-01 (feat/rv64-core): uart.rs gained the 16550 LCR.DLAB divisor
     # latches (DLL/DLM), reached only by the `ns16550` / `dw_apb_uart`
     # layouts. STM32 UART register maps, byte paths and IRQ timing are
@@ -4767,6 +4773,9 @@ boards:
     # UART register maps, byte paths and IRQ timing are unchanged. ACK, NOT A
     # SILICON CAPTURE; live re-capture remains pending.
   - id: nucleo-l073rz
+    # 2026-11-13: shared gpio.rs fixes only Nordic DIR/PIN_CNF and SET/CLR
+    # aliases, including narrow action stores. STM32 family paths are unchanged.
+    # Source-module controls only; no new silicon capture. Re-capture remains owed.
     # 2026-11-05: reviewed G0 DMA extension in shared UART/DMA source. Strict
     # channel completion/circular/IRQ semantics are opt-in (profile: stm32g0);
     # existing constructors retain their legacy profile. The bus completion
@@ -5195,7 +5204,7 @@ boards:
     # gained a `stm32g0b1` layout (G0 map + HSI48ON 22 -> HSI48RDY 23, CCIPR2 @0x58),
     # selected only by configs/chips/stm32g0b1re.yaml. No other layout changed; this board
     # does not use it. ACK, NOT A SILICON CAPTURE.
-    drift_ack_digest: be13faf424bc6d6bfaf3533103d18baa1b3c84fa04ef036a7e0f708c3fc97813
+    drift_ack_digest: e95bce7736f9b026178add65697fa455ef8634507eeaebad18b8ab0a9c4b7908
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5758,7 +5767,7 @@ boards:
     # micro:bit open-drain/GPIOTE/DRDY plumbing and the S040 LCD_CAM/GDMA RGB
     # path. No register map or reset value of this board changes. ACK, NOT A
     # SILICON CAPTURE; live re-capture remains pending.
-    drift_ack: 2026-11-08
+    drift_ack: 2026-11-13
     # 2026-11-07 (feat/arduino-matrix-pico2-rp2350): cortex_m exec/misc.rs
     # adds a cold p0 (GPIO coprocessor) path, reached only when the chip
     # declares `coprocessors: [rp2350_gpioc]` (RP2350 only); every other
@@ -5837,6 +5846,9 @@ boards:
     # UART register maps, byte paths and IRQ timing are unchanged. ACK, NOT A
     # SILICON CAPTURE; live re-capture remains pending.
   - id: stm32f103
+    # 2026-11-13: shared gpio.rs fixes only Nordic DIR/PIN_CNF and SET/CLR
+    # aliases, including narrow action stores. STM32 family paths are unchanged.
+    # Source-module controls only; no new silicon capture. Re-capture remains owed.
     # 2026-11-05: reviewed G0 DMA extension in shared UART/DMA source. Strict
     # channel completion/circular/IRQ semantics are opt-in (profile: stm32g0);
     # existing constructors retain their legacy profile. The bus completion
@@ -6966,8 +6978,8 @@ boards:
     # micro:bit open-drain/GPIOTE/DRDY plumbing and the S040 LCD_CAM/GDMA RGB
     # path. No register map or reset value of this board changes. ACK, NOT A
     # SILICON CAPTURE; live re-capture remains pending.
-    drift_ack: 2026-11-08
-    drift_ack_digest: a1702463e39d5b1238e1dea5eba34e7fcc6596b402dcee7f4767c2fb63644d52
+    drift_ack: 2026-11-13
+    drift_ack_digest: 0e7b5124a1b78287e954264fb531f9139a7618a5dbeb778497f2e042838251a7
     # 2026-11-01 (feat/rv64-core): uart.rs gained the 16550 LCR.DLAB divisor
     # latches (DLL/DLM), reached only by the `ns16550` / `dw_apb_uart`
     # layouts. STM32 UART register maps, byte paths and IRQ timing are
@@ -7039,6 +7051,9 @@ boards:
     # UART register maps, byte paths and IRQ timing are unchanged. ACK, NOT A
     # SILICON CAPTURE; live re-capture remains pending.
   - id: stm32f407
+    # 2026-11-13: shared gpio.rs fixes only Nordic DIR/PIN_CNF and SET/CLR
+    # aliases, including narrow action stores. STM32 family paths are unchanged.
+    # Source-module controls only; no new silicon capture. Re-capture remains owed.
     # 2026-11-05: reviewed G0 DMA extension in shared UART/DMA source. Strict
     # channel completion/circular/IRQ semantics are opt-in (profile: stm32g0);
     # existing constructors retain their legacy profile. The bus completion
@@ -7484,7 +7499,7 @@ boards:
     # gained a `stm32g0b1` layout (G0 map + HSI48ON 22 -> HSI48RDY 23, CCIPR2 @0x58),
     # selected only by configs/chips/stm32g0b1re.yaml. No other layout changed; this board
     # does not use it. ACK, NOT A SILICON CAPTURE.
-    drift_ack_digest: 485f173e8e744c4e37e2c4af1e293f87445ce1b97c9bf54a5db070d961ce8fff
+    drift_ack_digest: d65e38ec51230799eed2f49c402ddaa3cd6adf4997a725e83ba6ee0409148be2
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -8049,7 +8064,7 @@ boards:
     # micro:bit open-drain/GPIOTE/DRDY plumbing and the S040 LCD_CAM/GDMA RGB
     # path. No register map or reset value of this board changes. ACK, NOT A
     # SILICON CAPTURE; live re-capture remains pending.
-    drift_ack: 2026-11-08
+    drift_ack: 2026-11-13
     # 2026-11-07 (feat/arduino-matrix-pico2-rp2350): cortex_m exec/misc.rs
     # adds a cold p0 (GPIO coprocessor) path, reached only when the chip
     # declares `coprocessors: [rp2350_gpioc]` (RP2350 only); every other
