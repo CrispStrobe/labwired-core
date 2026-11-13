@@ -441,7 +441,7 @@ mod deadline_boundaries {
                     let subs = if branch_entry {
                         countdown_steps / 2
                     } else {
-                        (countdown_steps + 1) / 2
+                        countdown_steps.div_ceil(2)
                     };
                     assert_eq!(fast.bus.read_u32(0x2000_0fe0).unwrap(), 2048 - subs);
                     assert_eq!(fast.total_cycles, u64::from(finish));
