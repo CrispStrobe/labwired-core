@@ -465,7 +465,7 @@ boards:
     # 2026-11-01 (feat/rp2350-dcp, perf): DCP state moved off CortexM onto the
     # bus (Bus::rp2350_dcp_mut, default None) and its dispatch made cold and
     # out of line; no change for chips without a DCP. ACK, NOT A SILICON CAPTURE.
-    drift_ack_digest: 604ea47d81c4c70a6f2193e3e243a88fda2d52e643fdd6ddb5a4d9aca6146e7c
+    drift_ack_digest: 41d9e33650bde321efa4de0ab27f56ab22e39fb62a71b3cc47176feeb4179ae2
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -690,6 +690,12 @@ boards:
     # micro:bit open-drain/GPIOTE/DRDY plumbing and the S040 LCD_CAM/GDMA RGB
     # path. No register map or reset value of this board changes. ACK, NOT A
     # SILICON CAPTURE; live re-capture remains pending.
+    # 2026-11-13 (#280): cached Cortex-M RAM chunks now stop when a pending
+    # wake reaches its deadline, before another instruction retires. This
+    # changes event delivery timing; scheduler/MMIO differential tests target
+    # the simulated boundary; their results are pending. Physical timing and
+    # hardware parity have not been re-validated.
+    # ACK, NOT A SILICON CAPTURE; live re-capture remains pending.
     # 2026-11-13: SAADC now compares retained conversion results against signed
     # channel limits (inclusive bounds), latches limit events and routes their
     # enabled IRQ bits; LIMIT reset becomes 0x7fff8000 per Nordic's register table.
@@ -1058,7 +1064,7 @@ boards:
     # 2026-11-01 (feat/rp2350-dcp, perf): DCP state moved off CortexM onto the
     # bus (Bus::rp2350_dcp_mut, default None) and its dispatch made cold and
     # out of line; no change for chips without a DCP. ACK, NOT A SILICON CAPTURE.
-    drift_ack_digest: 604ea47d81c4c70a6f2193e3e243a88fda2d52e643fdd6ddb5a4d9aca6146e7c
+    drift_ack_digest: 41d9e33650bde321efa4de0ab27f56ab22e39fb62a71b3cc47176feeb4179ae2
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -1283,6 +1289,12 @@ boards:
     # micro:bit open-drain/GPIOTE/DRDY plumbing and the S040 LCD_CAM/GDMA RGB
     # path. No register map or reset value of this board changes. ACK, NOT A
     # SILICON CAPTURE; live re-capture remains pending.
+    # 2026-11-13 (#280): cached Cortex-M RAM chunks now stop when a pending
+    # wake reaches its deadline, before another instruction retires. This
+    # changes event delivery timing; scheduler/MMIO differential tests target
+    # the simulated boundary; their results are pending. Physical timing and
+    # hardware parity have not been re-validated.
+    # ACK, NOT A SILICON CAPTURE; live re-capture remains pending.
     # 2026-11-13: SAADC now compares retained conversion results against signed
     # channel limits (inclusive bounds), latches limit events and routes their
     # enabled IRQ bits; LIMIT reset becomes 0x7fff8000 per Nordic's register table.
@@ -2479,8 +2491,14 @@ boards:
     # micro:bit open-drain/GPIOTE/DRDY plumbing and the S040 LCD_CAM/GDMA RGB
     # path. No register map or reset value of this board changes. ACK, NOT A
     # SILICON CAPTURE; live re-capture remains pending.
-    drift_ack: 2026-11-08
-    drift_ack_digest: 11332c4a84ecf95bceec109bca9256bf1bf4653a88ee616b90c8c523e7a7ba79
+    # 2026-11-13 (#280): cached Cortex-M RAM chunks now stop when a pending
+    # wake reaches its deadline, before another instruction retires. This
+    # changes event delivery timing; scheduler/MMIO differential tests target
+    # the simulated boundary; their results are pending. Physical timing and
+    # hardware parity have not been re-validated.
+    # ACK, NOT A SILICON CAPTURE; live re-capture remains pending.
+    drift_ack: 2026-11-13
+    drift_ack_digest: 6291ed17ee4cb8d0f5fc0151789794e9b714a73d762bd48fcb1f8f0a6258190e
     # 2026-11-01 (feat/rv64-core): uart.rs gained the 16550 LCR.DLAB divisor
     # latches (DLL/DLM), reached only by the `ns16550` / `dw_apb_uart`
     # layouts. STM32 UART register maps, byte paths and IRQ timing are
@@ -4708,8 +4726,14 @@ boards:
     # micro:bit open-drain/GPIOTE/DRDY plumbing and the S040 LCD_CAM/GDMA RGB
     # path. No register map or reset value of this board changes. ACK, NOT A
     # SILICON CAPTURE; live re-capture remains pending.
-    drift_ack: 2026-11-08
-    drift_ack_digest: 1f6c5d576d3f3562db5affd65948a8da149aa2ce0927bf2ecbb3a70b8ce6d55e
+    # 2026-11-13 (#280): cached Cortex-M RAM chunks now stop when a pending
+    # wake reaches its deadline, before another instruction retires. This
+    # changes event delivery timing; scheduler/MMIO differential tests target
+    # the simulated boundary; their results are pending. Physical timing and
+    # hardware parity have not been re-validated.
+    # ACK, NOT A SILICON CAPTURE; live re-capture remains pending.
+    drift_ack: 2026-11-13
+    drift_ack_digest: 3a0afb239722a78dd4514ecca3f27c01006a11c976b5ef028bc7687b464062d0
     # 2026-11-01 (feat/rv64-core): uart.rs gained the 16550 LCR.DLAB divisor
     # latches (DLL/DLM), reached only by the `ns16550` / `dw_apb_uart`
     # layouts. STM32 UART register maps, byte paths and IRQ timing are
@@ -5205,7 +5229,7 @@ boards:
     # gained a `stm32g0b1` layout (G0 map + HSI48ON 22 -> HSI48RDY 23, CCIPR2 @0x58),
     # selected only by configs/chips/stm32g0b1re.yaml. No other layout changed; this board
     # does not use it. ACK, NOT A SILICON CAPTURE.
-    drift_ack_digest: be13faf424bc6d6bfaf3533103d18baa1b3c84fa04ef036a7e0f708c3fc97813
+    drift_ack_digest: afc1962912c14643be44a2f84879d38ffea404c6f4c996a0193124a0493ac77a
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5768,7 +5792,13 @@ boards:
     # micro:bit open-drain/GPIOTE/DRDY plumbing and the S040 LCD_CAM/GDMA RGB
     # path. No register map or reset value of this board changes. ACK, NOT A
     # SILICON CAPTURE; live re-capture remains pending.
-    drift_ack: 2026-11-08
+    # 2026-11-13 (#280): cached Cortex-M RAM chunks now stop when a pending
+    # wake reaches its deadline, before another instruction retires. This
+    # changes event delivery timing; scheduler/MMIO differential tests target
+    # the simulated boundary; their results are pending. Physical timing and
+    # hardware parity have not been re-validated.
+    # ACK, NOT A SILICON CAPTURE; live re-capture remains pending.
+    drift_ack: 2026-11-13
     # 2026-11-07 (feat/arduino-matrix-pico2-rp2350): cortex_m exec/misc.rs
     # adds a cold p0 (GPIO coprocessor) path, reached only when the chip
     # declares `coprocessors: [rp2350_gpioc]` (RP2350 only); every other
@@ -6976,8 +7006,14 @@ boards:
     # micro:bit open-drain/GPIOTE/DRDY plumbing and the S040 LCD_CAM/GDMA RGB
     # path. No register map or reset value of this board changes. ACK, NOT A
     # SILICON CAPTURE; live re-capture remains pending.
-    drift_ack: 2026-11-08
-    drift_ack_digest: a1702463e39d5b1238e1dea5eba34e7fcc6596b402dcee7f4767c2fb63644d52
+    # 2026-11-13 (#280): cached Cortex-M RAM chunks now stop when a pending
+    # wake reaches its deadline, before another instruction retires. This
+    # changes event delivery timing; scheduler/MMIO differential tests target
+    # the simulated boundary; their results are pending. Physical timing and
+    # hardware parity have not been re-validated.
+    # ACK, NOT A SILICON CAPTURE; live re-capture remains pending.
+    drift_ack: 2026-11-13
+    drift_ack_digest: 3ff6764cec7c4a28918fc1b517b3b121b0007ccc189c5dbf09eab2eee514aeea
     # 2026-11-01 (feat/rv64-core): uart.rs gained the 16550 LCR.DLAB divisor
     # latches (DLL/DLM), reached only by the `ns16550` / `dw_apb_uart`
     # layouts. STM32 UART register maps, byte paths and IRQ timing are
@@ -7494,7 +7530,7 @@ boards:
     # gained a `stm32g0b1` layout (G0 map + HSI48ON 22 -> HSI48RDY 23, CCIPR2 @0x58),
     # selected only by configs/chips/stm32g0b1re.yaml. No other layout changed; this board
     # does not use it. ACK, NOT A SILICON CAPTURE.
-    drift_ack_digest: 485f173e8e744c4e37e2c4af1e293f87445ce1b97c9bf54a5db070d961ce8fff
+    drift_ack_digest: 1d4889362eaa0f3fef5576abc622a964278d7926fd1ba37cd84a80627bd42a75
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -8059,7 +8095,13 @@ boards:
     # micro:bit open-drain/GPIOTE/DRDY plumbing and the S040 LCD_CAM/GDMA RGB
     # path. No register map or reset value of this board changes. ACK, NOT A
     # SILICON CAPTURE; live re-capture remains pending.
-    drift_ack: 2026-11-08
+    # 2026-11-13 (#280): cached Cortex-M RAM chunks now stop when a pending
+    # wake reaches its deadline, before another instruction retires. This
+    # changes event delivery timing; scheduler/MMIO differential tests target
+    # the simulated boundary; their results are pending. Physical timing and
+    # hardware parity have not been re-validated.
+    # ACK, NOT A SILICON CAPTURE; live re-capture remains pending.
+    drift_ack: 2026-11-13
     # 2026-11-07 (feat/arduino-matrix-pico2-rp2350): cortex_m exec/misc.rs
     # adds a cold p0 (GPIO coprocessor) path, reached only when the chip
     # declares `coprocessors: [rp2350_gpioc]` (RP2350 only); every other
