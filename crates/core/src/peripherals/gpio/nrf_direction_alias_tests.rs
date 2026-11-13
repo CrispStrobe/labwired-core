@@ -8,9 +8,9 @@ fn check(g: &Nrf52Gpio, direction: u32, config: &[u32; 32]) {
     for offset in [0x514, 0x518, 0x51c] {
         assert_eq!(g.read_reg(offset), direction, "register {offset:#x}");
     }
-    for pin in 0..32 {
+    for (pin, &pin_config) in config.iter().enumerate() {
         let expected = if pin < g.num_pins as usize {
-            (config[pin] & !1) | ((direction >> pin) & 1)
+            (pin_config & !1) | ((direction >> pin) & 1)
         } else {
             0
         };
@@ -25,13 +25,13 @@ fn all_direction_aliases_preserve_every_other_pin_configuration_field() {
     for count in [0, 10, 13, 16, 32] {
         let mut g = Nrf52Gpio::with_num_pins(count);
         let mut config = [0; 32];
-        for pin in 0..count as usize {
+        for (pin, pin_config) in config.iter_mut().enumerate().take(count as usize) {
             // Different INPUT/PULL/DRIVE/SENSE fields per pin.
-            config[pin] = ((pin as u32 & 1) << 1)
+            *pin_config = ((pin as u32 & 1) << 1)
                 | (((pin as u32 >> 1) & 3) << 2)
                 | ((pin as u32 & 7) << 8)
                 | ((pin as u32 & 3) << 16);
-            g.write_reg(0x700 + 4 * pin as u64, config[pin]);
+            g.write_reg(0x700 + 4 * pin as u64, *pin_config);
         }
         let mask = g.pin_mask();
         for value in [0, u32::MAX, 0xaaaaaaaa, 0x55555555, 0x80000001, 0] {
