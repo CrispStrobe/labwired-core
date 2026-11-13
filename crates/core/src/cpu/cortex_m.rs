@@ -5237,4 +5237,4 @@ mod t16_discovery_tests;
 
 #[cfg(test)]
 #[path = "cortex_m/t16_countdown_tests.rs"]
-mod t16_countdown_tests;
+pub mod t16_countdown_tests;
