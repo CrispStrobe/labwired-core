@@ -23,7 +23,10 @@ pub mod error;
 pub mod frames;
 pub mod machine;
 mod symbols;
+mod time;
 pub mod uart;
+
+pub(crate) use time::duration_for_cycles;
 
 pub use crate::network::{CanFrame, CanRxRejection};
 pub use error::{SessionError, SessionResult};
@@ -40,13 +43,6 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock, PoisonError};
 use std::time::Duration;
-
-/// `cycles` of simulated time at `cpu_hz`, computed in u128 so it cannot
-/// overflow before the result does.
-pub(crate) fn duration_for_cycles(cycles: u64, cpu_hz: u64) -> Duration {
-    let nanos = u128::from(cycles) * 1_000_000_000 / u128::from(cpu_hz);
-    Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
-}
 
 /// How a session is opened.
 #[derive(Debug, Clone)]
@@ -327,13 +323,13 @@ impl Session {
 
     /// Cycles covering `d` at this session's clock, rounded up, at least one.
     fn cycles_for(&self, d: Duration) -> u64 {
-        let c = (d.as_nanos() * u128::from(self.cpu_hz)).div_ceil(1_000_000_000);
-        u64::try_from(c).unwrap_or(u64::MAX).max(1)
+        time::cycles_for_duration(d, self.cpu_hz).max(1)
     }
 
-    /// Advance by `virtual_time` of simulated time.
+    /// Advance by `virtual_time` of simulated time. Zero is a no-op; positive
+    /// durations round up to a cycle, saturating at the cycle counter's range.
     pub fn run_for(&mut self, virtual_time: Duration) -> SessionResult<StopReason> {
-        let cycles = self.cycles_for(virtual_time);
+        let cycles = time::cycles_for_duration(virtual_time, self.cpu_hz);
         self.run_cycles(cycles)
     }
 
@@ -385,7 +381,9 @@ impl Session {
     /// Unread bytes are matched first, so output a previous call ran past is
     /// never lost. On a match the cursor moves to the end of it. The budget is
     /// `timeout` of simulated time; if it runs out, or the machine stops before
-    /// a match, the result is [`SessionError::ExpectTimeout`].
+    /// a match, the result is [`SessionError::ExpectTimeout`]. Unlike
+    /// [`Self::run_for`], a zero timeout still allows a minimum one-cycle
+    /// wait when no buffered match exists.
     pub fn expect(&mut self, pattern: &str, timeout: Duration) -> SessionResult<Match> {
         let re = regex::bytes::Regex::new(pattern)
             .map_err(|e| SessionError::Other(format!("invalid expect pattern /{pattern}/: {e}")))?;
