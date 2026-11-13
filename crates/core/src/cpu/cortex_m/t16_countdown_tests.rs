@@ -317,6 +317,7 @@ mod deadline_boundaries {
                 .write_u16(0xfe, if branch_entry { 0xe000 } else { 0xbf00 }));
         }
         let deliveries = Arc::new(Mutex::new(vec![]));
+        let deadline_idx = bus.peripherals.len();
         bus.add_peripheral(
             "countdown-deadline",
             ARM_REGISTER,
@@ -334,7 +335,9 @@ mod deadline_boundaries {
         let mut machine = Machine::new(cpu, bus);
         machine.config.peripheral_tick_interval = 64;
         if !arm_in_batch {
-            machine.sched.schedule(u64::from(offset), 0, TOKEN);
+            machine
+                .sched
+                .schedule(u64::from(offset), deadline_idx as u32, TOKEN);
             assert_eq!(machine.sched.next_event_deadline(), Some(u64::from(offset)));
         }
         assert!(machine.bus.pending_schedule.is_empty());
