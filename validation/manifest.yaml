@@ -1348,6 +1348,9 @@ boards:
     # interpreter's decoded instruction stream and state are unchanged;
     # Core Identity and the perf evidence pin it. ACK, NOT A CAPTURE.
   - id: stm32h563
+    # 2026-11-13: shared gpio.rs fixes only Nordic DIR/PIN_CNF and SET/CLR
+    # aliases, including narrow action stores. STM32 family paths are unchanged.
+    # Source-module controls only; no new silicon capture. Re-capture remains owed.
     # 2026-11-05: reviewed G0 DMA extension in shared UART/DMA source. Strict
     # channel completion/circular/IRQ semantics are opt-in (profile: stm32g0);
     # existing constructors retain their legacy profile. The bus completion
@@ -2498,7 +2501,7 @@ boards:
     # hardware parity have not been re-validated.
     # ACK, NOT A SILICON CAPTURE; live re-capture remains pending.
     drift_ack: 2026-11-13
-    drift_ack_digest: 6291ed17ee4cb8d0f5fc0151789794e9b714a73d762bd48fcb1f8f0a6258190e
+    drift_ack_digest: 774987993cf9304ee9aa8a87b6558de113b23cea07e4116d377fe8149faab998
     # 2026-11-01 (feat/rv64-core): uart.rs gained the 16550 LCR.DLAB divisor
     # latches (DLL/DLM), reached only by the `ns16550` / `dw_apb_uart`
     # layouts. STM32 UART register maps, byte paths and IRQ timing are
@@ -3613,6 +3616,9 @@ boards:
     drift_ack: 2026-11-08
 
   - id: nucleo-l476rg
+    # 2026-11-13: shared gpio.rs fixes only Nordic DIR/PIN_CNF and SET/CLR
+    # aliases, including narrow action stores. STM32 family paths are unchanged.
+    # Source-module controls only; no new silicon capture. Re-capture remains owed.
     # 2026-11-05: reviewed G0 DMA extension in shared UART/DMA source. Strict
     # channel completion/circular/IRQ semantics are opt-in (profile: stm32g0);
     # existing constructors retain their legacy profile. The bus completion
@@ -4733,7 +4739,7 @@ boards:
     # hardware parity have not been re-validated.
     # ACK, NOT A SILICON CAPTURE; live re-capture remains pending.
     drift_ack: 2026-11-13
-    drift_ack_digest: 3a0afb239722a78dd4514ecca3f27c01006a11c976b5ef028bc7687b464062d0
+    drift_ack_digest: 232d3ff90f2996dda4862415ef4367be71c54d2b4cf6856425fa2ab6e15d7d3d
     # 2026-11-01 (feat/rv64-core): uart.rs gained the 16550 LCR.DLAB divisor
     # latches (DLL/DLM), reached only by the `ns16550` / `dw_apb_uart`
     # layouts. STM32 UART register maps, byte paths and IRQ timing are
@@ -4801,6 +4807,9 @@ boards:
     # UART register maps, byte paths and IRQ timing are unchanged. ACK, NOT A
     # SILICON CAPTURE; live re-capture remains pending.
   - id: nucleo-l073rz
+    # 2026-11-13: shared gpio.rs fixes only Nordic DIR/PIN_CNF and SET/CLR
+    # aliases, including narrow action stores. STM32 family paths are unchanged.
+    # Source-module controls only; no new silicon capture. Re-capture remains owed.
     # 2026-11-05: reviewed G0 DMA extension in shared UART/DMA source. Strict
     # channel completion/circular/IRQ semantics are opt-in (profile: stm32g0);
     # existing constructors retain their legacy profile. The bus completion
@@ -5229,7 +5238,7 @@ boards:
     # gained a `stm32g0b1` layout (G0 map + HSI48ON 22 -> HSI48RDY 23, CCIPR2 @0x58),
     # selected only by configs/chips/stm32g0b1re.yaml. No other layout changed; this board
     # does not use it. ACK, NOT A SILICON CAPTURE.
-    drift_ack_digest: afc1962912c14643be44a2f84879d38ffea404c6f4c996a0193124a0493ac77a
+    drift_ack_digest: 0e446bef4c17cd2db5316597dc8915cdd38fa0cec7b8dd2f5322800a41b81019
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5877,6 +5886,9 @@ boards:
     # UART register maps, byte paths and IRQ timing are unchanged. ACK, NOT A
     # SILICON CAPTURE; live re-capture remains pending.
   - id: stm32f103
+    # 2026-11-13: shared gpio.rs fixes only Nordic DIR/PIN_CNF and SET/CLR
+    # aliases, including narrow action stores. STM32 family paths are unchanged.
+    # Source-module controls only; no new silicon capture. Re-capture remains owed.
     # 2026-11-05: reviewed G0 DMA extension in shared UART/DMA source. Strict
     # channel completion/circular/IRQ semantics are opt-in (profile: stm32g0);
     # existing constructors retain their legacy profile. The bus completion
@@ -7013,7 +7025,7 @@ boards:
     # hardware parity have not been re-validated.
     # ACK, NOT A SILICON CAPTURE; live re-capture remains pending.
     drift_ack: 2026-11-13
-    drift_ack_digest: 3ff6764cec7c4a28918fc1b517b3b121b0007ccc189c5dbf09eab2eee514aeea
+    drift_ack_digest: 25637a5e4a1e0939597ae615f239cf69ac98abdda24f0f88a6b10326b3c71b44
     # 2026-11-01 (feat/rv64-core): uart.rs gained the 16550 LCR.DLAB divisor
     # latches (DLL/DLM), reached only by the `ns16550` / `dw_apb_uart`
     # layouts. STM32 UART register maps, byte paths and IRQ timing are
@@ -7085,6 +7097,9 @@ boards:
     # UART register maps, byte paths and IRQ timing are unchanged. ACK, NOT A
     # SILICON CAPTURE; live re-capture remains pending.
   - id: stm32f407
+    # 2026-11-13: shared gpio.rs fixes only Nordic DIR/PIN_CNF and SET/CLR
+    # aliases, including narrow action stores. STM32 family paths are unchanged.
+    # Source-module controls only; no new silicon capture. Re-capture remains owed.
     # 2026-11-05: reviewed G0 DMA extension in shared UART/DMA source. Strict
     # channel completion/circular/IRQ semantics are opt-in (profile: stm32g0);
     # existing constructors retain their legacy profile. The bus completion
@@ -7530,7 +7545,7 @@ boards:
     # gained a `stm32g0b1` layout (G0 map + HSI48ON 22 -> HSI48RDY 23, CCIPR2 @0x58),
     # selected only by configs/chips/stm32g0b1re.yaml. No other layout changed; this board
     # does not use it. ACK, NOT A SILICON CAPTURE.
-    drift_ack_digest: 1d4889362eaa0f3fef5576abc622a964278d7926fd1ba37cd84a80627bd42a75
+    drift_ack_digest: 7a6b94042087f1a0d1e96e479519b10cce0941b2b2840cd9a7ad06dbefe34134
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
