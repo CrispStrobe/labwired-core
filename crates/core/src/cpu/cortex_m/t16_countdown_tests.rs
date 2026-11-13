@@ -415,9 +415,10 @@ mod deadline_boundaries {
                     assert_eq!(*expected.lock().unwrap(), delivered);
                     assert_eq!(fast.total_cycles, u64::from(budget));
                     assert_eq!(fast.step_profile().cpu_instructions, u64::from(budget));
-                    // Finish beyond IRQ entry even when the deadline lay outside
-                    // the initial request, and prove the wake wasn't just lost.
-                    let finish = budget.max(deadline + 1);
+                    // Exception entry itself consumes one modeled step; allow
+                    // a second step for the handler's ADDS, including when the
+                    // deadline lay outside the initial request.
+                    let finish = budget.max(deadline + 2);
                     if finish > budget {
                         fast.run(Some(finish - budget)).unwrap();
                         reference.run(Some(finish - budget)).unwrap();
