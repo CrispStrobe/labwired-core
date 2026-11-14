@@ -1,0 +1,25 @@
+{
+  "schema": "labwired.microbit.qualified-ab-archive-context.v1",
+  "hostedRun": "https://github.com/CrispStrobe/labwired-core/actions/runs/36719325375",
+  "artifactId": 11097383441,
+  "artifactName": "microbit-motion-same-runner-ab",
+  "githubArtifactDigest": "sha256:a097f837cee78c27299663966fa41e6bdca89e9f726c75bfd0014774d8b93afd",
+  "baselineCommit": "3456c048894f194bbabc9c414932a752d89da999",
+  "candidateHeadCommit": "066e94a600a2d48a87dad8f55207b5e5fbcc7a3a",
+  "candidateTestedMergeRef": "2ef3bbc7df558ae3366428e1e5a2a09b9d92fcf5",
+  "originalWorkflowPassed": true,
+  "originalReceiptParserValid": true,
+  "strictCandidateGatePassed": true,
+  "normalizationApplied": false,
+  "runnerCpu": "AMD EPYC 7763 64-Core Processor",
+  "candidateToBaselineMedianOfMediansRatio": 1.168857791959914,
+  "elfArtifacts": [
+    {"invocation": "01-baseline", "sha256": "1b4e6a6a1d99b06cbe5e9924d2247e97915a1d729aac354b3b88746dc1ea4bd7"},
+    {"invocation": "02-candidate", "sha256": "995c299b1a7ee8b33841ed8230a4d50f1221b69de0aea1c48a0a697edff22e71"},
+    {"invocation": "03-candidate", "sha256": "ed50367038bc3f2c267734e81091d324c4e849f7235097b235723c982a115067"},
+    {"invocation": "04-baseline", "sha256": "e645071562b40653d75e58002d6e4ed6e68a116c1581830f6edde99b82ad5df3"}
+  ],
+  "elfRetention": "All four actual file hashes verified against receipt firmwareSha256; binaries remain in the original GitHub artifact, not this repository.",
+  "qualificationScope": "Same-runner B/C/C/B native held-input polled motion workload. Both candidate medians passed >=1x on an EPYC 7763 runner; the lower margin is small and is not a guarantee for every host.",
+  "notQualified": "Older failures remain historical evidence. CAN-only CorePerf probe and full qualification were pending at archive creation; no later no-pull source, landed/current-main, browser-WASM, package-pin, sensor-IRQ, ADC/audio or CP13 completion promotion."
+}

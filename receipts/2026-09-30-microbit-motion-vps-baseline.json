@@ -1,0 +1,336 @@
+{
+  "commit": "2a916120ab9e5afb19ff53f5d72ca47787c7d926",
+  "compileFlags": [
+    "-mcpu=cortex-m4",
+    "-mthumb",
+    "-nostdlib",
+    "-DMICROBIT_MOTION_IO",
+    "-Wl,-T,board-io.ld"
+  ],
+  "cpuHz": 64000000,
+  "engine": "native Rust event-scheduler",
+  "firmwareSha256": "e091bb92f1ff26fe64020df91580e1a619b7675f6eba3fd82d1d8c941fe23827",
+  "guestSourceBundleSha256": "e6b8c239dc7ee1aca736671350cda8101f4bf8d6c89d91e2a9e787c85b553939",
+  "guestSourceFiles": [
+    "board-io.S",
+    "motion-polled.inc",
+    "board-io.ld"
+  ],
+  "limitations": [
+    "selected LSM303AGR variant only; held physical input poses",
+    "polled sensors; no shared sensor IRQ qualification",
+    "no ADC, microphone or speaker workload",
+    "no browser-WASM measurement",
+    "functional cycle model, not silicon-cycle-accurate timing; no silicon capture"
+  ],
+  "medianRtx": 0.16922332014257802,
+  "minimumRtx": 0.11645876326936608,
+  "realtimeTargetMet": false,
+  "samples": [
+    {
+      "accelDma": 393217,
+      "accelInput": [
+        1,
+        -0.5,
+        0.25
+      ],
+      "accelRaw": [
+        16384,
+        -8192,
+        4096
+      ],
+      "accelSamples": 112,
+      "cycles": 64000000,
+      "error": 0,
+      "guestButtonMask": 0,
+      "magDma": 393217,
+      "magInput": [
+        30,
+        -15,
+        7.5
+      ],
+      "magRaw": [
+        200,
+        -100,
+        50
+      ],
+      "magSamples": 112,
+      "pass": 1,
+      "pixels": [
+        155,
+        0,
+        0,
+        0,
+        0,
+        0,
+        157,
+        0,
+        0,
+        0,
+        0,
+        0,
+        158,
+        0,
+        0,
+        0,
+        0,
+        0,
+        155,
+        0,
+        0,
+        0,
+        0,
+        0,
+        255
+      ],
+      "rtxAt64MHz": 0.15883717267838907,
+      "scans": 2145,
+      "wallSeconds": 6.295755478
+    },
+    {
+      "accelDma": 393217,
+      "accelInput": [
+        -0.25,
+        0.125,
+        -0.75
+      ],
+      "accelRaw": [
+        -4096,
+        2048,
+        -12288
+      ],
+      "accelSamples": 212,
+      "cycles": 64000000,
+      "error": 0,
+      "guestButtonMask": 1,
+      "magDma": 393217,
+      "magInput": [
+        -30,
+        0,
+        60
+      ],
+      "magRaw": [
+        -200,
+        0,
+        400
+      ],
+      "magSamples": 212,
+      "pass": 2,
+      "pixels": [
+        155,
+        0,
+        0,
+        0,
+        0,
+        0,
+        155,
+        0,
+        0,
+        0,
+        0,
+        0,
+        155,
+        0,
+        0,
+        0,
+        0,
+        0,
+        156,
+        0,
+        0,
+        0,
+        0,
+        0,
+        255
+      ],
+      "rtxAt64MHz": 0.16922332014257802,
+      "scans": 4053,
+      "wallSeconds": 5.909351023
+    },
+    {
+      "accelDma": 393217,
+      "accelInput": [
+        1,
+        -0.5,
+        0.25
+      ],
+      "accelRaw": [
+        16384,
+        -8192,
+        4096
+      ],
+      "accelSamples": 312,
+      "cycles": 64000000,
+      "error": 0,
+      "guestButtonMask": 0,
+      "magDma": 393217,
+      "magInput": [
+        30,
+        -15,
+        7.5
+      ],
+      "magRaw": [
+        200,
+        -100,
+        50
+      ],
+      "magSamples": 312,
+      "pass": 3,
+      "pixels": [
+        155,
+        0,
+        0,
+        0,
+        0,
+        0,
+        155,
+        0,
+        0,
+        0,
+        0,
+        0,
+        155,
+        0,
+        0,
+        0,
+        0,
+        0,
+        155,
+        0,
+        0,
+        0,
+        0,
+        0,
+        255
+      ],
+      "rtxAt64MHz": 0.1711601741423184,
+      "scans": 5960,
+      "wallSeconds": 5.842480618
+    },
+    {
+      "accelDma": 393217,
+      "accelInput": [
+        -0.25,
+        0.125,
+        -0.75
+      ],
+      "accelRaw": [
+        -4096,
+        2048,
+        -12288
+      ],
+      "accelSamples": 412,
+      "cycles": 64000000,
+      "error": 0,
+      "guestButtonMask": 1,
+      "magDma": 393217,
+      "magInput": [
+        -30,
+        0,
+        60
+      ],
+      "magRaw": [
+        -200,
+        0,
+        400
+      ],
+      "magSamples": 412,
+      "pass": 4,
+      "pixels": [
+        157,
+        0,
+        0,
+        0,
+        0,
+        0,
+        158,
+        0,
+        0,
+        0,
+        0,
+        0,
+        155,
+        0,
+        0,
+        0,
+        0,
+        0,
+        155,
+        0,
+        0,
+        0,
+        0,
+        0,
+        255
+      ],
+      "rtxAt64MHz": 0.17730858619263085,
+      "scans": 7867,
+      "wallSeconds": 5.639884799
+    },
+    {
+      "accelDma": 393217,
+      "accelInput": [
+        1,
+        -0.5,
+        0.25
+      ],
+      "accelRaw": [
+        16384,
+        -8192,
+        4096
+      ],
+      "accelSamples": 512,
+      "cycles": 64000000,
+      "error": 0,
+      "guestButtonMask": 0,
+      "magDma": 393217,
+      "magInput": [
+        30,
+        -15,
+        7.5
+      ],
+      "magRaw": [
+        200,
+        -100,
+        50
+      ],
+      "magSamples": 512,
+      "pass": 5,
+      "pixels": [
+        155,
+        0,
+        0,
+        0,
+        0,
+        0,
+        155,
+        0,
+        0,
+        0,
+        0,
+        0,
+        156,
+        0,
+        0,
+        0,
+        0,
+        0,
+        159,
+        0,
+        0,
+        0,
+        0,
+        0,
+        255
+      ],
+      "rtxAt64MHz": 0.11645876326936608,
+      "scans": 9774,
+      "wallSeconds": 8.586730375
+    }
+  ],
+  "schema": "labwired.microbit.motion-board.v1",
+  "workload": "guest five-row GPIO scan, button reads, selected LSM303AGR polled TWIM0 EasyDMA samples",
+  "measurementHost": "shared VPS; concurrent unrelated workloads; no CPU isolation",
+  "nativeRunnerSha256": "20ba05338c0f394377c290cd86f83000d67503710becb2004cee3395c3807279",
+  "qualification": "all guest assertions passed; median below real time; no stable VPS real-time claim"
+}

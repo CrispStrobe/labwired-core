@@ -1,0 +1,14 @@
+{
+  "schema": "labwired.microbit.failed-ab-archive-context.v1",
+  "hostedRun": "https://github.com/CrispStrobe/labwired-core/actions/runs/36712453588",
+  "baselineCommit": "3456c048894f194bbabc9c414932a752d89da999",
+  "candidateTestedMergeRef": "b7bdb4f89ac083238458812bd4e76db0ff9cfc2a",
+  "candidateHeadCommit": "088f89a51563863b815dfbf9758f0ea9f231be0e",
+  "originalWorkflowPassed": false,
+  "originalReceiptParserValid": false,
+  "strictCandidateGatePassed": false,
+  "qualification": "FAILED: first candidate median0.9973683916355133 missed >=1x and exited101. Recovery discloses only hash-line pretty-harness normalization; it does not alter original workflow status.",
+  "archiveContents": "Original four raw logs, original invalid workflow summary, runner/source provenance; four strictly revalidated recovered receipts, explicitly normalized logs and complete20-sample recovered summary.",
+  "elfArtifacts": "ELFs remain in the original GitHub artifact. All four retained file hashes match the guest SHA256 in recovered receipts; binaries are not committed.",
+  "notQualified": "Combined later Nordic GPIO/memo candidate, current main, browser-WASM/audio/ADC/CP13 completion are not qualified by this failed historical run."
+}

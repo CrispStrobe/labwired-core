@@ -1,0 +1,385 @@
+{
+  "failures": [],
+  "measured": {
+    "atmega328p": {
+      "clock_hz": 16000000,
+      "max_rtx": 118.84003097915836,
+      "median_rtx": 115.76875838796849,
+      "min_rtx": 107.96267946160094,
+      "repeats": 3,
+      "steps": 16000000,
+      "steps_per_batch": 227.56
+    },
+    "atsamd21": {
+      "clock_hz": 48000000,
+      "max_rtx": 207.98379057533978,
+      "median_rtx": 202.5998011692183,
+      "min_rtx": 200.36056887987544,
+      "repeats": 3,
+      "steps": 48000000,
+      "steps_per_batch": 1023.8
+    },
+    "atsamd21g18a": {
+      "clock_hz": 48000000,
+      "max_rtx": 180.34827777332563,
+      "median_rtx": 179.8564062428964,
+      "min_rtx": 175.73744263682582,
+      "repeats": 3,
+      "steps": 48000000,
+      "steps_per_batch": 1023.8
+    },
+    "atsamd51": {
+      "clock_hz": 120000000,
+      "max_rtx": 112.58539179761934,
+      "median_rtx": 112.2908764897637,
+      "min_rtx": 112.02567628438428,
+      "repeats": 3,
+      "steps": 120000000,
+      "steps_per_batch": 1023.8
+    },
+    "atsamd51-pybadge": {
+      "clock_hz": 120000000,
+      "max_rtx": 108.03673378643586,
+      "median_rtx": 84.10555549987374,
+      "min_rtx": 80.93343443565318,
+      "repeats": 3,
+      "steps": 120000000,
+      "steps_per_batch": 1023.8
+    },
+    "efr32mg26": {
+      "clock_hz": 78000000,
+      "max_rtx": 101.99817484495547,
+      "median_rtx": 101.54125407929631,
+      "min_rtx": 100.92095416706616,
+      "repeats": 3,
+      "steps": 78000000,
+      "steps_per_batch": 1023.8
+    },
+    "esp32": {
+      "clock_hz": 240000000,
+      "max_rtx": 63.259285387673906,
+      "median_rtx": 62.9146587190549,
+      "min_rtx": 62.28818901325172,
+      "repeats": 3,
+      "steps": 240000000,
+      "steps_per_batch": 1023.8
+    },
+    "esp32c3": {
+      "clock_hz": 160000000,
+      "max_rtx": 23.38833060293929,
+      "median_rtx": 23.306437161017985,
+      "min_rtx": 22.865055472895854,
+      "repeats": 3,
+      "steps": 160000000,
+      "steps_per_batch": 1023.8
+    },
+    "esp32c6": {
+      "clock_hz": 160000000,
+      "max_rtx": 25.07611352741168,
+      "median_rtx": 24.999435637727622,
+      "min_rtx": 24.388156038351344,
+      "repeats": 3,
+      "steps": 160000000,
+      "steps_per_batch": 1023.8
+    },
+    "esp32s3": {
+      "clock_hz": 240000000,
+      "max_rtx": 37.85371266186526,
+      "median_rtx": 37.65411830625147,
+      "min_rtx": 37.14475821156423,
+      "repeats": 3,
+      "steps": 240000000,
+      "steps_per_batch": 1023.8
+    },
+    "esp32s3-zero": {
+      "clock_hz": 240000000,
+      "max_rtx": 38.251517035990034,
+      "median_rtx": 38.1598132214221,
+      "min_rtx": 37.90912954197809,
+      "repeats": 3,
+      "steps": 240000000,
+      "steps_per_batch": 1023.8
+    },
+    "imxrt1064": {
+      "clock_hz": 600000000,
+      "max_rtx": 28.632293464729464,
+      "median_rtx": 28.595770925663775,
+      "min_rtx": 28.343670978713778,
+      "repeats": 3,
+      "steps": 600000000,
+      "steps_per_batch": 1023.8
+    },
+    "mkw41z4": {
+      "clock_hz": 48000000,
+      "max_rtx": 114.48430202688446,
+      "median_rtx": 113.59873405583993,
+      "min_rtx": 113.27449025639123,
+      "repeats": 3,
+      "steps": 48000000,
+      "steps_per_batch": 1023.8
+    },
+    "nrf51822": {
+      "clock_hz": 16000000,
+      "max_rtx": 289.4371922736258,
+      "median_rtx": 288.52809412574464,
+      "min_rtx": 287.2763302395006,
+      "repeats": 3,
+      "steps": 16000000,
+      "steps_per_batch": 1023.8
+    },
+    "nrf52832": {
+      "clock_hz": 64000000,
+      "max_rtx": 90.41117192729628,
+      "median_rtx": 89.51167532129675,
+      "min_rtx": 87.39994345224638,
+      "repeats": 3,
+      "steps": 64000000,
+      "steps_per_batch": 1023.8
+    },
+    "nrf52833": {
+      "clock_hz": 64000000,
+      "max_rtx": 52.090767119895,
+      "median_rtx": 52.01172510716597,
+      "min_rtx": 51.77101122609702,
+      "repeats": 3,
+      "steps": 64000000,
+      "steps_per_batch": 1023.8
+    },
+    "nrf52840": {
+      "clock_hz": 64000000,
+      "max_rtx": 45.03722642024799,
+      "median_rtx": 44.99762727515502,
+      "min_rtx": 42.51103501440281,
+      "repeats": 3,
+      "steps": 64000000,
+      "steps_per_batch": 1023.8
+    },
+    "nrf5340": {
+      "clock_hz": 128000000,
+      "max_rtx": 35.35156852081232,
+      "median_rtx": 35.148762215207306,
+      "min_rtx": 34.932191376711316,
+      "repeats": 3,
+      "steps": 128000000,
+      "steps_per_batch": 1023.8
+    },
+    "nrf54l15": {
+      "clock_hz": 128000000,
+      "max_rtx": 40.211735698544906,
+      "median_rtx": 40.199220906961585,
+      "min_rtx": 40.03406258181159,
+      "repeats": 3,
+      "steps": 128000000,
+      "steps_per_batch": 1023.8
+    },
+    "nrf54lm20a": {
+      "clock_hz": 128000000,
+      "max_rtx": 74.4638675994262,
+      "median_rtx": 74.14674337495235,
+      "min_rtx": 73.64390095588892,
+      "repeats": 3,
+      "steps": 128000000,
+      "steps_per_batch": 1023.8
+    },
+    "ra4m1": {
+      "clock_hz": 48000000,
+      "max_rtx": 204.64381845789546,
+      "median_rtx": 204.26117405490828,
+      "min_rtx": 200.66882920694786,
+      "repeats": 3,
+      "steps": 48000000,
+      "steps_per_batch": 1023.8
+    },
+    "rp2040": {
+      "clock_hz": 125000000,
+      "max_rtx": 46.02210681105926,
+      "median_rtx": 45.001339014881395,
+      "min_rtx": 44.56526781781325,
+      "repeats": 3,
+      "steps": 125000000,
+      "steps_per_batch": 1023.79
+    },
+    "rp2350": {
+      "clock_hz": 150000000,
+      "max_rtx": 61.184165684798415,
+      "median_rtx": 60.20742541783084,
+      "min_rtx": 58.268569275241994,
+      "repeats": 3,
+      "steps": 150000000,
+      "steps_per_batch": 1023.8
+    },
+    "stm32f103": {
+      "clock_hz": 72000000,
+      "max_rtx": 73.70913740470321,
+      "median_rtx": 73.68307890943237,
+      "min_rtx": 73.54582978941235,
+      "repeats": 3,
+      "steps": 72000000,
+      "steps_per_batch": 1023.8
+    },
+    "stm32f401": {
+      "clock_hz": 84000000,
+      "max_rtx": 78.84640145428777,
+      "median_rtx": 78.7271643987059,
+      "min_rtx": 77.82187165036748,
+      "repeats": 3,
+      "steps": 84000000,
+      "steps_per_batch": 1023.8
+    },
+    "stm32f401cdu6": {
+      "clock_hz": 84000000,
+      "max_rtx": 60.18278595379395,
+      "median_rtx": 59.86112697425599,
+      "min_rtx": 57.29381160376546,
+      "repeats": 3,
+      "steps": 84000000,
+      "steps_per_batch": 1023.8
+    },
+    "stm32f405": {
+      "clock_hz": 168000000,
+      "max_rtx": 57.146354499757436,
+      "median_rtx": 57.00743029140217,
+      "min_rtx": 56.57316216710856,
+      "repeats": 3,
+      "steps": 168000000,
+      "steps_per_batch": 1023.8
+    },
+    "stm32f407": {
+      "clock_hz": 168000000,
+      "max_rtx": 41.59788629500044,
+      "median_rtx": 41.40666730155696,
+      "min_rtx": 41.22516065549777,
+      "repeats": 3,
+      "steps": 168000000,
+      "steps_per_batch": 1023.8
+    },
+    "stm32f411ceu6": {
+      "clock_hz": 100000000,
+      "max_rtx": 55.090096271713406,
+      "median_rtx": 50.555634225697695,
+      "min_rtx": 48.912764622256454,
+      "repeats": 3,
+      "steps": 100000000,
+      "steps_per_batch": 1023.8
+    },
+    "stm32f746": {
+      "clock_hz": 216000000,
+      "max_rtx": 53.912157256084924,
+      "median_rtx": 46.840173598991015,
+      "min_rtx": 37.07750369921279,
+      "repeats": 3,
+      "steps": 216000000,
+      "steps_per_batch": 1023.8
+    },
+    "stm32f767": {
+      "clock_hz": 216000000,
+      "max_rtx": 44.83934555721608,
+      "median_rtx": 43.57827300602935,
+      "min_rtx": 32.83840062146144,
+      "repeats": 3,
+      "steps": 216000000,
+      "steps_per_batch": 1023.8
+    },
+    "stm32g071": {
+      "clock_hz": 64000000,
+      "max_rtx": 151.29192715464313,
+      "median_rtx": 149.48938909314694,
+      "min_rtx": 148.29822595273563,
+      "repeats": 3,
+      "steps": 64000000,
+      "steps_per_batch": 1023.8
+    },
+    "stm32g0b1re": {
+      "clock_hz": 16000000,
+      "max_rtx": 296.7983471882447,
+      "median_rtx": 295.23624509289283,
+      "min_rtx": 288.744202380203,
+      "repeats": 3,
+      "steps": 16000000,
+      "steps_per_batch": 1023.8
+    },
+    "stm32g474re": {
+      "clock_hz": 170000000,
+      "max_rtx": 51.60789293186529,
+      "median_rtx": 51.108421558819614,
+      "min_rtx": 50.723417378655945,
+      "repeats": 3,
+      "steps": 170000000,
+      "steps_per_batch": 1023.8
+    },
+    "stm32h563": {
+      "clock_hz": 250000000,
+      "max_rtx": 26.834227454233925,
+      "median_rtx": 26.72211755463122,
+      "min_rtx": 26.27138944281927,
+      "repeats": 3,
+      "steps": 250000000,
+      "steps_per_batch": 992.81
+    },
+    "stm32h735": {
+      "clock_hz": 550000000,
+      "max_rtx": 18.669085732133404,
+      "median_rtx": 18.622449373895122,
+      "min_rtx": 18.602447594717464,
+      "repeats": 3,
+      "steps": 550000000,
+      "steps_per_batch": 1023.8
+    },
+    "stm32l073": {
+      "clock_hz": 32000000,
+      "max_rtx": 81.70270395918493,
+      "median_rtx": 80.87102624026026,
+      "min_rtx": 80.38087028528112,
+      "repeats": 3,
+      "steps": 32000000,
+      "steps_per_batch": 1023.8
+    },
+    "stm32l476": {
+      "clock_hz": 80000000,
+      "max_rtx": 41.24762346656798,
+      "median_rtx": 41.01194345718341,
+      "min_rtx": 40.58316547803684,
+      "repeats": 3,
+      "steps": 80000000,
+      "steps_per_batch": 1023.8
+    },
+    "stm32u545": {
+      "clock_hz": 160000000,
+      "max_rtx": 27.61900608532557,
+      "median_rtx": 27.546734136330407,
+      "min_rtx": 27.448570300059064,
+      "repeats": 3,
+      "steps": 160000000,
+      "steps_per_batch": 992.81
+    },
+    "stm32u575": {
+      "clock_hz": 160000000,
+      "max_rtx": 26.594872567055045,
+      "median_rtx": 26.25354714956195,
+      "min_rtx": 26.087199019279765,
+      "repeats": 3,
+      "steps": 160000000,
+      "steps_per_batch": 992.81
+    },
+    "stm32wb55": {
+      "clock_hz": 64000000,
+      "max_rtx": 78.14515900905965,
+      "median_rtx": 77.24594715630806,
+      "min_rtx": 75.78352587413234,
+      "repeats": 3,
+      "steps": 64000000,
+      "steps_per_batch": 1023.8
+    },
+    "stm32wba52": {
+      "clock_hz": 100000000,
+      "max_rtx": 56.08333400170234,
+      "median_rtx": 55.75566573732884,
+      "min_rtx": 54.911950883176864,
+      "repeats": 3,
+      "steps": 100000000,
+      "steps_per_batch": 1023.8
+    }
+  },
+  "minimum_required_rtx": 1.0,
+  "ok": true
+}

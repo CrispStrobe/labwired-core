@@ -1,0 +1,351 @@
+{
+  "schema": "labwired.microbit.motion-board.v1",
+  "commit": "b7bdb4f89ac083238458812bd4e76db0ff9cfc2a",
+  "firmwareSha256": "a7959928efdda126987aef4050b6fbce54b6d1846b457f6ee1fb36e904461b2e",
+  "guestSourceBundleSha256": "e6b8c239dc7ee1aca736671350cda8101f4bf8d6c89d91e2a9e787c85b553939",
+  "guestSourceFiles": [
+    "board-io.S",
+    "motion-polled.inc",
+    "board-io.ld"
+  ],
+  "compileFlags": [
+    "-mcpu=cortex-m4",
+    "-mthumb",
+    "-nostdlib",
+    "-DMICROBIT_MOTION_IO",
+    "-Wl,-T,board-io.ld"
+  ],
+  "engine": "native Rust event-scheduler",
+  "cpuHz": 64000000,
+  "workload": "guest five-row GPIO scan, button reads, selected LSM303AGR polled TWIM0 EasyDMA samples",
+  "samples": [
+    {
+      "accelDma": 393217,
+      "accelInput": [
+        1,
+        -0.5,
+        0.25
+      ],
+      "accelRaw": [
+        16384,
+        -8192,
+        4096
+      ],
+      "accelSamples": 112,
+      "cycles": 64000000,
+      "error": 0,
+      "guestButtonMask": 0,
+      "magDma": 393217,
+      "magInput": [
+        30,
+        -15,
+        7.5
+      ],
+      "magRaw": [
+        200,
+        -100,
+        50
+      ],
+      "magSamples": 112,
+      "pass": 1,
+      "pixels": [
+        155,
+        0,
+        0,
+        0,
+        0,
+        0,
+        157,
+        0,
+        0,
+        0,
+        0,
+        0,
+        158,
+        0,
+        0,
+        0,
+        0,
+        0,
+        155,
+        0,
+        0,
+        0,
+        0,
+        0,
+        255
+      ],
+      "rtxAt64MHz": 1.0288603963012626,
+      "scans": 2145,
+      "wallSeconds": 0.971949162
+    },
+    {
+      "accelDma": 393217,
+      "accelInput": [
+        -0.25,
+        0.125,
+        -0.75
+      ],
+      "accelRaw": [
+        -4096,
+        2048,
+        -12288
+      ],
+      "accelSamples": 212,
+      "cycles": 64000000,
+      "error": 0,
+      "guestButtonMask": 1,
+      "magDma": 393217,
+      "magInput": [
+        -30,
+        0,
+        60
+      ],
+      "magRaw": [
+        -200,
+        0,
+        400
+      ],
+      "magSamples": 212,
+      "pass": 2,
+      "pixels": [
+        155,
+        0,
+        0,
+        0,
+        0,
+        0,
+        155,
+        0,
+        0,
+        0,
+        0,
+        0,
+        155,
+        0,
+        0,
+        0,
+        0,
+        0,
+        156,
+        0,
+        0,
+        0,
+        0,
+        0,
+        255
+      ],
+      "rtxAt64MHz": 1.034546664351848,
+      "scans": 4053,
+      "wallSeconds": 0.966606954
+    },
+    {
+      "accelDma": 393217,
+      "accelInput": [
+        1,
+        -0.5,
+        0.25
+      ],
+      "accelRaw": [
+        16384,
+        -8192,
+        4096
+      ],
+      "accelSamples": 312,
+      "cycles": 64000000,
+      "error": 0,
+      "guestButtonMask": 0,
+      "magDma": 393217,
+      "magInput": [
+        30,
+        -15,
+        7.5
+      ],
+      "magRaw": [
+        200,
+        -100,
+        50
+      ],
+      "magSamples": 312,
+      "pass": 3,
+      "pixels": [
+        155,
+        0,
+        0,
+        0,
+        0,
+        0,
+        155,
+        0,
+        0,
+        0,
+        0,
+        0,
+        155,
+        0,
+        0,
+        0,
+        0,
+        0,
+        155,
+        0,
+        0,
+        0,
+        0,
+        0,
+        255
+      ],
+      "rtxAt64MHz": 1.0146103412269825,
+      "scans": 5960,
+      "wallSeconds": 0.985600047
+    },
+    {
+      "accelDma": 393217,
+      "accelInput": [
+        -0.25,
+        0.125,
+        -0.75
+      ],
+      "accelRaw": [
+        -4096,
+        2048,
+        -12288
+      ],
+      "accelSamples": 412,
+      "cycles": 64000000,
+      "error": 0,
+      "guestButtonMask": 1,
+      "magDma": 393217,
+      "magInput": [
+        -30,
+        0,
+        60
+      ],
+      "magRaw": [
+        -200,
+        0,
+        400
+      ],
+      "magSamples": 412,
+      "pass": 4,
+      "pixels": [
+        157,
+        0,
+        0,
+        0,
+        0,
+        0,
+        158,
+        0,
+        0,
+        0,
+        0,
+        0,
+        155,
+        0,
+        0,
+        0,
+        0,
+        0,
+        155,
+        0,
+        0,
+        0,
+        0,
+        0,
+        255
+      ],
+      "rtxAt64MHz": 1.0096457241296102,
+      "scans": 7867,
+      "wallSeconds": 0.990446427
+    },
+    {
+      "accelDma": 393217,
+      "accelInput": [
+        1,
+        -0.5,
+        0.25
+      ],
+      "accelRaw": [
+        16384,
+        -8192,
+        4096
+      ],
+      "accelSamples": 512,
+      "cycles": 64000000,
+      "error": 0,
+      "guestButtonMask": 0,
+      "magDma": 393217,
+      "magInput": [
+        30,
+        -15,
+        7.5
+      ],
+      "magRaw": [
+        200,
+        -100,
+        50
+      ],
+      "magSamples": 512,
+      "pass": 5,
+      "pixels": [
+        155,
+        0,
+        0,
+        0,
+        0,
+        0,
+        155,
+        0,
+        0,
+        0,
+        0,
+        0,
+        156,
+        0,
+        0,
+        0,
+        0,
+        0,
+        159,
+        0,
+        0,
+        0,
+        0,
+        0,
+        255
+      ],
+      "rtxAt64MHz": 0.9965514695155941,
+      "scans": 9774,
+      "wallSeconds": 1.003460464
+    }
+  ],
+  "medianRtx": 1.0146103412269825,
+  "minimumRtx": 0.9965514695155941,
+  "realtimeTargetMet": true,
+  "limitations": [
+    "selected LSM303AGR variant only; held physical input poses",
+    "polled sensors; no shared sensor IRQ qualification",
+    "no ADC, microphone or speaker workload",
+    "no browser-WASM measurement",
+    "functional cycle model, not silicon-cycle-accurate timing; no silicon capture"
+  ],
+  "abInvocation": {
+    "index": 3,
+    "role": "candidate",
+    "requireRealtime": true,
+    "exitCode": 0
+  },
+  "recovery": {
+    "originalWorkflowPassed": false,
+    "originalReceiptParserValid": false,
+    "hostedRun": "https://github.com/CrispStrobe/labwired-core/actions/runs/36712453588",
+    "rawLog": "../03-candidate.log",
+    "rawLogSha256": "99da896fbcf2d52191bab32fe1dab72be2c39b82bf3a7e7226c6c0d0e61b2fed",
+    "normalizedLog": "03-candidate-normalized.log",
+    "normalizedLogSha256": "c7955eda7ef0e76639886cd22763aa388c9773dc85621c34d2043902753d2040",
+    "removedPrefix": "test active_motion_display_button_workload_throughput ... ",
+    "removedPrefixCount": 1,
+    "normalizationRule": "Remove exactly one known Rust pretty-harness test prefix, only from the anchored guest SHA256 line; strict measurement parser unchanged"
+  }
+}
