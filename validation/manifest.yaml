@@ -471,7 +471,7 @@ boards:
     # Content acknowledgement only; capture/date/expiry are unchanged.
     # TEMP result writes ignored and STOP preserves DATARDY; six focused
     # source controls pass. No new silicon capture or guest qualification.
-    drift_ack_digest: 03f82a46e6c1db8d6b7ad21f3b17de56c801350f9b4caad78fd2eb5b913279c3
+    drift_ack_digest: ac2fd2aae5b99f5c02118a1283b48f6b5eca895c65f2c5bb3c4312135b556425
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -717,7 +717,12 @@ boards:
     # 2026-11-13: WDT restores documented RREN=1/CONFIG=1 reset defaults.
     # Default RR0 feeding, timeout/IRQ and scheduled deadline controls pass
     # in the isolated module harness; no live WDT capture or guest run.
-    drift_ack: 2026-11-13
+    # 2026-11-14: TIMER freezes the incremented counter for all compare
+    # channels before CLEAR shortcuts can hide equal matches or create CC=0
+    # events/STOP. Four module regressions pass in both feature profiles;
+    # Core/guest qualification and physical re-capture remain pending.
+    # Scoped source-drift metadata only; no new silicon capture.
+    drift_ack: 2026-11-14
     # 2026-11-07 (feat/arduino-matrix-pico2-rp2350): cortex_m exec/misc.rs
     # adds a cold p0 (GPIO coprocessor) path, reached only when the chip
     # declares `coprocessors: [rp2350_gpioc]` (RP2350 only); every other
@@ -1086,7 +1091,7 @@ boards:
     # Content acknowledgement only; capture/date/expiry are unchanged.
     # TEMP result writes ignored and STOP preserves DATARDY; six focused
     # source controls pass. No new silicon capture or guest qualification.
-    drift_ack_digest: 03f82a46e6c1db8d6b7ad21f3b17de56c801350f9b4caad78fd2eb5b913279c3
+    drift_ack_digest: ac2fd2aae5b99f5c02118a1283b48f6b5eca895c65f2c5bb3c4312135b556425
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -1329,7 +1334,12 @@ boards:
     # 2026-11-13: custom Bus Cortex-M batches now yield at pending flash ops.
     # SystemBus execution and captured register models are unchanged.
     # Content drift acknowledgement only; no capture/date/expiry renewed.
-    drift_ack: 2026-11-13
+    # 2026-11-14: TIMER freezes the incremented counter for all compare
+    # channels before CLEAR shortcuts can hide equal matches or create CC=0
+    # events/STOP. Four module regressions pass in both feature profiles;
+    # Core/guest qualification and physical re-capture remain pending.
+    # Scoped source-drift metadata only; no new silicon capture.
+    drift_ack: 2026-11-14
     # 2026-11-07 (feat/arduino-matrix-pico2-rp2350): cortex_m exec/misc.rs
     # adds a cold p0 (GPIO coprocessor) path, reached only when the chip
     # declares `coprocessors: [rp2350_gpioc]` (RP2350 only); every other
