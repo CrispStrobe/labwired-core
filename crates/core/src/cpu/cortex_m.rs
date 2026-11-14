@@ -3495,6 +3495,12 @@ impl Cpu for CortexM {
                 #[cfg(feature = "event-scheduler")]
                 bus.advance_cycle(live_step);
                 executed += 1;
+                // Custom bus implementations must yield on the same flash-op
+                // boundary as SystemBus so the machine can apply the operation
+                // before the next instruction fetch.
+                if bus.has_pending_flash_op() {
+                    break;
+                }
                 if bus.batch_stop_hit() {
                     break;
                 }
