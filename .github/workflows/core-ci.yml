@@ -935,6 +935,20 @@ jobs:
       # — a toolchain install and a firmware build this lane needs for nothing
       # else. #880 is the regression that escaped; this is the suite that
       # catches it.
+      # Fork PR safeguards stay before the fail-closed feature-off aggregate.
+      # Retain the upstream push-only copies as post-merge coverage as well.
+      - name: AVR Nano golden survival
+        run: cargo test -p labwired-core --test avr_nano_golden_survival -- --nocapture
+
+      - name: Walk-deletion derivation (PR-fast structural arm)
+        run: >
+          scripts/ci/cargo-test-nonvacuous.sh
+          -p labwired-core --test esp32_classic_walk_differential
+          --test ordered_debug_metadata
+
+      - name: BLE Pong fixture provenance (committed .ino ↔ .bin)
+        run: cargo test -p labwired-core --test fixture_ble_pong_provenance
+
       - name: Firmware survival (committed ELF fixtures, ~50 chips)
         run: cargo test -p labwired-core --test firmware_survival
 
@@ -1246,6 +1260,7 @@ jobs:
             scripts/ci/test_matrix_external_cache.py \
             scripts/ci/test_matrix_verdict.py \
             scripts/ci/test_cheat_ratchet.py \
+            scripts/ci/test_core_dep_map.py \
             scripts/ci/test_ignore_reasons.py \
             scripts/ci/test_linker_script_single_source.py \
             scripts/ci/test_host_clippy_scope.py \
@@ -1257,8 +1272,10 @@ jobs:
             scripts/test_generate_model_ratings.py \
             scripts/test_generate_validation_status.py \
             scripts/test_labwired_audit.py \
-            validation/matrix_lib/test_invoke.py
+            validation/matrix_lib/test_invoke.py \
+            validation/test_registry_dir.py
           python3 -m unittest discover -s scripts/tests -p test_cli_release_tag.py
+          python3 -m unittest discover -s examples/nrf52840-secure-boot-lab -p test_make_packages.py
 
   pr-gate-warm:
     name: pr-gate-warm
