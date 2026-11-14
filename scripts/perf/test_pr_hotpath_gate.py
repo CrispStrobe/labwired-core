@@ -87,6 +87,57 @@ class HistoryControls(unittest.TestCase):
         self.assertEqual(paths, ["README.md"])
         self.assertFalse(any(map(gate.hotpath, paths)))
 
+    def test_stale_event_base_uses_actual_merge_parent(self):
+        self.run_git("checkout", "-b", "docs")
+        self.write("README.md", "documentation\n")
+        self.run_git("add", ".")
+        self.run_git("commit", "-m", "docs")
+        head = self.sha()
+        self.run_git("checkout", "main")
+        self.write("crates/core/src/lib.rs", "new main runtime\n")
+        self.run_git("commit", "-am", "main advances after event")
+        self.run_git("merge", "--no-ff", "docs", "-m", "tested merge")
+        self.assertEqual(gate.changed_paths(self.sha(), self.initial, head), ["README.md"])
+
+    def test_stale_event_base_preserves_runtime_changes_and_deletions(self):
+        for rename in (False, True):
+            with self.subTest(rename=rename):
+                self.run_git("checkout", "-B", "runtime", self.initial)
+                if rename:
+                    self.run_git("mv", "crates/core/src/lib.rs", "README.md")
+                else:
+                    self.write("crates/core/src/lib.rs", "PR runtime\n")
+                self.run_git("add", ".")
+                self.run_git("commit", "-m", "PR runtime")
+                head = self.sha()
+                self.run_git("checkout", "-B", "advanced", self.initial)
+                self.write("main-only.md", "main advance\n")
+                self.run_git("add", ".")
+                self.run_git("commit", "-m", "main advances after event")
+                self.run_git("merge", "--no-ff", "runtime", "-m", "tested merge")
+                paths = gate.changed_paths(self.sha(), self.initial, head)
+                self.assertIn("crates/core/src/lib.rs", paths)
+                self.assertNotIn("main-only.md", paths)
+                self.assertTrue(any(map(gate.hotpath, paths)))
+
+    def test_shallow_merge_does_not_need_stale_event_base_object(self):
+        self.run_git("checkout", "-b", "runtime")
+        self.write("crates/core/src/lib.rs", "PR runtime\n")
+        self.run_git("commit", "-am", "PR runtime")
+        head = self.sha()
+        self.run_git("checkout", "main")
+        self.write("README.md", "main advance\n")
+        self.run_git("add", ".")
+        self.run_git("commit", "-m", "main advances after event")
+        self.run_git("merge", "--no-ff", "runtime", "-m", "tested merge")
+        tested = self.sha()
+        shallow = self.repo / "shallow"
+        self.run_git("clone", "--depth", "2", self.repo.as_uri(), str(shallow))
+        os.chdir(shallow)
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.run_git("cat-file", "-e", self.initial + "^{commit}")
+        self.assertEqual(gate.changed_paths(tested, self.initial, head), ["crates/core/src/lib.rs"])
+
     def test_runtime_rename_out_of_scope_still_selects_and_wrong_parents_refuse(self):
         self.run_git("checkout", "-b", "move")
         self.run_git("mv", "crates/core/src/lib.rs", "README.md")
@@ -96,9 +147,19 @@ class HistoryControls(unittest.TestCase):
         self.run_git("merge", "--no-ff", "move", "-m", "tested merge")
         tested = self.sha()
         self.assertTrue(any(map(gate.hotpath, gate.changed_paths(tested, self.initial, head))))
-        for args in [(tested, head, self.initial), (self.initial, self.initial, head), (tested, "bad", head)]:
+        for args in [(tested, head, self.initial), (self.initial, self.initial, head), (tested, "bad", head), (tested, self.initial, self.initial)]:
             with self.subTest(args=args), self.assertRaises(ValueError):
                 gate.changed_paths(*args)
+
+    def test_non_two_parent_merges_refuse(self):
+        # Raw commit headers preserve parent count even in a shallow checkout.
+        for count in (0, 1, 3):
+            headers = b"tree " + b"0" * 40 + b"\n"
+            headers += (b"parent " + self.initial.encode() + b"\n") * count
+            with self.subTest(count=count), patch.object(
+                gate, "git", side_effect=[self.initial.encode() + b"\n", headers + b"\nmessage\n"]
+            ), self.assertRaises(ValueError):
+                gate.changed_paths(self.initial, self.initial, self.initial)
 
     def test_git_failure_is_not_a_false_skip(self):
         with patch.object(gate, "git", side_effect=subprocess.CalledProcessError(1, "git")):
