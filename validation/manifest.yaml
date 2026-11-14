@@ -476,7 +476,7 @@ boards:
     # controls cover all event bits, STOP and both sequence paths; actual
     # Core/guest qualification and silicon re-capture remain pending.
     # Source-content acknowledgement only; capture/ACK dates and expiry kept.
-    drift_ack_digest: 03f6df1ff7867461f0915a26ae496f5135f1fe471e0180467d2abc87cbf9053a
+    drift_ack_digest: 1dd81f75e289303dedacb87d045c1c28dc832aef2741b3b8edbda58ceb82b01f
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -727,6 +727,11 @@ boards:
     # events/STOP. Four module regressions pass in both feature profiles;
     # Core/guest qualification and physical re-capture remain pending.
     # Scoped source-drift metadata only; no new silicon capture.
+    # 2026-11-14: EGU IRQ now follows latched EVENTS_TRIGGERED & INTEN,
+    # including enable-after-event and clear-before-drain. PPI event delivery
+    # stays independent of software clearing. Focused source controls only;
+    # engine/guest qualification and live re-capture remain pending.
+    # Scoped content acknowledgement; no capture/date/expiry renewed.
     drift_ack: 2026-11-14
     # 2026-11-07 (feat/arduino-matrix-pico2-rp2350): cortex_m exec/misc.rs
     # adds a cold p0 (GPIO coprocessor) path, reached only when the chip
@@ -1101,7 +1106,7 @@ boards:
     # controls cover all event bits, STOP and both sequence paths; actual
     # Core/guest qualification and silicon re-capture remain pending.
     # Source-content acknowledgement only; capture/ACK dates and expiry kept.
-    drift_ack_digest: 03f6df1ff7867461f0915a26ae496f5135f1fe471e0180467d2abc87cbf9053a
+    drift_ack_digest: 1dd81f75e289303dedacb87d045c1c28dc832aef2741b3b8edbda58ceb82b01f
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -1349,6 +1354,11 @@ boards:
     # events/STOP. Four module regressions pass in both feature profiles;
     # Core/guest qualification and physical re-capture remain pending.
     # Scoped source-drift metadata only; no new silicon capture.
+    # 2026-11-14: EGU IRQ now follows latched EVENTS_TRIGGERED & INTEN,
+    # including enable-after-event and clear-before-drain. PPI event delivery
+    # stays independent of software clearing. Focused source controls only;
+    # engine/guest qualification and live re-capture remain pending.
+    # Scoped content acknowledgement; no capture/date/expiry renewed.
     drift_ack: 2026-11-14
     # 2026-11-07 (feat/arduino-matrix-pico2-rp2350): cortex_m exec/misc.rs
     # adds a cold p0 (GPIO coprocessor) path, reached only when the chip
