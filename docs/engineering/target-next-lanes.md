@@ -51,6 +51,25 @@ and existing WDT descriptors. Add default feed, timeout/IRQ,
 explicit override and scheduler-deadline controls. No clock-rate, reset delivery,
 sleep/halt execution, duplicate START or guest qualification claim is added.
 
+## nRF52 TIMER simultaneous compare shortcuts — candidate 2026-11-14
+
+Scope: `crates/core/src/peripherals/nrf52/timer.rs` and affected generated
+board status. Freeze the incremented counter for all CC comparators before
+CLEAR shortcuts can change it. Equal CC values then retain every event and
+IRQ; clearing from a nonzero match cannot manufacture a CC=0 event or STOP.
+Existing clock approximation, cycle budget, register masks and SHORTS timing
+remain unchanged. Counter-mode event routing remains separately incomplete.
+
+The [Nordic TIMER specification](https://docs.nordicsemi.com/r/bundle/ps_nrf52840/page/timer.html)
+defines compare on counter increment and CLEAR as a task reached from an
+event. The [BabbleSim TIMER implementation](https://github.com/BabbleSim/ext_NRF_hw_models/blob/main/src/HW_models/NHW_TIMER.c)
+likewise collects matching channels before signaling events and their shortcuts.
+Focused tests cover all CLEAR positions for four/six channels, event and IRQ
+fanout, inactive zero-compare STOP, simultaneous CLEAR/STOP, batch versus tick,
+and scheduler callback delivery. Module-only controls are source evidence;
+hosted Core and affected clean guest qualification remain required. No silicon,
+physical timing or complete-board claim follows from these tests.
+
 ## Python 3.13 leg for the CI-script tests — claimed 2026-11-11
 
 Claim and change in one PR. Adds `pr-ci-scripts-py313` to `core-ci.yml`: the same
