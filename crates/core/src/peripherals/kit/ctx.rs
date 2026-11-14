@@ -503,12 +503,12 @@ impl<'a> AttachCtx<'a> {
     /// (`Transport::GpioGroup`). Accepts ESP32/S3 spellings (`GPIO15`, `IO4`,
     /// bare `15`) used by the ESP GPIO edge-observer path.
     pub fn parse_gpio_pin(&self, label: &str) -> Option<u8> {
-        // SAM and STM32 use the same PA/PB spelling with different widths.
+        // AVR, SAM and STM32 share PA/PB spellings with different widths.
         // Admit the concrete named model before encoding a port-qualified pad;
         // an unknown PB0 must never fall through as ESP GPIO0.
         let label = label.trim();
         if label.starts_with('P') {
-            return super::pad_label::parse_named_pad(label, |family, port| {
+            return super::pad_label::parse_named_pad(label, |family, port, pin| {
                 let name = family.instance_name(port);
                 self.bus
                     .find_peripheral_index_by_name(&name)
@@ -519,6 +519,10 @@ impl<'a> AttachCtx<'a> {
                         super::pad_label::PadFamily::Sam => {
                             self.bus.peripherals[idx].dev.is_sam_gpio_port()
                         }
+                        super::pad_label::PadFamily::Avr => self.bus.peripherals[idx]
+                            .dev
+                            .avr_gpio_pin_count()
+                            .is_some_and(|count| pin < count),
                     })
             });
         }
@@ -727,6 +731,41 @@ mod tests {
             clock_gate: None,
         });
         assert_eq!(AttachCtx::new(&mut bus, &ext).parse_gpio_pin("PA15"), None);
+    }
+
+    #[test]
+    fn avr_portd_uses_concrete_bonded_pads_without_aliasing_other_families() {
+        use crate::bus::PeripheralEntry;
+        use crate::peripherals::avr_gpio::AvrGpioPort;
+        use crate::peripherals::gpio::{GpioPort, GpioRegisterLayout};
+        let ext = ext_with_moisture(serde_yaml::Value::Null);
+        for (dev, expected) in [
+            (
+                Box::new(AvrGpioPort::new()) as Box<dyn crate::Peripheral>,
+                Some(30),
+            ),
+            (Box::new(AvrGpioPort::new_with_pin_count(6)), None),
+            (
+                Box::new(GpioPort::new_with_layout(GpioRegisterLayout::Stm32V2)),
+                None,
+            ),
+        ] {
+            let mut bus = SystemBus::new();
+            bus.peripherals.push(PeripheralEntry {
+                name: "portd".into(),
+                base: 0x10029,
+                size: 3,
+                irq: None,
+                dev,
+                ticks_remaining: 0,
+                clock_gate: None,
+            });
+            let ctx = AttachCtx::new(&mut bus, &ext);
+            assert_eq!(ctx.parse_gpio_pin("PD6"), expected);
+            assert_eq!(ctx.parse_gpio_pin("PD8"), None);
+            assert_eq!(ctx.parse_gpio_pin("PE0"), None);
+            assert_eq!(ctx.parse_gpio_pin("GPIO6"), Some(6));
+        }
     }
 
     fn output_delivery_fixture(primitive: &str) -> String {

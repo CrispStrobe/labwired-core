@@ -6,13 +6,14 @@
 pub(super) enum PadFamily {
     Stm32,
     Sam,
+    Avr,
 }
 
 impl PadFamily {
     pub(super) fn instance_name(self, port: u8) -> String {
         let prefix = match self {
             Self::Stm32 => "gpio",
-            Self::Sam => "port",
+            Self::Sam | Self::Avr => "port",
         };
         format!("{prefix}{}", char::from(b'a' + port))
     }
@@ -20,7 +21,10 @@ impl PadFamily {
 
 /// The caller admits only a named peripheral with the matching concrete model.
 /// Unknown ports and invalid pads never fall through to ESP numeric parsing.
-pub(super) fn parse_named_pad(label: &str, has_port: impl Fn(PadFamily, u8) -> bool) -> Option<u8> {
+pub(super) fn parse_named_pad(
+    label: &str,
+    has_port: impl Fn(PadFamily, u8, u8) -> bool,
+) -> Option<u8> {
     let rest = label.strip_prefix('P')?;
     let mut chars = rest.chars();
     let letter @ 'A'..='P' = chars.next()? else {
@@ -35,11 +39,13 @@ pub(super) fn parse_named_pad(label: &str, has_port: impl Fn(PadFamily, u8) -> b
     // Refuse an ambiguous model assignment rather than silently selecting a
     // different port width. Real board ports use one concrete GPIO family.
     let width = match (
-        has_port(PadFamily::Stm32, port),
-        has_port(PadFamily::Sam, port),
+        has_port(PadFamily::Stm32, port, pin),
+        has_port(PadFamily::Sam, port, pin),
+        has_port(PadFamily::Avr, port, pin),
     ) {
-        (true, false) => 16,
-        (false, true) => 32,
+        (true, false, false) => 16,
+        (false, true, false) => 32,
+        (false, false, true) => 8,
         _ => return None,
     };
     if pin >= width {
@@ -53,7 +59,7 @@ mod tests {
     use super::*;
 
     fn parse(label: &str, expected: PadFamily) -> Option<u8> {
-        parse_named_pad(label, |family, port| family == expected && port < 2)
+        parse_named_pad(label, |family, port, _| family == expected && port < 2)
     }
 
     #[test]
@@ -74,6 +80,32 @@ mod tests {
     }
 
     #[test]
+    fn avr_pd6_retains_eight_pad_port_identity_and_boundaries() {
+        let avr = |family, port, pin| family == PadFamily::Avr && port == 3 && pin < 8;
+        assert_eq!(parse_named_pad("PD6", avr), Some(30));
+        assert_eq!(parse_named_pad("PD7", avr), Some(31));
+        for label in ["PD8", "PD16", "PC6", "PE6", "PD-1", "PD+1"] {
+            assert_eq!(parse_named_pad(label, avr), None, "{label}");
+        }
+        assert_eq!(PadFamily::Avr.instance_name(3), "portd");
+    }
+
+    #[test]
+    fn avr_reduced_bonding_and_cross_family_ambiguity_refuse() {
+        let bonded = |family, port, pin| family == PadFamily::Avr && port == 0 && pin < 6;
+        assert_eq!(parse_named_pad("PA5", bonded), Some(5));
+        assert_eq!(parse_named_pad("PA6", bonded), None);
+        assert_eq!(
+            parse_named_pad("PB0", |family, _, _| family != PadFamily::Stm32),
+            None
+        );
+        // The same label never aliases across concrete port families.
+        assert_eq!(parse("PB0", PadFamily::Avr), Some(8));
+        assert_eq!(parse("PB0", PadFamily::Stm32), Some(16));
+        assert_eq!(parse("PB0", PadFamily::Sam), Some(32));
+    }
+
+    #[test]
     fn invalid_or_unmodeled_pads_are_not_numeric_fallbacks() {
         for label in [
             "PA32", "PB32", "PC0", "PA256", "P0", "PA", "PA-1", "PA+1", "PA 1", "GPIO15", "IO15",
@@ -81,8 +113,8 @@ mod tests {
         ] {
             assert_eq!(parse(label, PadFamily::Sam), None, "{label}");
         }
-        assert_eq!(parse_named_pad("PB0", |_, _| false), None);
-        assert_eq!(parse_named_pad("PB0", |_, _| true), None);
-        assert_eq!(parse_named_pad("PI0", |f, _| f == PadFamily::Sam), None);
+        assert_eq!(parse_named_pad("PB0", |_, _, _| false), None);
+        assert_eq!(parse_named_pad("PB0", |_, _, _| true), None);
+        assert_eq!(parse_named_pad("PI0", |f, _, _| f == PadFamily::Sam), None);
     }
 }

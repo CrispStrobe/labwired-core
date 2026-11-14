@@ -240,6 +240,10 @@ impl PinPort for AvrGpioPort {
 }
 
 impl Peripheral for AvrGpioPort {
+    fn avr_gpio_pin_count(&self) -> Option<u8> {
+        Some(self.pin_count)
+    }
+
     /// The selected three-byte GPIO register block moves only by `read`/`write`. There is no
     /// `tick`/`tick_elapsed` override, so the walk calls the trait default,
     /// which returns `PeripheralTickResult::default()` — no IRQ, no DMA

@@ -27,20 +27,25 @@ fn l476_bus() -> SystemBus {
     SystemBus::from_config(&chip, &manifest).unwrap()
 }
 
-/// Enable the USART1/USART2 peripheral clocks (RCC_APB2ENR.USART1EN bit 14,
+/// Enable the USART1/USART2 clocks and CR1 UE/TE (RCC_APB2ENR.USART1EN bit 14,
 /// RCC_APB1ENR1.USART2EN bit 17). On the L476 these are clock-gated and unclocked
 /// out of reset (RM0351), so a bare TDR write is ignored until firmware ungates
 /// them — these register-poking seam tests must do what firmware does.
-fn enable_l476_uart_clocks(bus: &mut SystemBus) {
+fn enable_l476_uarts(bus: &mut SystemBus) {
     const RCC: u64 = 0x4002_1000;
     bus.write_u32(RCC + 0x60, 1 << 14).unwrap(); // APB2ENR: USART1EN
     bus.write_u32(RCC + 0x58, 1 << 17).unwrap(); // APB1ENR1: USART2EN
+                                                 // The upstream STM32v2 model also requires CR1.UE and CR1.TE, as real
+                                                 // firmware does. Clocks alone must not authorize a disabled transmitter.
+    for base in [0x4001_3800, 0x4000_4400] {
+        bus.write_u32(base, (1 << 0) | (1 << 3)).unwrap(); // CR1: UE | TE
+    }
 }
 
 #[test]
 fn attach_uart_stream_by_id_wires_a_live_stream() {
     let mut bus = l476_bus();
-    enable_l476_uart_clocks(&mut bus);
+    enable_l476_uarts(&mut bus);
     let seen = Arc::new(Mutex::new(Vec::new()));
     bus.attach_uart_stream_by_id("uart2", Box::new(Recorder(seen.clone())))
         .expect("uart2 should accept a stream device");
@@ -54,7 +59,7 @@ fn attach_uart_stream_by_id_wires_a_live_stream() {
 #[test]
 fn detach_uart_sink_by_id_keeps_crosslink_bytes_out_of_the_console() {
     let mut bus = l476_bus();
-    enable_l476_uart_clocks(&mut bus);
+    enable_l476_uarts(&mut bus);
     let console = Arc::new(Mutex::new(Vec::new()));
     // The console sink is attached to EVERY UART (as the wasm bridge does).
     bus.attach_uart_tx_sink(console.clone(), false);

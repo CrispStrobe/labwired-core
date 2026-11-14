@@ -192,6 +192,12 @@ pub trait Peripheral: std::fmt::Debug + Send {
         false
     }
 
+    /// The concrete AVR port's bonded pad count (at most eight). A named
+    /// `portd` alone cannot authorize an AVR pad on a different GPIO family.
+    fn avr_gpio_pin_count(&self) -> Option<u8> {
+        None
+    }
+
     /// Subscribe an off-chip device to actual STM32 GPIO output transitions.
     /// Other peripheral families decline without a concrete downcast.
     /// The bus supplies the physical port number and cycle clock.
