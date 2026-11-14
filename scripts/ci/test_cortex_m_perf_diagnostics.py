@@ -13,6 +13,8 @@ import sys
 import tempfile
 import types
 import unittest
+
+import yaml
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -423,13 +425,6 @@ class DiagnosticsControls(unittest.TestCase):
         # This committed contract works in checkout@v4's default shallow source.
         fixture = root / 'scripts/ci/fixtures/cortex_m_perf_preservation_393b5310.json'
         # Historical393 is immutable provenance, never relabelled as successor.
-        # `scripts/perf/board_perf.py` grew reviewed onboarding waivers after
-        # 393b5310; its digest is the current baseline, not the historical one.
-        # Re-pinned 2026-11-11 after review of fadae7337..d543a46b (board_perf.py
-        # a5e8f141 -> 28f2cc02) and 693a6ad6d..d543a46b (baselines.json 527cea1b ->
-        # ca6f3003); historical393 function and workflow pins are unchanged.
-        # Re-pinned again for board_perf.py 28f2cc02 -> de4b5af5: the only changes are
-        # removing the byte-identical duplicate is_stale and is_regression definitions.
         self.assertEqual(hashlib.sha256(fixture.read_bytes()).hexdigest(), 'e32a7686541ec46b60a7fad661c19097a3a53010d87548a97be0415431da5291', 'historical393 fixture')
         manifest = json.loads(fixture.read_text())
         # Exact382034f4ec62bd66154f0675001bde3894a73c12 retains original393 collect AST.
@@ -456,48 +451,117 @@ class DiagnosticsControls(unittest.TestCase):
             digest = hashlib.sha256(current_functions[name].encode()).hexdigest()
             expected = successor_collect_task6 if name == 'collect' else manifest['function_ast_sha256'][name]
             self.assertEqual(expected, digest, name)
-        for path in ('scripts/perf/board_perf.py','scripts/perf/baselines.json'):
-            self.assertEqual(manifest['source_sha256'][path], hashlib.sha256((root/path).read_bytes()).hexdigest(), path)
-        workflow=(root/'.github/workflows/core-identity.yml').read_text()
-        # Permit only the reviewed opt-in input/env/argument routing. Reversing
-        # those additions must reproduce every byte of the previous workflow.
-        additions=(
-            '      diagnose_cortex_m_common_fixtures:\n'
-            '        description: "Optional perf only: preserve original ELF and common-input Callgrind diagnostics"\n'
-            '        type: boolean\n        default: false\n',
-            '          DIAGNOSE_COMMON_FIXTURES: ${{ inputs.diagnose_cortex_m_common_fixtures }}\n',
-            '          diagnostic_args=()\n'
-            '          case "${DIAGNOSE_COMMON_FIXTURES:-false}" in\n'
-            '            false) ;;\n'
-            '            true) diagnostic_args+=(--diagnose-common-fixtures) ;;\n'
-            "            *) echo 'Invalid diagnostic toggle' >&2; exit 1 ;;\n"
-            '          esac\n',
-            ' "${diagnostic_args[@]}"',
-        )
-        raw_additions=(
-            '      diagnose_cortex_m_raw_profiles:\n'
-            '        description: "Optional common-fixture perf only: retain three original base L476 raw profiles"\n'
-            '        type: boolean\n        default: false\n',
-            '          DIAGNOSE_RAW_PROFILES: ${{ inputs.diagnose_cortex_m_raw_profiles }}\n',
-            '          case "${DIAGNOSE_RAW_PROFILES:-false}" in\n'
-            '            false) ;;\n'
-            '            true)\n'
-            '              if [ "${DIAGNOSE_COMMON_FIXTURES:-false}" != true ] || [ "$IDENTITY_SUITE" != cortex-m ]; then\n'
-            "                echo 'Raw diagnosis requires common fixtures and Cortex-M' >&2; exit 1\n"
-            '              fi\n'
-            '              diagnostic_args+=(--diagnose-raw-l476-repeats) ;;\n'
-            "            *) echo 'Invalid raw diagnostic toggle' >&2; exit 1 ;;\n"
-            '          esac\n',
-        )
-        for addition in raw_additions:
-            self.assertEqual(workflow.count(addition),1)
-            workflow=workflow.replace(addition,'',1)
-        for addition in additions:
-            self.assertEqual(workflow.count(addition),1)
-            workflow=workflow.replace(addition,'',1)
-        self.assertEqual(manifest['source_sha256']['.github/workflows/core-identity.yml'], hashlib.sha256(workflow.encode()).hexdigest(), 'workflow')
+        # Historical file hashes describe the original evidence, not today's
+        # implementation. Protect the live limits by their meaning instead.
+        self.assert_performance_policy(root)
+        self.assert_workflow_policy(root)
         self.assertIn('action="store_true"',current)
         self.assertIn('budget = Budget(5 * 1024 * 1024)',current)
+
+    def assert_workflow_policy(self, root):
+        workflow = yaml.safe_load((root/'.github/workflows/core-identity.yml').read_text())
+        inputs = workflow[True]['workflow_dispatch']['inputs']
+        for name in ('diagnose_cortex_m_common_fixtures', 'diagnose_cortex_m_raw_profiles'):
+            self.assertEqual(inputs[name]['type'], 'boolean')
+            self.assertIs(inputs[name]['default'], False)
+        job = workflow['jobs']['cortex-m-perf']
+        self.assertEqual(job['needs'], ['run', 'compare'])
+        self.assertEqual(job['if'], "${{ always() && inputs.qualify_cortex_m_perf && needs.run.result == 'success' && needs.compare.result == 'success' }}")
+        self.assertEqual(job['timeout-minutes'], 45)
+        step = next(step for step in job['steps'] if step.get('name') == 'Qualify three-board Cortex-M performance evidence')
+        for variable, name in (('DIAGNOSE_COMMON_FIXTURES', 'diagnose_cortex_m_common_fixtures'),
+                               ('DIAGNOSE_RAW_PROFILES', 'diagnose_cortex_m_raw_profiles')):
+            self.assertEqual(step['env'][variable], '${{ inputs.'+name+' }}')
+        # Run only the argument-routing suffix with a capturing shell function;
+        # no Python producer, Valgrind, checkout or guest is started.
+        route = step['run'][step['run'].index('diagnostic_args='):]
+        capture = 'python() { printf "%s\\n" "$@"; };\n'
+        for common, raw, suite, flags in (
+            ('false', 'false', 'cortex-m', []),
+            ('true', 'false', 'cortex-m', ['--diagnose-common-fixtures']),
+            ('true', 'false', 'all', ['--diagnose-common-fixtures']),
+            ('true', 'true', 'cortex-m', ['--diagnose-common-fixtures', '--diagnose-raw-l476-repeats']),
+            ('false', 'true', 'cortex-m', None), ('true', 'true', 'all', None),
+            ('invalid', 'false', 'cortex-m', None), ('false', 'invalid', 'cortex-m', None),
+        ):
+            env = dict(os.environ, DIAGNOSE_COMMON_FIXTURES=common, DIAGNOSE_RAW_PROFILES=raw,
+                       IDENTITY_SUITE=suite, BASE_SHA='a'*40, HEAD_SHA='b'*40,
+                       STEP_COUNTS='5000000 40000000')
+            result = subprocess.run(['bash', '-euo', 'pipefail', '-c', capture+route],
+                                    env=env, text=True, capture_output=True, timeout=5)
+            if flags is None:
+                self.assertNotEqual(result.returncode, 0, (common, raw, suite))
+                self.assertEqual(result.stdout, '', 'invalid toggles must not start producer')
+            else:
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.splitlines(), [
+                    'scripts/ci/cortex_m_perf_evidence.py', 'qualify', *flags,
+                    '--base-dir', 'perf-base', '--head-dir', 'perf-head',
+                    '--base-sha', 'a'*40, '--head-sha', 'b'*40,
+                    '--identity-dir', 'perf-identity', '--steps', '5000000 40000000',
+                    '--suite', suite, '--output', 'perf-evidence',
+                ])
+
+    def assert_performance_policy(self, root):
+        source = ast.parse((root/'scripts/perf/board_perf.py').read_text())
+        expected = {
+            'MODE_STEP': 'step', 'MODE_BATCH': 'batch',
+            'STEPS_LOW': 200_000, 'STEPS_HIGH': 1_200_000, 'BATCH_REPEATS': 3,
+            'REGRESSION_TOLERANCE': 0.03, 'BATCH_ABSOLUTE_NOISE_FLOOR': 0.5,
+            'STALE_TOLERANCE': 0.10, 'MIN_RECOMMENDED_TICK_INTERVAL': 1024,
+            'SAME_LOOP_RATIO': 1.25,
+        }
+        namespace = {}
+        for node in source.body:
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id in expected:
+                        namespace[target.id] = ast.literal_eval(node.value)
+        self.assertEqual(namespace, expected, 'performance policy limits')
+        names = {'is_regression', 'is_stale', 'gate_is_ok', 'scheduler_contract_met'}
+        functions = [node for node in source.body if isinstance(node, ast.FunctionDef) and node.name in names]
+        self.assertEqual(sorted(node.name for node in functions), sorted(names))
+        # Only pure policy functions execute; no toolchain, process or guest.
+        policy = ast.Module(body=[ast.ImportFrom(module='__future__', names=[ast.alias(name='annotations')], level=0), *functions], type_ignores=[])
+        exec(compile(ast.fix_missing_locations(policy), '<performance policy>', 'exec'), namespace)
+        for name, cases in {
+            'is_regression': ((103, 100, 'step', False), (103.1, 100, 'step', True),
+                              (2.5, 2, 'batch', False), (2.51, 2, 'batch', True),
+                              (103, 100, 'batch', False), (103.1, 100, 'batch', True)),
+            'is_stale': ((90, 100, 'step', False), (89.9, 100, 'step', True),
+                         (1.5, 2, 'batch', False), (1.49, 2, 'batch', True),
+                         (90, 100, 'batch', False), (89.9, 100, 'batch', True)),
+        }.items():
+            for measured, baseline, mode, expected_result in cases:
+                self.assertIs(namespace[name](measured, baseline, mode), expected_result, name)
+        for arguments, expected_result in (
+            (([], False, [], []), True), (([{}], False, [], []), False),
+            (([], True, [], []), False), (([], False, ['missing'], []), False),
+            (([], False, [], [{}]), False),
+        ):
+            self.assertIs(namespace['gate_is_ok'](*arguments), expected_result, 'gate_is_ok')
+        for interval, retired, expected_result in (
+            (1024, None, True), (1023, None, False), (None, None, False),
+            (1, None, False), (1, 1023, False), (1, 1024, True), (512, 2048, False),
+        ):
+            measured = types.SimpleNamespace(tick_interval=interval, quiescent_max_retired=retired)
+            self.assertIs(namespace['scheduler_contract_met'](measured), expected_result, 'scheduler_contract_met')
+
+        baselines = json.loads((root/'scripts/perf/baselines.json').read_text())
+        for board, modes in baselines.items():
+            self.assertIsInstance(modes, dict, board)
+            self.assertTrue(modes and set(modes) <= {'step', 'batch'}, board)
+            for value in modes.values():
+                self.assertIn(type(value), (int, float), board)
+                self.assertTrue(0 < value < float('inf'), board)
+        # The evidence suite compares exactly these boards in both modes.
+        # These numeric budgets must survive formatting and implementation edits.
+        for board, limits in {
+            'nrf52840': {'step': 1368.6, 'batch': 2.1},
+            'stm32f405': {'step': 936.3, 'batch': 1.5},
+            'stm32l476': {'step': 937.6, 'batch': 1.6},
+        }.items():
+            self.assertEqual(baselines.get(board), limits, 'performance baseline '+board)
 
     def test_bounded_argv_still_refuses_a_path_chip(self):
         # Near-miss for the str(chip) callers above: the guard must keep
@@ -506,7 +570,7 @@ class DiagnosticsControls(unittest.TestCase):
             self.perf.bounded_argv(['valgrind','run','--chip',Path('configs/chips/stm32l476.yaml')])
         self.assertEqual(self.perf.bounded_argv(['valgrind','run','--chip','configs/chips/stm32l476.yaml'])[-1],'configs/chips/stm32l476.yaml')
 
-    def test_defaults_workflow_tool_and_strict_guards_are_unchanged(self):
+    def test_historical_evidence_workflow_and_current_performance_limits(self):
         self.assert_preservation(ROOT)
 
     def preservation_copy(self):
@@ -531,7 +595,7 @@ class DiagnosticsControls(unittest.TestCase):
         with mock.patch.object(subprocess, 'check_output', side_effect=AssertionError('history read')):
             self.assert_preservation(cold)
 
-    def test_preservation_rejects_each_guard_tool_baseline_and_workflow_mutation(self):
+    def test_preservation_rejects_each_evidence_guard_and_workflow_mutation(self):
         cold = self.preservation_copy()
         source = cold / 'scripts/ci/cortex_m_perf_evidence.py'
         original = source.read_text()
@@ -544,14 +608,59 @@ class DiagnosticsControls(unittest.TestCase):
                 with self.assertRaisesRegex(AssertionError, name):
                     self.assert_preservation(cold)
                 source.write_text(original)
-        for path in ('scripts/perf/board_perf.py', 'scripts/perf/baselines.json', '.github/workflows/core-identity.yml'):
+        for path in ('.github/workflows/core-identity.yml',):
             with self.subTest(path=path):
                 target = cold / path
                 original_bytes = target.read_bytes()
-                target.write_bytes(original_bytes + b'\n# unreviewed contract change\n')
+                self.assertIn(b'diagnostic_args+=(--diagnose-common-fixtures)', original_bytes)
+                target.write_bytes(original_bytes.replace(b'diagnostic_args+=(--diagnose-common-fixtures)', b'diagnostic_args+=()'))
                 with self.assertRaises(AssertionError):
                     self.assert_preservation(cold)
                 target.write_bytes(original_bytes)
+        self.assert_preservation(cold)
+
+    def test_current_policy_accepts_comments_and_baseline_formatting(self):
+        cold = self.preservation_copy()
+        tool = cold/'scripts/perf/board_perf.py'
+        tool.write_text(tool.read_text()+'\n# Implementation comments do not change performance policy.\n')
+        baseline = cold/'scripts/perf/baselines.json'
+        baseline.write_text(json.dumps(json.loads(baseline.read_text()), sort_keys=True))
+        workflow = cold/'.github/workflows/core-identity.yml'
+        workflow.write_text(workflow.read_text()+'\n# Documentation-only workflow comment.\n')
+        self.assert_preservation(cold)
+
+    def test_current_policy_rejects_weakened_limits_and_decisions(self):
+        cold = self.preservation_copy()
+        tool = cold/'scripts/perf/board_perf.py'
+        original = tool.read_text()
+        for old, new in (
+            ('REGRESSION_TOLERANCE = 0.03', 'REGRESSION_TOLERANCE = 0.30'),
+            ('BATCH_ABSOLUTE_NOISE_FLOOR = 0.5', 'BATCH_ABSOLUTE_NOISE_FLOOR = 5.0'),
+            ('STALE_TOLERANCE = 0.10', 'STALE_TOLERANCE = 0.50'),
+            ('MIN_RECOMMENDED_TICK_INTERVAL = 1024', 'MIN_RECOMMENDED_TICK_INTERVAL = 512'),
+            ('relative > REGRESSION_TOLERANCE', 'relative < REGRESSION_TOLERANCE'),
+            ('relative > STALE_TOLERANCE', 'relative < STALE_TOLERANCE'),
+            ('not regressions', 'True'), ('not named_and_skipped', 'True'),
+            ('not unmeasurable', 'True'), ('not contract_failures', 'True'),
+            ('measured.tick_interval == 1 and', 'True and'),
+        ):
+            with self.subTest(mutation=old):
+                self.assertIn(old, original)
+                tool.write_text(original.replace(old, new))
+                with self.assertRaises(AssertionError):
+                    self.assert_preservation(cold)
+        tool.write_text(original)
+        baseline = cold/'scripts/perf/baselines.json'
+        original_baselines = json.loads(baseline.read_text())
+        for board in ('nrf52840', 'stm32f405', 'stm32l476'):
+            for mode in ('step', 'batch'):
+                with self.subTest(board=board, mode=mode):
+                    changed = json.loads(json.dumps(original_baselines))
+                    changed[board][mode] *= 2
+                    baseline.write_text(json.dumps(changed))
+                    with self.assertRaisesRegex(AssertionError, 'performance baseline'):
+                        self.assert_preservation(cold)
+        baseline.write_text(json.dumps(original_baselines))
         self.assert_preservation(cold)
 
     def test_preservation_rejects_relabelled_historical_collector_fixture(self):
