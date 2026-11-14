@@ -810,6 +810,12 @@ fn every_shipped_descriptor_is_ratcheted() {
         // no silicon oracle for its GRTC/IRQ path. Surviving a boot is not the
         // same as being right. Promote it only when that differential exists.
         "nrf54l15",
+        // Modeled UARTE20/GPIO/SysTick/TIMER10 application-core subsets, not
+        // CPU-only declarations. Upstream exact-variant synthetic smoke
+        // fixtures exist, but no fork-native executing-fidelity/catalog
+        // qualification promotes either sibling to SHIPPED here.
+        "nrf54l05",
+        "nrf54l10",
         // Same standing as its sibling above, for the same reason. The
         // nrf54lm20a-snake lab drives UARTE20, SPIM22, the RM67162 panel and
         // four buttons across two GPIO ports, with display-region evidence and

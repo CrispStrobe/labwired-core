@@ -301,6 +301,22 @@ const CHIPS: &[ChipConf] = &[
         reset_oracle: None,
         behavior_gate: Some("firmware_survival::test_stm32f072b_disco_smoke_survival"),
     },
+    // Real modeled siblings, not CPU/memory-only declarations. The imported
+    // synthetic CLI fixtures are not a resolved native behavior gate in this
+    // fork, and neither variant has a physical cold-reset capture. Leave both
+    // fields None; measure() must still probe their actual peripheral estate.
+    ChipConf {
+        name: "nrf54l05",
+        yaml: "configs/chips/nrf54l05.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
+        name: "nrf54l10",
+        yaml: "configs/chips/nrf54l10.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
     ChipConf {
         name: "nrf54l15",
         yaml: "configs/chips/nrf54l15.yaml",
