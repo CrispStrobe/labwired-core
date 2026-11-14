@@ -69,8 +69,8 @@ impl Default for Nrf52Wdt {
             runstatus: 0,
             reqstatus_pending: 0,
             crv: 0xFFFF_FFFF, // nRF52840 PS §6.34: CRV reset value
-            rren: 1, // RR0 is enabled after reset.
-            config: 1, // Run during sleep; pause while halted by the debugger.
+            rren: 1,          // RR0 is enabled after reset.
+            config: 1,        // Run during sleep; pause while halted by the debugger.
             counter: 0,
             bitten: false,
             clock: None,
