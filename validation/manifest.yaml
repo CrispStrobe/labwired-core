@@ -465,7 +465,13 @@ boards:
     # 2026-11-01 (feat/rp2350-dcp, perf): DCP state moved off CortexM onto the
     # bus (Bus::rp2350_dcp_mut, default None) and its dispatch made cold and
     # out of line; no change for chips without a DCP. ACK, NOT A SILICON CAPTURE.
-    drift_ack_digest: 7e4bde9cd9fe5540808e6b07f96bf5cc72b637c8b166a90c8a4fb311327c6dfd
+    # 2026-11-13: RTC START/TRIGOVRFLW restart the partial prescaler
+    # interval per the Nordic specification. Focused source controls pass;
+    # affected hosted engine/guest qualification and re-capture remain pending.
+    # Content acknowledgement only; capture/date/expiry are unchanged.
+    # TEMP result writes ignored and STOP preserves DATARDY; six focused
+    # source controls pass. No new silicon capture or guest qualification.
+    drift_ack_digest: ac2fd2aae5b99f5c02118a1283b48f6b5eca895c65f2c5bb3c4312135b556425
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -708,7 +714,15 @@ boards:
     # 2026-11-13: custom Bus Cortex-M batches now yield at pending flash ops.
     # SystemBus execution and captured register models are unchanged.
     # Content drift acknowledgement only; no capture/date/expiry renewed.
-    drift_ack: 2026-11-13
+    # 2026-11-13: WDT restores documented RREN=1/CONFIG=1 reset defaults.
+    # Default RR0 feeding, timeout/IRQ and scheduled deadline controls pass
+    # in the isolated module harness; no live WDT capture or guest run.
+    # 2026-11-14: TIMER freezes the incremented counter for all compare
+    # channels before CLEAR shortcuts can hide equal matches or create CC=0
+    # events/STOP. Four module regressions pass in both feature profiles;
+    # Core/guest qualification and physical re-capture remain pending.
+    # Scoped source-drift metadata only; no new silicon capture.
+    drift_ack: 2026-11-14
     # 2026-11-07 (feat/arduino-matrix-pico2-rp2350): cortex_m exec/misc.rs
     # adds a cold p0 (GPIO coprocessor) path, reached only when the chip
     # declares `coprocessors: [rp2350_gpioc]` (RP2350 only); every other
@@ -1071,7 +1085,13 @@ boards:
     # 2026-11-01 (feat/rp2350-dcp, perf): DCP state moved off CortexM onto the
     # bus (Bus::rp2350_dcp_mut, default None) and its dispatch made cold and
     # out of line; no change for chips without a DCP. ACK, NOT A SILICON CAPTURE.
-    drift_ack_digest: 7e4bde9cd9fe5540808e6b07f96bf5cc72b637c8b166a90c8a4fb311327c6dfd
+    # 2026-11-13: RTC START/TRIGOVRFLW restart the partial prescaler
+    # interval per the Nordic specification. Focused source controls pass;
+    # affected hosted engine/guest qualification and re-capture remain pending.
+    # Content acknowledgement only; capture/date/expiry are unchanged.
+    # TEMP result writes ignored and STOP preserves DATARDY; six focused
+    # source controls pass. No new silicon capture or guest qualification.
+    drift_ack_digest: ac2fd2aae5b99f5c02118a1283b48f6b5eca895c65f2c5bb3c4312135b556425
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -1314,7 +1334,12 @@ boards:
     # 2026-11-13: custom Bus Cortex-M batches now yield at pending flash ops.
     # SystemBus execution and captured register models are unchanged.
     # Content drift acknowledgement only; no capture/date/expiry renewed.
-    drift_ack: 2026-11-13
+    # 2026-11-14: TIMER freezes the incremented counter for all compare
+    # channels before CLEAR shortcuts can hide equal matches or create CC=0
+    # events/STOP. Four module regressions pass in both feature profiles;
+    # Core/guest qualification and physical re-capture remain pending.
+    # Scoped source-drift metadata only; no new silicon capture.
+    drift_ack: 2026-11-14
     # 2026-11-07 (feat/arduino-matrix-pico2-rp2350): cortex_m exec/misc.rs
     # adds a cold p0 (GPIO coprocessor) path, reached only when the chip
     # declares `coprocessors: [rp2350_gpioc]` (RP2350 only); every other

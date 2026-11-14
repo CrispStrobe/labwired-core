@@ -11,6 +11,65 @@ These are proposed task contracts, not ownership claims or passing receipts.
 Refresh the default branch and open PRs before starting; shared behavior lands
 in the engine first, followed by an explicit qualified consumer pin.
 
+## nRF52 TEMP result and event-latch semantics — candidate 2026-11-13
+
+Claim and implementation in one change. Scope: `nrf52/temp.rs`, this contract
+and generated validation status. The Nordic
+[TEMP register specification](https://docs.nordicsemi.com/r/bundle/ps_nrf52840/page/temp.html)
+marks the measurement result read-only; firmware writes now leave it intact.
+The [peripheral interface](https://docs.nordicsemi.com/r/bundle/ps_nrf52840/page/peripheral_interface.html)
+requires explicit firmware clearing of event latches, so STOP now preserves an
+already-generated DATARDY event. Tests cover result writes before/after START,
+STOP followed by explicit clear/restart, zero task writes and interrupt-enable
+alias preservation. The immediate 25 °C conversion, calibration registers,
+interrupt delivery and timing remain unchanged. Focused module controls do not
+qualify full-bus/guest execution or physical sensor behavior.
+
+## nRF52 RTC task prescaler restart — candidate 2026-11-13
+
+Claim and implementation in one change. Scope:
+`crates/core/src/peripherals/nrf52/rtc.rs`, this contract and the affected
+validation content digests/generated status; capture facts remain unchanged. Nordic's
+[nRF52840 specification](https://docs.nordicsemi.com/r/bundle/ps_nrf52840/page/rtc.html),
+"Resolution versus overflow and the PRESCALER", requires START, CLEAR and
+TRIGOVRFLW to restart the divider. START and TRIGOVRFLW now discard a partial
+prescaler interval, as CLEAR already did. START retains COUNTER; TRIGOVRFLW
+retains its documented preload. LFCLK fraction and event/interrupt routing
+are unchanged. Tests cover repeated START, STOP/START, exact overflow timing,
+zero writes, stopped-counter behavior and independent LFCLK fraction on the
+legacy path, with corresponding clock-driven scheduler cases. Focused module
+controls are insufficient for full bus/guest or physical timing qualification;
+normal hosted checks and affected guest qualification remain required.
+
+## nRF52 watchdog documented reset defaults — claimed 2026-11-13
+
+Claim and change in one PR. Scope: `crates/core/src/peripherals/nrf52/wdt.rs`
+and required validation metadata. Restore RREN=1 (RR0 enabled) and CONFIG=1
+(run during sleep, pause during debug halt), matching the Nordic product
+[specification](https://docs.nordicsemi.com/r/bundle/ps_nrf52832/page/wdt.html)
+and existing WDT descriptors. Add default feed, timeout/IRQ,
+explicit override and scheduler-deadline controls. No clock-rate, reset delivery,
+sleep/halt execution, duplicate START or guest qualification claim is added.
+
+## nRF52 TIMER simultaneous compare shortcuts — candidate 2026-11-14
+
+Scope: `crates/core/src/peripherals/nrf52/timer.rs` and affected generated
+board status. Freeze the incremented counter for all CC comparators before
+CLEAR shortcuts can change it. Equal CC values then retain every event and
+IRQ; clearing from a nonzero match cannot manufacture a CC=0 event or STOP.
+Existing clock approximation, cycle budget, register masks and SHORTS timing
+remain unchanged. Counter-mode event routing remains separately incomplete.
+
+The [Nordic TIMER specification](https://docs.nordicsemi.com/r/bundle/ps_nrf52840/page/timer.html)
+defines compare on counter increment and CLEAR as a task reached from an
+event. The [BabbleSim TIMER implementation](https://github.com/BabbleSim/ext_NRF_hw_models/blob/main/src/HW_models/NHW_TIMER.c)
+likewise collects matching channels before signaling events and their shortcuts.
+Focused tests cover all CLEAR positions for four/six channels, event and IRQ
+fanout, inactive zero-compare STOP, simultaneous CLEAR/STOP, batch versus tick,
+and scheduler callback delivery. Module-only controls are source evidence;
+hosted Core and affected clean guest qualification remain required. No silicon,
+physical timing or complete-board claim follows from these tests.
+
 ## Python 3.13 leg for the CI-script tests — claimed 2026-11-11
 
 Claim and change in one PR. Adds `pr-ci-scripts-py313` to `core-ci.yml`: the same
