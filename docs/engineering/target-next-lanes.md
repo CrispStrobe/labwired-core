@@ -904,3 +904,15 @@ either silicon-verified digest; retain ACK dates, expiry, captures and watch lis
 See the [sensor contract](microbit-lsm303agr.md) for the selected source,
 routing, acknowledgement and exclusions. Threshold IRQ, microphone/audio,
 physical behavior and consumer adoption remain separate work.
+
+## nRF52 PWM event interrupts — candidate 2026-11-14
+
+PWM stored interrupt masks but never asserted its configured IRQ. The candidate
+routes existing event latches to the MMIO level hook and scheduled completion,
+using bits 1–7 from the [Nordic PWM register specification](https://docs.nordicsemi.com/r/bundle/ps_nrf52833/page/pwm.html).
+Three source regressions cover each event/mask pair, latched enable, clear,
+STOP and both sequence paths. LOOPSDONE is injected only to test bit mapping;
+loop generation, SHORTS, NEXTSTEP and multi-step timing remain unmodelled.
+Focused source controls pass with both scheduler feature settings; full engine,
+affected clean guest and physical qualification remain pending. Existing
+capture results are retained; source-drift metadata does not claim re-capture.

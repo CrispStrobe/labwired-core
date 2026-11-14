@@ -471,7 +471,12 @@ boards:
     # Content acknowledgement only; capture/date/expiry are unchanged.
     # TEMP result writes ignored and STOP preserves DATARDY; six focused
     # source controls pass. No new silicon capture or guest qualification.
-    drift_ack_digest: dd0ec7515b69f377db733eb2396a50bd60166cd04b50ce25328fbf6539e83efb
+    # 2026-11-14: PWM now routes enabled latched event interrupts through
+    # the MMIO level hook and scheduled completion. Three focused source
+    # controls cover all event bits, STOP and both sequence paths; actual
+    # Core/guest qualification and silicon re-capture remain pending.
+    # Source-content acknowledgement only; capture/ACK dates and expiry kept.
+    drift_ack_digest: 1dd81f75e289303dedacb87d045c1c28dc832aef2741b3b8edbda58ceb82b01f
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -1096,7 +1101,12 @@ boards:
     # Content acknowledgement only; capture/date/expiry are unchanged.
     # TEMP result writes ignored and STOP preserves DATARDY; six focused
     # source controls pass. No new silicon capture or guest qualification.
-    drift_ack_digest: dd0ec7515b69f377db733eb2396a50bd60166cd04b50ce25328fbf6539e83efb
+    # 2026-11-14: PWM now routes enabled latched event interrupts through
+    # the MMIO level hook and scheduled completion. Three focused source
+    # controls cover all event bits, STOP and both sequence paths; actual
+    # Core/guest qualification and silicon re-capture remain pending.
+    # Source-content acknowledgement only; capture/ACK dates and expiry kept.
+    drift_ack_digest: 1dd81f75e289303dedacb87d045c1c28dc832aef2741b3b8edbda58ceb82b01f
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     models:
       - crates/core/src/cpu/cortex_m.rs

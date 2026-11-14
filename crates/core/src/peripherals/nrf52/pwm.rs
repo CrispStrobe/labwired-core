@@ -48,7 +48,8 @@
 //!   and a scheduler wake lands on each one so live pad reads follow too.
 //!
 //! Not modelled: multi-step playback timing (REFRESH/ENDDELAY/LOOP; the events
-//! still fire at once, as before), SHORTS, interrupts, and NEXTSTEP stepping.
+//! still fire at once, as before), SHORTS, and NEXTSTEP stepping. Interrupts
+//! reflect the latched events; this does not add sequence/event timing fidelity.
 //!
 //! # EVENTS write semantics
 //!
@@ -419,6 +420,20 @@ impl Peripheral for Nrf52Pwm {
         false
     }
 
+    /// PS PWM INTEN: STOPPED is bit 1, followed by the sequence and period
+    /// events through LOOPSDONE at bit 7. The bus reconciles this level after
+    /// MMIO writes, including enabling a previously latched event.
+    fn irq_line_level(&self) -> Option<bool> {
+        let events = (self.events_stopped << 1)
+            | (self.events_seqstarted[0] << 2)
+            | (self.events_seqstarted[1] << 3)
+            | (self.events_seqend[0] << 4)
+            | (self.events_seqend[1] << 5)
+            | (self.events_pwmperiodend << 6)
+            | (self.events_loopsdone << 7);
+        Some(events & self.inten != 0)
+    }
+
     fn read(&self, _offset: u64) -> SimResult<u8> {
         Ok(0)
     }
@@ -611,6 +626,7 @@ impl Peripheral for Nrf52Pwm {
         // Re-armed under this same token by the machine.
         self.armed_target = self.wake_target();
         crate::sched::EventResult {
+            raise_own_irq: self.irq_line_level() == Some(true),
             reschedule_delay: self.armed_target.map(|t| t - now),
             ..Default::default()
         }
@@ -759,6 +775,112 @@ mod tests {
         }
         fn config(&self) -> &SimulationConfig {
             &self.config
+        }
+    }
+
+    #[test]
+    fn every_event_uses_its_specified_interrupt_bit() {
+        // Literal offsets/bit positions from the PS, independent of the
+        // implementation's constants. LOOPSDONE timing remains unmodelled;
+        // inject that latch only to check the register-to-line mapping.
+        for (offset, bit) in [
+            (0x104, 1),
+            (0x108, 2),
+            (0x10c, 3),
+            (0x110, 4),
+            (0x114, 5),
+            (0x118, 6),
+            (0x11c, 7),
+        ] {
+            let mut p = Nrf52Pwm::new();
+            match offset {
+                0x104 => p.events_stopped = 1,
+                0x108 => p.events_seqstarted[0] = 1,
+                0x10c => p.events_seqstarted[1] = 1,
+                0x110 => p.events_seqend[0] = 1,
+                0x114 => p.events_seqend[1] = 1,
+                0x118 => p.events_pwmperiodend = 1,
+                _ => p.events_loopsdone = 1,
+            }
+            assert_eq!(p.irq_line_level(), Some(false));
+            p.write_u32(0x300, !(1 << bit)).unwrap();
+            assert_eq!(p.irq_line_level(), Some(false), "wrong bit for {offset:#x}");
+            p.write_u32(0x304, 1 << bit).unwrap();
+            assert_eq!(p.irq_line_level(), Some(true), "latched {offset:#x}");
+            let mut sched = crate::sched::EventScheduler::new();
+            let mut bus = FlatRam::new();
+            assert!(p.on_event(0, &mut sched, &mut bus).raise_own_irq);
+            p.write_u32(0x308, 1 << bit).unwrap();
+            assert_eq!(p.irq_line_level(), Some(false));
+            assert!(!p.on_event(0, &mut sched, &mut bus).raise_own_irq);
+            assert_eq!(p.read_u32(offset).unwrap(), 1, "mask clear keeps event");
+            p.write_u32(0x300, 1 << bit).unwrap();
+            assert_eq!(p.irq_line_level(), Some(true));
+            p.write_u32(offset, 1).unwrap();
+            assert_eq!(p.irq_line_level(), Some(true), "write one keeps event");
+            p.write_u32(offset, 0).unwrap();
+            assert_eq!(p.irq_line_level(), Some(false), "clear drops level");
+        }
+    }
+
+    #[test]
+    fn stop_event_interrupt_survives_disable_until_cleared() {
+        let mut p = Nrf52Pwm::new();
+        p.write_u32(0x304, 1 << 1).unwrap();
+        p.write_u32(0x004, 1).unwrap();
+        assert_eq!(p.irq_line_level(), Some(false), "disabled STOP ignored");
+        p.write_u32(0x500, 1).unwrap();
+        p.write_u32(0x004, 1).unwrap();
+        assert_eq!(p.irq_line_level(), Some(true));
+        p.write_u32(0x500, 0).unwrap();
+        assert_eq!(
+            p.irq_line_level(),
+            Some(true),
+            "ENABLE does not clear events"
+        );
+        p.write_u32(0x104, 0).unwrap();
+        assert_eq!(p.irq_line_level(), Some(false));
+    }
+
+    #[test]
+    fn sequence_irqs_follow_easydma_on_both_execution_paths() {
+        for scheduled in [false, true] {
+            for sequence in 0..2 {
+                // Each sequence emits three currently modelled latches. Check
+                // them separately, so one correct bit cannot hide another.
+                for (event, bit) in [
+                    (0x108 + sequence * 4, 2 + sequence),
+                    (0x110 + sequence * 4, 4 + sequence),
+                    (0x118, 6),
+                ] {
+                    let mut p = Nrf52Pwm::new();
+                    let mut bus = FlatRam::new();
+                    p.write_u32(0x500, 1).unwrap();
+                    p.write_u32(0x304, 1 << bit).unwrap();
+                    p.write_u32(0x520 + sequence * 0x20, 0x2000_0000).unwrap();
+                    p.write_u32(0x524 + sequence * 0x20, 1).unwrap();
+                    bus.write_slice(0x2000_0000, &[0x10, 0x80]);
+                    p.write_u32(0x008 + sequence * 4, 1).unwrap();
+                    assert_eq!(p.irq_line_level(), Some(false), "not completed");
+                    if scheduled {
+                        let [(_, token)] = p.take_scheduled_events()[..] else {
+                            panic!("wake")
+                        };
+                        let mut sched = crate::sched::EventScheduler::new();
+                        assert!(
+                            !p.on_event(token.wrapping_add(1), &mut sched, &mut bus)
+                                .raise_own_irq
+                        );
+                        assert!(p.on_event(token, &mut sched, &mut bus).raise_own_irq);
+                    } else {
+                        p.tick_with_bus(&mut bus);
+                    }
+                    assert_eq!(p.read_u32(event).unwrap(), 1);
+                    assert_eq!(p.irq_line_level(), Some(true));
+                    p.write_u32(event, 0).unwrap();
+                    assert_eq!(p.irq_line_level(), Some(false));
+                }
+            }
         }
     }
 
