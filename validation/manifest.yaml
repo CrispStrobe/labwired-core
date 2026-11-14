@@ -465,7 +465,7 @@ boards:
     # 2026-11-01 (feat/rp2350-dcp, perf): DCP state moved off CortexM onto the
     # bus (Bus::rp2350_dcp_mut, default None) and its dispatch made cold and
     # out of line; no change for chips without a DCP. ACK, NOT A SILICON CAPTURE.
-    drift_ack_digest: ac1b32998722f6c2aa6f3cae42d18d6b6e886d49aa1c5e788f4d10223fc78c2d
+    drift_ack_digest: 7e4bde9cd9fe5540808e6b07f96bf5cc72b637c8b166a90c8a4fb311327c6dfd
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -700,6 +700,10 @@ boards:
     # channel limits (inclusive bounds), latches limit events and routes their
     # enabled IRQ bits; LIMIT reset becomes 0x7fff8000 per Nordic's register table.
     # Focused peripheral source controls cover the change; affected engine/guest
+    # qualification and live re-capture remain pending. ACK, NOT A SILICON CAPTURE.
+    # 2026-11-13: SAADC RESOLUTION now resets to 1 (10 bits), as documented;
+    # prior model reset selected 8 bits. Exact-module controls check DMA,
+    # limits/IRQs and signed codes without a driver override. Engine/guest
     # qualification and live re-capture remain pending. ACK, NOT A SILICON CAPTURE.
     # 2026-11-13: custom Bus Cortex-M batches now yield at pending flash ops.
     # SystemBus execution and captured register models are unchanged.
@@ -1067,7 +1071,7 @@ boards:
     # 2026-11-01 (feat/rp2350-dcp, perf): DCP state moved off CortexM onto the
     # bus (Bus::rp2350_dcp_mut, default None) and its dispatch made cold and
     # out of line; no change for chips without a DCP. ACK, NOT A SILICON CAPTURE.
-    drift_ack_digest: ac1b32998722f6c2aa6f3cae42d18d6b6e886d49aa1c5e788f4d10223fc78c2d
+    drift_ack_digest: 7e4bde9cd9fe5540808e6b07f96bf5cc72b637c8b166a90c8a4fb311327c6dfd
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -1302,6 +1306,10 @@ boards:
     # channel limits (inclusive bounds), latches limit events and routes their
     # enabled IRQ bits; LIMIT reset becomes 0x7fff8000 per Nordic's register table.
     # Focused peripheral source controls cover the change; affected engine/guest
+    # qualification and live re-capture remain pending. ACK, NOT A SILICON CAPTURE.
+    # 2026-11-13: SAADC RESOLUTION now resets to 1 (10 bits), as documented;
+    # prior model reset selected 8 bits. Exact-module controls check DMA,
+    # limits/IRQs and signed codes without a driver override. Engine/guest
     # qualification and live re-capture remain pending. ACK, NOT A SILICON CAPTURE.
     # 2026-11-13: custom Bus Cortex-M batches now yield at pending flash ops.
     # SystemBus execution and captured register models are unchanged.
