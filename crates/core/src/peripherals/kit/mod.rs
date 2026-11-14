@@ -32,6 +32,7 @@
 
 mod ctx;
 pub mod declarative;
+mod pad_label;
 pub mod registry;
 
 pub use ctx::AttachCtx;

@@ -2834,6 +2834,10 @@ impl GpioPort {
 }
 
 impl crate::Peripheral for GpioPort {
+    fn is_sam_gpio_port(&self) -> bool {
+        matches!(&self.family, GpioFamily::SamPort(_))
+    }
+
     fn is_stm32_gpio_port(&self) -> bool {
         matches!(
             &self.family,

@@ -503,23 +503,24 @@ impl<'a> AttachCtx<'a> {
     /// (`Transport::GpioGroup`). Accepts ESP32/S3 spellings (`GPIO15`, `IO4`,
     /// bare `15`) used by the ESP GPIO edge-observer path.
     pub fn parse_gpio_pin(&self, label: &str) -> Option<u8> {
-        // Parse port-qualified STM32 pads *before* the ESP parser: the latter
-        // strips all leading letters and would misread PB0 as ESP GPIO0.
+        // SAM and STM32 use the same PA/PB spelling with different widths.
+        // Admit the concrete named model before encoding a port-qualified pad;
+        // an unknown PB0 must never fall through as ESP GPIO0.
         let label = label.trim();
-        if let Some(rest) = label.strip_prefix('P') {
-            let mut letters = rest.chars();
-            if let Some(port @ 'A'..='P') = letters.next() {
-                let pin = letters.as_str().parse::<u8>().ok()?;
-                if pin > 15 {
-                    return None;
-                }
-                let name = format!("gpio{}", port.to_ascii_lowercase());
-                let idx = self.bus.find_peripheral_index_by_name(&name)?;
-                if self.bus.peripherals[idx].dev.is_stm32_gpio_port() {
-                    return Some((port as u8 - b'A') * 16 + pin);
-                }
-                return None;
-            }
+        if label.starts_with('P') {
+            return super::pad_label::parse_named_pad(label, |family, port| {
+                let name = family.instance_name(port);
+                self.bus
+                    .find_peripheral_index_by_name(&name)
+                    .is_some_and(|idx| match family {
+                        super::pad_label::PadFamily::Stm32 => {
+                            self.bus.peripherals[idx].dev.is_stm32_gpio_port()
+                        }
+                        super::pad_label::PadFamily::Sam => {
+                            self.bus.peripherals[idx].dev.is_sam_gpio_port()
+                        }
+                    })
+            });
         }
         SystemBus::parse_esp32s3_gpio_pin(label).or_else(|| SystemBus::parse_esp32_gpio_pin(label))
     }
@@ -674,6 +675,58 @@ mod tests {
         let ext = ext_with_moisture(serde_yaml::Value::from(25));
         let ctx = AttachCtx::new(&mut bus, &ext);
         assert_eq!(ctx.config_f64("moisture"), Some(25.0));
+    }
+
+    #[test]
+    fn named_gpio_pads_use_the_concrete_port_family_and_keep_esp_labels() {
+        use crate::bus::PeripheralEntry;
+        use crate::peripherals::gpio::{GpioPort, GpioRegisterLayout};
+        let ext = ext_with_moisture(serde_yaml::Value::Null);
+        for (layout, prefix, width) in [
+            (GpioRegisterLayout::SamPort, "port", 32),
+            (GpioRegisterLayout::Stm32V2, "gpio", 16),
+        ] {
+            let mut bus = SystemBus::new();
+            for port in ['a', 'b'] {
+                bus.peripherals.push(PeripheralEntry {
+                    name: format!("{prefix}{port}"),
+                    base: if port == 'a' {
+                        0x4000_0000
+                    } else {
+                        0x4000_1000
+                    },
+                    size: 128,
+                    irq: None,
+                    dev: Box::new(GpioPort::new_with_layout(layout)),
+                    ticks_remaining: 0,
+                    clock_gate: None,
+                });
+            }
+            let ctx = AttachCtx::new(&mut bus, &ext);
+            assert_eq!(ctx.parse_gpio_pin("PA15"), Some(15));
+            assert_eq!(ctx.parse_gpio_pin("PB0"), Some(width));
+            assert_eq!(ctx.parse_gpio_pin("PB15"), Some(width + 15));
+            assert_eq!(ctx.parse_gpio_pin("PA31"), (width == 32).then_some(31));
+            for bad in ["PA32", "PC0", "PA-1", "PA+1"] {
+                assert_eq!(ctx.parse_gpio_pin(bad), None, "{layout:?} {bad}");
+            }
+            for (label, pin) in [("GPIO48", 48), ("IO17", 17), ("15", 15)] {
+                assert_eq!(ctx.parse_gpio_pin(label), Some(pin));
+            }
+            assert_eq!(ctx.parse_gpio_pin("GPIO49"), None);
+        }
+        // A familiar instance name with the wrong concrete model is not a pad.
+        let mut bus = SystemBus::new();
+        bus.peripherals.push(PeripheralEntry {
+            name: "gpioa".into(),
+            base: 0x4000_0000,
+            size: 128,
+            irq: None,
+            dev: Box::new(GpioPort::new_with_layout(GpioRegisterLayout::SamPort)),
+            ticks_remaining: 0,
+            clock_gate: None,
+        });
+        assert_eq!(AttachCtx::new(&mut bus, &ext).parse_gpio_pin("PA15"), None);
     }
 
     fn output_delivery_fixture(primitive: &str) -> String {

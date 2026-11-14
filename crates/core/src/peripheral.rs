@@ -186,6 +186,12 @@ pub trait Peripheral: std::fmt::Debug + Send {
         false
     }
 
+    /// A SAM PORT block owns 32 pads per port, unlike STM32's 16-pad ports.
+    /// Instance names alone must not authorize a port-qualified pad binding.
+    fn is_sam_gpio_port(&self) -> bool {
+        false
+    }
+
     /// Subscribe an off-chip device to actual STM32 GPIO output transitions.
     /// Other peripheral families decline without a concrete downcast.
     /// The bus supplies the physical port number and cycle clock.
