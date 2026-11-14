@@ -1,0 +1,82 @@
+{
+  "schema": 1,
+  "kind": "reviewed-source-successor-not-new-performance-measurement",
+  "fork_predecessor": "5240da1c6d0f4c069a554995ece35fe8e07e1da0",
+  "upstream_source": "10284b0028f57ebbf11d4fe0269d51d3f2701b45",
+  "fixture_selection_commit": "bcf981554fdce1d04cd7b1069edecff78d2920fc",
+  "scope": [
+    "Honor CARGO_TARGET_DIR (absolute or build-cwd relative); refuse missing selected ELF instead of stale default fallback. Other board_perf source bytes are unchanged.",
+    "Import six upstream-only board baseline entries; retain every existing fork baseline entry and byte unchanged. Imported values are upstream references, not newly measured or requalified fork performance.",
+    "This receipt preserves source history and permits source-only checks; it does not qualify runtime performance, a new speedup, or the upstream RP2040 RTF replacement."
+  ],
+  "imported_upstream_baselines": {
+    "esp32-devkitc-32e-gpio-smoke": {
+      "batch": 1.4,
+      "step": 977.8
+    },
+    "esp32-devkitc-32e-uart1": {
+      "batch": 1.4,
+      "step": 977.8
+    },
+    "nrf54l05": {
+      "batch": 1.9,
+      "step": 1377.5
+    },
+    "nrf54l10": {
+      "batch": 1.9,
+      "step": 1377.5
+    },
+    "stm32f103rb-nucleo-bme280-smoke": {
+      "batch": 1.5,
+      "step": 921.9
+    },
+    "stm32f446re": {
+      "batch": 1.5,
+      "step": 935.5
+    }
+  },
+  "source_transitions": [
+    {
+      "path": "scripts/perf/board_perf.py",
+      "predecessor_sha256": "de4b5af56c80e6c2a6d76f14a02d5fefd026a4e064c34f6ca9b495b120149a3b",
+      "successor_sha256": "c97ed11ec819d7511bff6093a90768ad9d504d3e507a0c5f4ed1891eb6182fd8",
+      "replacements": [
+        {
+          "before": "        elf = cwd / f\"target/{spec.target}/release/{spec.crate}\"\n        if not elf.exists():\n            elf = REPO_ROOT / f\"target/{spec.target}/release/{spec.crate}\"\n",
+          "after": "        target_override = env.get(\"CARGO_TARGET_DIR\")\n        if target_override is not None:\n            # Cargo resolves an environment override relative to its build\n            # cwd. Never substitute a stale default-target ELF for this build.\n            target_dir = Path(target_override)\n            if not target_dir.is_absolute():\n                target_dir = cwd / target_dir\n            elf = target_dir / spec.target / \"release\" / spec.crate\n        else:\n            elf = cwd / f\"target/{spec.target}/release/{spec.crate}\"\n            if not elf.exists():\n                elf = REPO_ROOT / f\"target/{spec.target}/release/{spec.crate}\"\n        if not elf.is_file():\n            selected = f\" (CARGO_TARGET_DIR={target_override!r})\" if target_override is not None else \"\"\n            raise RuntimeError(\n                f\"fixture '{name}': Cargo succeeded but the expected ELF{selected} \"\n                f\"is missing or not a file: {elf}\"\n            )\n"
+        }
+      ]
+    },
+    {
+      "path": "scripts/perf/baselines.json",
+      "predecessor_sha256": "ca6f300347bc9e43cd632ef7360e1666cc07947f6c32898a1f58cf8376feecda",
+      "successor_sha256": "92b23585087ae51644d3cbefac67182e029844b3cd6c968eba84a284674dd7fe",
+      "replacements": [
+        {
+          "before": "",
+          "after": "  \"esp32-devkitc-32e-gpio-smoke\": {\n    \"batch\": 1.4,\n    \"step\": 977.8\n  },\n"
+        },
+        {
+          "before": "",
+          "after": "  \"esp32-devkitc-32e-uart1\": {\n    \"batch\": 1.4,\n    \"step\": 977.8\n  },\n"
+        },
+        {
+          "before": "",
+          "after": "  \"nrf54l05\": {\n    \"batch\": 1.9,\n    \"step\": 1377.5\n  },\n"
+        },
+        {
+          "before": "",
+          "after": "  \"nrf54l10\": {\n    \"batch\": 1.9,\n    \"step\": 1377.5\n  },\n"
+        },
+        {
+          "before": "",
+          "after": "  \"stm32f103rb-nucleo-bme280-smoke\": {\n    \"batch\": 1.5,\n    \"step\": 921.9\n  },\n"
+        },
+        {
+          "before": "",
+          "after": "  \"stm32f446re\": {\n    \"batch\": 1.5,\n    \"step\": 935.5\n  },\n"
+        }
+      ]
+    }
+  ]
+}
