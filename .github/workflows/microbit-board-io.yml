@@ -81,7 +81,7 @@ jobs:
           cargo test --release -p labwired-core --features microbit-board-io-test \
             --test nrf52833_config --test nrf52833_gpio_geometry \
             --test microbit_v2_led_matrix --test microbit_v2_board_io_guest \
-            --test microbit_v2_motion_io_guest --test microbit_v2_open_drain_guest --test microbit_v2_mag_drdy_guest --test microbit_v2_sensor_drdy_guest --test nrf52840_gpiote_guest --test peripheral_kit_gate -- --nocapture
+            --test microbit_v2_motion_io_guest --test microbit_v2_open_drain_guest --test microbit_v2_mag_drdy_guest --test microbit_v2_sensor_drdy_guest --test nrf52840_gpiote_guest --test microbit_v2_egu_ppi_guest --test peripheral_kit_gate -- --nocapture
           cargo test --release -p labwired-core --features microbit-board-io-test \
             --test microbit_v2_adc_scan_guest
           cargo test --release -p labwired-core --features microbit-board-io-test \
@@ -98,7 +98,7 @@ jobs:
         run: |
           cargo test --release -p labwired-core --no-default-features \
             --features microbit-sensor-guest-test,nrf52-gpiote-guest-test \
-            --test microbit_v2_mag_drdy_guest --test microbit_v2_sensor_drdy_guest --test nrf52840_gpiote_guest \
+            --test microbit_v2_mag_drdy_guest --test microbit_v2_sensor_drdy_guest --test nrf52840_gpiote_guest --test microbit_v2_egu_ppi_guest \
             -- --nocapture
       - name: Prove native WASM analog input routing
         run: cargo test --release -p labwired-wasm --lib adc_routing_tests
