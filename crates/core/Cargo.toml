@@ -554,3 +554,7 @@ required-features = ["microbit-sensor-guest-test"]
 [[test]]
 name = "nrf52840_gpiote_guest"
 required-features = ["nrf52-gpiote-guest-test"]
+
+[[test]]
+name = "microbit_v2_egu_ppi_guest"
+required-features = ["nrf52-gpiote-guest-test"]
