@@ -471,7 +471,7 @@ boards:
     # Content acknowledgement only; capture/date/expiry are unchanged.
     # TEMP result writes ignored and STOP preserves DATARDY; six focused
     # source controls pass. No new silicon capture or guest qualification.
-    drift_ack_digest: 1f81a7265ec859b7eade0d4d06ee51c20ff18c4a31ba359d6fe49af0617dd2af
+    drift_ack_digest: 03f82a46e6c1db8d6b7ad21f3b17de56c801350f9b4caad78fd2eb5b913279c3
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -1086,7 +1086,7 @@ boards:
     # Content acknowledgement only; capture/date/expiry are unchanged.
     # TEMP result writes ignored and STOP preserves DATARDY; six focused
     # source controls pass. No new silicon capture or guest qualification.
-    drift_ack_digest: 1f81a7265ec859b7eade0d4d06ee51c20ff18c4a31ba359d6fe49af0617dd2af
+    drift_ack_digest: 03f82a46e6c1db8d6b7ad21f3b17de56c801350f9b4caad78fd2eb5b913279c3
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     models:
       - crates/core/src/cpu/cortex_m.rs
