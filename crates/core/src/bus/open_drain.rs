@@ -197,6 +197,27 @@ mod tests {
         assert!(second.level());
     }
     #[test]
+    fn one_source_resolves_independently_on_direct_and_inverted_pads() {
+        let source = driver("sensor", "irq");
+        let mut nets = OpenDrainNets::default();
+        nets.register_inverted((10, 2), source.clone(), false)
+            .unwrap();
+        nets.register((11, 3), source.clone(), false).unwrap();
+        assert_eq!(nets.level((10, 2)), Some(true));
+        assert_eq!(nets.level((11, 3)), Some(true));
+
+        assert!(!nets.drive((10, 2), &source, true).unwrap());
+        assert!(nets.drive((11, 3), &source, true).unwrap());
+        assert_eq!(nets.level((10, 2)), Some(false));
+        assert_eq!(nets.level((11, 3)), Some(true));
+
+        assert!(nets.drive((10, 2), &source, false).unwrap());
+        assert!(!nets.drive((11, 3), &source, false).unwrap());
+        assert_eq!(nets.level((10, 2)), Some(true));
+        assert_eq!(nets.level((11, 3)), Some(false));
+    }
+
+    #[test]
     fn pad_registry_rejects_mixed_and_unknown_routes_and_releases_all() {
         let a = driver("part-a", "irq");
         let b = driver("part-b", "irq");

@@ -1,0 +1,29 @@
+# Board validation record migrated from both fork and upstream registries.
+id: same70q21b
+doc: docs/boards/sam-e70-xplained.md
+chip: configs/chips/same70q21b.yaml
+tier: smoke-manual
+offline_tests:
+- firmware_survival::test_sam_e70_xplained_smoke_survival
+- firmware_survival::test_sam_e70_xplained_zephyr_survival
+- same70_zephyr_boot::zephyr_bring_up_walks_the_m7_caches_and_locks_the_plls
+models:
+- crates/core/src/cpu/cortex_m.rs
+- crates/core/src/decoder/arm.rs
+- crates/core/src/peripherals/sam4s.rs
+- crates/core/src/peripherals/cortex_m7_cache.rs
+- crates/core/src/peripherals/scb.rs
+- crates/core/src/system/cortex_m.rs
+- crates/core/src/peripherals/declarative.rs
+- configs/peripherals/same70q21b
+- crates/firmware-sam-e70-xplained-zephyr
+- crates/core/src/peripherals/uart.rs
+- crates/core/src/peripherals/systick.rs
+- crates/core/src/peripherals/stub.rs
+- crates/core/src/bus/from_config.rs
+- crates/core/src/bus/profiles.rs
+- crates/core/src/peripherals/generic_factory.rs
+- crates/core/src/system/builder/arm.rs
+- crates/firmware-sam-e70-xplained-smoke
+- configs/chips/same70q21b.yaml
+- configs/systems/sam-e70-xplained.yaml

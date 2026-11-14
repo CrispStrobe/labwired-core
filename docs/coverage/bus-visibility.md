@@ -111,6 +111,8 @@ Chips that cannot yet produce edges for a bus are listed here with a reason — 
   * UART: no USART1 bring-up in this harness; bytes are proven by the sam-e70-xplained survival smoke
 * **stm32f072**
   * UART: no USART1 bring-up in this harness; bytes are proven by the stm32f072b-disco survival smoke
+* **stm32f103rb-nucleo-bme280-smoke**
+  * UART: this profile exposes only USART2 (the NUCLEO VCP); the F1 harness          produces no analyzer edges on pad-gated USART2 (parent stm32f103          passes on USART3, which this YAML does not include). Bytes are          proven by the boards.yml nucleo-f103rb-bme280 cell          (NUCLEO_F103RB_BME280_OK over USART2)
 * **stm32l552**
   * UART: no LPUART1 bring-up in this harness; bytes are proven by the nucleo-l552ze-q survival smoke
 * **vegaboard-ri5cy**
@@ -147,6 +149,8 @@ Chips that cannot yet produce edges for a bus are listed here with a reason — 
 | dspic33fj32mc204 | — | — | — |
 | efr32mg26 | ✓ | ✓ | — |
 | esp32 | ✓ | — | ✓ |
+| esp32-devkitc-32e-gpio-smoke | ✓ | — | ✓ |
+| esp32-devkitc-32e-uart1 | — | — | ✓ |
 | esp32c3 | ✓ | ✓ | ✓ |
 | esp32c6 | ✓ | ✓ | ✓ |
 | esp32s3 | — | — | — |
@@ -195,6 +199,7 @@ Chips that cannot yet produce edges for a bus are listed here with a reason — 
 | stm32f103r6h | ✓ | ✓ | ✓ |
 | stm32f103r8 | ✓ | ✓ | ✓ |
 | stm32f103rb | ✓ | ✓ | ✓ |
+| stm32f103rb-nucleo-bme280-smoke | ✓ | — | — |
 | stm32f103t4 | ✓ | ✓ | ✓ |
 | stm32f103t6 | ✓ | ✓ | ✓ |
 | stm32f401 | ✓ | ✓ | ✓ |
@@ -220,6 +225,7 @@ Chips that cannot yet produce edges for a bus are listed here with a reason — 
 | stm32f407ze | ✓ | ✓ | ✓ |
 | stm32f407zg | ✓ | ✓ | ✓ |
 | stm32f411ceu6 | ✓ | ✓ | ✓ |
+| stm32f446re | ✓ | ✓ | ✓ |
 | stm32f746 | — | — | ✓ |
 | stm32f767 | ✓ | ✓ | ✓ |
 | stm32g071 | ✓ | ✓ | ✓ |

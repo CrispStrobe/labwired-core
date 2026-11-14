@@ -28,6 +28,7 @@ mod analog {
             sources: BTreeMap::from([("gpio".to_string(), "Vgpio".to_string())]),
             trace: vec!["v(in)".to_string(), "i(Vgpio)".to_string()],
             trace_samples: 20_000,
+            thermistors: BTreeMap::new(),
         }
     }
 
@@ -75,6 +76,41 @@ mod analog {
             error < 0.005,
             "after one tau: {volts} V vs {expected} V ({:.3} %)",
             error * 100.0
+        );
+    }
+
+    /// Electrical negative control for the source-backed RC example. If a
+    /// model ignores its capacitor value (or returns a hard-coded response),
+    /// both traces become the same and this check fails. This is a model
+    /// test, not physical-board verification.
+    #[test]
+    fn rc_capacitance_perturbation_changes_the_measured_response() {
+        let sample_at_one_ms = |netlist: &str| {
+            let mut adapter =
+                AnalogCosimAdapter::from_netlist(netlist, &rc_config()).expect("adapter builds");
+            let mut volts = 0.0;
+            for step in 1..=10 {
+                volts = step_high(&mut adapter, step * 100_000);
+            }
+            volts
+        };
+
+        // Same 10 kΩ resistance, source and GPIO stimulus. Only C changes.
+        let baseline = sample_at_one_ms(RC);
+        let negative_control = sample_at_one_ms(&RC.replace("100n", "1u"));
+        let expected_baseline = 3.3 * (1.0 - (-1.0_f64).exp());
+        let expected_slow = 3.3 * (1.0 - (-0.1_f64).exp());
+        assert!(
+            (baseline - expected_baseline).abs() < 0.02,
+            "10 kΩ × 100 nF must charge to {expected_baseline:.3} V after 1 ms, got {baseline:.3} V"
+        );
+        assert!(
+            (negative_control - expected_slow).abs() < 0.02,
+            "10 kΩ × 1 µF must charge to {expected_slow:.3} V after 1 ms, got {negative_control:.3} V"
+        );
+        assert!(
+            baseline > 4.0 * negative_control,
+            "capacitor change must affect the actual electrical result; baseline {baseline:.3} V vs negative control {negative_control:.3} V"
         );
     }
 
@@ -214,6 +250,120 @@ mod analog {
             })
             .expect_err("temperature input cannot be boolean");
         assert!(error.to_string().contains("degrees Celsius"), "{error}");
+    }
+
+    #[test]
+    fn a_routed_temperature_updates_a_tempco_resistor_inside_the_analog_netlist() {
+        let netlist = "Vcc vcc 0 dc 3.3\nRhot vcc sense 10k tc1=4m tc2=1u tnom=25 temp=25\nRpull sense 0 10k\n";
+        let cfg = AnalogConfig {
+            probes: BTreeMap::from([("v_sense".to_string(), "v(sense)".to_string())]),
+            sources: BTreeMap::from([("temperature_c".to_string(), "Rhot".to_string())]),
+            ..AnalogConfig::default()
+        };
+        let mut adapter = AnalogCosimAdapter::from_netlist(netlist, &cfg).expect("adapter builds");
+        assert_eq!(
+            adapter.input_kind("temperature_c"),
+            Some(labwired_core::cosim::CosimInputKind::Number)
+        );
+        assert_eq!(
+            adapter.input_initial_value("temperature_c"),
+            Some(CosimSignalValue::F64(25.0))
+        );
+
+        let sample = |adapter: &mut AnalogCosimAdapter, time_ns, celsius| {
+            let result = adapter
+                .step(CosimStep {
+                    time_ns,
+                    dt_ns: 100_000,
+                    inputs: BTreeMap::from([(
+                        "temperature_c".to_string(),
+                        CosimSignalValue::F64(celsius),
+                    )]),
+                })
+                .expect("temperature step solves");
+            match result.outputs["v_sense"] {
+                CosimSignalValue::F64(volts) => volts,
+                ref other => panic!("probe should be a voltage, got {other:?}"),
+            }
+        };
+
+        let cold = sample(&mut adapter, 100_000, -10.0);
+        let nominal = sample(&mut adapter, 200_000, 25.0);
+        let hot = sample(&mut adapter, 300_000, 125.0);
+        assert!(
+            hot < nominal && nominal < cold,
+            "a positive tempco raises the high-side resistance and lowers the divider output: cold={cold}, nominal={nominal}, hot={hot}"
+        );
+
+        let expected_sense = |temperature_celsius: f64| {
+            let delta = temperature_celsius - 25.0;
+            let hot_resistance = 10_000.0 * (1.0 + 4e-3 * delta + 1e-6 * delta * delta);
+            3.3 * 10_000.0 / (hot_resistance + 10_000.0)
+        };
+        for (label, actual, temperature_celsius) in [
+            ("cold", cold, -10.0),
+            ("nominal", nominal, 25.0),
+            ("hot", hot, 125.0),
+        ] {
+            let expected = expected_sense(temperature_celsius);
+            assert!(
+                (actual - expected).abs() < 1e-9,
+                "{label} routed resistor voltage should be {expected} V at {temperature_celsius} °C, got {actual} V"
+            );
+        }
+
+        let error = adapter
+            .step(CosimStep {
+                time_ns: 400_000,
+                dt_ns: 100_000,
+                inputs: BTreeMap::from([(
+                    "temperature_c".to_string(),
+                    CosimSignalValue::Bool(true),
+                )]),
+            })
+            .expect_err("temperature input cannot be boolean");
+        assert!(error.to_string().contains("degrees Celsius"), "{error}");
+    }
+
+    #[test]
+    fn invalid_tempco_resistance_does_not_change_the_routed_temperature() {
+        let netlist =
+            "Vcc vcc 0 dc 3.3\nRhot vcc sense 10k tc1=-0.02 tnom=25 temp=25\nRpull sense 0 10k\n";
+        let cfg = AnalogConfig {
+            sources: BTreeMap::from([("temperature_c".to_string(), "Rhot".to_string())]),
+            ..AnalogConfig::default()
+        };
+        let mut adapter = AnalogCosimAdapter::from_netlist(netlist, &cfg).unwrap();
+        let result = adapter.step(CosimStep {
+            time_ns: 100_000,
+            dt_ns: 100_000,
+            inputs: BTreeMap::from([("temperature_c".to_string(), CosimSignalValue::F64(125.0))]),
+        });
+        assert!(result.is_err(), "negative resistance must be rejected");
+        assert_eq!(
+            adapter.input_initial_value("temperature_c"),
+            Some(CosimSignalValue::F64(25.0))
+        );
+    }
+
+    #[test]
+    fn routed_tempco_rejects_infinite_conductance_without_changing_temperature() {
+        let netlist = "Vcc vcc 0 dc 3.3\nRhot vcc sense 1e-307 tc1=-0.009999999999999 tnom=25 temp=25\nRpull sense 0 10k\n";
+        let cfg = AnalogConfig {
+            sources: BTreeMap::from([("temperature_c".to_string(), "Rhot".to_string())]),
+            ..AnalogConfig::default()
+        };
+        let mut adapter = AnalogCosimAdapter::from_netlist(netlist, &cfg).unwrap();
+        let result = adapter.step(CosimStep {
+            time_ns: 100_000,
+            dt_ns: 100_000,
+            inputs: BTreeMap::from([("temperature_c".to_string(), CosimSignalValue::F64(125.0))]),
+        });
+        assert!(result.is_err(), "infinite conductance must be rejected");
+        assert_eq!(
+            adapter.input_initial_value("temperature_c"),
+            Some(CosimSignalValue::F64(25.0))
+        );
     }
 
     #[test]

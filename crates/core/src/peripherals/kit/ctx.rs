@@ -136,6 +136,16 @@ impl<'a> AttachCtx<'a> {
     /// work over the bus. An unresolvable pad label IS an error — that is a
     /// wiring mistake, not a choice.
     pub fn bind_output_pins(&mut self, desc: &labwired_config::DeviceDescriptor) -> Result<()> {
+        self.bind_output_roles(&desc.behavior.outputs, &desc.behavior.output_pins)
+    }
+
+    /// Bind output roles from a hand-written kit through the same pad port
+    /// as declarative devices. Models queue role names, never MCU pad labels.
+    pub fn bind_output_roles(
+        &mut self,
+        outputs: &[String],
+        output_pins: &std::collections::BTreeMap<String, String>,
+    ) -> Result<()> {
         // The placement must name each output role explicitly; the name also
         // declares a pull-up. No implicit electrical mode is inferred.
         let open_drain_roles = match self.ext.config.get("open_drain_pullups") {
@@ -155,9 +165,7 @@ impl<'a> AttachCtx<'a> {
                             self.ext.id
                         )
                     })?;
-                    if !desc.behavior.outputs.iter().any(|known| known == role)
-                        || result.contains(&role)
-                    {
+                    if !outputs.iter().any(|known| known == role) || result.contains(&role) {
                         return Err(anyhow!(
                             "device '{}' has an unknown or duplicate open-drain role '{}'",
                             self.ext.id,
@@ -198,10 +206,8 @@ impl<'a> AttachCtx<'a> {
                 result
             }
         };
-        for role in &desc.behavior.outputs {
-            let key = desc
-                .behavior
-                .output_pins
+        for role in outputs {
+            let key = output_pins
                 .get(role)
                 .cloned()
                 .unwrap_or_else(|| role.clone());
@@ -239,10 +245,10 @@ impl<'a> AttachCtx<'a> {
                 .bus
                 .device_pin_pads
                 .iter()
-                .any(|p| p.device_id == self.ext.id && p.role == *role)
+                .any(|p| p.device_id == self.ext.id && p.role == *role && (p.addr, p.bit) == pad)
             {
                 return Err(anyhow!(
-                    "device '{}' output role '{}' is already bound",
+                    "device '{}' output role '{}' is already bound to this pad",
                     self.ext.id,
                     role
                 ));
@@ -294,6 +300,21 @@ impl<'a> AttachCtx<'a> {
         Ok(())
     }
 
+    /// Output roles with a delivery destination for this placement. A role
+    /// may feed several pads; the rule machine filters membership only, and
+    /// the bus still delivers each edge to every matching pad.
+    ///
+    /// When direct device-output observers are added, their source roles must
+    /// also be included here before applying the filter. Pad bindings are the
+    /// only destinations supported by the current bus.
+    pub(crate) fn bound_output_roles(&self) -> impl Iterator<Item = String> + '_ {
+        self.bus
+            .device_pin_pads
+            .iter()
+            .filter(move |pad| pad.device_id == self.ext.id)
+            .map(|pad| pad.role.clone())
+    }
+
     pub fn attach_i2c_device(&mut self, mut device: Box<dyn I2cDevice>) -> Result<()> {
         // Input devices get their system.yaml id stamped here (the ONE kit
         // attach path), so discovery and the stimulus resolver address them
@@ -340,6 +361,33 @@ impl<'a> AttachCtx<'a> {
         // Same identity stamp as `attach_i2c_device`.
         if let Some(si) = device.as_sim_input_mut() {
             si.set_component_id(self.ext.id.clone());
+        }
+        let routed = self.ext.config.contains_key("supply_rails")
+            || self.ext.config.contains_key("supply_domain");
+        anyhow::ensure!(
+            !routed || device.supports_power_control(),
+            "device '{}' does not support routed SPI power transitions",
+            self.ext.id
+        );
+        if routed {
+            let index = self
+                .bus
+                .find_peripheral_index_by_name(&self.ext.connection)
+                .ok_or_else(|| missing_connection_err(self.ext))?;
+            anyhow::ensure!(
+                self.bus.peripherals[index]
+                    .dev
+                    .spi_attached_devices_mut()
+                    .is_some(),
+                "connection '{}' cannot publish routed SPI power transitions",
+                self.ext.connection
+            );
+        }
+        let gate = crate::peripherals::components::supply_domain::SupplyGate::from_config(self)?;
+        if gate.is_routed() {
+            device = Box::new(
+                crate::peripherals::components::supply_domain::GatedSpiDevice::new(device, gate)?,
+            );
         }
         // Funnel through the single bus choke point (see `attach_i2c_device`).
         let connection = self.ext.connection.clone();
@@ -455,6 +503,24 @@ impl<'a> AttachCtx<'a> {
     /// (`Transport::GpioGroup`). Accepts ESP32/S3 spellings (`GPIO15`, `IO4`,
     /// bare `15`) used by the ESP GPIO edge-observer path.
     pub fn parse_gpio_pin(&self, label: &str) -> Option<u8> {
+        // Parse port-qualified STM32 pads *before* the ESP parser: the latter
+        // strips all leading letters and would misread PB0 as ESP GPIO0.
+        let label = label.trim();
+        if let Some(rest) = label.strip_prefix('P') {
+            let mut letters = rest.chars();
+            if let Some(port @ 'A'..='P') = letters.next() {
+                let pin = letters.as_str().parse::<u8>().ok()?;
+                if pin > 15 {
+                    return None;
+                }
+                let name = format!("gpio{}", port.to_ascii_lowercase());
+                let idx = self.bus.find_peripheral_index_by_name(&name)?;
+                if self.bus.peripherals[idx].dev.is_stm32_gpio_port() {
+                    return Some((port as u8 - b'A') * 16 + pin);
+                }
+                return None;
+            }
+        }
         SystemBus::parse_esp32s3_gpio_pin(label).or_else(|| SystemBus::parse_esp32_gpio_pin(label))
     }
 
@@ -608,6 +674,158 @@ mod tests {
         let ext = ext_with_moisture(serde_yaml::Value::from(25));
         let ctx = AttachCtx::new(&mut bus, &ext);
         assert_eq!(ctx.config_f64("moisture"), Some(25.0));
+    }
+
+    fn output_delivery_fixture(primitive: &str) -> String {
+        let transport = match primitive {
+            "i2c_device" => "  i2c:\n    default_address: 0x29\n",
+            "spi_device" => {
+                "  spi:\n    framing: { command_bytes: 1, rw_bit: 7, rw_read_high: true, addr_mask: 0x7f }\n"
+            }
+            _ => unreachable!("test uses I2C and SPI"),
+        };
+        format!(
+            r#"type: output_delivery_probe
+behavior:
+  primitive: {primitive}
+{transport}    registers:
+      - {{ name: PORT, addr: 0, width: 1, endian: be, access: rw, reset: 0 }}
+  outputs: [LIVE, UNWIRED]
+  output_pins: {{ LIVE: live_pin }}
+  rules:
+    - on: {{ write: PORT }}
+      do:
+        - {{ pin: LIVE, level: "written & 1" }}
+        - {{ pin: UNWIRED, level: "written & 1" }}
+"#
+        )
+    }
+
+    fn write_i2c_output(device: &mut dyn I2cDevice, value: u8) {
+        device.start();
+        device.write(0);
+        device.write(value);
+        device.stop();
+    }
+
+    fn write_spi_output(device: &mut dyn SpiDevice, value: u8) {
+        device.cs_select();
+        device.transfer(0);
+        device.transfer(value);
+        device.cs_release();
+    }
+
+    #[test]
+    fn standalone_i2c_and_spi_keep_all_output_edges() {
+        use crate::peripherals::components::declarative_i2c::GenericI2cDevice;
+        use crate::peripherals::components::declarative_spi::GenericSpiDevice;
+
+        for primitive in ["i2c_device", "spi_device"] {
+            let yaml = output_delivery_fixture(primitive);
+            let drives = if primitive == "i2c_device" {
+                let mut device = GenericI2cDevice::from_yaml(&yaml, 0).unwrap();
+                for value in [0, 1, 0] {
+                    write_i2c_output(&mut device, value);
+                }
+                device.take_pin_drives()
+            } else {
+                let mut device = GenericSpiDevice::from_yaml(&yaml, "PA4").unwrap();
+                for value in [0, 1, 0] {
+                    write_spi_output(&mut device, value);
+                }
+                device.take_pin_drives()
+            };
+            assert_eq!(
+                drives,
+                vec![
+                    ("LIVE".to_owned(), false),
+                    ("UNWIRED".to_owned(), false),
+                    ("LIVE".to_owned(), true),
+                    ("UNWIRED".to_owned(), true),
+                    ("LIVE".to_owned(), false),
+                    ("UNWIRED".to_owned(), false),
+                ],
+                "{primitive}: standalone capture must preserve every role and edge"
+            );
+        }
+    }
+
+    #[test]
+    fn attached_i2c_and_spi_queue_only_this_placements_bound_output_roles() {
+        use crate::peripherals::components::declarative_i2c::DeclarativeI2cKit;
+        use crate::peripherals::components::declarative_spi::DeclarativeSpiKit;
+        use crate::peripherals::kit::PeripheralKit;
+
+        for primitive in ["i2c_device", "spi_device"] {
+            for wired in [false, true] {
+                let yaml = output_delivery_fixture(primitive);
+                let mut bus = SystemBus::new();
+                let mut ext = ext_with_moisture(serde_yaml::Value::Null);
+                ext.id = "probe".into();
+                ext.r#type = "output_delivery_probe".into();
+                ext.connection = "probe_controller".into();
+                ext.config.clear();
+                if wired {
+                    ext.config.insert("live_pin".into(), "PA0".into());
+                }
+                // Another placement's role must not authorize delivery here.
+                bus.device_pin_pads.push(crate::bus::DevicePinPad {
+                    device_id: "other".into(),
+                    role: "UNWIRED".into(),
+                    addr: 0x4001_0808,
+                    bit: 1,
+                });
+                let drives = if primitive == "i2c_device" {
+                    bus.add_peripheral(
+                        "probe_controller",
+                        0x4000_5400,
+                        0x400,
+                        None,
+                        Box::new(I2c::new()),
+                    );
+                    let mut ctx = AttachCtx::new(&mut bus, &ext);
+                    DeclarativeI2cKit::from_yaml(&yaml)
+                        .unwrap()
+                        .attach(&mut ctx)
+                        .unwrap();
+                    let controller = ctx.i2c().unwrap();
+                    let mut device = controller.attached_devices()[0].borrow_mut();
+                    for i in 0..4096 {
+                        write_i2c_output(&mut **device, (i % 2) as u8);
+                    }
+                    device.take_pin_drives()
+                } else {
+                    bus.add_peripheral(
+                        "probe_controller",
+                        0x4001_3000,
+                        0x400,
+                        None,
+                        Box::new(Spi::new()),
+                    );
+                    let mut ctx = AttachCtx::new(&mut bus, &ext);
+                    DeclarativeSpiKit::from_yaml(&yaml)
+                        .unwrap()
+                        .attach(&mut ctx)
+                        .unwrap();
+                    let device = &mut ctx.spi().unwrap().attached_devices[0];
+                    for i in 0..4096 {
+                        write_spi_output(&mut **device, (i % 2) as u8);
+                    }
+                    device.take_pin_drives()
+                };
+                let expected = if wired {
+                    (0..4096)
+                        .map(|i| ("LIVE".to_owned(), i % 2 != 0))
+                        .collect::<Vec<_>>()
+                } else {
+                    Vec::new()
+                };
+                assert_eq!(
+                    drives, expected,
+                    "{primitive}, wired {wired}: keep ordered bound edges without unwired growth"
+                );
+            }
+        }
     }
 
     #[test]

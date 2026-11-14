@@ -170,10 +170,10 @@ pub struct GenericI2cDevice {
     /// A delayed response withheld until `elapsed_us >= ready_at_us`.
     pending: Option<Vec<u8>>,
     ready_at_us: u64,
-    /// True once a bus master has actually advanced this device's wall-clock —
-    /// i.e. the chip has an honest absolute-µs source. Families without one
-    /// (STM32, ESP32-classic, nRF52) never set it, and every [`DataReady`] bit
-    /// degrades to always-set there (see [`DataReady`] for why).
+    /// True after the owning controller forwards a nonzero simulated-time
+    /// advance through I2cDevice::advance_time_us. Legacy read-driven readiness
+    /// uses a compatibility fallback until that first advance; subscribed
+    /// conversions complete against their elapsed-time deadline.
     time_source_seen: bool,
 
     /// `data_ready` rules and their per-rule conversion state (parallel Vecs,
@@ -2600,10 +2600,18 @@ fn validate_spec(spec: &I2cSpec) -> Result<()> {
                 );
             }
         }
-        let start_width_mask = if start_reg.width == 4 {
-            u32::MAX
-        } else {
-            (1u32 << (8 * u32::from(start_reg.width))) - 1
+        // Conversion controls are stored as u32 register values. Validate
+        // the width before deriving the mask, including the legacy path with
+        // no all-result acknowledgement group.
+        let start_width_mask = match start_reg.width {
+            1..=3 => (1u32 << (8 * u32::from(start_reg.width))) - 1,
+            4 => u32::MAX,
+            width => bail!(
+                "data_ready '{}' start_register '{}' has unsupported width {}; expected 1..=4 bytes",
+                dr.name,
+                dr.start_register,
+                width
+            ),
         };
         for result in &dr.clear_on_read_all {
             if result.enable_mask & !start_width_mask != 0
@@ -3262,6 +3270,9 @@ impl PeripheralKit for DeclarativeI2cKit {
         // wiring error is reported against the placement rather than leaving a
         // device attached with an interrupt line that goes nowhere.
         ctx.bind_output_pins(&self.descriptor)?;
+        if let Some(rules) = &mut device.rules {
+            rules.restrict_pin_delivery(ctx.bound_output_roles());
+        }
         ctx.attach_i2c_device(Box::new(device))
     }
 }
@@ -4952,6 +4963,79 @@ metadata:
 metadata:
 "#,
         )
+    }
+
+    #[test]
+    fn data_ready_start_register_rejects_invalid_widths_without_panicking() {
+        for (subscribed, fixture) in [
+            (false, TOF_FIXTURE.to_owned()),
+            (true, autonomous_fixture()),
+        ] {
+            for width in [0, 5, 255] {
+                let yaml = fixture.replace(
+                    "SYSRANGE_START, addr: 0x00, width: 1",
+                    &format!("SYSRANGE_START, addr: 0x00, width: {width}"),
+                );
+                assert_ne!(yaml, fixture);
+                let result = std::panic::catch_unwind(|| GenericI2cDevice::from_yaml(&yaml, 0))
+                    .unwrap_or_else(|_| {
+                        panic!("width {width}, subscribed {subscribed}: descriptor load panicked")
+                    });
+                let error = err_of(result, "invalid data-ready start-register width");
+                assert!(
+                    error.contains("start_register 'SYSRANGE_START'")
+                        && error.contains(&format!("unsupported width {width}; expected 1..=4")),
+                    "width {width}, subscribed {subscribed}: {error}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn data_ready_start_register_accepts_each_u32_width_and_byte_order() {
+        for width in 1u8..=4 {
+            for endian in ["be", "le"] {
+                for auto_increment in [false, true] {
+                    let yaml = autonomous_fixture()
+                        .replace(
+                            "SYSRANGE_START, addr: 0x00, width: 1, endian: be",
+                            &format!(
+                                "SYSRANGE_START, addr: 0x00, width: {width}, endian: {endian}"
+                            ),
+                        )
+                        .replace(
+                            "default_address: 0x29",
+                            &format!("default_address: 0x29\n    auto_increment: {auto_increment}"),
+                        );
+                    let mut d = GenericI2cDevice::from_yaml(&yaml, 0).unwrap();
+                    let bytes = if endian == "be" {
+                        1u32.to_be_bytes()[4 - usize::from(width)..].to_vec()
+                    } else {
+                        1u32.to_le_bytes()[..usize::from(width)].to_vec()
+                    };
+                    d.advance_time_us(1);
+                    d.start();
+                    d.write(0);
+                    for byte in bytes {
+                        d.write(byte);
+                    }
+                    d.stop();
+                    assert_eq!(
+                        d.dr_state[0],
+                        DataReadyState::Converting(33_001),
+                        "width {width}, endian {endian}, auto_increment {auto_increment}"
+                    );
+                    d.advance_time_us(32_999);
+                    assert!(d.take_pin_drives().is_empty());
+                    d.advance_time_us(1);
+                    assert_eq!(
+                        d.take_pin_drives(),
+                        vec![("INT".to_owned(), false)],
+                        "width {width}, endian {endian}, auto_increment {auto_increment}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

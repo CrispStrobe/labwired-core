@@ -127,6 +127,27 @@ struct Board {
 /// A chip added to the shipped catalog MUST be added here, or the cross-check at
 /// the bottom of this file fails — a shipped board can never bypass the ratchet.
 const SHIPPED: &[Board] = &[
+    // Public onboarding profiles carry the same reset + executing-fidelity
+    // requirements as catalog boards. Use exact aliases: a parent-family
+    // differential or a survival-only boot must not satisfy these rows.
+    Board {
+        chip: "esp32-devkitc-32e-gpio-smoke",
+        aliases: &["esp32-devkitc-32e-gpio-smoke"],
+        yaml_stem: "esp32-devkitc-32e-gpio-smoke",
+        display_lab: false,
+    },
+    Board {
+        chip: "esp32-devkitc-32e-uart1",
+        aliases: &["esp32-devkitc-32e-uart1"],
+        yaml_stem: "esp32-devkitc-32e-uart1",
+        display_lab: false,
+    },
+    Board {
+        chip: "stm32f103rb-nucleo-bme280-smoke",
+        aliases: &["stm32f103rb-nucleo-bme280-smoke"],
+        yaml_stem: "stm32f103rb-nucleo-bme280-smoke",
+        display_lab: false,
+    },
     Board {
         chip: "stm32f103",
         aliases: &["stm32f103", "f103", "stm32f1"],
@@ -321,6 +342,34 @@ fn generic_cpu_tests_do_not_supply_rv1103_board_coverage() {
     assert!(!corpus.covers(&board, Class::Exec));
     assert!(!is_allowlisted(board.chip, Class::Reset));
     assert!(!is_allowlisted(board.chip, Class::Exec));
+}
+
+#[test]
+fn onboarding_profiles_require_their_own_executing_fidelity() {
+    let corpus = Corpus {
+        files: vec![
+            ("stm32f1_exec_oracle.rs".into(), "chips/stm32f103.yaml".into()),
+            ("esp32_classic_walk_differential.rs".into(), "chips/esp32.yaml".into()),
+            ("firmware_survival.rs".into(),
+                "chips/esp32-devkitc-32e-gpio-smoke.yaml chips/esp32-devkitc-32e-uart1.yaml chips/stm32f103rb-nucleo-bme280-smoke.yaml".into()),
+        ],
+    };
+    for stem in [
+        "esp32-devkitc-32e-gpio-smoke",
+        "esp32-devkitc-32e-uart1",
+        "stm32f103rb-nucleo-bme280-smoke",
+    ] {
+        let board = SHIPPED
+            .iter()
+            .find(|board| board.yaml_stem == stem)
+            .unwrap();
+        assert_eq!(required_classes(board), vec![Class::Reset, Class::Exec]);
+        assert!(
+            !corpus.covers(board, Class::Exec),
+            "{stem}: parent/survival coverage is insufficient"
+        );
+        assert!(!is_allowlisted(board.chip, Class::Exec));
+    }
 }
 
 fn core_crate_root() -> PathBuf {
@@ -733,6 +782,12 @@ fn every_shipped_descriptor_is_ratcheted() {
         // walk-vs-scheduler differential, no silicon oracle — there is no F411
         // bench part). Promote to SHIPPED only when both of those exist.
         "stm32f411ceu6",
+        // NUCLEO-F446RE full-chip profile. Runs the stock stm32duino Arduino
+        // matrix row (L0-L8) on the shared stm32f4 models plus PWR over-drive
+        // and PLLI2S/PLLSAI, but it is not a bundled-configs.ts catalog board
+        // and has no silicon oracle or executing-fidelity differential of its
+        // own. Same bar as stm32f411ceu6 above.
+        "stm32f446re",
         "stm32g474re", // G4 peripheral models in progress, not shipped
         "stm32wb55",   // BLE not modelled, not shipped
         "stm32wba52",  // WBA early onboarding, not shipped

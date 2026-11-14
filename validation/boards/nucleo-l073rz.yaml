@@ -1,0 +1,40 @@
+# Board validation record migrated from both fork and upstream registries.
+chip: configs/chips/stm32l073.yaml
+doc: docs/boards/nucleo-l073rz.md
+drift_ack: 2026-11-13
+drift_ack_digest: 4524a55b788440b508a575a0c74673b88789615d4f4f4af3027aecf02ba7d948
+id: nucleo-l073rz
+models:
+- crates/core/src/peripherals/esp_ledc_wave.rs
+- crates/core/src/cpu/cortex_m.rs
+- crates/core/src/cpu/cortex_m/exec
+- crates/core/src/decoder/arm.rs
+- crates/core/src/decoder/arm_thumb32.rs
+- crates/core/src/peripherals/rcc.rs
+- crates/core/src/peripherals/gpio.rs
+- crates/core/src/peripherals/uart.rs
+- crates/core/src/peripherals/spi.rs
+- crates/core/src/peripherals/i2c.rs
+- crates/core/src/peripherals/timer.rs
+- crates/core/src/peripherals/timer_output.rs
+- crates/core/src/peripherals/dma.rs
+- crates/core/src/peripherals/crc.rs
+- configs/chips/stm32l073.yaml
+note: 'Register diff covers RCC/GPIO/SPI1/TIM2/TIM21 (20 mmio cases) — not a full-chip sweep. Caught +
+  fixed a real model bug: L0 TIM2 was declared 32-bit (L4 assumption); genuine L0 TIM2 is 16-bit, yaml
+  corrected to width:16.'
+offline_tests:
+- stm32l0_mmio_diff::{l0_mmio_sim_only,l0_parity_sim_only}
+- firmware_survival L073 smoke case
+silicon:
+  last_capture: 2026-08-09
+  probe: ST-LINK V2.1 (NUCLEO-L073RZ on-board, V2J28S17, serial 066CFF555054877567065340) over SWD; DBGMCU
+    IDCODE read back 0x20086447
+  result: 're-captured live 2026-08-09 with L073_STRICT=1: l0_mmio_diff 20/20, 0 divergence (RCC IOPENR/APB1ENR/APB2ENR/AHBENR/CFGR
+    clock switch, GPIOA BSRR/BRR, SPI1 CR1/CR2, TIM2 ARR/PSC/CR1, TIM21 ARR, DBGMCU IDCODE). Clean on
+    arrival — unlike the nRF re-capture the same day, this one found nothing to fix. Scope is UNCHANGED
+    and still partial: RCC/GPIO/SPI1/TIM2/TIM21 only, not a full-chip sweep (see `note`); I2C/UART/ADC
+    on this part remain outside the asserted set. Probe serial is recorded from this run on — the earlier
+    entries named no serial, so whether this is the same physical NUCLEO as the 2026-06-20 capture cannot
+    be established either way.'
+tier: silicon-verified

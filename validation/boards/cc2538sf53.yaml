@@ -1,0 +1,37 @@
+# Board validation record migrated from both fork and upstream registries.
+id: cc2538sf53
+doc: docs/boards/cc2538dk.md
+chip: configs/chips/cc2538sf53.yaml
+tier: smoke-manual
+offline_tests:
+- firmware_survival::test_cc2538dk_smoke_survival
+- firmware_survival::test_cc2538dk_contiki_hello_survival
+- firmware_survival::test_cc2538dk_contiki_flash_test_survival
+- firmware_survival::test_cc2538dk_contiki_crypto_ccm_survival
+- firmware_survival::test_cc2538dk_contiki_crypto_sha256_survival
+- 'cc2538_rom (12 tests: ROM utility API incl. PageErase/ProgramFlash through FLASH_CTRL + CCA boot on
+  the CPU model)'
+- cc2538_sleep_timer_irq (compare -> SM Timer IRQ 145 -> handler)
+- 'cc2538_rpl_udp (3 nodes, stock Contiki-NG rpl-udp: 3 round trips per client; event-scheduler)'
+models:
+- crates/core/src/cpu/cortex_m.rs
+- crates/core/src/decoder/arm.rs
+- crates/core/src/peripherals/cc2538.rs
+- crates/core/src/peripherals/cc2538/rfcore.rs
+- crates/core/src/peripherals/cc2538/sleep_timer.rs
+- crates/core/src/peripherals/cc2538/flash_ctrl.rs
+- crates/core/src/peripherals/cc2538/aes.rs
+- crates/core/src/peripherals/cc2538/udma.rs
+- crates/core/src/peripherals/ieee802154_air.rs
+- crates/core/src/peripherals/uart.rs
+- crates/core/src/peripherals/systick.rs
+- crates/core/src/peripherals/stub.rs
+- crates/core/src/bus/from_config.rs
+- crates/core/src/bus/profiles.rs
+- crates/core/src/peripherals/generic_factory.rs
+- crates/core/src/system/builder/arm.rs
+- crates/core/roms/cc2538
+- crates/firmware-cc2538dk-smoke
+- crates/firmware-cc2538dk-contiki
+- configs/chips/cc2538sf53.yaml
+- configs/systems/cc2538dk.yaml

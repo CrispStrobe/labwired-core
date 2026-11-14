@@ -1,0 +1,40 @@
+# Board validation record migrated from both fork and upstream registries.
+chip: configs/chips/stm32l476.yaml
+doc: docs/boards/nucleo-l476rg.md
+drift_ack: 2026-11-13
+drift_ack_digest: 360baad8324f2934647e39da7e730b9358f345bc5c9014f9b7129cca1cca181a
+id: nucleo-l476rg
+models:
+- crates/core/src/peripherals/esp_ledc_wave.rs
+- crates/core/src/cpu/cortex_m.rs
+- crates/core/src/cpu/cortex_m/exec
+- crates/core/src/decoder/arm.rs
+- crates/core/src/decoder/arm_thumb32.rs
+- crates/core/src/peripherals/rcc.rs
+- crates/core/src/peripherals/gpio.rs
+- crates/core/src/peripherals/uart.rs
+- crates/core/src/peripherals/spi.rs
+- crates/core/src/peripherals/i2c.rs
+- crates/core/src/peripherals/exti.rs
+- crates/core/src/peripherals/timer.rs
+- crates/core/src/peripherals/timer_output.rs
+- crates/core/src/peripherals/dma.rs
+- crates/core/src/peripherals/adc.rs
+- crates/core/src/peripherals/rtc_v3.rs
+- crates/core/src/peripherals/crc.rs
+- crates/core/src/peripherals/pwr.rs
+- configs/chips/stm32l476.yaml
+note: Register diff covers RCC/GPIO/SPI1/TIM2 (15 mmio cases + 104-pattern parity sweep), NOT a full-chip
+  sweep — the prose doc's 'every peripheral exercised' is still an overstatement; this is the honest scope.
+offline_tests:
+- l476_mmio_diff::{l476_mmio_sim_only,l476_parity_sim_only}
+- firmware_survival L476 cases (UART byte stream)
+silicon:
+  last_capture: 2026-08-09
+  probe: STLINK-V2.1 (USB 0483:374b serial 0670FF…1747, NUCLEO-L476RG onboard)
+  result: 're-captured live 2026-08-09 with L476_STRICT=1: l476_mmio_diff 15/15 and l476_parity_diff 104/104,
+    0 divergence — identical to the 2026-06-20 figures. Clean on arrival; nothing to fix. SAME physical
+    board as that baseline, established by probe serial 0670FF535155878281121747 being recorded in both
+    (the L073 entry could not make that claim, having no serial on file before today). Scope unchanged
+    and still partial: the mmio+parity set, not a full-chip sweep.'
+tier: silicon-verified
