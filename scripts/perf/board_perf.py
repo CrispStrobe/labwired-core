@@ -1061,7 +1061,7 @@ def measure_once(cli: Path, chip_arg: str, firmware: Path, steps: int, mode: str
         # — a run that halted early, or that spent fuel on idle fast-forward
         # rather than instructions, would silently inflate Ir/step.
         raise ModeNotTakenError(
-            f"{chip.stem}: batched run was asked for {steps} steps but retired "
+            f"{chip_label}: batched run was asked for {steps} steps but retired "
             f"{instructions}; the slope denominator would be wrong"
         )
     interval = int(proof.group(4))
