@@ -2214,8 +2214,8 @@ mod scheduler_diff {
         Write(u64, u8),
     }
 
-    fn build(scheduler: bool) -> Adc {
-        let mut adc = Adc::new(); // F1
+    fn build(scheduler: bool, layout: AdcRegisterLayout) -> Adc {
+        let mut adc = Adc::new_with_layout(layout);
         adc.set_channel_input(3, 1650); // deterministic conversion result on ch3
         if scheduler {
             adc.attach_cycle_clock(CycleClock::default());
@@ -2228,8 +2228,16 @@ mod scheduler_diff {
     /// identical every cycle. The conversion countdown, DR latch, EOC flag and
     /// continuous-mode restart must all line up cycle-for-cycle.
     fn assert_walk_identical(script: &[(u64, Op)], cycles: u64) {
-        let mut walk = build(false);
-        let mut sched = build(true);
+        assert_walk_layout_identical(script, cycles, AdcRegisterLayout::Stm32F1);
+    }
+
+    fn assert_walk_layout_identical(
+        script: &[(u64, Op)],
+        cycles: u64,
+        layout: AdcRegisterLayout,
+    ) -> (Adc, Adc) {
+        let mut walk = build(false, layout);
+        let mut sched = build(true, layout);
         let clock = sched.clock.clone().unwrap();
 
         let mut events: Vec<(u64, u32)> = Vec::new();
@@ -2274,6 +2282,27 @@ mod scheduler_diff {
             );
         }
         assert_eq!(walk_pends, sched_pends, "EOC-IRQ pend cycles diverged");
+        (walk, sched)
+    }
+
+    #[test]
+    fn f4_single_conversion_walk_and_scheduled_events_agree() {
+        let script = [
+            (1u64, Op::Write(0x04, 1 << 5)), // CR1.EOCIE
+            (1, Op::Write(0x34, 3)),         // SQR3.SQ1 = channel 3
+            (1, Op::Write(0x08, 1)),         // CR2.ADON
+            (2, Op::Write(0x0B, 1 << 6)),    // F4 CR2.SWSTART at bit 30
+        ];
+        let (walk, scheduled) =
+            assert_walk_layout_identical(&script, 26, AdcRegisterLayout::Stm32F4);
+        for adc in [walk, scheduled] {
+            assert_ne!(
+                adc.read_u32(0x00).unwrap() & (1 << 1),
+                0,
+                "EOC must complete"
+            );
+            assert_eq!(adc.read_u32(0x4C).unwrap(), 2047, "1650mV channel3 sample");
+        }
     }
 
     #[test]

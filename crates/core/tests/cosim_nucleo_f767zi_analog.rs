@@ -9,6 +9,7 @@ use common::root;
 use labwired_config::{ChipDescriptor, SystemManifest};
 use labwired_core::bus::SystemBus;
 use labwired_core::cosim::{CosimSession, CosimSignalValue, RoutingError};
+use labwired_core::peripherals::adc::Adc;
 use labwired_core::Bus;
 use std::path::Path;
 
@@ -55,6 +56,22 @@ fn signal_voltage(session: &CosimSession, path: &str) -> f64 {
 
 /// Perform the selected one-shot through the same F4 register interface firmware uses.
 fn stm32f4_adc_convert(bus: &mut SystemBus, channel: u8) -> u32 {
+    // These analog-routing tests settle a bare bus, not a Machine scheduler.
+    // Pin the ADC to its explicit walk reference before arming a conversion;
+    // otherwise workspace event-scheduler feature unification deletes the
+    // walk while these fifteen manual ticks never drain scheduled events.
+    // The F4 model's scheduler_diff gate separately compares both drive modes.
+    let adc_idx = bus.find_peripheral_index_by_name("adc1").expect("ADC1");
+    bus.peripherals[adc_idx]
+        .dev
+        .as_any_mut()
+        .and_then(|any| any.downcast_mut::<Adc>())
+        .expect("concrete STM32F4 ADC1")
+        .force_legacy_walk();
+    bus.recompute_walk_deletable();
+    bus.refresh_peripheral_index();
+    assert!(!bus.peripherals[adc_idx].dev.uses_scheduler());
+
     const ADC1EN: u32 = 1 << 8;
     const ADON: u32 = 1;
     const SWSTART: u32 = 1 << 30;
