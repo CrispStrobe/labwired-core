@@ -313,6 +313,188 @@ wall-time limits.
 See the [CLI reference](docs/cli_reference.md) and the
 [test runner reference](docs/ci_test_runner.md).
 
+### From Python
+
+Use `labwired.Sim` to run an ELF, wait for UART output, and write pytest checks:
+
+```python
+from labwired import Sim
+
+with Sim("tests/fixtures/uart-ok-thumbv7m.elf",
+         chip="ci-fixture-cortex-m3-uart1", uart="uart1") as sim:
+    sim.expect("OK", timeout="1ms")
+```
+
+The SDK runs the Rust engine in your Python process. Start with the
+[Python SDK quickstart](docs/python-sdk.md) for source installation and a runnable
+pytest test. This SDK is not yet published to PyPI.
+
+### In CI
+
+The same YAML scripts are the merge gate, with no HIL bench to maintain:
+
+```yaml
+- run: labwired test --script examples/ci/uart-ok.yaml --junit report.xml
+```
+
+See [CI integration](docs/ci_integration.md) and
+[labwired.com/ci](https://labwired.com/ci.html).
+
+### From an AI coding agent (MCP)
+
+LabWired speaks MCP. An agent can assemble a board, run firmware, and read the result back.
+You never touch the toolchain.
+
+```sh
+claude mcp add labwired --transport http https://api.labwired.com/mcp
+codex   mcp add labwired --url https://api.labwired.com/mcp
+```
+
+Your client opens a browser to sign in on first use. Other MCP clients take the standard
+block:
+
+```json
+{ "mcpServers": { "labwired": { "type": "http", "url": "https://api.labwired.com/mcp" } } }
+```
+
+Then ask for what you want:
+
+> *"Connect LabWired over MCP. Load a virtual STM32 LED + UART board, run the firmware,
+> check the UART output, and give me the Playground URL."*
+
+Agents working inside this repository should read [docs/agents.md](docs/agents.md).
+
+## How a board is described
+
+A board is data, not code.
+
+A chip descriptor in [`configs/chips`](configs/chips/) declares memory geometry, cores, and
+peripheral bases. A system manifest in [`configs/systems`](configs/systems/) wires up pins,
+buses, and the devices on them. Firmware writes to modeled registers. The modeled hardware
+drives the firmware back.
+
+To add a board you write those two files and an example. You do not patch the engine. See
+the [board onboarding playbook](docs/board_onboarding_playbook.md) and the
+[configuration reference](docs/configuration_reference.md).
+
+## What we validate
+
+Every capability sits in one of three tiers, and we say which:
+
+* **Modeled** — simulator logic exists and firmware can execute against it.
+* **Smoke-tested** — a committed test or example exercises the model and checks output.
+* **Hardware-compared** — captured silicon behavior is diffed against simulator behavior for
+  a documented scope.
+
+The NUCLEO-H563ZI example is the reference case. The same firmware runs on a physical board
+and on the simulator, and the artifacts are committed. See
+[`VALIDATION.md`](examples/nucleo-h563zi/VALIDATION.md),
+[`determinism_report_h563.json`](examples/nucleo-h563zi/golden-reference/determinism_report_h563.json),
+and the [golden reference method](docs/golden_reference.md).
+
+Each report covers the scope it describes. None of them claim that every instruction and
+timing path matches silicon. The [Fidelity Ledger](FIDELITY.md) has both sides: where we
+short-circuit hardware, and where we hold up. One e-paper panel matches silicon on 19033 of
+19033 SPI transfers.
+
+## Boards and examples
+
+ARM Cortex-M and RISC-V have the deepest coverage. Some ESP32/Xtensa paths exist for
+specific examples. The optional native [QEMU-derived Cortex-A7 backend](docs/qemu-arm-core.md)
+runs bounded instruction fixtures through the same CPU and bus interfaces. The
+[Luckfox Pico Mini A dossier](docs/boards/luckfox-pico-mini-a.md) includes vendor assets,
+pins and declared memory geometry; RV1103 peripherals and Linux boot remain unimplemented.
+
+Check the per-board status before you assume a peripheral is modeled. It is in
+[docs/boards](docs/boards/), the
+[validation status matrix](https://docs.labwired.com/boards/VALIDATION_STATUS/), and the browsable catalog at
+[app.labwired.com/validation](https://app.labwired.com/validation).
+
+| To see | Run |
+| --- | --- |
+| A deterministic pass/fail gate | [CI UART smoke](examples/ci/README.md) |
+| Firmware driving a sensor over I2C | [Blinky + TMP102](examples/demo-blinky/README.md) |
+| Simulator compared against a physical board | [NUCLEO-H563ZI](examples/nucleo-h563zi/README.md) |
+| CAN/UDS diagnostics | [UDS on STM32H563](examples/h563-uds-ecu/README.md) |
+| An IO-Link device | [IO-Link DIDO](examples/iolink-dido/README.md) |
+| GDB or VS Code debugging without a probe | [Debugging](docs/debugging.md), [GDB](docs/gdb_integration.md) |
+
+The full list is in [docs/demos.md](docs/demos.md). Each example's README and validation file
+is the source of truth for what that example actually models.
+
+## The LabWired ecosystem
+
+This repository is the engine. Everything below runs on it, and all of it is public.
+
+**Put it in your workflow**
+
+| Project | What it gives you |
+| --- | --- |
+| [firmware-test](https://github.com/LabWired/firmware-test) | GitHub Action. Run a LabWired test script as a merge gate — no hardware, no cross-toolchain on the runner. |
+| [firmware-ci-starter](https://github.com/LabWired/firmware-ci-starter) | Template repo. Firmware, test script, and workflow already wired — [generate](https://github.com/LabWired/firmware-ci-starter/generate) it and your first push runs green. |
+| [labwired-zephyr](https://github.com/w1ne/labwired-zephyr) | `west labwired-simulate` on Zephyr 3.7 and 4.5. The optional native runner on 4.5 also supports `west simulate -r labwired` and `west flash -r labwired`; see the setup instructions. |
+| [labwired-vscode](https://github.com/w1ne/labwired-vscode) | VS Code extension. Run and debug firmware from the editor without a probe. |
+| [labwired-lab-template](https://github.com/w1ne/labwired-lab-template) | Bare template for a repo whose merges gate on a simulation run. |
+
+**Drive it from an agent**
+
+| Project | What it gives you |
+| --- | --- |
+| [agent](https://github.com/LabWired/agent) | The LabWired Firmware Agent — writes firmware and checks it on a virtual board. |
+| [skills](https://github.com/LabWired/skills) | Agent Skills for firmware work against the simulator as a hardware oracle. |
+| [`docs/agents.md`](docs/agents.md) | The MCP surface and the rules an agent working in this repo should follow. |
+
+**See it doing real work**
+
+| Project | What it shows |
+| --- | --- |
+| [labwired-cra-evidence](https://github.com/LabWired/labwired-cra-evidence) | CRA-style secure-boot and signed-OTA evidence, regenerated in CI on a virtual nRF52840 + ATECC608A. Evidence, not a certificate. |
+| [smart-ring-digital-twin](https://github.com/w1ne/smart-ring-digital-twin) | An nRF54L15 smart ring, register-level sensor models, and an honest BLE-contention demonstration. |
+| [labwired-nokia-ci-demo](https://github.com/w1ne/labwired-nokia-ci-demo) | STM32L476 driving a Nokia 5110 (PCD8544) and an HC-SR04, gated in CI. |
+| [labwired-demo-stm32f1xx](https://github.com/w1ne/labwired-demo-stm32f1xx) | Rust `embedded-hal` on STM32F1 under the simulator. |
+
+**Firmware stacks that use LabWired as their test bench**
+
+[iolinki](https://github.com/w1ne/iolinki) (IO-Link device stack for Zephyr) ·
+[iolinki-master](https://github.com/w1ne/iolinki-master) (IO-Link master stack) ·
+[udslib](https://github.com/w1ne/udslib) (ISO 14229 UDS for embedded ECUs) ·
+[thermal-io-link-condition-sensor](https://github.com/w1ne/thermal-io-link-condition-sensor) (MLX90640 + ESP32-C3 condition monitoring)
+
+Using LabWired for something public? [Open an issue][new-issue] and it goes on this list.
+
+## Missing a chip? Peripheral behaving wrong?
+
+[Open an issue][new-issue] for a wrong register, an unsupported instruction, a board you
+need, or a peripheral you would model differently. Attach a firmware ELF and a system
+manifest if you can — those usually become regression tests.
+
+Adding a board is the easiest way to contribute: follow the
+[board onboarding playbook](docs/board_onboarding_playbook.md), mirror an existing example,
+and check the result against the [target support rubric](docs/target_support_rubric.md).
+
+See [ROADMAP.md](ROADMAP.md) for what is planned, [CONTRIBUTING.md](CONTRIBUTING.md) for
+repository workflow, and [SECURITY.md](SECURITY.md) for security issues.
+
+[new-issue]: https://github.com/w1ne/labwired-core/issues/new
+
+## Repository scope
+
+This repository owns the core simulator and its validation assets: CPU, bus, memory,
+peripheral, and external device execution; chip and system descriptors; CLI, test runner,
+debug adapters, and snapshot/trace tooling; and hardware-target validation metadata.
+Application UI, hosted Playground behavior, and product surfaces live outside this package.
+
+The merge gate is [`core-ci.yml`](.github/workflows/core-ci.yml). Narrower signals come from
+board smoke coverage ([`core-board-ci.yml`](.github/workflows/core-board-ci.yml)), coverage
+([matrix smoke](.github/workflows/core-coverage-matrix-smoke.yml),
+[weekly](.github/workflows/core-coverage-weekly.yml)),
+[unsupported instruction audits](.github/workflows/core-unsupported-audit.yml),
+[nightly validation](.github/workflows/core-nightly.yml),
+[hardware target sweeps](.github/workflows/core-validate-hw-targets.yml), and per-board
+throughput ([`core-perf.yml`](.github/workflows/core-perf.yml)). Release mechanics are in
+[RELEASE_PROCESS.md](RELEASE_PROCESS.md) and
+[RELEASE_READINESS_CHECKLIST.md](RELEASE_READINESS_CHECKLIST.md).
+
 ## Documentation
 
 [Docs index](docs/index.md) ·

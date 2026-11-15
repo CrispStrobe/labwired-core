@@ -456,8 +456,28 @@ class DiagnosticsControls(unittest.TestCase):
             digest = hashlib.sha256(current_functions[name].encode()).hexdigest()
             expected = successor_collect_task6 if name == 'collect' else manifest['function_ast_sha256'][name]
             self.assertEqual(expected, digest, name)
-        for path in ('scripts/perf/board_perf.py','scripts/perf/baselines.json'):
-            self.assertEqual(manifest['source_sha256'][path], hashlib.sha256((root/path).read_bytes()).hexdigest(), path)
+        # Upstream's reviewed successor is separate from immutable historical393.
+        # Reverse only its exact reviewed byte deltas, then prove the original
+        # fork hashes again. A changed old metric/helper or stale-ELF fallback
+        # cannot be admitted by merely replacing a current source digest.
+        successor_path = root / 'scripts/ci/fixtures/cortex_m_perf_successor_10284b00.json'
+        self.assertEqual(hashlib.sha256(successor_path.read_bytes()).hexdigest(),
+                         '90ca8cce1181b7e30acfa06ad0f076abe66b5d1197ac17d595989dddb00acb23',
+                         'reviewed upstream successor fixture')
+        successor = json.loads(successor_path.read_text())
+        self.assertEqual({'scripts/perf/board_perf.py', 'scripts/perf/baselines.json'},
+                         {entry['path'] for entry in successor['source_transitions']})
+        for entry in successor['source_transitions']:
+            path = entry['path']
+            self.assertEqual(manifest['source_sha256'][path], entry['predecessor_sha256'], path)
+            successor_bytes = (root/path).read_bytes()
+            self.assertEqual(entry['successor_sha256'], hashlib.sha256(successor_bytes).hexdigest(), path)
+            restored = successor_bytes.decode('utf-8')
+            for replacement in entry['replacements']:
+                self.assertEqual(restored.count(replacement['after']), 1, path)
+                restored = restored.replace(replacement['after'], replacement['before'], 1)
+            self.assertEqual(manifest['source_sha256'][path],
+                             hashlib.sha256(restored.encode('utf-8')).hexdigest(), path)
         workflow=(root/'.github/workflows/core-identity.yml').read_text()
         # Permit only the reviewed opt-in input/env/argument routing. Reversing
         # those additions must reproduce every byte of the previous workflow.
@@ -514,7 +534,8 @@ class DiagnosticsControls(unittest.TestCase):
         cold = self.path / 'source-only'
         paths = ('scripts/ci/cortex_m_perf_evidence.py', '.github/workflows/core-identity.yml',
                  'scripts/perf/board_perf.py', 'scripts/perf/baselines.json',
-                 'scripts/ci/fixtures/cortex_m_perf_preservation_393b5310.json')
+                 'scripts/ci/fixtures/cortex_m_perf_preservation_393b5310.json',
+                 'scripts/ci/fixtures/cortex_m_perf_successor_10284b00.json')
         for path in paths:
             target = cold / path
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -553,6 +574,25 @@ class DiagnosticsControls(unittest.TestCase):
                     self.assert_preservation(cold)
                 target.write_bytes(original_bytes)
         self.assert_preservation(cold)
+
+    def test_preservation_rejects_relabelled_successor_and_changed_existing_metric(self):
+        cold = self.preservation_copy()
+        receipt = cold / 'scripts/ci/fixtures/cortex_m_perf_successor_10284b00.json'
+        original = receipt.read_bytes()
+        record = json.loads(original)
+        record['kind'] = 'new measured performance'
+        receipt.write_text(json.dumps(record))
+        with self.assertRaisesRegex(AssertionError, 'reviewed upstream successor fixture'):
+            self.assert_preservation(cold)
+        receipt.write_bytes(original)
+        baseline = cold / 'scripts/perf/baselines.json'
+        values = json.loads(baseline.read_text())
+        key = next(k for k in values if k not in record['imported_upstream_baselines'])
+        metric = next(iter(values[key]))
+        values[key][metric] += 1
+        baseline.write_text(json.dumps(values, indent=2) + '\n')
+        with self.assertRaisesRegex(AssertionError, 'scripts/perf/baselines.json'):
+            self.assert_preservation(cold)
 
     def test_preservation_rejects_relabelled_historical_collector_fixture(self):
         cold = self.preservation_copy()

@@ -32,6 +32,7 @@
 
 mod ctx;
 pub mod declarative;
+mod pad_label;
 pub mod registry;
 
 pub use ctx::AttachCtx;
@@ -129,6 +130,7 @@ pub enum ConfigType {
     Int,
     Bool,
     Float,
+    Object,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

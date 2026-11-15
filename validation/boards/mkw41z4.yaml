@@ -1,0 +1,28 @@
+# Board validation record migrated from both fork and upstream registries.
+id: mkw41z4
+doc: docs/boards/mkw41z4.md
+chip: configs/chips/mkw41z4.yaml
+tier: sim-validated
+note: NXP KW41Z (Cortex-M0+ BLE + 802.15.4). Boots bare-metal smoke firmware, the vendor NXP HAL clock/UART
+  bring-up path, UNMODIFIED upstream Zephyr v3.7 hello_world (board frdm_kw41z), and a Zephyr FXOS8700
+  I2C + Nokia5110/PCD8544 LCD demo end to end (firmware_survival::kw41z_smoke/kw41z_nxp/kw41z_zephyr/kw41z_zephyr_fxos8700/kw41z_lcd_activity),
+  with a deterministic register-level twin in tests/kw41z_clock_boot.rs. No KW41Z silicon diff — no bench
+  part.
+offline_tests:
+- firmware_survival::kw41z_smoke / kw41z_nxp / kw41z_zephyr / kw41z_zephyr_fxos8700 / kw41z_lcd_activity
+- kw41z_clock_boot (MCG/RSIM clock bring-up, register-level)
+drift_ack: 2026-09-14
+drift_ack_digest: 6b6a42461b8826dda149b5cdf0a4fd62787490484d6ec6cfb50941f67a861245
+models:
+- crates/core/src/cpu/cortex_m.rs
+- crates/core/src/decoder/arm.rs
+- configs/chips/mkw41z4.yaml
+- crates/core/src/peripherals/i2c.rs
+- configs/peripherals/mkw41z4
+- crates/core/src/peripherals/declarative.rs
+- crates/core/src/peripherals/gpio.rs
+- crates/core/src/peripherals/mcg.rs
+- crates/core/src/peripherals/rsim.rs
+- crates/core/src/peripherals/spi.rs
+- crates/core/src/peripherals/systick.rs
+- crates/core/src/peripherals/uart.rs

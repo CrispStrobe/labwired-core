@@ -1,0 +1,34 @@
+# Board validation record migrated from both fork and upstream registries.
+id: esp32
+doc: docs/boards/esp32.md
+chip: configs/chips/esp32.yaml
+tier: structural
+note: Original ESP32 (dual-core Xtensa LX6). Exercised via the tier-1 fast-boot fixture (tests/fixtures/tier1/esp32.elf)
+  and a dedicated PR-run gate firmware_survival::test_esp32_tier1_survival (classes PASS with the documented
+  dma gap esp32-no-mem2mem-dma, then `TIER1 done`). No silicon bench.
+models:
+- crates/core/src/peripherals/esp_ledc_wave.rs
+- crates/core/src/cpu/xtensa_lx7.rs
+- crates/core/src/decoder/xtensa.rs
+- configs/chips/esp32.yaml
+- crates/core/src/peripherals/esp32/efuse.rs
+- crates/core/src/peripherals/esp32/gpio.rs
+- crates/core/src/peripherals/esp32/i2c.rs
+- crates/core/src/peripherals/esp32/ledc.rs
+- crates/core/src/peripherals/esp32/mcpwm.rs
+- crates/core/src/peripherals/esp32/pcnt.rs
+- crates/core/src/peripherals/esp32/rmt.rs
+- crates/core/src/peripherals/esp32/rtc_cntl.rs
+- crates/core/src/peripherals/esp32/sar_adc.rs
+- crates/core/src/peripherals/esp32/sdio_stub.rs
+- crates/core/src/peripherals/esp32/sha.rs
+- crates/core/src/peripherals/esp32/spi.rs
+- crates/core/src/peripherals/esp32/syscon.rs
+- crates/core/src/peripherals/esp32/timg.rs
+- crates/core/src/peripherals/esp32/twai.rs
+- crates/core/src/peripherals/esp32/uart.rs
+- crates/core/src/peripherals/esp_rtc_io.rs
+- crates/core/src/peripherals/stub.rs
+- crates/core/src/peripherals/timer.rs
+- crates/core/src/peripherals/timer_output.rs
+- crates/core/src/peripherals/uart.rs

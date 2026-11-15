@@ -1233,6 +1233,88 @@ mod tests {
     }
 
     #[test]
+    fn same_timer_conf0_write_keeps_duty_pending_until_overflow() {
+        for channel in [0, 8] {
+            for byte_access in [false, true] {
+                let (mut p, lines) = wave(channel, timer_conf(10, 256, true), 0);
+                write_u32(&mut p, CONF, 1); // APB also supplies low-speed timers.
+                p.sync_to(3072 + 100); // A zero-duty frame is already running.
+                write_u32(&mut p, Ledc::ch_reg(channel, CH_DUTY), 256 << 4);
+                write_u32(
+                    &mut p,
+                    Ledc::ch_reg(channel, CH_CONF1),
+                    CONF1_DUTY_START_BIT,
+                );
+                // ESP-IDF sets SIG_OUT_EN / PARA_UP after DUTY_START. Neither
+                // field changes the selected timer or the current PWM frame.
+                let conf0 = CONF0_SIG_OUT_EN_BIT | (1 << 4);
+                if byte_access {
+                    write_u32(&mut p, Ledc::ch_reg(channel, CH_CONF0), conf0);
+                } else {
+                    p.write_u32(Ledc::ch_reg(channel, CH_CONF0), conf0).unwrap();
+                }
+                assert_ne!(
+                    read_u32(&p, Ledc::ch_reg(channel, CH_CONF1)) & CONF1_DUTY_START_BIT,
+                    0,
+                    "channel {channel}, byte_access={byte_access}: keep the latch pending"
+                );
+                for cycle in [3072 + 101, 6143] {
+                    assert!(
+                        !level_at(&mut p, &lines, channel as usize, cycle),
+                        "channel {channel}, byte_access={byte_access}: no mid-frame edge"
+                    );
+                }
+                assert!(level_at(&mut p, &lines, channel as usize, 6144));
+                assert_eq!(
+                    read_u32(&p, Ledc::ch_reg(channel, CH_CONF1)) & CONF1_DUTY_START_BIT,
+                    0
+                );
+                assert!(level_at(&mut p, &lines, channel as usize, 6144 + 767));
+                assert!(!level_at(&mut p, &lines, channel as usize, 6144 + 768));
+            }
+        }
+    }
+
+    #[test]
+    fn timer_rebind_still_applies_pending_duty() {
+        for channel in [0, 8] {
+            for byte_access in [false, true] {
+                let (mut p, lines) = wave(channel, timer_conf(10, 256, true), 0);
+                write_u32(&mut p, CONF, 1);
+                let new_timer = if channel < CH_COUNT {
+                    1
+                } else {
+                    TIMER_COUNT + 1
+                };
+                write_u32(
+                    &mut p,
+                    Ledc::timer_reg(new_timer, TIMER_CONF),
+                    timer_conf(10, 256, true),
+                );
+                p.sync_to(3072 + 100);
+                write_u32(&mut p, Ledc::ch_reg(channel, CH_DUTY), 256 << 4);
+                write_u32(
+                    &mut p,
+                    Ledc::ch_reg(channel, CH_CONF1),
+                    CONF1_DUTY_START_BIT,
+                );
+                let conf0 = CONF0_SIG_OUT_EN_BIT | 1; // TIMER_SEL changes to 1.
+                if byte_access {
+                    write_u32(&mut p, Ledc::ch_reg(channel, CH_CONF0), conf0);
+                } else {
+                    p.write_u32(Ledc::ch_reg(channel, CH_CONF0), conf0).unwrap();
+                }
+                assert_eq!(
+                    read_u32(&p, Ledc::ch_reg(channel, CH_CONF1)) & CONF1_DUTY_START_BIT,
+                    0,
+                    "channel {channel}, byte_access={byte_access}: rebind applies the latch"
+                );
+                assert!(level_at(&mut p, &lines, channel as usize, 3072 + 101));
+            }
+        }
+    }
+
+    #[test]
     fn duty_start_self_clears_at_once_on_a_stopped_timer() {
         let mut p = Ledc::new(Ledc::BASE);
         write_u32(&mut p, Ledc::ch_reg(0, CH_DUTY), 512 << 4);

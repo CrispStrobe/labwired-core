@@ -1,0 +1,25 @@
+# Board validation record migrated from both fork and upstream registries.
+chip: configs/chips/nrf52840.yaml
+doc: docs/boards/seeed-xiao-nrf52840-sense.md
+drift_ack: 2026-11-14
+drift_ack_digest: 1dd81f75e289303dedacb87d045c1c28dc832aef2741b3b8edbda58ceb82b01f
+id: seeed-xiao-nrf52840-sense
+models:
+- crates/core/src/cpu/cortex_m.rs
+- crates/core/src/cpu/cortex_m/exec
+- crates/core/src/decoder/arm.rs
+- crates/core/src/decoder/arm_thumb32.rs
+- crates/core/src/peripherals/nrf52
+- configs/chips/nrf52840.yaml
+note: Same silicon as nrf52840 (the bench board IS a Seeed XIAO nRF52840 Sense).
+offline_tests:
+- nrf52.rs xiao_* (manifest build, GPIO task regs, SPIM0 EasyDMA)
+silicon:
+  last_capture: 2026-08-09
+  probe: ST-LINK V2 (V2J37S7, serial 48FF6B064884534929321087) — the same physical XIAO the nrf52840 entry
+    describes
+  result: 'rides the nrf52840 re-capture of 2026-08-09: all 11 hw-oracle suites pass under NRF52_STRICT=1,
+    mmio 16/16. This is not an independent run — it is the SAME board and the SAME suites, which is exactly
+    what `note` says this entry means. See the nrf52840 result for the three defects that run uncovered
+    and fixed.'
+tier: silicon-verified

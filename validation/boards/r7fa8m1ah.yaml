@@ -1,0 +1,34 @@
+# Board validation record migrated from both fork and upstream registries.
+id: r7fa8m1ah
+doc: docs/boards/ek-ra8m1.md
+chip: configs/chips/r7fa8m1ah.yaml
+tier: smoke-manual
+offline_tests:
+- firmware_survival::test_ek_ra8m1_smoke_survival
+- firmware_survival::test_ek_ra8m1_zephyr_survival (stock Zephyr hello)
+- ra8m1_agt_icu (AGT0 compare match A through ICU IELSR84)
+- ra8m1_sci_icu (SCI9 RXI/TXI/TEI through ICU IELSR24-26)
+models:
+- crates/core/src/peripherals/esp_ledc_wave.rs
+- crates/core/src/cpu/cortex_m.rs
+- crates/core/src/decoder/arm.rs
+- crates/core/src/peripherals/gpio.rs
+- crates/core/src/peripherals/ra_pfs.rs
+- crates/core/src/peripherals/ra_clock.rs
+- crates/core/src/peripherals/ra_icu.rs
+- crates/core/src/peripherals/ra_agt.rs
+- crates/core/src/peripherals/uart.rs
+- crates/core/src/peripherals/systick.rs
+- crates/core/src/peripherals/stub.rs
+- crates/core/src/bus/from_config.rs
+- crates/core/src/bus/profiles.rs
+- crates/core/src/peripherals/generic_factory.rs
+- crates/core/src/system/builder/arm.rs
+- crates/firmware-ek-ra8m1-smoke
+- crates/firmware-ek-ra8m1-zephyr
+- configs/chips/r7fa8m1ah.yaml
+- crates/core/src/peripherals/ra_adc12.rs
+- crates/core/src/peripherals/ra_dac12.rs
+- crates/core/src/peripherals/ra_gpt.rs
+- crates/core/src/peripherals/ra_iic.rs
+- configs/systems/ek-ra8m1.yaml

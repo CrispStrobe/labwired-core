@@ -1,0 +1,24 @@
+# Board validation record migrated from both fork and upstream registries.
+id: am6234
+doc: docs/boards/sk-am62.md
+chip: configs/chips/am6234.yaml
+tier: smoke-manual
+offline_tests:
+- firmware_survival::test_sk_am62_zephyr_survival
+- examples/sk-am62/ci/test.sh (synchronization on the virtual timer, kernel/common 12 suites 63/63)
+- 'aarch64_tests (11 tests: data processing, loads/stores and the exclusive monitor, branches, SVC/UNDEFINED
+  syndromes, ERET, FP traps, MMU permission faults, AT/PAR, timer IRQ through the GIC, WFI fast-forward,
+  sysreg EL checks)'
+- aarch64_gic unit tests (SPI acknowledge/EOI, level timer PPI, redistributor wake, PMR)
+models:
+- crates/core/src/cpu/aarch64.rs
+- crates/core/src/cpu/aarch64_exec.rs
+- crates/core/src/cpu/aarch64_gic.rs
+- crates/core/src/peripherals/uart.rs
+- crates/core/src/peripherals/stub.rs
+- crates/core/src/bus/from_config.rs
+- crates/core/src/system/aarch64.rs
+- crates/core/src/system/builder/aarch64.rs
+- crates/firmware-sk-am62-zephyr
+- configs/chips/am6234.yaml
+- configs/systems/sk-am62.yaml

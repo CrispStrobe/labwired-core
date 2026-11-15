@@ -204,15 +204,7 @@ impl I2cDevice for Tca9548a {
         })
     }
 
-    /// Latch what this transaction is for.
-    ///
-    /// Note that the switch's own address and a downstream device are NOT
-    /// mutually exclusive: on real hardware the pass-gates are closed while the
-    /// switch still decodes its own address, so a (mis-)wired downstream device
-    /// that shares the switch's address collides with the control register.
-    /// The datasheet warns against that layout; the model reproduces it instead
-    /// of hiding it.
-    /// The selected downstream devices share SCL: the longest hold wins.
+    /// Selected downstream devices share SCL: the longest hold wins.
     fn clock_stretch_ns(&self) -> u64 {
         self.selected
             .downstream
@@ -222,6 +214,14 @@ impl I2cDevice for Tca9548a {
             .unwrap_or(0)
     }
 
+    /// Latch what this transaction is for.
+    ///
+    /// Note that the switch's own address and a downstream device are NOT
+    /// mutually exclusive: on real hardware the pass-gates are closed while the
+    /// switch still decodes its own address, so a (mis-)wired downstream device
+    /// that shares the switch's address collides with the control register.
+    /// The datasheet warns against that layout; the model reproduces it instead
+    /// of hiding it.
     fn select_address(&mut self, addr: u8) {
         self.selected = Selection {
             control: addr == self.address,

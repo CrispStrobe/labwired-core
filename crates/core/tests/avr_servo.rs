@@ -31,6 +31,27 @@ fn angle(m: &Machine<Avr>) -> f32 {
 }
 
 #[test]
+fn avr_servo_factory_admits_pd6_and_refuses_unknown_or_out_of_port_pads() {
+    let chip = ChipDescriptor::from_file(root().join("configs/chips/atmega328p.yaml")).unwrap();
+    for (signal, valid) in [("PD6", true), ("PD7", true), ("PD8", false), ("PA6", false)] {
+        let manifest = SystemManifest::from_yaml(&format!(
+            "name: servo-pad-regression\nchip: atmega328p.yaml\nexternal_devices:\n  - id: M5\n    type: servo\n    connection: portd\n    config: {{ signal_pin: {signal}, model: sg90 }}\n"
+        )).unwrap();
+        let result = SystemBus::from_config(&chip, &manifest);
+        assert_eq!(
+            result.is_ok(),
+            valid,
+            "{signal}: {:?}",
+            result.as_ref().err()
+        );
+        if let Ok(bus) = result {
+            let servo = bus.observed_of::<Servo>().next().expect("attached servo");
+            assert_eq!(servo.pin(), 3 * 8 + if signal == "PD6" { 6 } else { 7 });
+        }
+    }
+}
+
+#[test]
 fn servo_library_on_d6_steers_the_servo_150_30_90() {
     let chip =
         ChipDescriptor::from_file(root().join("configs/chips/atmega328p.yaml")).expect("chip");
@@ -55,6 +76,12 @@ external_devices:
     let mut cpu = Avr::new();
     cpu.load_program_image(&image);
     let mut m = Machine::new(cpu, bus);
+
+    assert_eq!(
+        m.bus.observed_of::<Servo>().next().unwrap().pin(),
+        3 * 8 + 6,
+        "PD6 must retain the concrete AVR port identity, not ESP GPIO6"
+    );
 
     // The servo is listed once in inspect, its pad watcher is not.
     let ids: Vec<String> = m

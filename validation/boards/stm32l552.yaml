@@ -1,0 +1,42 @@
+# Board validation record migrated from both fork and upstream registries.
+id: stm32l552
+doc: docs/boards/nucleo-l552ze-q.md
+chip: configs/chips/stm32l552.yaml
+tier: smoke-manual
+offline_tests:
+- firmware_survival::test_nucleo_l552ze_q_smoke_survival
+- firmware_survival::test_stm32l552_zephyr_survival (stock Zephyr hello)
+models:
+- crates/core/src/peripherals/esp_ledc_wave.rs
+- crates/core/src/cpu/cortex_m.rs
+- crates/core/src/decoder/arm.rs
+- crates/core/src/peripherals/rcc.rs
+- crates/core/src/peripherals/gpio.rs
+- crates/core/src/peripherals/uart.rs
+- crates/core/src/peripherals/systick.rs
+- crates/core/src/peripherals/pwr.rs
+- crates/core/src/peripherals/spi.rs
+- crates/core/src/peripherals/i2c.rs
+- crates/core/src/peripherals/timer.rs
+- crates/core/src/peripherals/timer_output.rs
+- crates/core/src/peripherals/dma.rs
+- crates/core/src/peripherals/dmamux.rs
+- crates/core/src/peripherals/rng.rs
+- crates/core/src/peripherals/crc.rs
+- crates/core/src/peripherals/rtc.rs
+- crates/core/src/peripherals/iwdg.rs
+- crates/core/src/peripherals/wwdg.rs
+- crates/core/src/peripherals/stub.rs
+- crates/core/src/peripherals/icache.rs
+- crates/core/src/peripherals/dbgmcu.rs
+- crates/core/src/peripherals/cortex_m_fpu.rs
+- crates/core/src/peripherals/armv8m_mpu.rs
+- crates/core/src/peripherals/scb.rs
+- crates/core/src/bus/from_config.rs
+- crates/core/src/bus/profiles.rs
+- crates/core/src/peripherals/generic_factory.rs
+- crates/core/src/system/builder/arm.rs
+- crates/firmware-l552ze-smoke
+- crates/firmware-l552ze-zephyr
+- configs/chips/stm32l552.yaml
+- configs/systems/nucleo-l552ze-q.yaml

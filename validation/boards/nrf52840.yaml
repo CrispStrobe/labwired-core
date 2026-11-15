@@ -1,0 +1,33 @@
+# Board validation record migrated from both fork and upstream registries.
+chip: configs/chips/nrf52840.yaml
+doc: docs/boards/nrf52840.md
+drift_ack: 2026-11-14
+drift_ack_digest: 1dd81f75e289303dedacb87d045c1c28dc832aef2741b3b8edbda58ceb82b01f
+id: nrf52840
+models:
+- crates/core/src/cpu/cortex_m.rs
+- crates/core/src/cpu/cortex_m/exec
+- crates/core/src/decoder/arm.rs
+- crates/core/src/decoder/arm_thumb32.rs
+- crates/core/src/peripherals/nrf52
+- configs/chips/nrf52840.yaml
+offline_tests:
+- nrf52_conformance::conformance_sim (digest vs frozen 2026-06-09 capture)
+- nrf52_mmio_diff / nrf52_gpio_conformance (sim halves)
+silicon:
+  last_capture: 2026-08-09
+  probe: ST-LINK V2 (V2J37S7, serial 48FF6B064884534929321087), openocd 0.12.0 hla_swd; nRF52840 FICR
+    INFO.PART=0x00052840, DEVICEID 707dc298
+  result: 're-captured live 2026-08-09 with NRF52_STRICT=1: ALL 11 hw-oracle suites pass — conformance,
+    cpu_conformance, mmio 16/16, gpio, onboarding, power, spis_twis, timer_rtc, spim_easydma, full_register,
+    ccm. NOT a second board: DEVICEID 707dc298 matches the 2026-06-09 baseline, so this is a re-read of
+    the SAME part (unlike the C3/S3 re-captures, which were cross-board). The run was NOT clean on arrival
+    and found three real defects, all fixed in this commit: (1) seven nrf52_* hw-oracle tests had not
+    COMPILED since the 2026-07-18 bus consolidation removed the inherent SystemBus read_u32/write_u32
+    shadows — they build only under --features hw-oracle-nrf52, which CI never enables, so the ''re-capture
+    pending'' ack pointed at a path that could not build; (2) mmio was 15/16, SPIM0 PSEL_MISO sim=0x0
+    vs hw=0x2E, because the serial-instance broadcast PSEL WRITES to both halves but dispatched READS
+    to TWIM, which models only 0x508/0x50C; (3) SPIM PSEL.CSN (0x514) was missing from Nrf52SpiRegs entirely
+    — corroborated present on silicon (wrote 0x2B, read 0x2B). Guarded going forward by a hardware-free
+    unit test, serial_instance::psel_block_reads_back_while_disabled.'
+tier: silicon-verified

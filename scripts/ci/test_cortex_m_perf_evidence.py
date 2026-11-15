@@ -6,10 +6,12 @@ import importlib.util
 import itertools
 import json
 import os
+import signal
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import types
 import unittest
 from unittest import mock
@@ -185,8 +187,44 @@ class PerformanceControls(unittest.TestCase):
 
     def test_owned_child_is_stopped_on_timeout(self):
         pidfile = self.path / "child.pid"
-        script = f"import subprocess,time,pathlib; p=subprocess.Popen(['{sys.executable}','-c','import time;time.sleep(10)']);pathlib.Path({str(pidfile)!r}).write_text(str(p.pid));time.sleep(10)"
-        run = self.helper.collect([sys.executable, "-c", script], timeout=0.2)
+        script = f"import subprocess,time,pathlib; p=subprocess.Popen(['{sys.executable}','-c','import time;time.sleep(10)']); ready=pathlib.Path({str(pidfile)!r}); temporary=ready.with_suffix('.ready'); temporary.write_text(str(p.pid)); temporary.replace(ready); time.sleep(10)"
+        real_popen = subprocess.Popen
+
+        def ready_popen(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            # collect starts its unchanged 0.2s deadline after Popen returns.
+            # Admit the cancellation test only after its owned child exists;
+            # interpreter startup speed must not decide whether it was tested.
+            try:
+                deadline = time.monotonic() + 5
+                while not pidfile.exists():
+                    terminal = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+                    if terminal is not None:
+                        raise AssertionError('owned timeout producer exited before child readiness')
+                    if time.monotonic() >= deadline:
+                        raise AssertionError('owned timeout child readiness exceeded startup bound')
+                    time.sleep(0.01)
+                self.assertGreater(int(pidfile.read_text()), 0)
+                return process
+            except BaseException:
+                # Popen has not returned to collect, so this wrapper owns
+                # cleanup. Keep the direct leader unreaped until group signals
+                # finish; never signal an unverified or recycled process group.
+                try:
+                    if os.getpgid(process.pid) == process.pid and os.getsid(process.pid) == process.pid:
+                        os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                finally:
+                    try:
+                        process.wait(timeout=5)
+                    finally:
+                        process.stdout.close()
+                        process.stderr.close()
+                raise
+
+        with mock.patch.object(self.helper.subprocess, 'Popen', side_effect=ready_popen):
+            run = self.helper.collect([sys.executable, "-c", script], timeout=0.2)
         self.assertEqual(run.returncode, 124)
         pid = int(pidfile.read_text())
         try:

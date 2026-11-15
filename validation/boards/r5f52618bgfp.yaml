@@ -1,0 +1,25 @@
+# Board validation record migrated from both fork and upstream registries.
+id: r5f52618bgfp
+doc: docs/boards/ek-rx261.md
+chip: configs/chips/r5f52618bgfp.yaml
+tier: smoke-manual
+offline_tests:
+- firmware_survival::test_ek_rx261_zephyr_survival
+- ek_rx261_zephyr (synchronization on the CMT0 tick, kernel/common 12 suites, uart_basic_api on the SCI6
+  RXI/TXI/TEI vectors)
+- 'rx_tests (25 tests: integer forms and flags, memex sizes, string ops, INT/RTE stack switch, ICU priority/IPL,
+  accumulators, FPU, BFMOV, MOVLI/MOVCO, undefined-instruction trap, snapshot)'
+- rx_cmt, rx_sysc unit tests (compare match, one live wake, OSCOVFSR, keyed MEMWAITR)
+models:
+- crates/core/src/cpu/rx.rs
+- crates/core/src/peripherals/rx_cmt.rs
+- crates/core/src/peripherals/rx_sysc.rs
+- crates/core/src/peripherals/uart.rs
+- crates/core/src/peripherals/stub.rs
+- crates/core/src/bus/from_config.rs
+- crates/core/src/peripherals/generic_factory.rs
+- crates/core/src/system/rx.rs
+- crates/core/src/system/builder/rx.rs
+- crates/firmware-ek-rx261-zephyr
+- configs/chips/r5f52618bgfp.yaml
+- configs/systems/ek-rx261.yaml

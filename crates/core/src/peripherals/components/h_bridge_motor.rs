@@ -323,7 +323,18 @@ fn attach_ibt2(ctx: &mut AttachCtx<'_>) -> anyhow::Result<()> {
         )
         .with_declared_id(ctx.device_id().to_string()),
     );
-    if !native || !ctx.install_gpio_observer(motor.clone()) {
+    // STM32's direct observer covers GPIO ODR/BSRR stores only. A timer can
+    // drive an AF pad without those stores, so an IBT-2 on concrete STM32
+    // pads must retain canonical pad sampling instead of selecting that
+    // incomplete observer path. ESP native GPIO observers remain unchanged.
+    let sample_stm32_pads = labels.iter().flatten().any(|label| {
+        ctx.resolve_pin_odr(label).is_some_and(|(addr, _)| {
+            ctx.bus.peripherals.iter().any(|port| {
+                port.dev.is_stm32_gpio_port() && addr >= port.base && addr - port.base < port.size
+            })
+        })
+    });
+    if !native || sample_stm32_pads || !ctx.install_gpio_observer(motor.clone()) {
         let mut pads = Vec::new();
         let mut addrs = Vec::new();
         for (label, id) in labels.iter().zip(ids) {

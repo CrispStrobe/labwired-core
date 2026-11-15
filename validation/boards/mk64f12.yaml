@@ -1,0 +1,30 @@
+# Board validation record migrated from both fork and upstream registries.
+id: mk64f12
+doc: docs/boards/frdm-k64f.md
+chip: configs/chips/mk64f12.yaml
+tier: smoke-manual
+offline_tests:
+- firmware_survival::test_frdm_k64f_smoke_survival
+- firmware_survival::test_frdm_k64f_zephyr_survival (stock Zephyr hello)
+- mcg::tests (k6x PLL0) + uart::tests::test_kinetis_uart_c2_interrupt_enables
+models:
+- crates/core/src/cpu/cortex_m.rs
+- crates/core/src/decoder/arm.rs
+- crates/core/src/peripherals/uart.rs
+- crates/core/src/peripherals/gpio.rs
+- crates/core/src/peripherals/mcg.rs
+- crates/core/src/peripherals/systick.rs
+- crates/core/src/peripherals/stub.rs
+- crates/core/src/peripherals/kinetis_rnga.rs
+- crates/core/src/bus/from_config.rs
+- crates/core/src/bus/profiles.rs
+- crates/core/src/peripherals/generic_factory.rs
+- crates/core/src/system/builder/arm.rs
+- crates/core/src/peripherals/declarative.rs
+- crates/firmware-frdm-k64f-smoke
+- crates/firmware-frdm-k64f-zephyr
+- configs/chips/mk64f12.yaml
+- configs/peripherals/mk64f12/sysmpu.yaml
+- configs/peripherals/mk64f12/pmc.yaml
+- configs/peripherals/mk64f12/osc.yaml
+- configs/systems/frdm-k64f.yaml

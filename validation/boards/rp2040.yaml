@@ -1,0 +1,40 @@
+# Board validation record migrated from both fork and upstream registries.
+id: rp2040
+doc: docs/boards/rp2040.md
+chip: configs/chips/rp2040.yaml
+tier: structural
+note: 'Behavioural models for clocks/resets (RESET_DONE/PLL-LOCK/XOSC-STABLE), the 64-bit free-running
+  TIMER, SIO GPIO (drive/readback round-trip) + hardware spinlocks (SPINLOCK0..31 try-lock/release), PL022
+  SPI0 (loopback transfer), DW_apb_i2c I2C0 (no-slave address-NACK abort), the XIP_SSI flash controller
+  (boot2 QSPI bring-up: SSI shift engine + W25Q-style RDSR/WREN/WRSR responder, so the stage-2 bootloader
+  and pico-sdk flash_enable_xip_via_boot2 complete), a TBMAN storage stub (running_on_fpga probe), and
+  the PL011 UART0 console. Each is exercised by the tier-1 fixture (tests/fixtures/tier1/rp2040.elf) which
+  reports clock/timer/gpio/spi/i2c PASS over UART. PIO0 is declared but has no test coverage. No silicon
+  bench.'
+drift_ack: 2026-09-22
+drift_ack_digest: dbf661e76d9fca317f8e91370c3f96d116e2b699f880a31d4510306e3f1a77c9
+models:
+- crates/core/src/cpu/cortex_m.rs
+- crates/core/src/decoder/arm.rs
+- configs/chips/rp2040.yaml
+- crates/core/src/peripherals/rp2040
+- crates/core/src/peripherals/rp2040_clocks.rs
+- configs/peripherals/rp2040
+- crates/core/src/peripherals/declarative.rs
+- crates/core/src/peripherals/pio.rs
+- crates/core/src/peripherals/rp2040/adc.rs
+- crates/core/src/peripherals/rp2040/dma.rs
+- crates/core/src/peripherals/rp2040/i2c.rs
+- crates/core/src/peripherals/rp2040/io_bank0.rs
+- crates/core/src/peripherals/rp2040/pwm.rs
+- crates/core/src/peripherals/rp2040/rtc.rs
+- crates/core/src/peripherals/rp2040/sio.rs
+- crates/core/src/peripherals/rp2040/spi.rs
+- crates/core/src/peripherals/rp2040/timer.rs
+- crates/core/src/peripherals/rp2040/usb.rs
+- crates/core/src/peripherals/rp2040/watchdog.rs
+- crates/core/src/peripherals/rp2040/xip_ssi.rs
+- crates/core/src/peripherals/simctl.rs
+- crates/core/src/peripherals/stub.rs
+- crates/core/src/peripherals/systick.rs
+- crates/core/src/peripherals/uart.rs

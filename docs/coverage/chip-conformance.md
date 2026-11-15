@@ -28,6 +28,8 @@ This page covers the public models. For every chip we model — public and priva
 | mimxrt595s | **L1** | ✓ | 19 | — | — | firmware_survival::test_mimxrt595_evk_smoke_survival |
 | sam4s16c | **L1** | ✓ | 20 | — | — | firmware_survival::test_sam4s_xplained_smoke_survival |
 | stm32f072 | **L1** | ✓ | 39 | — | — | firmware_survival::test_stm32f072b_disco_smoke_survival |
+| nrf54l05 | **L0** | ✓ | 6 | — | — | — |
+| nrf54l10 | **L0** | ✓ | 6 | — | — | — |
 | nrf54l15 | **L1** | ✓ | 29 | — | — | firmware_survival::test_nrf54l15_zephyr_survival |
 | atsamd21g18a | **L1** | ✓ | 15 | — | — | atsamd21_peripheral_estate::the_estate_answers_at_its_own_addresses |
 | atsamd21e15a | **L0** | ✓ | 13 | — | — | — |
@@ -45,8 +47,11 @@ This page covers the public models. For every chip we model — public and priva
 | esp32 | **L1** | ✓ | 32 | — | — | firmware_survival::test_esp32_tier1_survival |
 | esp32s3 | **L1** | ✓ | 14 | — | — | firmware_survival::test_esp32s3_tier1_survival |
 | esp32s3-zero | **L1** | ✓ | 17 | — | — | firmware_survival::test_esp32s3_zero_tier1_survival |
+| esp32-devkitc-32e-gpio-smoke | **L1** | ✓ | 3 | — | — | firmware_survival::test_esp32_devkitc_32e_gpio_smoke_tier1_survival |
+| esp32-devkitc-32e-uart1 | **L0** | ✓ | 3 | — | — | — |
 | stm32f401cdu6 | **L1** | ✓ | 45 | — | — | firmware_survival::test_stm32f401cdu6_demo_survival |
 | stm32f411ceu6 | **L1** | ✓ | 46 | — | — | firmware_survival::test_stm32f411_tier1_survival |
+| stm32f446re | **L0** | ✓ | 34 | — | — | — |
 | nrf51822 | **L1** | ✓ | 22 | — | — | firmware_survival::test_nrf51822_microbit_v1_smoke_survival |
 | nrf52832 | **L1** | ✓ | 17 | — | — | firmware_survival::test_nrf52832_demo_survival |
 | nrf52833 | **L1** | ✓ | 48 | — | — | firmware_survival::test_nrf52833_microbit_v2_smoke_survival |
@@ -55,6 +60,7 @@ This page covers the public models. For every chip we model — public and priva
 | rp2040 | **L1** | ✓ | 23 | — | — | firmware_survival::test_rp2040_demo_survival |
 | stm32f103 | **L1** | ✓ | 31 | — | — | stm32f1_exec_oracle |
 | stm32f103rb | **L0** | ✓ | 32 | — | — | — |
+| stm32f103rb-nucleo-bme280-smoke | **L0** | ✓ | 7 | — | — | — |
 | stm32f103c4 | **L0** | ✓ | 31 | — | — | — |
 | stm32f103c6 | **L0** | ✓ | 31 | — | — | — |
 | stm32f103r4 | **L0** | ✓ | 31 | — | — | — |
