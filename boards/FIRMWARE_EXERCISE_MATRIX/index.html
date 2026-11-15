@@ -4934,6 +4934,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#esp32-devkitc-32e-gpio-smoke" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        esp32-devkitc-32e-gpio-smoke
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#esp32-devkitc-32e-uart1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        esp32-devkitc-32e-uart1
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#nrf52840" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5004,6 +5026,28 @@
     <span class="md-ellipsis">
       
         nrf5340
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nrf54l05" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nrf54l05
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nrf54l10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nrf54l10
       
     </span>
   </a>
@@ -5147,6 +5191,17 @@
     <span class="md-ellipsis">
       
         stm32f103rb
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stm32f103rb-nucleo-bme280-smoke" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        stm32f103rb-nucleo-bme280-smoke
       
     </span>
   </a>
@@ -5411,6 +5466,17 @@
     <span class="md-ellipsis">
       
         stm32f401cdu6
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stm32f446re" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        stm32f446re
       
     </span>
   </a>
@@ -6679,6 +6745,10 @@
 <p><strong>Advanced peripherals — unit-tested only</strong> (no firmware drives them): <code>efuse</code>, <code>sha</code>, <code>syscon</code>, <code>twai</code>, <code>mcpwm</code>, <code>rtc_cntl</code></p>
 <p><strong>Shims</strong> (hardcoded stubs or engine-less declarative register files — not real fidelity):
 - <code>sdio_stub</code> (esp32/sdio_stub.rs:5) — STRUCTURAL: hardcoded FSM_DONE so the boot ROM's SDIO bring-up poll terminates. Removing it breaks boot; the ROM blob is the only 'firmware' that touches it.</p>
+<h3 id="esp32-devkitc-32e-gpio-smoke"><code>esp32-devkitc-32e-gpio-smoke</code></h3>
+<p><em>Narrow ESP32-DevKitC-32E onboarding profile (GPIO23, UART0, I2C0). docs/receipts/2026-11-09-esp32-deep-sleep records stock Arduino-ESP32 timer-wake deep sleep printing LW_DS_OK (bootCount 1→2→3 across DEEPSLEEP_RESET, RTC slow memory kept) and light sleep printing LW_LS_OK. Firmware is PlatformIO-built, not a committed ELF; those receipts are not a required CI lane. The committed system attaches no external I2C device. No beyond-rubric block is listed for this slice.</em></p>
+<h3 id="esp32-devkitc-32e-uart1"><code>esp32-devkitc-32e-uart1</code></h3>
+<p><em>Narrow ESP32-DevKitC-32E onboarding profile that routes UART1 TX to J3 pin 12 / GPIO16. Committed evidence at examples/esp32-devkitc-32e-uart1/evidence/run shows examples/esp32-devkitc-32e-uart1/uart1-smoke.yaml passed 3/3: UART0 printed ESP32_DEVKITC32E_UART1_TX_OK, GPIO16 (UART1 TX) saw at least 32 edges from Serial1 printing UUUUUUUU, and the run stopped at max_steps. Firmware is PlatformIO-built via scripts/build-esp32-devkitc-32e-uart1-smoke.sh, not a committed ELF; no required CI lane runs this script. No beyond-rubric block is listed for this slice.</em></p>
 <h3 id="nrf52840"><code>nrf52840</code></h3>
 <p><em>TWIM/PWM are firmware-proven via the rubric fixture; the PR-gated OBD2 scanner e2e drives the RADIO TXEN/READY/START/END handshake (asserts ble_tx &gt; 0), and the #[ignore]d proximity e2e adds an on-demand radio path. The Zephyr BME280 temperature read runs in an external west build.</em></p>
 <p><strong>Functional device/protocol reads</strong> (real driver, decoded value):
@@ -6712,6 +6782,10 @@
 <p><strong>Advanced peripherals — unit-tested only</strong> (no firmware drives them): <code>GPIO</code>, <code>TIMER0-2</code>, <code>RTC0</code>, <code>TWIM1 + BMI270 CHIP_ID EasyDMA transaction</code></p>
 <p><strong>Shims</strong> (hardcoded stubs or engine-less declarative register files — not real fidelity):
 - <code>DCNF/FPU/CACHE/SPU/OSC_REG/CTRLAP/GPIOTE0/DPPIC/FICR</code> (nrf5340_*_stub) — STRUCTURAL: SystemInit pokes them once at boot and never polls them again, so a register stub is byte-faithful for the hello_world boot path.</p>
+<h3 id="nrf54l05"><code>nrf54l05</code></h3>
+<p><em>Minimal nRF54L05 application-core smoke using real RRAM and SRAM geometry, UARTE20 EasyDMA and GPIO P2.09. Only a synthetic board is tested; no beyond-rubric firmware function exists. Full Zephyr/SDK boot, BLE radio, TrustZone and silicon parity are untested.</em></p>
+<h3 id="nrf54l10"><code>nrf54l10</code></h3>
+<p><em>Minimal nRF54L10 application-core smoke using real RRAM and SRAM geometry, UARTE20 EasyDMA and GPIO P2.09. Only a synthetic board is tested; no beyond-rubric firmware function exists. Full Zephyr/SDK boot, BLE radio, TrustZone and silicon parity are untested.</em></p>
 <h3 id="nrf54l15"><code>nrf54l15</code></h3>
 <p><em>No tier1 fixture. Unmodified Zephyr v4.4 hello_world boots end-to-end (nRF54L CLOCK/LFCLK, GRTC kernel tick, TAMPC approtect gate, RRAM-mapped UARTE20 EasyDMA) and the PR-gated smart-ring probe reads four I2C sensor IDs. Beyond the rubric TEMP/EGU/GPIOTE are unit-tested models no firmware drives; TAMPC/RRAMC/regulators/FICR/UICR/DPPIC are zero-filled stub windows the boot path pokes but never polls.</em></p>
 <p><strong>Advanced peripherals — unit-tested only</strong> (no firmware drives them): <code>TEMP</code>, <code>EGU10</code>, <code>EGU20</code>, <code>GPIOTE20</code>, <code>GPIOTE30</code></p>
@@ -6767,6 +6841,8 @@
 <p><em>Exact STM32F103R8 LQFP64 model (medium-density x8: 64 KiB flash, 20 KiB SRAM, 51 GPIOs, 16 ADC channels). Same die and peripheral map as the public stm32f103 (C8) engine, so firmware-exercise rubric claims stay on the STM32F103 family row. Exact memory, package, GPIO, ADC and order-code geometry is asserted by <code>stm32_variant_geometry</code>, and the exact part is executed by the <code>stm32-exact-catalog</code> arm-spin cell in core-coverage-matrix-smoke.yml.</em></p>
 <h3 id="stm32f103rb"><code>stm32f103rb</code></h3>
 <p><em>Exact STM32F103RBT6 LQFP64 model with 128 KiB flash and 20 KiB SRAM. The NUCLEO-F103RB source smoke exercises PA5 GPIO output and USART2; firmware-exercise rubric claims remain on the STM32F103 family row until exact-part rubric coverage is added.</em></p>
+<h3 id="stm32f103rb-nucleo-bme280-smoke"><code>stm32f103rb-nucleo-bme280-smoke</code></h3>
+<p><em>Narrow NUCLEO-F103RB + BME280 onboarding profile (USART2/ST-LINK VCP, LD2 on PA5, I2C1 remapped to PB8/PB9). Committed evidence at examples/nucleo-f103rb-bme280/evidence shows examples/nucleo-f103rb-bme280/onboarding-smoke.yaml passed 3/3: USART2 printed NUCLEO_F103RB_BME280_OK ID=0x60 I2C1=PB8/PB9 after a firmware read of BME280.CHIP_ID (0xD0) at 0x77, gpioa:5 (LD2) saw at least 32 edges, and the run stopped at max_steps. Firmware is built from crates/firmware-nucleo-f103rb-bme280-smoke, not a committed ELF; no required CI lane runs this script. No beyond-rubric block is listed for this slice.</em></p>
 <h3 id="stm32f103t4"><code>stm32f103t4</code></h3>
 <p><em>Exact low-density x4/x6 geometry slice for stm32f103t4; it reuses the shared medium-density STM32F103 peripheral map, so firmware-exercise claims stay under <code>stm32f103</code>. Exact memory, package, GPIO, ADC and order-code geometry is asserted by <code>stm32_variant_geometry</code>.</em></p>
 <h3 id="stm32f103t6"><code>stm32f103t6</code></h3>
@@ -6834,6 +6910,9 @@
 - <code>DMA1/DMA2</code> (configs/chips/stm32f401cdu6.yaml:248,254 (type: stub; the real engine is <code>stm32f4_dma</code>, used by configs/chips/stm32f401.yaml:216,226)) — CLOSABLE: both stream controllers are zero windows, so the sibling fixture's byte-exact DMA2 memcpy fails here (<code>dma-ndtr</code>) — the stm32f401 row's dma pass belongs to that descriptor's real DMA2, not this window. Port path: declare <code>type: stm32f4_dma</code> with the AHB1ENR gates and stream_irqs as the F401/F405/F407/F767 descriptors do.
 - <code>OTG_FS global/host/device/pwrclk</code> (configs/chips/stm32f401cdu6.yaml:309,315,321,327 (type: stub; configs/peripherals/stm32f401/otg_fs_<em>.yaml)) — CLOSABLE: four zero windows — the engine's STM32 OTG FS/DWC2 model (usb_otg.rs, wired on the L476) is not wired here (the F103 USB-device window is the same stub class), no gated firmware opens them, and the declarative otg_fs_</em>.yaml schemas are decode-only.
 - <code>DBG</code> (configs/chips/stm32f401cdu6.yaml:336 (type: stub; configs/peripherals/stm32f401/dbg.yaml)) — CLOSABLE: zero window with no IDCODE wired even though the yaml header records the CDU6's bench-read DBGMCU IDCODE 0x10016433 — the sibling descriptor's real <code>dbgmcu</code> model (configs/chips/stm32f401.yaml:187, idcode 0x10006411) is not reused; no gated firmware reads it.</p>
+<h3 id="stm32f446re"><code>stm32f446re</code></h3>
+<p><em>Minimal real-register firmware smoke: reset/stack, RCC, GPIO PA5 LED and USART2 UART banner. No beyond-rubric function is exercised; the model deliberately omits F446-exclusive blocks, and no stock HAL/Zephyr or physical silicon run exists.</em></p>
+<p><strong>Dead</strong> (2 modeled, never exercised): <code>PWR</code>, <code>FLASH_CTRL</code></p>
 <h3 id="stm32f411ceu6"><code>stm32f411ceu6</code></h3>
 <p><em>WeAct Black Pill. Its tier-1 fixture (PR-gated <code>firmware_survival::test_stm32f411_tier1_survival</code>; nightly coverage-matrix cell examples/stm32f411ceu6-blackpill/io-smoke.yaml) drives clock/gpio/timer/i2c/spi (SPI1+SPI5)/adc/wdt/rtc over USART2, leaving dma unrecorded (the fixture never attempts it, and both stream controllers are zero stubs) and irq/pwm n/a (the fixture does not attempt either class). PWR is a real stm32f4-profile model no firmware drives; the descriptor's remaining stub windows are listed below.</em></p>
 <p><strong>Advanced peripherals — unit-tested only</strong> (no firmware drives them): <code>PWR</code></p>

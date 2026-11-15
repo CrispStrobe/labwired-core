@@ -4837,6 +4837,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#core-dependency-ratchet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Core dependency ratchet
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#pre-push-local" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5267,6 +5278,17 @@
   
     <nav class="md-nav" aria-label="CI map (PR &lt;1 min / nightly slow gates)">
       <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#core-dependency-ratchet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Core dependency ratchet
+      
+    </span>
+  </a>
+  
+</li>
         
           <li class="md-nav__item">
   <a href="#pre-push-local" class="md-nav__link">
@@ -5748,6 +5770,37 @@ scheduler identity unless a workflow enables the feature.</p>
 <p>Branch protection: required context <strong><code>pr-gate</code></strong> only (+ <strong><code>strict: true</code></strong>).</p>
 <p>Slow matrices are <strong>not</strong> on <code>pull_request</code> so required-check path-filter
 stalls cannot block merges; they still run every night and on main.</p>
+<h3 id="core-dependency-ratchet">Core dependency ratchet</h3>
+<p><code>scripts/ci/core_dep_map.py</code> parses <code>crates/core/src</code> (no cargo build, about
+five seconds) and builds a module graph: for each top-level module, each
+<code>peripherals/&lt;dir&gt;</code> and each CPU architecture, the production line count and
+the <code>crate::</code>, <code>super::</code> and <code>self::</code> references it makes to other modules.
+<code>scripts/ci/core_layers.json</code> classifies modules as <code>kernel</code> (bus, peripherals
+root and factory, generic engines, hot CPUs) or <code>leaf</code> (vendor peripheral sets,
+the components library, CPU architectures the bus does not step directly);
+everything else is neutral. <code>scripts/ci/core_layers_baseline.json</code> records the
+current kernel-to-leaf edges with their reference counts.</p>
+<p><code>python3 scripts/ci/core_dep_map.py --check</code> runs in the <code>pr-gate</code> job in
+advisory mode: it prints the difference from the baseline (new kernel-to-leaf
+pairs, increased counts, decreases, size of the largest strongly connected
+component) to the log and the job summary, and emits <code>::warning::</code> annotations
+for new pairs, but does not fail on them. It still fails if the script crashes
+or <code>core_layers.json</code> / the baseline cannot be parsed. A module missing from
+<code>core_layers.json</code> is a warning in this mode, because adding a module is routine.</p>
+<p>It is advisory because chip and board work currently has to add kernel-to-leaf
+references (the type-string factory, <code>bus/from_config.rs</code>, <code>peripherals/mod.rs</code>
+name vendor types), and a blocking count baseline would fail those PRs and turn
+the baseline file into a conflict hot spot. No PR is required to update the
+baseline. <code>--check --strict</code> has the failing behaviour (a new pair, a higher
+count, or an unclassified module exits 1); switch the gate to it once vendor
+construction is inverted. To lower the baseline after a decrease, run
+<code>python3 scripts/ci/core_dep_map.py --update-baseline</code>; it refuses to raise any
+count unless <code>--allow-increase</code> is given. Run without flags to print the full
+graph as JSON. The parser is regex based; its limits (macro-generated paths,
+glob imports) are listed in the script's docstring. Tests:
+<code>scripts/ci/test_core_dep_map.py</code>.</p>
+<p>The manual <code>Rust Core CI</code> dispatch also takes a <code>build_timings</code> input that runs
+a cold <code>cargo build -p labwired-core --timings</code> and uploads the report.</p>
 <h3 id="pre-push-local">Pre-push (local)</h3>
 <p><code>scripts/pre-push.sh</code>: fmt, clippy (core+cli), walk-deletion + RP2040 vector
 tests, LogicTap unit smokes. Full workspace: <code>LABWIRED_PREPUSH_FULL=1</code>.</p>

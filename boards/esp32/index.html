@@ -4900,6 +4900,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#narrow-onboarding-profiles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Narrow onboarding profiles
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#sources" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4981,6 +4992,16 @@ models the memory map probed against a real ESP32-WROOM-32 module (chip type
 <li>No silicon diff of any kind against a real ESP32.</li>
 <li>WiFi/BT/radio are not modeled.</li>
 </ul>
+<h2 id="narrow-onboarding-profiles">Narrow onboarding profiles</h2>
+<p>The <a href="../../examples/esp32-devkitc-32e-gpio-smoke/README.md">GPIO/UART0/I2C0 profile</a>
+and <a href="../../examples/esp32-devkitc-32e-uart1/README.md">UART1 TX profile</a> describe
+separate bounded DevKitC-32E examples. The coverage ratchet requires each exact
+descriptor to have reset/conformance coverage and its own executing core-timer
+oracle. <code>esp32_onboarding_exec_oracle</code> checks CCOMPARE0 interrupt delivery,
+the vector trace and the handler's RAM write at every instruction boundary,
+with a disarmed-timer negative control. These checks establish the simulator's
+core-timer contract; they do not establish silicon timing or additional
+peripheral coverage.</p>
 <h2 id="sources">Sources</h2>
 <ul>
 <li>ESP32 Technical Reference Manual v4.6 §1.3 (Memory Map), Table 1-2, as cited

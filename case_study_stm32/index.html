@@ -5144,7 +5144,7 @@
 - <strong>Complexity</strong>: Debugging I2C/SPI timing issues requires logic analyzers or oscilloscopes.
 - <strong>CI/CD Gaps</strong>: Hard to run automated tests for firmware on real hardware in every PR.</p>
 <h2 id="the-labwired-solution">The LabWired Solution</h2>
-<p>LabWired allows developers to simulate an entire STM32-based system, including external peripherals like sensors, directly in their local environment and VS Code.</p>
+<p>LabWired runs STM32 firmware against supported MCU peripheral and external-device models, including I²C sensors. The example is a model-based firmware test, not a complete analog or physical replica of the board. See <a href="../fidelity/">what a green pass means</a> and the <a href="../target_support_rubric/">target support levels</a>.</p>
 <h3 id="scenario-i2c-temperature-sensor-integration">Scenario: I2C Temperature Sensor Integration</h3>
 <p>In this demo, we integrated a <strong>TMP102</strong> temperature sensor with an <strong>STM32F103</strong> microcontroller.</p>
 <h4 id="1-hardware-free-simulation">1. Hardware-Free Simulation</h4>
@@ -5166,10 +5166,11 @@
 - <strong>Step Through Logic</strong>: Verify that the temperature conversion logic handles negative values or overflow correctly.</p>
 <h2 id="impact">Impact</h2>
 <ul>
-<li><strong>Zero Setup Costs</strong>: No hardware, cables, or probes required.</li>
-<li><strong>Instant Reproducibility</strong>: High-fidelity simulation ensures a bug in simulation is a bug in hardware.</li>
-<li><strong>Modern Workflow</strong>: Bring the power of modern software development (CI/CD, fast iteration) to the embedded world.</li>
+<li><strong>No bench required for the model check</strong>: Run supported firmware and device-model tests without a connected board. Physical hardware is still required for acceptance tests.</li>
+<li><strong>Repeatable evidence</strong>: Reuse the same firmware, system manifest and inputs to reproduce an observed model failure. A simulated failure does not automatically prove a silicon defect; a simulated pass does not prove the physical board works.</li>
+<li><strong>CI integration</strong>: Assert supported MCU and I²C device behavior on every change, then use physical tests to cover unmodeled electrical and timing effects.</li>
 </ul>
+<p>Record the firmware revision, model version, inputs, expected results and simulator artifacts. Label the result <strong>model-verified</strong> only when its explicit assertions pass; this is not a whole-board or hardware-acceptance verdict.</p>
 <hr />
 <h2 id="technical-highlights">Technical Highlights</h2>
 <ul>

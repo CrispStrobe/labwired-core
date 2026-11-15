@@ -4968,24 +4968,39 @@ ST-LINK virtual COM port.</p>
 <td>Simulator-verified: UART <code>OK</code>, 10 PA5 edges, 200,000 steps</td>
 </tr>
 <tr>
+<td>BME280 sensor path</td>
+<td>Simulator smoke reads <code>CHIP_ID = 0x60</code> over I2C1 on PB8/PB9 and pulses LD2</td>
+</tr>
+<tr>
 <td>Hardware comparison</td>
 <td>Not recorded</td>
 </tr>
 <tr>
 <td>External devices</td>
-<td>None in the base board system</td>
+<td>BME280 on the separate narrow I2C1 profile; base board system remains bare</td>
 </tr>
 </tbody>
 </table>
 <p>See the <a href="../../examples/nucleo-f103rb/README.md">F103RB example</a>,
 <a href="../../examples/nucleo-f103rb/VALIDATION.md">validation runbook</a>, and
-<a href="../../examples/nucleo-f103rb/KNOWN_LIMITATIONS.md">known limitations</a>.</p>
+<a href="../../examples/nucleo-f103rb/KNOWN_LIMITATIONS.md">known limitations</a>.
+The additional <a href="../../examples/nucleo-f103rb-bme280/README.md">BME280 example</a>
+includes wiring, a copy-paste Arduino sketch, and committed smoke evidence.</p>
+<p>The narrow BME280 profile also retains the Cortex-M3 SysTick core timer.
+<code>systick_walk_differential::nucleo_bme280_profile_systick_irq_is_byte_identical</code>
+loads that exact descriptor and system, then compares 3,000 instruction
+boundaries against the legacy walk. It requires repeated SysTick ISR entries
+and main-loop progress. This engine comparison does not extend the sensor
+smoke or silicon claims.</p>
 <h2 id="chip-and-board-files">Chip and board files</h2>
 <ul>
 <li>Exact chip descriptor: <a href="../../configs/chips/stm32f103rb.yaml"><code>stm32f103rb.yaml</code></a></li>
 <li>Carrier system: <a href="../../configs/systems/nucleo-f103rb.yaml"><code>nucleo-f103rb.yaml</code></a></li>
 <li>Smoke firmware: <code>crates/firmware-nucleo-f103rb-smoke/</code></li>
 <li>Runnable example: <code>examples/nucleo-f103rb/</code></li>
+<li>BME280 system: <a href="../../configs/systems/nucleo-f103rb-bme280.yaml"><code>nucleo-f103rb-bme280.yaml</code></a></li>
+<li>BME280 narrow chip profile: <a href="../../configs/chips/stm32f103rb-nucleo-bme280-smoke.yaml"><code>stm32f103rb-nucleo-bme280-smoke.yaml</code></a></li>
+<li>BME280 firmware and evidence: <code>examples/nucleo-f103rb-bme280/</code></li>
 </ul>
 <p>The model shares the family reference's medium-density F103 peripheral map.
 Its exact geometry identifies the STM32F103RB, while behavior beyond the
@@ -5016,6 +5031,11 @@ documented smoke remains unvalidated for this specific part.</p>
 <td>Default ST-LINK/V2-1 VCP route</td>
 </tr>
 <tr>
+<td>I2C1 SCL/SDA</td>
+<td>PB8 / PB9</td>
+<td>Arduino D15/D14; I2C1 remap enabled</td>
+</tr>
+<tr>
 <td>SWDIO / SWCLK</td>
 <td>PA13 / PA14</td>
 <td>ST-LINK debug</td>
@@ -5040,10 +5060,13 @@ example's <a href="../../examples/nucleo-f103rb/io-smoke.yaml"><code>io-smoke.ya
 recorded simulator run captured <code>OK</code> on UART and 10 PA5 edges. The exact chip
 ID is <code>stm32f103rb</code>; the carrier board ID is <code>nucleo-f103rb</code>.</p>
 <h2 id="support-boundary">Support boundary</h2>
-<p>The runnable scope is GPIOA/PA5 and USART2/PA2-PA3. B1 is declared as board I/O
-but is not exercised. External bus devices, clock-tree behavior, timers, DMA,
-ADC, SPI, I2C, USB, CAN, and other unexercised peripherals are outside the
-current claim. See the <a href="../../examples/nucleo-f103rb/KNOWN_LIMITATIONS.md">validation boundary</a>.</p>
+<p>The base board smoke exercises GPIOA/PA5 and USART2/PA2-PA3. The separate
+BME280 profile adds AFIO remapping and exercises one I2C1 register read on
+PB8/PB9. B1 is not exercised. The sensor smoke does not validate full I2C
+coverage, conversions, or other STM32F103 peripherals. USB, CAN, timers, DMA,
+ADC, SPI, and the wider clock tree remain outside these smoke claims. See the
+<a href="../../examples/nucleo-f103rb/KNOWN_LIMITATIONS.md">base validation boundary</a>
+and <a href="../../examples/nucleo-f103rb-bme280/README.md#model-boundary">BME280 model boundary</a>.</p>
 
 
 

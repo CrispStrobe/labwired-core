@@ -5754,8 +5754,8 @@ from pico-sdk <code>waveshare_rp2350_zero.h</code>. Authored drawing:
 </tr>
 <tr>
 <td>USB CDC / USB device</td>
-<td>❌</td>
-<td>Bench only</td>
+<td>✅</td>
+<td>Same <code>rp2040_usb</code> model as RP2040 (TinyUSB / earlephilhower <code>Serial</code>)</td>
 </tr>
 <tr>
 <td>SIO GPIO</td>
@@ -5807,8 +5807,8 @@ forever — that is intentional.</p>
 <h2 id="what-it-catches-vs-what-needs-a-bench">What it catches vs what needs a bench</h2>
 <p><strong>Twin is strong for:</strong> UART0 bring-up of an RP2350 Thumb ELF; GP16 as a
 digital LED stand-in; deterministic CLI oracles that match UART0.</p>
-<p><strong>Needs the bench:</strong> anything on USB CDC, UF2 boot, WS2812 color, SWD
-register parity, PIO v2, dual-core.</p>
+<p><strong>Needs the bench:</strong> UF2 boot, WS2812 color, SWD register parity, PIO v2,
+dual-core. USB CDC <code>Serial</code> is modelled (see chip page / core gate test).</p>
 <hr />
 <h2 id="how-to-run">How to run</h2>
 <h3 id="cli">CLI</h3>
@@ -5822,10 +5822,10 @@ register parity, PIO v2, dual-core.</p>
 <p>Details: <a href="../../examples/rp2350-zero/VALIDATION.md"><code>examples/rp2350-zero/VALIDATION.md</code></a>.</p>
 <h3 id="playground">Playground</h3>
 <p>Board id <code>rp2350-zero</code> on <a href="https://app.labwired.com">app.labwired.com</a>. USB CDC
-on the cable is still unmodeled — serial in the twin is UART0.</p>
+<code>Serial</code> is modelled; UART0 on GP0/GP1 remains available as a header console.</p>
 <h3 id="agent">Agent</h3>
 <p><a href="../../agent/mcp/">MCP</a> → describe the <strong>chip</strong> <code>rp2350</code> and run against
-<code>examples/rp2350-zero/system.yaml</code>. Do not claim USB or WS2812 success.</p>
+<code>examples/rp2350-zero/system.yaml</code>. Do not claim WS2812 success.</p>
 <hr />
 <h2 id="related">Related</h2>
 <ul>

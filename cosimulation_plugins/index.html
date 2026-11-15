@@ -1359,6 +1359,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#shared-analog-in-a-multi-controller-world" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shared analog in a multi-controller world
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#board-signal-paths" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5095,6 +5106,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#shared-analog-in-a-multi-controller-world" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shared analog in a multi-controller world
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#board-signal-paths" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5347,6 +5369,13 @@ the same input sequence always produces the same voltages.</p>
 (GPIO into a 10 kΩ / 100 nF low-pass, τ = 1 ms). Requires <code>libngspice0</code>
 (Debian/Ubuntu: <code>apt install libngspice0</code>). Tests:
 <code>python3 -m pytest tools/cosim/test_labwired_ngspice.py</code>.</p>
+<h2 id="shared-analog-in-a-multi-controller-world">Shared analog in a multi-controller world</h2>
+<p>An environment can own one inline <code>adapter: analog</code> model with instance-qualified
+<code>node.&lt;id&gt;.board.*</code> / <code>node.&lt;id&gt;.adc.*</code> routes. The existing world scheduler
+advances one shared circuit and applies all observations at its declared
+boundaries. Per-node co-simulation models remain refused. See
+<a href="../world-analog/">One shared analog circuit in a world</a> for the manifest,
+voltage and reset semantics, trace API, validation, and sampling limits.</p>
 <h2 id="board-signal-paths">Board signal paths</h2>
 <p>A model that only speaks abstract observables can be driven from the command
 line but never by firmware. The <code>board.</code> / <code>adc.</code> path grammar is how a
@@ -5381,6 +5410,12 @@ steps the model against the pins the firmware is actually driving:</p>
 <td>The live level a logic probe clipped to <code>&lt;pad&gt;</code> sees: the GPIO latch for a plain output, the peripheral's wire for an alternate-function pad, the input register for an input.</td>
 </tr>
 <tr>
+<td><code>board.gpio_pad_volts.&lt;pad&gt;</code></td>
+<td>machine → model</td>
+<td>volts</td>
+<td>The live pad driver amplitude from the routed VDD, or the descriptor I/O voltage when VDD is not routed. Use a separate direction switch for high impedance.</td>
+</tr>
+<tr>
 <td><code>board.gpio_driven.&lt;pad&gt;</code></td>
 <td>machine → model</td>
 <td>bool</td>
@@ -5411,6 +5446,12 @@ steps the model against the pins the firmware is actually driving:</p>
 <td>The MCU's supply. The chip's <code>supply_monitor:</code> holds the core in reset below its power-on threshold and resets it on power-down or brown-out; a chip without one refuses the route.</td>
 </tr>
 <tr>
+<td><code>board.reset.&lt;pin&gt;_volts</code></td>
+<td>model → machine</td>
+<td>volts</td>
+<td>The descriptor-declared reset pin, with absolute or VDD-ratio thresholds and valid/invalid pulse limits. Holds execution independently of the supply supervisor.</td>
+</tr>
+<tr>
 <td><code>board.motor.&lt;id&gt;.back_emf_v</code></td>
 <td>machine → model</td>
 <td>number</td>
@@ -5423,6 +5464,24 @@ steps the model against the pins the firmware is actually driving:</p>
 <td>The winding current the netlist solved for an <code>armature: circuit</code> DC motor (amps, positive = forward torque). Until it is routed the motor holds still and reports no current.</td>
 </tr>
 <tr>
+<td><code>board.motor.&lt;id&gt;.phase_{a,b,c}_back_emf_v</code></td>
+<td>machine → model</td>
+<td>volts</td>
+<td>The three phase EMFs of a circuit BLDC winding.</td>
+</tr>
+<tr>
+<td><code>board.motor.&lt;id&gt;.phase_{a,b,c}_current_a</code></td>
+<td>model → machine</td>
+<td>amps</td>
+<td>A complete solved three-phase current vector, positive toward the floating star.</td>
+</tr>
+<tr>
+<td><code>board.motor.&lt;id&gt;.supply_v</code></td>
+<td>model → machine</td>
+<td>volts</td>
+<td>Optional measured supply for a circuit DC/BLDC motor; absent remains unknown.</td>
+</tr>
+<tr>
 <td><code>ui.&lt;partId&gt;.&lt;field&gt;</code></td>
 <td>outside → model</td>
 <td>bool or number</td>
@@ -5430,6 +5489,8 @@ steps the model against the pins the firmware is actually driving:</p>
 </tr>
 </tbody>
 </table>
+<p>For the complete winding, ownership, timing and readback contract, see
+<a href="../circuit-bldc/">Circuit-driven three-phase BLDC motors</a>.</p>
 <p><code>&lt;pad&gt;</code> is a pad label in whatever form the chip speaks — <code>pa5</code> / <code>PA5</code> on
 STM32, <code>pd2</code> on the ATmega328P, <code>p0.13</code> on Nordic, <code>gpio5</code> or a bare <code>5</code> on
 ESP32. Labels resolve through the same pin resolution every other
@@ -5515,12 +5576,20 @@ It starts low. A boolean keeps meaning the level itself, exactly as before.
 This is what lets a circuit node charging through a megohm reach
 <code>digitalRead</code> at the right time, instead of flipping at a guessed midpoint.</p>
 <p>The thresholds are chip data, transcribed from the datasheet into the chip
-descriptor as ratios of the I/O supply:</p>
+descriptor as slopes of the I/O supply with optional voltage offsets:</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">io_voltage_v</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5.0</span><span class="w">          </span><span class="c1"># the rail the GPIO pads run from</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="nt">gpio_input_thresholds</span><span class="p">:</span><span class="w">     </span><span class="c1"># ratios of io_voltage_v</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="nt">gpio_input_thresholds</span><span class="p">:</span><span class="w">     </span><span class="c1"># zero-offset limits: slope * supply</span>
 </span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">vil</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.3</span><span class="w">                 </span><span class="c1"># highest input guaranteed to read low</span>
 </span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="nt">vih</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.6</span><span class="w">                 </span><span class="c1"># lowest input guaranteed to read high</span>
 </span></code></pre></div>
+<p>Optional <code>vil_offset_v</code> and <code>vih_offset_v</code> add volts to the corresponding
+slope-times-supply limit. They default to zero, preserving existing ratio-only
+documents. The slopes satisfy <code>0 &lt; vil &lt; vih &lt; 1</code>; finite offsets satisfy
+<code>0 &lt;= vil_offset_v &lt;= vih_offset_v</code>. A routed <code>board.power.vdd_volts</code> supplies
+the actual reference for each boundary; <code>io_voltage_v</code> applies only when VDD is
+unrouted. An absent or non-positive routed rail cannot read as a logic high.
+The <a href="../world-analog/#driver-voltage-and-high-impedance">shared-world electrical contract</a>
+includes an affine datasheet example and the zero-VDDA capability boundary.</p>
 <p>In-tree they are declared for <code>atmega328p</code> (5.0 V, 0.3 / 0.6, Microchip
 DS40002061B Table 30-1), <code>stm32f103</code> (3.3 V, 0.35 / 0.65, DS5319 Table 36), and
 <code>stm32f401</code>, <code>stm32f401cdu6</code>, <code>stm32f405</code>, <code>stm32f407</code>, <code>stm32f411ceu6</code> (3.3 V,
@@ -5638,7 +5707,7 @@ spells them:</p>
 </span><span id="__span-7-10"><a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="w">      </span><span class="nt">substeps</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10</span><span class="w">             </span><span class="c1"># internal solver steps per co-sim step</span>
 </span><span id="__span-7-11"><a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a><span class="w">      </span><span class="nt">integration</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">be</span><span class="w">          </span><span class="c1"># be (default) | trap</span>
 </span><span id="__span-7-12"><a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a><span class="w">      </span><span class="nt">probes</span><span class="p">:</span><span class="w">  </span><span class="p p-Indicator">{</span><span class="nt"> v_out</span><span class="p">:</span><span class="w"> </span><span class="s">"v(out)"</span><span class="w"> </span><span class="p p-Indicator">}</span><span class="w">   </span><span class="c1"># output name &lt;- voltage / element current</span>
-</span><span id="__span-7-13"><a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a><span class="w">      </span><span class="nt">sources</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt"> gpio</span><span class="p">:</span><span class="w"> </span><span class="nv">Vgpio</span><span class="w"> </span><span class="p p-Indicator">}</span><span class="w">       </span><span class="c1"># input name  -&gt; V, I or S element</span>
+</span><span id="__span-7-13"><a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a><span class="w">      </span><span class="nt">sources</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt"> gpio</span><span class="p">:</span><span class="w"> </span><span class="nv">Vgpio</span><span class="w"> </span><span class="p p-Indicator">}</span><span class="w">       </span><span class="c1"># input name -&gt; V, I, S, or R (ohms / Celsius)</span>
 </span><span id="__span-7-14"><a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a><span class="w">      </span><span class="nt">trace</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"v(in)"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"i(Vgpio)"</span><span class="p p-Indicator">]</span><span class="w">   </span><span class="c1"># extra oscilloscope channels</span>
 </span><span id="__span-7-15"><a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a><span class="w">      </span><span class="nt">trace_samples</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">20000</span><span class="w">           </span><span class="c1"># ring depth (default 20000)</span>
 </span></code></pre></div>
@@ -5715,6 +5784,9 @@ SPICE deck, line 1 is NOT a title — put a <code>*</code> on it, because silent
 an element line is the worst thing a netlist parser can do.</p>
 <p>A switch's <code>&lt;ctrl&gt;</code> is the name of a routed boolean input, not a circuit node,
 so it needs no <code>sources:</code> entry.</p>
+<p>A <code>sources:</code> entry may also target a resistor with <code>beta=</code> or <code>tc1=</code>/<code>tc2=</code>.
+The routed number is its external temperature in degrees Celsius; a value
+change rebuilds that resistor's MNA conductance on the next step.</p>
 <h3 id="op-amp-and-comparator-macros">Op-amp and comparator macros</h3>
 <p><code>X</code> instances use <code>.model &lt;name&gt; OPAMP(...)</code> or <code>.model &lt;name&gt; COMP(...)</code>.
 Both cards model finite gain and bandwidth, output resistance, offset voltage,
