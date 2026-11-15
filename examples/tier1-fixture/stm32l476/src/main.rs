@@ -406,6 +406,9 @@ fn main() -> ! {
     // offset 0x58) and is unclocked out of reset — enable it before the first
     // report() or the console UART silently drops every byte.
     wr32(RCC_BASE + 0x58, rd32(RCC_BASE + 0x58) | (1 << 17));
+    // STM32v2 requires both USART enable and transmitter enable before TDR
+    // writes emit bytes. Keep the disabled-transmitter model behavior intact.
+    wr32(USART2_BASE, (1 << 0) | (1 << 3)); // CR1: UE | TE
     CONSOLE.report(b"clock", check_clock());
     CONSOLE.report(b"gpio", check_gpio());
     CONSOLE.report(b"timer", check_timer());
