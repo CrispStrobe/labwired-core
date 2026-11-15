@@ -9,7 +9,6 @@ use common::root;
 use labwired_config::{ChipDescriptor, SystemManifest};
 use labwired_core::bus::SystemBus;
 use labwired_core::cosim::{CosimSession, CosimSignalValue, RoutingError};
-use labwired_core::peripherals::adc::Adc;
 use labwired_core::Bus;
 use std::path::Path;
 
@@ -62,12 +61,10 @@ fn stm32f4_adc_convert(bus: &mut SystemBus, channel: u8) -> u32 {
     // walk while these fifteen manual ticks never drain scheduled events.
     // The F4 model's scheduler_diff gate separately compares both drive modes.
     let adc_idx = bus.find_peripheral_index_by_name("adc1").expect("ADC1");
-    bus.peripherals[adc_idx]
-        .dev
-        .as_any_mut()
-        .and_then(|any| any.downcast_mut::<Adc>())
-        .expect("concrete STM32F4 ADC1")
-        .force_legacy_walk();
+    assert!(
+        bus.peripherals[adc_idx].dev.force_legacy_walk(),
+        "ADC1 must expose its retained walk through the diagnostic capability"
+    );
     bus.recompute_walk_deletable();
     bus.refresh_peripheral_index();
     assert!(!bus.peripherals[adc_idx].dev.uses_scheduler());

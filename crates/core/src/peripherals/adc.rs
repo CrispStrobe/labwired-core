@@ -1259,6 +1259,11 @@ impl Default for Adc {
 }
 
 impl Peripheral for Adc {
+    fn force_legacy_walk(&mut self) -> bool {
+        Adc::force_legacy_walk(self);
+        true
+    }
+
     fn adc_channel_count(&self) -> Option<u8> {
         Some(self.channel_count())
     }

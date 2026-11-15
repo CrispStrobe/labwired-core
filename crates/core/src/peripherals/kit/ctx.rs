@@ -686,11 +686,30 @@ mod tests {
         use crate::bus::PeripheralEntry;
         use crate::peripherals::gpio::{GpioPort, GpioRegisterLayout};
         let ext = ext_with_moisture(serde_yaml::Value::Null);
+        // A default test bus already owns STM32 gpioa. A SAM porta alongside
+        // it makes PA15 ambiguous and must be refused, not guessed.
+        let mut mixed = SystemBus::new();
+        mixed.peripherals.push(PeripheralEntry {
+            name: "porta".into(),
+            base: 0x4000_0000,
+            size: 128,
+            irq: None,
+            dev: Box::new(GpioPort::new_with_layout(GpioRegisterLayout::SamPort)),
+            ticks_remaining: 0,
+            clock_gate: None,
+        });
+        assert_eq!(
+            AttachCtx::new(&mut mixed, &ext).parse_gpio_pin("PA15"),
+            None
+        );
+
         for (layout, prefix, width) in [
             (GpioRegisterLayout::SamPort, "port", 32),
             (GpioRegisterLayout::Stm32V2, "gpio", 16),
         ] {
             let mut bus = SystemBus::new();
+            // Isolate the concrete family under test from the default F1 port.
+            bus.peripherals.clear();
             for port in ['a', 'b'] {
                 bus.peripherals.push(PeripheralEntry {
                     name: format!("{prefix}{port}"),
@@ -721,6 +740,7 @@ mod tests {
         }
         // A familiar instance name with the wrong concrete model is not a pad.
         let mut bus = SystemBus::new();
+        bus.peripherals.clear();
         bus.peripherals.push(PeripheralEntry {
             name: "gpioa".into(),
             base: 0x4000_0000,
