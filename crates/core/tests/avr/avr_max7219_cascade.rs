@@ -374,9 +374,22 @@ fn avr_guest_mixed_bus_keeps_real_slave_commands_intact_and_ignores_cs_high() {
         ("rc522", &[0x22, 0x5A], &[0xA2, 0], &[0x22, 0xAA], 0x5A),
         (
             "microsd",
-            &[0x40, 0, 0, 0, 0, 0x95],
-            &[0x77, 0, 0, 0, 0, 0],
-            &[0x69, 0, 0, 0, 0, 0],
+            // SD SPI queues one NCR filler after the CRC, then R1; the
+            // command's CRC transfer itself cannot contain its response.
+            // CMD8 also establishes the SDHC host interface condition; drain
+            // its complete R7 before testing CMD55 and the HCS polls below.
+            &[
+                0x40, 0, 0, 0, 0, 0x95, 0xFF, 0xFF, 0x48, 0, 0, 1, 0xAA, 0x87, 0xFF, 0xFF, 0xFF,
+                0xFF, 0xFF, 0xFF,
+            ],
+            &[0x77, 0, 0, 0, 0, 0, 0xFF, 0xFF],
+            // CMD55 above arms ACMD41. Two HCS polls leave idle if this
+            // CS-high sequence leaks; one arg=0 poll would leave idle set
+            // even when received and would not prove deselection.
+            &[
+                0x69, 0x40, 0, 0, 0, 0, 0xFF, 0xFF, 0x77, 0, 0, 0, 0, 0, 0xFF, 0xFF, 0x69, 0x40, 0,
+                0, 0, 0, 0xFF, 0xFF,
+            ],
             1,
         ),
     ];
@@ -395,6 +408,11 @@ fn avr_guest_mixed_bus_keeps_real_slave_commands_intact_and_ignores_cs_high() {
                 guest.peer_transaction(read, 17);
                 guest.hardware_bytes(deselected_write); // all configured CS high
                 guest.peer_transaction(read, 18);
+                // The same write while selected must change what we read:
+                // the CS-high negative above must have an observable effect
+                // to exclude, including the SDHC two-poll init sequence.
+                guest.peer_transaction(deselected_write, 20);
+                guest.peer_transaction(read, 21);
                 guest.run(&mut cpu, &mut bus);
                 assert_eq!(
                     cpu.r[17], expected,
@@ -403,6 +421,11 @@ fn avr_guest_mixed_bus_keeps_real_slave_commands_intact_and_ignores_cs_high() {
                 assert_eq!(
                     cpu.r[18], expected,
                     "{kind}: CS-high write leaked, MAX={with_max}, CPU-owned={cpu_owned}"
+                );
+                assert_eq!(
+                    cpu.r[21],
+                    if kind == "microsd" { 0 } else { 0xAA },
+                    "{kind}: selected control did not change the read, MAX={with_max}, CPU-owned={cpu_owned}"
                 );
             }
         }

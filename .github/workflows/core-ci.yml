@@ -1291,7 +1291,7 @@ jobs:
       - name: CI-script tests on Python 3.13
         if: steps.scope.outputs.run == 'true'
         run: |
-          python -m pip install --quiet pytest
+          python -m pip install --quiet pytest pyyaml
           python3 scripts/perf/board_perf.py --check-coverage
           python3 -m pytest -q \
             scripts/perf/test_board_perf.py \

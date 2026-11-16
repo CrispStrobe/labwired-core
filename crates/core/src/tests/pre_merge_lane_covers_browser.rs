@@ -224,7 +224,7 @@ fn required_library_worker_bodies(ci: &str) -> Result<Vec<String>, String> {
         // the aggregate needs them after its `always() &&` conjunction.
         let matching_scope = worker_condition == scope
             || (scope == EVERY_PR_SCOPE
-                && worker_condition == &EVERY_PR_SCOPE[1..EVERY_PR_SCOPE.len() - 1]);
+                && worker_condition == EVERY_PR_SCOPE[1..EVERY_PR_SCOPE.len() - 1]);
         if advisory(worker) || !matching_scope {
             return Err(format!(
                 "{job} must share the aggregate's pull-request scope without allowing failure"
