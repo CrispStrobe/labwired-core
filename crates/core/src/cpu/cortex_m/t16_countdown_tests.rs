@@ -461,3 +461,25 @@ mod deadline_boundaries {
         differential_deadlines(true);
     }
 }
+
+#[cfg(feature = "cortex-m-countdown-probe")]
+#[test]
+fn countdown_window_observes_real_dispatch_without_changing_cpu_state() {
+    let (mut observed, mut observed_bus) = fixture(2, 20, 0xf0000000);
+    let (mut control, mut control_bus) = fixture(2, 20, 0xf0000000);
+    assert!(observed.begin_countdown_window(16, 1));
+    let observed_retired = observed.run_t16_cached_fast_paths(&mut observed_bus, 16);
+    let control_retired = control.run_t16_cached_fast_paths(&mut control_bus, 16);
+    assert_eq!(observed_retired, control_retired);
+    assert_eq!(observed_retired, 16);
+    assert_eq!(state(&observed), state(&control));
+    assert_eq!(observed_bus.access_counts(), control_bus.access_counts());
+    assert!(observed.countdown_window_progress(u64::from(observed_retired)));
+    let window = observed.end_countdown_window().unwrap();
+    assert_eq!(
+        (window.attempts, window.returns, window.retired),
+        (1, 1, 16)
+    );
+    assert!(window.detail_exhausted());
+    assert!(window.complete());
+}

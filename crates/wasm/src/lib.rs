@@ -77,6 +77,11 @@ struct Esp32IpiBridge {
     handshake_bytes: Vec<u32>,
 }
 
+#[cfg(feature = "countdown-probe")]
+fn countdown_driver_valid(expected: Option<u64>, current: u64, invalid: bool) -> bool {
+    !invalid && expected == Some(current)
+}
+
 /// A run's console capture plus the sink for the USB-Serial-JTAG block that the
 /// shared C3 ROM builder installs after the bus is handed over.
 type C3FlashConsole = (ConsoleCapture, Arc<Mutex<Vec<u8>>>);
@@ -109,6 +114,10 @@ pub struct WasmSimulator {
     /// until benchmarks confirm a net win, so production playground
     /// behaviour is unchanged unless the operator opts in.
     jit_browser_enabled: bool,
+    #[cfg(feature = "countdown-probe")]
+    countdown_next_cycle: Option<u64>,
+    #[cfg(feature = "countdown-probe")]
+    countdown_invalid: bool,
     /// Lazy-init at first JIT-able step. Boxed so the typical "JIT off"
     /// path pays no per-instance allocation.
     jit_browser_cache: Option<Box<jit_browser::BrowserJitCache>>,
@@ -404,6 +413,10 @@ impl WasmSimulator {
             arch: MachineFamily::CortexM,
             esp32_ipi: None,
             jit_browser_enabled: false,
+            #[cfg(feature = "countdown-probe")]
+            countdown_next_cycle: None,
+            #[cfg(feature = "countdown-probe")]
+            countdown_invalid: false,
             jit_browser_cache: None,
             cosim: None,
             tools: Default::default(),
@@ -650,6 +663,10 @@ impl WasmSimulator {
             arch: MachineFamily::CortexM,
             esp32_ipi: None,
             jit_browser_enabled: false,
+            #[cfg(feature = "countdown-probe")]
+            countdown_next_cycle: None,
+            #[cfg(feature = "countdown-probe")]
+            countdown_invalid: false,
             jit_browser_cache: None,
             cosim: None,
             tools: Default::default(),
@@ -704,6 +721,10 @@ impl WasmSimulator {
             arch: MachineFamily::Avr,
             esp32_ipi: None,
             jit_browser_enabled: false,
+            #[cfg(feature = "countdown-probe")]
+            countdown_next_cycle: None,
+            #[cfg(feature = "countdown-probe")]
+            countdown_invalid: false,
             jit_browser_cache: None,
             cosim: None,
             tools: Default::default(),
@@ -765,6 +786,10 @@ impl WasmSimulator {
             arch: MachineFamily::Pic24,
             esp32_ipi: None,
             jit_browser_enabled: false,
+            #[cfg(feature = "countdown-probe")]
+            countdown_next_cycle: None,
+            #[cfg(feature = "countdown-probe")]
+            countdown_invalid: false,
             jit_browser_cache: None,
             cosim: None,
             tools: Default::default(),
@@ -950,6 +975,10 @@ impl WasmSimulator {
             arch: MachineFamily::RiscV,
             esp32_ipi: None,
             jit_browser_enabled: false,
+            #[cfg(feature = "countdown-probe")]
+            countdown_next_cycle: None,
+            #[cfg(feature = "countdown-probe")]
+            countdown_invalid: false,
             jit_browser_cache: None,
             cosim: None,
             tools: Default::default(),
@@ -1118,6 +1147,10 @@ impl WasmSimulator {
             arch: MachineFamily::RiscV,
             esp32_ipi: None,
             jit_browser_enabled: false,
+            #[cfg(feature = "countdown-probe")]
+            countdown_next_cycle: None,
+            #[cfg(feature = "countdown-probe")]
+            countdown_invalid: false,
             jit_browser_cache: None,
             cosim: None,
             tools: Default::default(),
@@ -1208,6 +1241,10 @@ impl WasmSimulator {
             arch: MachineFamily::RiscV,
             esp32_ipi: None,
             jit_browser_enabled: false,
+            #[cfg(feature = "countdown-probe")]
+            countdown_next_cycle: None,
+            #[cfg(feature = "countdown-probe")]
+            countdown_invalid: false,
             jit_browser_cache: None,
             cosim: None,
             tools: Default::default(),
@@ -1283,6 +1320,10 @@ impl WasmSimulator {
             arch: MachineFamily::Xtensa,
             esp32_ipi: None,
             jit_browser_enabled: false,
+            #[cfg(feature = "countdown-probe")]
+            countdown_next_cycle: None,
+            #[cfg(feature = "countdown-probe")]
+            countdown_invalid: false,
             jit_browser_cache: None,
             cosim: None,
             tools: Default::default(),
@@ -1472,6 +1513,10 @@ impl WasmSimulator {
             arch: MachineFamily::Xtensa,
             esp32_ipi: None,
             jit_browser_enabled: false,
+            #[cfg(feature = "countdown-probe")]
+            countdown_next_cycle: None,
+            #[cfg(feature = "countdown-probe")]
+            countdown_invalid: false,
             jit_browser_cache: None,
             cosim: None,
             tools: Default::default(),
@@ -1583,6 +1628,10 @@ impl WasmSimulator {
             arch: MachineFamily::Xtensa,
             esp32_ipi: None,
             jit_browser_enabled: false,
+            #[cfg(feature = "countdown-probe")]
+            countdown_next_cycle: None,
+            #[cfg(feature = "countdown-probe")]
+            countdown_invalid: false,
             jit_browser_cache: None,
             cosim: None,
             tools: Default::default(),
@@ -1809,6 +1858,109 @@ impl WasmSimulator {
         let machine = self.machine.as_ref().unwrap();
         let pc = machine.cpu.get_pc();
         debug_writes::decode_at(self, pc)
+    }
+
+    /// Start an opt-in counter window. Progress is measured by the machine clock.
+    #[cfg(feature = "countdown-probe")]
+    #[wasm_bindgen]
+    pub fn diagnostic_countdown_begin(&mut self, requested: u32, detail_cap: u32) -> bool {
+        if self.countdown_next_cycle.is_some() {
+            return false;
+        }
+        let now = self.machine().total_cycles;
+        let started = self
+            .machine()
+            .cpu
+            .as_any_mut()
+            .and_then(|cpu| cpu.downcast_mut::<labwired_core::cpu::CortexM>())
+            .is_some_and(|cpu| {
+                cpu.begin_countdown_window(u64::from(requested), u64::from(detail_cap))
+            });
+        if started {
+            self.countdown_next_cycle = Some(now);
+            self.countdown_invalid = false;
+        }
+        started
+    }
+
+    /// Advance through the real simulator path, counting only measured clock progress.
+    #[cfg(feature = "countdown-probe")]
+    #[wasm_bindgen]
+    pub fn diagnostic_countdown_advance(&mut self, budget: u32) -> Result<u32, JsValue> {
+        let expected = self
+            .countdown_next_cycle
+            .ok_or_else(|| JsValue::from_str("no window"))?;
+        let before = self.machine().total_cycles;
+        if before != expected || self.countdown_invalid {
+            self.countdown_invalid = true;
+            return Err(JsValue::from_str(
+                "window advanced outside diagnostic driver",
+            ));
+        }
+        // Use the same engine paths as step_batch, but do not turn a partial
+        // machine error into success: an errored window must remain invalid.
+        let result: Result<u32, AdvanceFailure> = if self.jit_browser_enabled
+            && self.arch == MachineFamily::CortexM
+            && self.cosim.is_none()
+        {
+            self.step_batch_cortex_m_jit(budget)
+        } else {
+            self.advance_machine(AdvanceRequest::run(Some(u64::from(budget))))
+                .map(|report| report.elapsed_cycles.min(u64::from(u32::MAX)) as u32)
+        };
+        let after = self.machine().total_cycles;
+        let Some(elapsed) = after.checked_sub(before) else {
+            self.countdown_invalid = true;
+            return Err(JsValue::from_str("machine cycle counter moved backwards"));
+        };
+        self.countdown_next_cycle = Some(after);
+        let updated = self
+            .machine()
+            .cpu
+            .as_any_mut()
+            .and_then(|cpu| cpu.downcast_mut::<labwired_core::cpu::CortexM>())
+            .is_some_and(|cpu| cpu.countdown_window_progress(elapsed));
+        match result {
+            Ok(n) if updated && u64::from(n) == elapsed => Ok(n),
+            Ok(_) => {
+                self.countdown_invalid = true;
+                Err(JsValue::from_str("driver progress mismatch"))
+            }
+            Err(e) => {
+                self.countdown_invalid = true;
+                Err(e.into_js())
+            }
+        }
+    }
+
+    /// Return the window even when interrupted; invalid progress cannot pass.
+    #[cfg(feature = "countdown-probe")]
+    #[wasm_bindgen]
+    pub fn diagnostic_countdown_end(&mut self) -> Result<JsValue, JsValue> {
+        let expected = self
+            .countdown_next_cycle
+            .take()
+            .ok_or_else(|| JsValue::from_str("no window"))?;
+        let current = self.machine().total_cycles;
+        let valid_driver = countdown_driver_valid(Some(expected), current, self.countdown_invalid);
+        let p = self
+            .machine()
+            .cpu
+            .as_any_mut()
+            .and_then(|cpu| cpu.downcast_mut::<labwired_core::cpu::CortexM>())
+            .and_then(|cpu| cpu.end_countdown_window())
+            .ok_or_else(|| JsValue::from_str("countdown probe missing"))?;
+        // Decimal strings preserve u64 precision in JavaScript.
+        let value = serde_json::json!({
+            "requestedCycles": p.requested_cycles.to_string(),
+            "completedCycles": p.completed_cycles.to_string(),
+            "attempts": p.attempts.to_string(), "returns": p.returns.to_string(),
+            "retired": p.retired.to_string(), "detailCap": p.detail_limit.to_string(),
+            "detailRecorded": p.detail_recorded.to_string(), "detailExhausted": p.detail_exhausted(),
+            "overflow": p.overflow, "driverValid": valid_driver,
+            "complete": valid_driver && p.complete(),
+        });
+        serde_wasm_bindgen::to_value(&value).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     /// Execute up to max_cycles steps, returning the number actually executed.
@@ -2620,6 +2772,10 @@ mod machine_advance_tests {
             arch,
             esp32_ipi: None,
             jit_browser_enabled: false,
+            #[cfg(feature = "countdown-probe")]
+            countdown_next_cycle: None,
+            #[cfg(feature = "countdown-probe")]
+            countdown_invalid: false,
             jit_browser_cache: None,
             cosim: None,
             tools: Default::default(),
@@ -2634,6 +2790,43 @@ mod machine_advance_tests {
         }
         cpu.set_pc(0);
         wrap_test_machine(cpu, bus, MachineFamily::CortexM)
+    }
+
+    #[cfg(feature = "countdown-probe")]
+    #[test]
+    fn countdown_driver_uses_real_machine_progress_and_detects_outside_steps() {
+        let mut sim = arm_simulator();
+        let before = sim.machine().total_cycles;
+        assert!(sim.diagnostic_countdown_begin(8, 1));
+        assert!(!sim.diagnostic_countdown_begin(8, 1));
+        let executed = sim.diagnostic_countdown_advance(8).unwrap();
+        let after = sim.machine().total_cycles;
+        assert_eq!(after - before, u64::from(executed));
+        let cpu = sim
+            .machine()
+            .cpu
+            .as_any_mut()
+            .unwrap()
+            .downcast_mut::<labwired_core::cpu::CortexM>()
+            .unwrap();
+        let window = cpu.countdown_window().unwrap();
+        assert_eq!(window.completed_cycles, after - before);
+        assert!(!window.complete()); // Ending is explicit; a live window cannot pass.
+        assert!(countdown_driver_valid(
+            sim.countdown_next_cycle,
+            after,
+            false
+        ));
+        assert!(!countdown_driver_valid(
+            sim.countdown_next_cycle,
+            after + 1,
+            false
+        ));
+        assert!(!countdown_driver_valid(
+            sim.countdown_next_cycle,
+            after,
+            true
+        ));
     }
 
     fn configured_arm_simulator() -> WasmSimulator {

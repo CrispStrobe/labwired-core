@@ -20,6 +20,9 @@ crate-type = ["cdylib"]
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = ["-Oz", "--strip-debug", "--strip-producers", "--enable-bulk-memory", "--enable-simd", "--enable-nontrapping-float-to-int"]
 
+[features]
+countdown-probe = ["labwired-core/cortex-m-countdown-probe"]
+
 [dependencies]
 wasm-bindgen = "0.2.92"
 # #124 Phase 4: js-sys exposes `js_sys::WebAssembly::{Module, Instance}` used

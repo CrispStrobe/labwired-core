@@ -1534,6 +1534,24 @@ jobs:
       - name: Unit tests (browser layer)
         run: cargo test -p labwired-wasm --lib
 
+      # This opt-in feature variant may need a fresh Core compile even when the
+      # browser cache is warm. These host tests are not a WASM motion run.
+      - name: Countdown diagnostic controls (native)
+        shell: bash
+        run: |
+          set -euo pipefail
+          core_log="$(mktemp)"
+          wasm_log="$(mktemp)"
+          trap 'rm -f "$core_log" "$wasm_log"' EXIT
+          scripts/ci/cargo-test-nonvacuous.sh -p labwired-core \
+            --features event-scheduler,jit-framework,cortex-m-countdown-probe \
+            --test countdown_probe_controls -- --nocapture | tee "$core_log"
+          scripts/ci/cargo-test-nonvacuous.sh -p labwired-wasm \
+            --features countdown-probe --lib \
+            countdown_driver_uses_real_machine_progress_and_detects_outside_steps \
+            -- --nocapture | tee "$wasm_log"
+          python3 scripts/ci/check-countdown-results.py "$core_log" "$wasm_log"
+
       # ── THE BROWSER JIT GATE ─────────────────────────────────────────────
       #
       # Everything above tests crates/wasm on the HOST. The opt-in browser JIT

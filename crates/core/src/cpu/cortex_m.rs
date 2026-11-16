@@ -24,6 +24,10 @@ use std::sync::Arc;
 #[path = "cortex_m/exec/mod.rs"]
 mod exec;
 
+#[cfg(feature = "cortex-m-countdown-probe")]
+#[path = "cortex_m/countdown_probe.rs"]
+pub mod countdown_probe;
+
 #[path = "cortex_m/semihost.rs"]
 pub mod semihost;
 
@@ -99,6 +103,8 @@ struct T16FastBlock {
 
 #[derive(Debug)]
 pub struct CortexM {
+    #[cfg(feature = "cortex-m-countdown-probe")]
+    countdown_probe: Option<countdown_probe::CountdownWindow>,
     pub r0: u32,
     pub r1: u32,
     pub r2: u32,
@@ -306,6 +312,8 @@ pub struct CortexM {
 impl Default for CortexM {
     fn default() -> Self {
         Self {
+            #[cfg(feature = "cortex-m-countdown-probe")]
+            countdown_probe: None,
             r0: 0,
             r1: 0,
             r2: 0,
@@ -700,7 +708,15 @@ impl CortexM {
             fast = self.run_t16_self_branch(max_count);
         }
         if fast == 0 && op & 0xf8ff == 0x3801 {
+            #[cfg(feature = "cortex-m-countdown-probe")]
+            if let Some(probe) = &mut self.countdown_probe {
+                probe.record_attempt();
+            }
             fast = self.run_t16_countdown(max_count);
+            #[cfg(feature = "cortex-m-countdown-probe")]
+            if let Some(probe) = &mut self.countdown_probe {
+                probe.record_return(fast);
+            }
         }
         if fast == 0
             && (op & 0xf800 == 0x9000
