@@ -125,6 +125,8 @@ impl SystemBus {
         self.refresh_legacy_tick_peer_write_observers(idx);
         self.refresh_bus_tick_index(idx);
         self.sync_timer_kernel_clocks(idx);
+        self.sync_peripheral_reset_holds(idx);
+        self.deliver_exti_line_edges(idx);
         self.reconcile_irq_levels_after_write(idx);
     }
 
@@ -365,14 +367,24 @@ impl SystemBus {
         } else {
             return None;
         };
+        let existing = (0..width as u64).fold(0u32, |acc, i| {
+            let byte = self
+                .flash
+                .read_u8(self.flash.base_addr + off + i)
+                .unwrap_or(0xFF);
+            acc | (u32::from(byte) << (8 * i))
+        });
         let outcome = self
             .peripherals
             .get_mut(idx)?
             .dev
-            .flash_cpu_store(off, width, value);
+            .flash_cpu_store(off, width, value, existing);
         match outcome {
             crate::FlashStoreOutcome::Commit => None,
             crate::FlashStoreOutcome::Consumed => Some(Ok(())),
+            crate::FlashStoreOutcome::Unsupported(reason) => Some(Err(
+                crate::SimulationError::Other(format!("flash store at {addr:#x}: {reason}")),
+            )),
             crate::FlashStoreOutcome::Program => {
                 for i in 0..width as u64 {
                     let a = self.flash.base_addr + off + i;
@@ -688,6 +700,7 @@ impl crate::Bus for SystemBus {
             let mmio_addr = self.resolve_ns_alias(addr);
             if let Some(idx) = self.find_peripheral_index(mmio_addr) {
                 if !self.is_peripheral_clocked(idx) {
+                    self.note_gated_read(idx, mmio_addr - self.peripherals[idx].base);
                     return Ok(0); // unclocked peripheral reads 0 (silicon gating)
                 }
                 let p = &self.peripherals[idx];
@@ -704,6 +717,7 @@ impl crate::Bus for SystemBus {
             let mmio_addr = self.resolve_ns_alias(addr);
             if let Some(idx) = self.find_peripheral_index(mmio_addr) {
                 if !self.is_peripheral_clocked(idx) {
+                    self.note_gated_read(idx, mmio_addr - self.peripherals[idx].base);
                     return Ok(0); // unclocked peripheral reads 0 (silicon gating)
                 }
                 let p = &self.peripherals[idx];
@@ -1022,6 +1036,7 @@ impl crate::Bus for SystemBus {
             let mmio_addr = self.resolve_ns_alias(addr);
             if let Some(idx) = self.find_peripheral_index(mmio_addr) {
                 if !self.is_peripheral_clocked(idx) {
+                    self.note_gated_read(idx, mmio_addr - self.peripherals[idx].base);
                     return Ok(0);
                 }
                 let off = mmio_addr - self.peripherals[idx].base;
@@ -1034,6 +1049,7 @@ impl crate::Bus for SystemBus {
             let mmio_addr = self.resolve_ns_alias(addr);
             if let Some(idx) = self.find_peripheral_index(mmio_addr) {
                 if !self.is_peripheral_clocked(idx) {
+                    self.note_gated_read(idx, mmio_addr - self.peripherals[idx].base);
                     return Ok(0);
                 }
                 let off = mmio_addr - self.peripherals[idx].base;
@@ -1151,6 +1167,7 @@ impl crate::Bus for SystemBus {
             let mmio_addr = self.resolve_ns_alias(addr);
             if let Some(idx) = self.find_peripheral_index(mmio_addr) {
                 if !self.is_peripheral_clocked(idx) {
+                    self.note_gated_read(idx, mmio_addr - self.peripherals[idx].base);
                     return Ok(0);
                 }
                 let off = mmio_addr - self.peripherals[idx].base;
@@ -1163,6 +1180,7 @@ impl crate::Bus for SystemBus {
             let mmio_addr = self.resolve_ns_alias(addr);
             if let Some(idx) = self.find_peripheral_index(mmio_addr) {
                 if !self.is_peripheral_clocked(idx) {
+                    self.note_gated_read(idx, mmio_addr - self.peripherals[idx].base);
                     return Ok(0);
                 }
                 let off = mmio_addr - self.peripherals[idx].base;
@@ -1205,6 +1223,7 @@ impl crate::Bus for SystemBus {
         let mmio_addr = self.resolve_ns_alias(addr);
         let idx = self.find_peripheral_index(mmio_addr)?;
         if !self.is_peripheral_clocked(idx) {
+            self.note_gated_read(idx, mmio_addr - self.peripherals[idx].base);
             return Some(Ok(0));
         }
         let off = mmio_addr - self.peripherals[idx].base;
@@ -1350,6 +1369,8 @@ impl crate::Bus for SystemBus {
                 self.refresh_legacy_tick_peer_write_observers(idx);
                 self.refresh_bus_tick_index(idx);
                 self.sync_timer_kernel_clocks(idx);
+                self.sync_peripheral_reset_holds(idx);
+                self.deliver_exti_line_edges(idx);
                 // Level reconcile at the write choke (single- and multi-line
                 // level sources): see `reconcile_irq_levels_after_write`.
                 self.reconcile_irq_levels_after_write(idx);
@@ -1555,6 +1576,8 @@ impl crate::Bus for SystemBus {
                 self.refresh_legacy_tick_peer_write_observers(idx);
                 self.refresh_bus_tick_index(idx);
                 self.sync_timer_kernel_clocks(idx);
+                self.sync_peripheral_reset_holds(idx);
+                self.deliver_exti_line_edges(idx);
                 // Level reconcile at the write choke (single- and multi-line
                 // level sources): see `reconcile_irq_levels_after_write`.
                 self.reconcile_irq_levels_after_write(idx);

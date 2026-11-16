@@ -114,7 +114,7 @@ same fields but never their source, chip YAML, binary or build paths.
 | efr32mg26 | open | L2 | 34 | 1513.7 | 2.2 | ≥1× (CI) | [doc](docs/boards/efr32mg26.md) |
 | atmega328p | open | L1 | 7 | 1044.8 | 7.6 | ≥1× (CI) | — |
 | atmega328pb | open | L1 | 8 | 1026.4 | 7.6 | ≥1× (CI) | — |
-| atmega2560 | open | L1 | 15 | — | — | ≥1× (CI) | — |
+| atmega2560 | open | L1 | 18 | — | — | ≥1× (CI) | — |
 | atmega2561 | open | L1 | 11 | — | — | ≥1× (CI) | [doc](docs/boards/atmega2561.md) |
 | atmega4809 | open | L0 | 19 | — | — | ≥1× (CI) | — |
 | atmega32u4 | open | L0 | 8 | 1020.0 | 7.7 | ≥1× (CI) | — |
@@ -124,7 +124,7 @@ same fields but never their source, chip YAML, binary or build paths.
 | atsamd51 | open | L1 | 27 | 1240.0 | 1.4 | ≥1× (CI) | — |
 | samd51-no-asf-simulation | open | L0 | 32 | 1339.0 | 1.9 | ≥1× (CI) | — |
 | atsamd51-pybadge | open | L0 | 28 | 1251.8 | 1.5 | ≥1× (CI) | — |
-| ra4m1 | open | L1 | 7 | 895.0 | 1.4 | ≥1× (CI) | — |
+| ra4m1 | open | L1 | 34 | 895.0 | 1.4 | ≥1× (CI) | — |
 | imxrt1064 | open | L1 | 6 | 895.0 | 1.4 | ≥1× (CI) | [doc](docs/boards/imxrt1064.md) |
 | stm32f746 | open | L1 | 17 | 895.0 | 1.4 | ≥1× (CI) | [doc](docs/boards/stm32f746.md) |
 | stm32g071 | open | L1 | 41 | 937.4 | 1.6 | ≥1× (CI) | — |
@@ -140,11 +140,14 @@ same fields but never their source, chip YAML, binary or build paths.
 | pic24f16ka101 | open | L1 | 3 | — | — | ≥1× (CI) | — |
 | pic24f16ka102 | open | L1 | 3 | — | — | ≥1× (CI) | — |
 | ch32v003f4p6 | open | L1 | 5 | — | — | ≥1× (CI) | — |
+| ch32l103c8t6 | open | L1 | 7 | — | — | ≥1× (CI) | — |
 | ch32v005f6p6 | open | L1 | 6 | — | — | ≥1× (CI) | — |
+| ch32x035c8t6 | open | L1 | 5 | — | — | ≥1× (CI) | — |
 | ch32v006k8u6 | open | L1 | 6 | — | — | ≥1× (CI) | — |
 | ch32v203c8t6 | open | L1 | 7 | — | — | ≥1× (CI) | — |
 | ch32v003f4u6 | open | L1 | 5 | — | — | ≥1× (CI) | — |
 | ch32v003a4m6 | open | L1 | 5 | — | — | ≥1× (CI) | — |
+| at32f421g8u7 | open | L1 | 22 | 982.3 | 1.5 | ≥1× (CI) | [doc](docs/boards/at32f421g8u7.md) |
 | ch32v003j4m6 | open | L1 | 5 | — | — | ≥1× (CI) | — |
 | esp32h2 | open | L0 | 3 | — | 2.4 | ≥1× (CI) | — |
 | esp32c5 | open | L0 | 1 | — | 2.2 | ≥1× (CI) | — |
