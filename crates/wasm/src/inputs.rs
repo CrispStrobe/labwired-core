@@ -1214,6 +1214,10 @@ board_io:
             arch: labwired_core::system::arch_policy::MachineFamily::RiscV,
             esp32_ipi: None,
             jit_browser_enabled: false,
+            #[cfg(feature = "countdown-probe")]
+            countdown_next_cycle: None,
+            #[cfg(feature = "countdown-probe")]
+            countdown_invalid: false,
             jit_browser_cache: None,
             cosim: None,
             tools: Default::default(),
