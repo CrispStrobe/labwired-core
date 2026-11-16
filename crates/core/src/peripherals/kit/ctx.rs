@@ -579,6 +579,9 @@ impl<'a> AttachCtx<'a> {
         {
             return None;
         }
+        // Match the upstream parser's numeric label bound before consulting
+        // an explicit alias; a declared PA256 must not wrap into a valid pad.
+        let _: u8 = digits.parse().ok()?;
         let (_, bit) = self.resolve_pin_odr(label)?;
         u8::try_from(usize::from(port as u8 - b'A') * 32 + usize::from(bit)).ok()
     }

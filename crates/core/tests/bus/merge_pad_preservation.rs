@@ -150,6 +150,7 @@ fn other_port_aliases_need_explicit_board_declarations_and_valid_labels() {
         ("PA31", "declared-sam-port", 31),
         ("PA-1", "declared-sam-port", 1),
         ("PA+1", "declared-sam-port", 1),
+        ("PA256", "declared-sam-port", 1),
     ]);
     add(
         &mut bus,
@@ -160,7 +161,7 @@ fn other_port_aliases_need_explicit_board_declarations_and_valid_labels() {
     assert_eq!(ctx.parse_gpio_pin("PA15"), Some(15));
     assert_eq!(ctx.parse_gpio_pin("PB0"), Some(32));
     assert_eq!(ctx.parse_gpio_pin("PA31"), Some(31));
-    for invalid in ["PC0", "PA32", "PA-1", "PA+1"] {
+    for invalid in ["PC0", "PA32", "PA-1", "PA+1", "PA256"] {
         assert_eq!(ctx.parse_gpio_pin(invalid), None, "{invalid}");
     }
 }
