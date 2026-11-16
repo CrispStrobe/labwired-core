@@ -467,10 +467,25 @@ class DiagnosticsControls(unittest.TestCase):
         successor = json.loads(successor_path.read_text())
         self.assertEqual({'scripts/perf/board_perf.py', 'scripts/perf/baselines.json'},
                          {entry['path'] for entry in successor['source_transitions']})
+        next_path = root / 'scripts/ci/fixtures/cortex_m_perf_successor_a4b097c0.json'
+        self.assertEqual(hashlib.sha256(next_path.read_bytes()).hexdigest(),
+                         'e8b5e6c80a21fce60b1f30d7e6a36aa87f054398c848c0432c5047fc2db0633d', 'reviewed a4b097c0 successor fixture')
+        next_successor = json.loads(next_path.read_text())
+        predecessor_sources = {}
+        for entry in next_successor['source_transitions']:
+            path = entry['path']
+            current_source = (root/path).read_text()
+            self.assertEqual(entry['successor_sha256'], hashlib.sha256(current_source.encode()).hexdigest(), path)
+            restored = current_source
+            for replacement in entry['replacements']:
+                self.assertEqual(restored.count(replacement['after']), 1, path)
+                restored = restored.replace(replacement['after'], replacement['before'], 1)
+            self.assertEqual(entry['predecessor_sha256'], hashlib.sha256(restored.encode()).hexdigest(), path)
+            predecessor_sources[path] = restored.encode()
         for entry in successor['source_transitions']:
             path = entry['path']
             self.assertEqual(manifest['source_sha256'][path], entry['predecessor_sha256'], path)
-            successor_bytes = (root/path).read_bytes()
+            successor_bytes = predecessor_sources[path]
             self.assertEqual(entry['successor_sha256'], hashlib.sha256(successor_bytes).hexdigest(), path)
             restored = successor_bytes.decode('utf-8')
             for replacement in entry['replacements']:
@@ -535,7 +550,8 @@ class DiagnosticsControls(unittest.TestCase):
         paths = ('scripts/ci/cortex_m_perf_evidence.py', '.github/workflows/core-identity.yml',
                  'scripts/perf/board_perf.py', 'scripts/perf/baselines.json',
                  'scripts/ci/fixtures/cortex_m_perf_preservation_393b5310.json',
-                 'scripts/ci/fixtures/cortex_m_perf_successor_10284b00.json')
+                 'scripts/ci/fixtures/cortex_m_perf_successor_10284b00.json',
+                 'scripts/ci/fixtures/cortex_m_perf_successor_a4b097c0.json')
         for path in paths:
             target = cold / path
             target.parent.mkdir(parents=True, exist_ok=True)

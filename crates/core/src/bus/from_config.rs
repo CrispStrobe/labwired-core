@@ -656,6 +656,10 @@ impl SystemBus {
                 .or_else(|| crate::peripherals::esp32s3::factory::try_build(&canonical_type, p_cfg))
                 .or_else(|| crate::peripherals::esp32c3::factory::try_build(&canonical_type, p_cfg))
                 .or_else(|| crate::peripherals::esp32c6::factory::try_build(&canonical_type, p_cfg))
+                .or_else(|| crate::peripherals::esp32c5::try_build(&canonical_type, p_cfg))
+                .or_else(|| crate::peripherals::esp32c61::try_build(&canonical_type, p_cfg))
+                .or_else(|| crate::peripherals::esp32h2::try_build(&canonical_type, p_cfg))
+                .or_else(|| crate::peripherals::esp32p4::try_build(&canonical_type, p_cfg))
                 // ESP32-classic was missing from this chain. Its factory has
                 // always existed with all 14 `esp32_*` types, but only the
                 // Xtensa builder called it, so a plain `from_config` bus --
@@ -1513,6 +1517,8 @@ impl SystemBus {
         bus.wire_stm32_timer_output_pads();
         // SAMD51 TC waveform outputs onto their PMUX-E pads (samd51_tc only).
         bus.wire_samd51_tc_output_pads();
+        // SAMD21 TCC WO[x] onto their PMUX-E/F pads (samd21_tcc only).
+        bus.wire_samd21_tcc_output_pads();
         // RA GPT GTIOCnA/B onto the pads the chip YAML names (PSEL 00011).
         bus.wire_ra_gpt_output_pads();
         // Board wires from an analog output (a DAC pin) to an ADC input.

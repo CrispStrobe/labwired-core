@@ -501,13 +501,48 @@ impl<'a> AttachCtx<'a> {
 
     /// Parse a GPIO pad label into a pin number for bit-bang devices
     /// (`Transport::GpioGroup`). Accepts ESP32/S3 spellings (`GPIO15`, `IO4`,
-    /// bare `15`) used by the ESP GPIO edge-observer path.
+    /// bare `15`) used by the ESP GPIO edge-observer path, STM32 port pads, and
+    /// port-style pads the board declares (SAMD `PA15`, AVR `PD6`).
     pub fn parse_gpio_pin(&self, label: &str) -> Option<u8> {
         // AVR, SAM and STM32 share PA/PB spellings with different widths.
         // Admit the concrete named model before encoding a port-qualified pad;
         // an unknown PB0 must never fall through as ESP GPIO0.
         let label = label.trim();
         if label.starts_with('P') {
+            let has_known_named_model = label.as_bytes().get(1).is_some_and(|letter| {
+                if !letter.is_ascii_uppercase() {
+                    return false;
+                }
+                let port = *letter - b'A';
+                [
+                    super::pad_label::PadFamily::Stm32,
+                    super::pad_label::PadFamily::Sam,
+                    super::pad_label::PadFamily::Avr,
+                ]
+                .into_iter()
+                .any(|family| {
+                    self.bus
+                        .find_peripheral_index_by_name(&family.instance_name(port))
+                        .is_some_and(|idx| {
+                            let dev = self.bus.peripherals[idx].dev.as_ref();
+                            dev.is_stm32_gpio_port()
+                                || dev.is_sam_gpio_port()
+                                || dev.avr_gpio_pin_count().is_some()
+                        })
+                })
+            });
+            if !has_known_named_model {
+                // Only an explicit board pin declaration may admit a different
+                // port model. The general ODR resolver also guesses canonical
+                // gpio/port names without checking this concrete family; that
+                // fallback must not bypass the refusals above.
+                return self
+                    .bus
+                    .pin_map
+                    .contains_key(&label.to_ascii_uppercase())
+                    .then(|| self.port_pad(label))
+                    .flatten();
+            }
             return super::pad_label::parse_named_pad(label, |family, port, pin| {
                 let name = family.instance_name(port);
                 self.bus
@@ -527,6 +562,28 @@ impl<'a> AttachCtx<'a> {
             });
         }
         SystemBus::parse_esp32s3_gpio_pin(label).or_else(|| SystemBus::parse_esp32_gpio_pin(label))
+    }
+
+    /// Pad number for a port-qualified label (`PA15`, `PD6`) on a family that
+    /// is not STM32: `port letter * 32 + bit`, valid only when the board
+    /// resolves the label to a real output latch (chip pin map, AVR/SAM port
+    /// blocks, ...). None when the board does not declare the pin.
+    fn port_pad(&self, label: &str) -> Option<u8> {
+        let rest = label.strip_prefix('P')?;
+        let mut chars = rest.chars();
+        let port = chars.next()?;
+        let digits = chars.as_str();
+        if !port.is_ascii_uppercase()
+            || digits.is_empty()
+            || !digits.bytes().all(|b| b.is_ascii_digit())
+        {
+            return None;
+        }
+        // Match the upstream parser's numeric label bound before consulting
+        // an explicit alias; a declared PA256 must not wrap into a valid pad.
+        let _: u8 = digits.parse().ok()?;
+        let (_, bit) = self.resolve_pin_odr(label)?;
+        u8::try_from(usize::from(port as u8 - b'A') * 32 + usize::from(bit)).ok()
     }
 
     /// Read a GPIO pin config key (or alternate key / default label) as a pad

@@ -71,6 +71,53 @@ struct Route {
     when_driving: bool,
 }
 
+/// The one rule for which route owns a pad, shared by [`PadRoutes`] and
+/// [`PinRoute::select`] so a listener and a pad read can never disagree.
+/// `view` answers, per route: `(on this pad, selector, conditional, drives)`.
+/// A conditional route wins while its line drives the pad; otherwise the
+/// first ordinary route matching the pad's current selector does.
+#[inline]
+fn select_route<T>(
+    routes: &[T],
+    current: u32,
+    view: impl Fn(&T) -> (bool, Option<u32>, bool, bool),
+) -> Option<&T> {
+    let conditional = routes.iter().find(|r| {
+        let (on_pin, selector, when_driving, drives) = view(r);
+        on_pin && when_driving && selector.is_none_or(|want| want == current) && drives
+    });
+    if conditional.is_some() {
+        return conditional;
+    }
+    routes.iter().find(|r| {
+        let (on_pin, selector, when_driving, _) = view(r);
+        on_pin && !when_driving && selector.is_none_or(|want| want == current)
+    })
+}
+
+/// An owned copy of one [`PadRoutes`] binding, for a consumer that must decide
+/// off the CPU walk (from the wire's own transition) whether the pad currently
+/// selects this wire.
+#[derive(Debug, Clone)]
+pub struct PinRoute {
+    pub cell: Arc<PadLines>,
+    pub line: usize,
+    selector: Option<u32>,
+    when_driving: bool,
+}
+
+impl PinRoute {
+    /// Index of the route that owns the pad when it selects `current`
+    /// (`None`: the pad is plain GPIO), by the same rule as a pad read.
+    pub fn select(routes: &[PinRoute], current: Option<u32>) -> Option<usize> {
+        let current = current?;
+        let hit = select_route(routes, current, |r| {
+            (true, r.selector, r.when_driving, r.cell.drives(r.line))
+        })?;
+        routes.iter().position(|r| std::ptr::eq(r, hit))
+    }
+}
+
 /// Every pad-to-peripheral-wire binding on one GPIO port.
 ///
 /// Empty on a port with no peripheral routed to it, where every operation
@@ -240,33 +287,67 @@ impl PadRoutes {
             return None;
         }
         let current = selector_of(pin)?;
-        // A conditional route that currently drives its pad wins outright.
-        let conditional = self.routes.iter().find_map(|r| {
-            if !r.when_driving || r.pin != pin || !self.cells[r.cell].drives(r.line) {
-                return None;
-            }
-            match r.selector {
-                Some(want) if want != current => None,
-                _ => Some((r, r.line, r.func)),
-            }
-        });
-        if conditional.is_some() {
-            return conditional;
-        }
-        self.routes.iter().find_map(|r| {
-            if r.pin != pin || r.when_driving {
-                return None;
-            }
-            let Some(want) = r.selector else {
-                return Some((r, r.line, r.func));
+        let route = select_route(&self.routes, current, |r| {
+            let selector = if r.span_funcs.is_empty() {
+                r.selector
+            } else {
+                // The family selector chooses a different line within this span.
+                r.selector
+                    .filter(|start| {
+                        current
+                            .checked_sub(*start)
+                            .is_some_and(|k| (k as usize) < r.span_funcs.len())
+                    })
+                    .map(|_| current)
             };
-            if r.span_funcs.is_empty() {
-                return (want == current).then_some((r, r.line, r.func));
-            }
-            let k = current.checked_sub(want)? as usize;
-            let func = *r.span_funcs.get(k)?;
-            Some((r, r.line + k, func))
-        })
+            let in_span = r.span_funcs.is_empty() || selector.is_some();
+            (
+                r.pin == pin && in_span,
+                selector,
+                r.when_driving,
+                self.cells[r.cell].drives(r.line),
+            )
+        })?;
+        let offset = if route.span_funcs.is_empty() {
+            0
+        } else {
+            current.checked_sub(route.selector?)? as usize
+        };
+        let func = if route.span_funcs.is_empty() {
+            route.func
+        } else {
+            *route.span_funcs.get(offset)?
+        };
+        Some((route, route.line + offset, func))
+    }
+
+    /// Every route `pin` can ever take, as owned handles a listener can keep
+    /// (see [`PinRoute`]). Allocating; call when routing is (re)built, not per
+    /// edge.
+    pub fn pin_routes(&self, pin: u8) -> Vec<PinRoute> {
+        self.routes
+            .iter()
+            .filter(|r| r.pin == pin)
+            .flat_map(|r| {
+                (0..r.span_funcs.len().max(1)).filter_map(move |offset| {
+                    let selector = match r.selector {
+                        Some(start) => Some(start.checked_add(offset as u32)?),
+                        None => None,
+                    };
+                    Some(PinRoute {
+                        cell: self.cells[r.cell].clone(),
+                        line: r.line + offset,
+                        selector,
+                        when_driving: r.when_driving,
+                    })
+                })
+            })
+            .collect()
+    }
+
+    /// How many routes are bound; a change means routing was (re)built.
+    pub fn route_count(&self) -> usize {
+        self.routes.len()
     }
 
     /// The live wire level for `pin`, or `None` when no peripheral drives it
@@ -548,6 +629,13 @@ mod tests {
         assert_eq!(routes.level(5, |_| Some(74)), None, "past the span");
         assert_eq!(routes.level(5, |_| Some(70)), None, "before the span");
         assert_eq!(routes.bound_functions(), vec!["CH0", "CH1", "CH2"]);
+        let listeners = routes.pin_routes(5);
+        for offset in 0..3 {
+            let index = PinRoute::select(&listeners, Some(71 + offset)).unwrap();
+            assert_eq!(listeners[index].line, offset as usize);
+        }
+        assert_eq!(PinRoute::select(&listeners, Some(70)), None);
+        assert_eq!(PinRoute::select(&listeners, Some(74)), None);
         let tap = LogicTap::new();
         routes.sync_taps(&tap, &[(5, 9)], |_| Some(73));
         lines.set(&[true, true, true]);
@@ -559,6 +647,24 @@ mod tests {
             vec![(9, true)],
             "the watched pad reports from CH2 only",
         );
+    }
+
+    #[test]
+    fn a_span_at_max_selector_keeps_its_valid_prefix_without_wrapping_listeners() {
+        const PWM: &[&str] = &["CH0", "CH1"];
+        let lines = Arc::new(PadLines::new(PWM, &[true, false]));
+        let mut routes = PadRoutes::new();
+        routes.bind_span(&lines, 5, u32::MAX, 0, PWM);
+        assert_eq!(routes.level(5, |_| Some(u32::MAX)), Some(true));
+        assert_eq!(routes.func(5, |_| Some(u32::MAX)), Some("CH0"));
+        let listeners = routes.pin_routes(5);
+        assert_eq!(listeners.len(), 1);
+        let index = PinRoute::select(&listeners, Some(u32::MAX)).unwrap();
+        assert_eq!(listeners[index].line, 0);
+        for selector in [0, u32::MAX - 1] {
+            assert_eq!(routes.level(5, |_| Some(selector)), None);
+            assert_eq!(PinRoute::select(&listeners, Some(selector)), None);
+        }
     }
 
     #[test]

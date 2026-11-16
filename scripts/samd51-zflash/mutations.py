@@ -96,9 +96,9 @@ def main():
   for name in MUTATIONS:
    raw=mutate_source(original,name);p.write_bytes(raw)
    (out/(name+'.diff')).write_bytes(subprocess.check_output(['git','diff','--','crates/core/src/bus/samd51_storage.rs'],cwd=ROOT))
-   command=['cargo','test','--locked','-p','labwired-core','--test','samd51_zflash_guest']
+   command=['cargo','test','--locked','-p','labwired-core','--test','samd']
    if profile!='default':command+=['--features',profile]
-   command+=['--','--ignored','--exact','actual_zflash_driver_program_erase_and_refusals','--nocapture']
+   command+=['--','--ignored','--exact','samd51_zflash_guest::actual_zflash_driver_program_erase_and_refusals','--nocapture']
    result=subprocess.run(command,cwd=ROOT,env={**os.environ,'ZFLASH_MUTANT':name},capture_output=True,timeout=600)
    (out/(name+'.stdout')).write_bytes(result.stdout);(out/(name+'.stderr')).write_bytes(result.stderr)
    marker=b'ZFLASH_MUTANT_WRONG_ERASE ' if name=='omit-erase-commit' else b'ZFLASH_MUTANT_WRONG_PROGRAM '

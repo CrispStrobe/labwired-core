@@ -58,6 +58,7 @@ on:
   # The cheap scope job selects runtime/build/perf changes and preserves the
   # existing owned upstream-sync branch admission. Other PRs skip the build.
   pull_request:
+    types: [opened, synchronize, reopened, labeled, ready_for_review]
     branches:
       - main
   schedule:
@@ -75,8 +76,9 @@ on:
         default: ''
 
 concurrency:
-  group: core-perf-${{ github.ref }}
-  cancel-in-progress: true
+  # Unrelated labels must not cancel an existing measurement.
+  group: core-perf-${{ github.ref }}${{ github.event.action == 'labeled' && github.event.label.name != 'perf' && '-other-label' || '' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
