@@ -867,6 +867,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       # Match the default-member child and existing push-to-main cache seed.
       # Neither PR child writes a new cache or changes its feature set.
       - name: Install Rust
