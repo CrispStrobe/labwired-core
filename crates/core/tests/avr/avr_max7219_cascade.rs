@@ -382,13 +382,17 @@ fn avr_guest_mixed_bus_keeps_real_slave_commands_intact_and_ignores_cs_high() {
                 0x40, 0, 0, 0, 0, 0x95, 0xFF, 0xFF, 0x48, 0, 0, 1, 0xAA, 0x87, 0xFF, 0xFF, 0xFF,
                 0xFF, 0xFF, 0xFF,
             ],
-            &[0x77, 0, 0, 0, 0, 0, 0xFF, 0xFF],
-            // CMD55 above arms ACMD41. Two HCS polls leave idle if this
-            // CS-high sequence leaks; one arg=0 poll would leave idle set
-            // even when received and would not prove deselection.
+            // Observe R1 through CMD58, which does not arm APP_CMD. Repeating
+            // CMD55 would turn the second read into illegal ACMD55 even when
+            // the deselected write was correctly ignored. CS release drops
+            // the unused OCR bytes after we read the R1 status.
+            &[0x7A, 0, 0, 0, 0, 0, 0xFF, 0xFF],
+            // Each ACMD41 needs its own preceding CMD55. Two HCS polls leave
+            // idle if this CS-high sequence leaks; one arg=0 poll would leave
+            // idle set even when received and would not prove deselection.
             &[
-                0x69, 0x40, 0, 0, 0, 0, 0xFF, 0xFF, 0x77, 0, 0, 0, 0, 0, 0xFF, 0xFF, 0x69, 0x40, 0,
-                0, 0, 0, 0xFF, 0xFF,
+                0x77, 0, 0, 0, 0, 0, 0xFF, 0xFF, 0x69, 0x40, 0, 0, 0, 0, 0xFF, 0xFF, 0x77, 0, 0, 0,
+                0, 0, 0xFF, 0xFF, 0x69, 0x40, 0, 0, 0, 0, 0xFF, 0xFF,
             ],
             1,
         ),

@@ -859,10 +859,18 @@ jobs:
     # dependencies; the workspace crates always rebuild), then the guest
     # steps follow. 30 min cancelled it mid-compile; this is a hang guard.
     timeout-minutes: 45
+    env:
+      # Record successful real compiler outputs without changing its arguments.
+      RUSTC_WRAPPER: ${{ github.workspace }}/scripts/ci/native_test_bundle.py
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
       # Match the default-member child and existing push-to-main cache seed.
       # Neither PR child writes a new cache or changes its feature set.
@@ -1017,6 +1025,23 @@ jobs:
         run: |
           cargo test -p nrf-softdevice-hle --features capi
           cargo rustc -p nrf-softdevice-hle --features capi --crate-type cdylib
+
+      - name: Retain source-bound native feature-off replay inputs
+        id: native_replay_pack
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/native_test_bundle.py pack feature-off native-feature-off.tar.gz ${{ job.status != 'success' && '--available' || '' }}
+
+      - name: Upload native feature-off replay inputs
+        if: ${{ !cancelled() && steps.native_replay_pack.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-feature-off-replay
+          path: |
+            native-feature-off.tar.gz
+            native-feature-off.tar.gz.manifest.json
+            native-feature-off.tar.gz.sha256
+          retention-days: 1
+          if-no-files-found: error
 
   # Per-chip FEATURE-OFF guests, moved off the PR path on 2026-11-13.
   #
@@ -2118,6 +2143,8 @@ jobs:
     # Tighten to measured x1.5 once there is data; a timeout that cannot fit
     # the work it names is a gate that fails for the wrong reason.
     timeout-minutes: 45
+    env:
+      RUSTC_WRAPPER: ${{ github.workspace }}/scripts/ci/native_test_bundle.py
     strategy:
       # A red shard must not cancel its siblings: their reports are what tell
       # the aggregate (and the human) whether the red is new or known.
@@ -2249,6 +2276,24 @@ jobs:
           # One day: the report matters for the aggregate run minutes from
           # now, not for archaeology.
           retention-days: 1
+
+      # One copy is sufficient: every shard builds the same full workspace.
+      - name: Retain source-bound native workspace replay inputs
+        id: native_replay_pack
+        if: ${{ !cancelled() && matrix.shard == 2 }}
+        run: python3 scripts/ci/native_test_bundle.py pack workspace native-workspace.tar.gz ${{ job.status != 'success' && '--available' || '' }}
+
+      - name: Upload native workspace replay inputs
+        if: ${{ !cancelled() && matrix.shard == 2 && steps.native_replay_pack.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-workspace-replay
+          path: |
+            native-workspace.tar.gz
+            native-workspace.tar.gz.manifest.json
+            native-workspace.tar.gz.sha256
+          retention-days: 1
+          if-no-files-found: error
 
   pr-workspace-tests-aggregate:
     # The single stable context this lane reports. This is the name to add to
