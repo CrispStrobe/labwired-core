@@ -136,7 +136,7 @@ class MutationRunnerTests(unittest.TestCase):
             self.assertEqual(calls, list(M.MUTATIONS))
             self.assertTrue((root / "out/mutation-report.json").is_file())
 
-    def test_exact_guest_filter_resolves_in_the_grouped_binary(self):
+    def test_exact_guest_filter_resolves_in_the_grouped_target(self):
         group = M.ROOT / "crates/core/tests/samd/main.rs"
         guest = group.with_name("samd51_zflash_guest.rs")
         self.assertIn("mod samd51_zflash_guest;", group.read_text())
