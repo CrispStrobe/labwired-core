@@ -1,8 +1,28 @@
-# Board validation record migrated from both fork and upstream registries.
-id: atsamd21g18a
-doc: docs/boards/atsamd21g18a.md
+
 chip: configs/chips/atsamd21g18a.yaml
-tier: sim-validated
+doc: docs/boards/atsamd21g18a.md
+id: atsamd21g18a
+models:
+- crates/core/src/cpu/cortex_m.rs
+- crates/core/src/decoder/arm.rs
+- crates/core/src/peripherals/gpio.rs
+- crates/core/src/peripherals/sam/sercom_usart.rs
+- crates/core/src/peripherals/sam/sercom_i2cm.rs
+- crates/core/src/peripherals/sam/sercom_spi.rs
+- crates/core/src/peripherals/sam/adc21.rs
+- crates/core/src/peripherals/sam/tcc.rs
+- crates/core/src/peripherals/esp_ledc_wave.rs
+- configs/chips/atsamd21g18a.yaml
+- crates/core/src/peripherals/declarative.rs
+- crates/core/src/peripherals/stub.rs
+- crates/core/src/peripherals/systick.rs
+- configs/peripherals/atsamd21g18a/pm.yaml
+- configs/peripherals/atsamd21g18a/sysctrl.yaml
+- configs/peripherals/atsamd21g18a/gclk.yaml
+- configs/peripherals/atsamd21g18a/wdt.yaml
+- configs/peripherals/atsamd21g18a/nvmctrl.yaml
+- configs/peripherals/atsamd21g18a/dac.yaml
+- configs/peripherals/atsamd21g18a/usb.yaml
 note: 'Microchip ATSAMD21G18A (Cortex-M0+, 256K flash at 0x0 / 32K SRAM) — the first SAM part in the engine,
   Arduino Zero / Feather M0 class. PORT and SERCOM are BEHAVIOURAL models, not stubs: PORT implements
   the DIR/OUT SET-CLR-TGL aliases as one register each, WRCONFIG''s bulk PINCFG/PMUX write (the path ASF
@@ -14,24 +34,19 @@ note: 'Microchip ATSAMD21G18A (Cortex-M0+, 256K flash at 0x0 / 32K SRAM) — the
   are memory_value reads of the PORT registers the firmware configured, so the banner is not the gate.
   Every base and IRQ is checked against Microchip''s Apache-2.0 ATSAMD21G18A.svd by svd_conformance with
   ZERO justified deviations. NOT PROVEN: no SAM D21 silicon diff (no bench part); nothing is clock-gated
-  (PM is a register bank, so firmware that forgets APBCMASK works here and fails on hardware); SYNCBUSY
-  always reads 0 and transmission has no latency — modelling truths, not silicon ones; SERCOM SPI/I2C
-  modes, EIC, USB, TCC/TC, ADC and DMAC are unmodelled and their windows deliberately unmapped.'
+  except the SERCOM3 I2C master, the ADC and TCC0..2, which read PM.APBCMASK themselves (PM is a register
+  bank, so firmware that forgets APBCMASK for any other block works here and fails on hardware); SYNCBUSY
+  always reads 0 and transmission has no latency — modelling truths, not silicon ones; SERCOM3 runs as
+  the I2C master slice and SERCOM4 as the SPI master (the Arduino Zero variant roles; stock ArduinoCore-samd
+  Wire reads an INA219 and SPI a MAX31855, arduino-matrix L3/L4), with no SCL/SCK timing and no SPI interrupt;
+  TCC0..2 count at the CPU clock (GCLK is a register bank, not checked) and drive single-slope NPWM onto
+  their PMUX E/F pads (stock analogWrite on D13 = PA17 = TCC2/WO1 is a 732 Hz, 50.0% waveform on the pad,
+  arduino-matrix L6); EIC, TC3..5 and DMAC are unmodelled and their windows deliberately unmapped; the
+  ADC converts single-ended AINn against GND on the internal references (stock analogRead() reads A0 at
+  a board-driven 1650 mV as exactly 512, arduino-matrix L5) with no settling, noise or IRQ; DAC and USB
+  are declarative register banks only.'
 offline_tests:
 - strict_onboarding::test_strict_board_onboarding (executes examples/samd21-smoke/io-smoke.yaml)
 - atsamd21_peripheral_estate::{the_estate_answers_at_its_own_addresses,the_sercom_instances_are_not_each_other,the_port_groups_are_not_each_other}
 - svd_conformance::chip_configs_match_their_svd
-models:
-- crates/core/src/cpu/cortex_m.rs
-- crates/core/src/decoder/arm.rs
-- crates/core/src/peripherals/gpio.rs
-- crates/core/src/peripherals/sam/sercom_usart.rs
-- configs/chips/atsamd21g18a.yaml
-- crates/core/src/peripherals/declarative.rs
-- crates/core/src/peripherals/stub.rs
-- crates/core/src/peripherals/systick.rs
-- configs/peripherals/atsamd21g18a/pm.yaml
-- configs/peripherals/atsamd21g18a/sysctrl.yaml
-- configs/peripherals/atsamd21g18a/gclk.yaml
-- configs/peripherals/atsamd21g18a/wdt.yaml
-- configs/peripherals/atsamd21g18a/nvmctrl.yaml
+tier: sim-validated

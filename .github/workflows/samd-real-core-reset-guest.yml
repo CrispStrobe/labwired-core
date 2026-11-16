@@ -6,7 +6,7 @@ on:
     # Cargo.*) trigger it on push to main instead.
     paths:
       - 'crates/core/src/tests/scb_reset.rs'
-      - 'crates/core/tests/samd_real_core_reset_guest.rs'
+      - 'crates/core/tests/samd/samd_real_core_reset_guest.rs'
       - '.github/workflows/samd-real-core-reset-guest.yml'
   push:
     branches: [main]
@@ -15,13 +15,13 @@ on:
       - 'crates/core/src/tests/scb_reset.rs'
       - 'crates/core/src/config.rs'
       - 'crates/core/src/bus/**'
-      - 'crates/core/tests/samd_real_core_reset_guest.rs'
+      - 'crates/core/tests/samd/samd_real_core_reset_guest.rs'
       - '.github/workflows/samd-real-core-reset-guest.yml'
 permissions:
   contents: read
 concurrency:
   group: real-core-reset-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 env:
   LABWIRED_RESET_SOURCE: 12d4759af0bf2b29726cfd79c487474a282cc5b0
   LABWIRED_SERVICES_SOURCE: 932d476344107386d56dfd2d595d74d713780563
@@ -67,7 +67,7 @@ jobs:
           done
       - name: Nonvacuous reset controls and source-reviewed CPU reset controls
         run: |
-          cargo test --release --locked -p labwired-core --test samd_real_core_reset_guest -- --nocapture
+          cargo test --release --locked -p labwired-core --test samd -- --nocapture samd_real_core_reset_guest::
           cargo test --release --locked -p labwired-core --lib scb_reset_tests -- --nocapture
           cargo test --release --locked -p labwired-core --lib test_wide_ram_store_observation_is_explicit_and_exact -- --nocapture
       - name: Execute new reset and all affected earlier callers in both profiles
@@ -79,7 +79,7 @@ jobs:
             if test "$profile" = event-scheduler; then feature_args=(--features event-scheduler); fi
             echo "SAMD_CORE_RESET_AFFECTED_BEGIN profile=$profile"
             export LABWIRED_SERVICES_FIXTURE_DIR="$RUNNER_TEMP/runtime-services"
-            if ! cargo test --release --locked -p labwired-core "${feature_args[@]}" --test samd_real_services_guest -- --ignored --nocapture 2>&1 | tee "core-reset-services-$profile.log"; then reset_failures=$((reset_failures+1)); fi
+            if ! cargo test --release --locked -p labwired-core "${feature_args[@]}" --test samd -- --ignored --nocapture samd_real_services_guest:: 2>&1 | tee "core-reset-services-$profile.log"; then reset_failures=$((reset_failures+1)); fi
             for mode in $(seq 8 18); do
               case "$mode" in
                 8) fixture=samd_real_spi_guest ;;
@@ -92,10 +92,10 @@ jobs:
               esac
               export LABWIRED_SPI_MODE="$mode"
               export LABWIRED_SPI_FIXTURE_DIR="$RUNNER_TEMP/old-$mode"
-              if ! cargo test --release --locked -p labwired-core "${feature_args[@]}" --test "$fixture" -- --ignored --nocapture 2>&1 | tee "core-reset-old-$mode-$profile.log"; then reset_failures=$((reset_failures+1)); fi
+              if ! cargo test --release --locked -p labwired-core "${feature_args[@]}" --test samd -- --ignored --nocapture "$fixture":: 2>&1 | tee "core-reset-old-$mode-$profile.log"; then reset_failures=$((reset_failures+1)); fi
             done
             export LABWIRED_RESET_FIXTURE_DIR="$RUNNER_TEMP/core-reset"
-            if ! cargo test --release --locked -p labwired-core "${feature_args[@]}" --test samd_real_core_reset_guest -- --ignored --nocapture 2>&1 | tee "core-reset-new-$profile.log"; then reset_failures=$((reset_failures+1)); fi
+            if ! cargo test --release --locked -p labwired-core "${feature_args[@]}" --test samd -- --ignored --nocapture samd_real_core_reset_guest:: 2>&1 | tee "core-reset-new-$profile.log"; then reset_failures=$((reset_failures+1)); fi
             echo "SAMD_CORE_RESET_AFFECTED_END profile=$profile"
           done
           test "$reset_failures" -eq 0

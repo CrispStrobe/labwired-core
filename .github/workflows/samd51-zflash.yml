@@ -65,7 +65,7 @@ jobs:
           set -o pipefail
           flags=()
           if [ "$PROFILE" != default ]; then flags+=(--features "$PROFILE"); fi
-          cargo test --locked -p labwired-core --test samd51_zflash_guest "${flags[@]}" -- --include-ignored --nocapture 2>&1 | tee zflash-evidence/actual-guest.log
+          cargo test --locked -p labwired-core --test samd "${flags[@]}" -- --include-ignored --nocapture samd51_zflash_guest:: 2>&1 | tee zflash-evidence/actual-guest.log
       - name: Two actual model-source mutants with specific guest wrong-memory results
         env:
           PROFILE: ${{ matrix.profile }}

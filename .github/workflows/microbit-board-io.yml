@@ -1,5 +1,8 @@
 name: microbit active board qualification
 on:
+  # CI cut O11: no push-to-main run (22 min each merge); nightly instead.
+  schedule:
+    - cron: "50 3 * * *"
   workflow_dispatch:
   pull_request:
     # Lean PR gate (2026-11-13): on pull requests this lane runs only when
@@ -47,9 +50,10 @@ permissions:
   contents: read
 concurrency:
   group: microbit-board-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   board:
+    if: ${{ github.event_name != 'schedule' || github.repository == 'w1ne/labwired-core' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -82,9 +86,12 @@ jobs:
           python3 scripts/perf/test_microbit_motion_report.py
           python3 scripts/perf/test_microbit_sensor_guest_flow.py
           cargo test --release -p labwired-core --features microbit-board-io-test \
-            --test nrf52833_config --test nrf52833_gpio_geometry \
-            --test microbit_v2_led_matrix --test microbit_v2_board_io_guest \
-            --test microbit_v2_motion_io_guest --test microbit_v2_open_drain_guest --test microbit_v2_mag_drdy_guest --test microbit_v2_sensor_drdy_guest --test nrf52840_gpiote_guest --test microbit_v2_egu_ppi_guest --test peripheral_kit_gate -- --nocapture
+            --test microbit_v2_board_io_guest --test microbit_v2_motion_io_guest \
+            --test nrf52840_gpiote_guest --test microbit_v2_egu_ppi_guest -- --nocapture
+          cargo test --release -p labwired-core --features microbit-board-io-test \
+            --test nrf -- --nocapture nrf52833_config:: nrf52833_gpio_geometry:: microbit_v2_led_matrix:: microbit_v2_open_drain_guest:: microbit_v2_mag_drdy_guest:: microbit_v2_sensor_drdy_guest::
+          cargo test --release -p labwired-core --features microbit-board-io-test \
+            --test bus -- --nocapture peripheral_kit_gate::
           cargo test --release -p labwired-core --features microbit-board-io-test \
             --test microbit_v2_adc_scan_guest
           cargo test --release -p labwired-core --features microbit-board-io-test \
@@ -101,8 +108,10 @@ jobs:
         run: |
           cargo test --release -p labwired-core --no-default-features \
             --features microbit-sensor-guest-test,nrf52-gpiote-guest-test \
-            --test microbit_v2_mag_drdy_guest --test microbit_v2_sensor_drdy_guest --test nrf52840_gpiote_guest --test microbit_v2_egu_ppi_guest \
-            -- --nocapture
+            --test nrf -- --nocapture microbit_v2_mag_drdy_guest:: microbit_v2_sensor_drdy_guest::
+          cargo test --release -p labwired-core --no-default-features \
+            --features microbit-sensor-guest-test,nrf52-gpiote-guest-test \
+            --test nrf52840_gpiote_guest --test microbit_v2_egu_ppi_guest -- --nocapture
       - name: Prove native WASM analog input routing
         run: cargo test --release -p labwired-wasm --lib adc_routing_tests
       - name: Measure active board throughput

@@ -501,13 +501,44 @@ impl<'a> AttachCtx<'a> {
 
     /// Parse a GPIO pad label into a pin number for bit-bang devices
     /// (`Transport::GpioGroup`). Accepts ESP32/S3 spellings (`GPIO15`, `IO4`,
-    /// bare `15`) used by the ESP GPIO edge-observer path.
+    /// bare `15`) used by the ESP GPIO edge-observer path, STM32 port pads, and
+    /// port-style pads the board declares (SAMD `PA15`, AVR `PD6`).
     pub fn parse_gpio_pin(&self, label: &str) -> Option<u8> {
         // AVR, SAM and STM32 share PA/PB spellings with different widths.
         // Admit the concrete named model before encoding a port-qualified pad;
         // an unknown PB0 must never fall through as ESP GPIO0.
         let label = label.trim();
         if label.starts_with('P') {
+            let has_named_family = label.as_bytes().get(1).is_some_and(|letter| {
+                if !letter.is_ascii_uppercase() {
+                    return false;
+                }
+                let port = *letter - b'A';
+                [
+                    super::pad_label::PadFamily::Stm32,
+                    super::pad_label::PadFamily::Sam,
+                    super::pad_label::PadFamily::Avr,
+                ]
+                .into_iter()
+                .any(|family| {
+                    self.bus
+                        .find_peripheral_index_by_name(&family.instance_name(port))
+                        .is_some_and(|idx| match family {
+                            super::pad_label::PadFamily::Stm32 => {
+                                self.bus.peripherals[idx].dev.is_stm32_gpio_port()
+                            }
+                            super::pad_label::PadFamily::Sam => {
+                                self.bus.peripherals[idx].dev.is_sam_gpio_port()
+                            }
+                            super::pad_label::PadFamily::Avr => {
+                                self.bus.peripherals[idx].dev.avr_gpio_pin_count().is_some()
+                            }
+                        })
+                })
+            });
+            if !has_named_family {
+                return self.port_pad(label);
+            }
             return super::pad_label::parse_named_pad(label, |family, port, pin| {
                 let name = family.instance_name(port);
                 self.bus
@@ -527,6 +558,19 @@ impl<'a> AttachCtx<'a> {
             });
         }
         SystemBus::parse_esp32s3_gpio_pin(label).or_else(|| SystemBus::parse_esp32_gpio_pin(label))
+    }
+
+    /// Pad number for a port-qualified label (`PA15`, `PD6`) on a family that
+    /// is not STM32: `port letter * 32 + bit`, valid only when the board
+    /// resolves the label to a real output latch (chip pin map, AVR/SAM port
+    /// blocks, ...). None when the board does not declare the pin.
+    fn port_pad(&self, label: &str) -> Option<u8> {
+        let port = label.strip_prefix('P')?.chars().next()?;
+        if !port.is_ascii_uppercase() {
+            return None;
+        }
+        let (_, bit) = self.resolve_pin_odr(label)?;
+        u8::try_from(usize::from(port as u8 - b'A') * 32 + usize::from(bit)).ok()
     }
 
     /// Read a GPIO pin config key (or alternate key / default label) as a pad

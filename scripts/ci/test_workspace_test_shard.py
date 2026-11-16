@@ -85,12 +85,13 @@ def test_core_split_preserves_configuration_commands_and_read_only_cache():
     assert commands["Unit tests (default-members lib)"] == "cargo test --lib"
     commands = {step.get("name"): step.get("run") for step in feature_off["steps"]}
     assert commands["Unit tests (labwired-core, FEATURE-OFF)"] == "cargo test -p labwired-core --lib"
-    assert commands["AVR Nano golden survival"] == "cargo test -p labwired-core --test avr_nano_golden_survival -- --nocapture"
-    assert commands["Walk-deletion derivation (PR-fast structural arm)"].split() == [
-        "scripts/ci/cargo-test-nonvacuous.sh", "-p", "labwired-core", "--test", "esp32_classic_walk_differential", "--test", "ordered_debug_metadata",
+    assert commands["AVR Nano golden survival"] == "cargo test -p labwired-core --test avr -- --nocapture avr_nano_golden_survival::"
+    assert commands["Walk-deletion derivation (PR-fast structural arm)"].splitlines() == [
+        "scripts/ci/cargo-test-nonvacuous.sh -p labwired-core --test esp -- esp32_classic_walk_differential::",
+        "scripts/ci/cargo-test-nonvacuous.sh -p labwired-core --test session -- ordered_debug_metadata::",
     ]
-    assert commands["Firmware survival (committed ELF fixtures, ~50 chips)"] == "cargo test -p labwired-core --test firmware_survival"
-    assert commands["BLE Pong fixture provenance (committed .ino ↔ .bin)"] == "cargo test -p labwired-core --test fixture_ble_pong_provenance"
+    assert commands["Firmware survival (committed ELF fixtures, ~50 chips)"] == "cargo test -p labwired-core --test gates -- firmware_survival::"
+    assert commands["BLE Pong fixture provenance (committed .ino ↔ .bin)"] == "cargo test -p labwired-core --test esp -- fixture_ble_pong_provenance::"
     assert commands["SoftDevice HLE (unit + conformance vectors, C ABI)"] == (
         "cargo test -p nrf-softdevice-hle --features capi\n"
         "cargo rustc -p nrf-softdevice-hle --features capi --crate-type cdylib\n"
