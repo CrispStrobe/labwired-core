@@ -6,7 +6,8 @@ on:
       - 'crates/core/src/machine/**'
       - 'crates/core/src/peripherals/**'
       - 'crates/core/src/lib.rs'
-      - 'crates/core/tests/samd51_zflash_guest.rs'
+      - 'crates/core/tests/samd/main.rs'
+      - 'crates/core/tests/samd/samd51_zflash_guest.rs'
       - 'scripts/samd51-zflash/**'
       - '.github/workflows/samd51-zflash.yml'
 permissions:
@@ -66,6 +67,24 @@ jobs:
           flags=()
           if [ "$PROFILE" != default ]; then flags+=(--features "$PROFILE"); fi
           cargo test --locked -p labwired-core --test samd "${flags[@]}" -- --include-ignored --nocapture samd51_zflash_guest:: 2>&1 | tee zflash-evidence/actual-guest.log
+      - name: Affected production pad, UART and analog controls
+        env:
+          PROFILE: ${{ matrix.profile }}
+        run: |
+          flags=()
+          if [ "$PROFILE" != default ]; then flags+=(--features "$PROFILE"); fi
+          scripts/ci/cargo-test-nonvacuous.sh --locked -p labwired-core "${flags[@]}" --test bus -- \
+            merge_pad_preservation:: uart_attach_seam:: i2c_clock_stretch_wrappers:: tier2_device_pins:: peripheral_kit_gate::
+          scripts/ci/cargo-test-nonvacuous.sh --locked -p labwired-core "${flags[@]}" --test analog -- \
+            cosim_nucleo_f767zi_analog::
+          scripts/ci/cargo-test-nonvacuous.sh --locked -p labwired-core "${flags[@]}" --test samd -- \
+            samd51_sercom_timing:: atsamd21_peripheral_estate::
+      - name: Retained L476 and Cortex-M CLI fast-reference parity
+        if: matrix.profile == 'event-scheduler'
+        run: >
+          scripts/ci/cargo-test-nonvacuous.sh --locked -p labwired-cli
+          --test hosted_fast_cortex_m_exact --
+          --exact the_cortex_m_fast_path_reports_the_same_run
       - name: Two actual model-source mutants with specific guest wrong-memory results
         env:
           PROFILE: ${{ matrix.profile }}

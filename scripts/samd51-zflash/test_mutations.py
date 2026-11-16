@@ -117,6 +117,11 @@ class MutationRunnerTests(unittest.TestCase):
                 calls.append(name)
                 self.assertEqual(model.read_bytes(), M.mutate_source(ORIGINAL, name))
                 self.assertEqual("event-scheduler" in command, profile == "event-scheduler")
+                self.assertEqual(command[command.index("--test") + 1], "samd")
+                self.assertEqual(command[command.index("--") + 1:], [
+                    "--ignored", "--exact",
+                    "samd51_zflash_guest::actual_zflash_driver_program_erase_and_refusals", "--nocapture",
+                ])
                 if isinstance(outcome, Exception):
                     raise outcome
                 marker = b"ZFLASH_MUTANT_WRONG_ERASE " if name == "omit-erase-commit" else b"ZFLASH_MUTANT_WRONG_PROGRAM "
@@ -130,6 +135,13 @@ class MutationRunnerTests(unittest.TestCase):
                     self.assertEqual(model.read_bytes(), ORIGINAL)
             self.assertEqual(calls, list(M.MUTATIONS))
             self.assertTrue((root / "out/mutation-report.json").is_file())
+
+    def test_exact_guest_filter_resolves_in_the_grouped_binary(self):
+        group = M.ROOT / "crates/core/tests/samd/main.rs"
+        guest = group.with_name("samd51_zflash_guest.rs")
+        self.assertIn("mod samd51_zflash_guest;", group.read_text())
+        self.assertIn("fn actual_zflash_driver_program_erase_and_refusals()", guest.read_text())
+        self.assertIn("#[ignore =", guest.read_text().split("fn actual_zflash_driver_program_erase_and_refusals()", 1)[0])
 
     def test_both_mutants_restore_source_for_both_profiles(self):
         for profile in ("default", "event-scheduler"):
