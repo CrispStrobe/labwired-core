@@ -1116,8 +1116,8 @@ jobs:
   # cancelled, or skipped prerequisite from turning this gate into a skip.
   # Both exact feature configurations must actually finish successfully.
   pr-core-feature-off:
-    # Skipped on drafts (both test jobs it aggregates are skipped there); the
-    # name differs so no draft run ever reports the required context.
+    # Both workers and this aggregate run on drafts too. The name differs so
+    # a draft run never reports the protected ready-for-review context.
     name: ${{ (github.event_name == 'pull_request' && github.event.pull_request.draft) && 'pr-core-feature-off (draft-light)' || 'pr-core-feature-off' }}
     needs: [pr-default-members-lib, pr-core-feature-off-tests]
     if: >

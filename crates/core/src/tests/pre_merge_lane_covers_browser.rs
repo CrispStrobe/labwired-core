@@ -149,6 +149,10 @@ const LIBRARY_WORKERS: &[(&str, &str)] = &[
     ("pr-core-feature-off-tests", "FEATURE_OFF_RESULT"),
 ];
 
+const EVERY_PR_SCOPE: &str =
+    "(github.event_name=='pull_request'||github.event_name=='workflow_dispatch')";
+const NON_DRAFT_PR_SCOPE: &str = "!(github.event_name=='pull_request'&&github.event.pull_request.draft)&&(github.event_name=='pull_request'||github.event_name=='workflow_dispatch')";
+
 /// Admit only the two existing library workers, and only after proving that
 /// their required aggregate fails for every unsuccessful prerequisite result.
 /// Naming a worker in `needs` alone is not proof: a skipped/advisory aggregate
@@ -176,11 +180,13 @@ fn required_library_worker_bodies(ci: &str) -> Result<Vec<String>, String> {
     }
     let normalize = |text: &str| text.split_whitespace().collect::<String>();
     let condition = normalize(aggregate["if"].as_str().unwrap_or_default());
-    if condition
-        != "always()&&!(github.event_name=='pull_request'&&github.event.pull_request.draft)&&(github.event_name=='pull_request'||github.event_name=='workflow_dispatch')"
-    {
-        return Err("library aggregate must always check both results on non-draft pull requests".into());
-    }
+    // The fork runs these workers even on drafts. Also retain the original
+    // non-draft arrangement, but only when both workers have the SAME scope:
+    // an aggregate must never turn a missing/skipped worker into coverage.
+    let scope = condition
+        .strip_prefix("always()&&")
+        .filter(|scope| [EVERY_PR_SCOPE, NON_DRAFT_PR_SCOPE].contains(scope))
+        .ok_or("library aggregate must always check both results on its pull-request scope")?;
     let advisory = |node: &serde_yaml::Value| {
         !node["continue-on-error"].is_null() && node["continue-on-error"].as_bool() != Some(false)
     };
@@ -213,12 +219,15 @@ fn required_library_worker_bodies(ci: &str) -> Result<Vec<String>, String> {
             ));
         }
         let worker = &jobs[*job];
-        if advisory(worker)
-            || normalize(worker["if"].as_str().unwrap_or_default())
-                != "!(github.event_name=='pull_request'&&github.event.pull_request.draft)&&(github.event_name=='pull_request'||github.event_name=='workflow_dispatch')"
-        {
+        let worker_condition = normalize(worker["if"].as_str().unwrap_or_default());
+        // A worker's whole OR expression needs no grouping parentheses;
+        // the aggregate needs them after its `always() &&` conjunction.
+        let matching_scope = worker_condition == scope
+            || (scope == EVERY_PR_SCOPE
+                && worker_condition == &EVERY_PR_SCOPE[1..EVERY_PR_SCOPE.len() - 1]);
+        if advisory(worker) || !matching_scope {
             return Err(format!(
-                "{job} must run on every pull request without allowing failure"
+                "{job} must share the aggregate's pull-request scope without allowing failure"
             ));
         }
         // Only unconditional, non-advisory run steps count as coverage.
@@ -320,7 +329,37 @@ fn library_worker_coverage_rejects_broken_dependency_proofs() {
     assert!(bodies[0].contains("cargo test --lib"));
     assert!(bodies[1].contains("cargo test -p nrf-softdevice-hle --features capi"));
 
-    for mutation in 0..7 {
+    for scope in [EVERY_PR_SCOPE, NON_DRAFT_PR_SCOPE] {
+        let mut matching = original.clone();
+        matching["jobs"][LIBRARY_AGGREGATE]["if"] = format!("always() && {scope}").into();
+        for (worker, _) in LIBRARY_WORKERS {
+            matching["jobs"][*worker]["if"] = if scope == EVERY_PR_SCOPE {
+                &EVERY_PR_SCOPE[1..EVERY_PR_SCOPE.len() - 1]
+            } else {
+                scope
+            }
+            .into();
+        }
+        required_library_worker_bodies(&serde_yaml::to_string(&matching).unwrap())
+            .expect("matching all-PR or non-draft workers retain the actual result guard");
+
+        for (worker, _) in LIBRARY_WORKERS {
+            let mut mismatched = matching.clone();
+            mismatched["jobs"][*worker]["if"] = if scope == EVERY_PR_SCOPE {
+                NON_DRAFT_PR_SCOPE
+            } else {
+                EVERY_PR_SCOPE
+            }
+            .into();
+            assert!(
+                required_library_worker_bodies(&serde_yaml::to_string(&mismatched).unwrap())
+                    .is_err(),
+                "mismatched worker {worker} scope was admitted"
+            );
+        }
+    }
+
+    for mutation in 0..9 {
         let mut changed = original.clone();
         let aggregate = &mut changed["jobs"][LIBRARY_AGGREGATE];
         match mutation {
@@ -336,6 +375,8 @@ fn library_worker_coverage_rejects_broken_dependency_proofs() {
             4 => aggregate["if"] = "github.event_name == 'pull_request'".into(),
             5 => changed["jobs"][LIBRARY_WORKERS[1].0]["continue-on-error"] = true.into(),
             6 => aggregate["steps"][0]["continue-on-error"] = true.into(),
+            7 => aggregate["if"] = "always()".into(),
+            8 => changed["jobs"][LIBRARY_WORKERS[0].0]["if"] = "true".into(),
             _ => unreachable!(),
         }
         assert!(
