@@ -1863,24 +1863,24 @@ impl WasmSimulator {
     /// Start an opt-in counter window. Progress is measured by the machine clock.
     #[cfg(feature = "countdown-probe")]
     #[wasm_bindgen]
-    pub fn diagnostic_countdown_begin(&mut self, requested: u32, detail_cap: u32) -> bool {
+    pub fn diagnostic_countdown_begin(
+        &mut self,
+        requested: u32,
+        detail_cap: u32,
+    ) -> Result<bool, JsValue> {
         if self.countdown_next_cycle.is_some() {
-            return false;
+            return Ok(false);
         }
-        let now = self.machine().total_cycles;
-        let started = self
-            .machine()
+        let machine = self.machine_mut_or_err()?;
+        let now = machine.total_cycles;
+        let started = machine
             .cpu
-            .as_any_mut()
-            .and_then(|cpu| cpu.downcast_mut::<labwired_core::cpu::CortexM>())
-            .is_some_and(|cpu| {
-                cpu.begin_countdown_window(u64::from(requested), u64::from(detail_cap))
-            });
+            .begin_countdown_window(u64::from(requested), u64::from(detail_cap));
         if started {
             self.countdown_next_cycle = Some(now);
             self.countdown_invalid = false;
         }
-        started
+        Ok(started)
     }
 
     /// Advance through the real simulator path, counting only measured clock progress.
@@ -1914,12 +1914,7 @@ impl WasmSimulator {
             return Err(JsValue::from_str("machine cycle counter moved backwards"));
         };
         self.countdown_next_cycle = Some(after);
-        let updated = self
-            .machine()
-            .cpu
-            .as_any_mut()
-            .and_then(|cpu| cpu.downcast_mut::<labwired_core::cpu::CortexM>())
-            .is_some_and(|cpu| cpu.countdown_window_progress(elapsed));
+        let updated = self.machine().cpu.countdown_window_progress(elapsed);
         match result {
             Ok(n) if updated && u64::from(n) == elapsed => Ok(n),
             Ok(_) => {
@@ -1946,9 +1941,7 @@ impl WasmSimulator {
         let p = self
             .machine()
             .cpu
-            .as_any_mut()
-            .and_then(|cpu| cpu.downcast_mut::<labwired_core::cpu::CortexM>())
-            .and_then(|cpu| cpu.end_countdown_window())
+            .end_countdown_window()
             .ok_or_else(|| JsValue::from_str("countdown probe missing"))?;
         // Decimal strings preserve u64 precision in JavaScript.
         let value = serde_json::json!({
@@ -2797,19 +2790,12 @@ mod machine_advance_tests {
     fn countdown_driver_uses_real_machine_progress_and_detects_outside_steps() {
         let mut sim = arm_simulator();
         let before = sim.machine().total_cycles;
-        assert!(sim.diagnostic_countdown_begin(8, 1));
-        assert!(!sim.diagnostic_countdown_begin(8, 1));
+        assert!(sim.diagnostic_countdown_begin(8, 1).unwrap());
+        assert!(!sim.diagnostic_countdown_begin(8, 1).unwrap());
         let executed = sim.diagnostic_countdown_advance(8).unwrap();
         let after = sim.machine().total_cycles;
         assert_eq!(after - before, u64::from(executed));
-        let cpu = sim
-            .machine()
-            .cpu
-            .as_any_mut()
-            .unwrap()
-            .downcast_mut::<labwired_core::cpu::CortexM>()
-            .unwrap();
-        let window = cpu.countdown_window().unwrap();
+        let window = sim.machine().cpu.countdown_window().unwrap();
         assert_eq!(window.completed_cycles, after - before);
         assert!(!window.complete()); // Ending is explicit; a live window cannot pass.
         assert!(countdown_driver_valid(

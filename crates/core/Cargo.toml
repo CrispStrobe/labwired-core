@@ -560,3 +560,7 @@ required-features = ["nrf52-gpiote-guest-test"]
 [[test]]
 name = "microbit_v2_egu_ppi_guest"
 required-features = ["nrf52-gpiote-guest-test"]
+
+[[test]]
+name = "countdown_probe_controls"
+required-features = ["cortex-m-countdown-probe"]

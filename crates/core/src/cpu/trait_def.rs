@@ -211,6 +211,26 @@ pub trait Cpu: Send {
     fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
         None
     }
+
+    /// Optional diagnostic capability; unsupported CPUs leave it unavailable.
+    #[cfg(feature = "cortex-m-countdown-probe")]
+    fn begin_countdown_window(&mut self, _requested: u64, _cap: u64) -> bool {
+        false
+    }
+    #[cfg(feature = "cortex-m-countdown-probe")]
+    fn countdown_window_progress(&mut self, _completed: u64) -> bool {
+        false
+    }
+    #[cfg(feature = "cortex-m-countdown-probe")]
+    fn countdown_window(&self) -> Option<&crate::cpu::cortex_m::countdown_probe::CountdownWindow> {
+        None
+    }
+    #[cfg(feature = "cortex-m-countdown-probe")]
+    fn end_countdown_window(
+        &mut self,
+    ) -> Option<crate::cpu::cortex_m::countdown_probe::CountdownWindow> {
+        None
+    }
     /// Optional checked RAM/register-only execution primitive. It may retire a
     /// bounded prefix, but must stop BEFORE any MMIO/unsupported instruction.
     /// The machine admits inactive residents and deadlines, then commits the
@@ -551,6 +571,24 @@ impl Cpu for Box<dyn Cpu> {
     /// bench validation.
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         (**self).as_any_mut()
+    }
+    #[cfg(feature = "cortex-m-countdown-probe")]
+    fn begin_countdown_window(&mut self, requested: u64, cap: u64) -> bool {
+        (**self).begin_countdown_window(requested, cap)
+    }
+    #[cfg(feature = "cortex-m-countdown-probe")]
+    fn countdown_window_progress(&mut self, completed: u64) -> bool {
+        (**self).countdown_window_progress(completed)
+    }
+    #[cfg(feature = "cortex-m-countdown-probe")]
+    fn countdown_window(&self) -> Option<&crate::cpu::cortex_m::countdown_probe::CountdownWindow> {
+        (**self).countdown_window()
+    }
+    #[cfg(feature = "cortex-m-countdown-probe")]
+    fn end_countdown_window(
+        &mut self,
+    ) -> Option<crate::cpu::cortex_m::countdown_probe::CountdownWindow> {
+        (**self).end_countdown_window()
     }
     fn try_quiescent_memory_chunk(
         &mut self,

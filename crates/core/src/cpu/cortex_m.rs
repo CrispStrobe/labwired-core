@@ -2957,6 +2957,23 @@ impl CortexM {
 }
 
 impl Cpu for CortexM {
+    #[cfg(feature = "cortex-m-countdown-probe")]
+    fn begin_countdown_window(&mut self, requested: u64, cap: u64) -> bool {
+        CortexM::begin_countdown_window(self, requested, cap)
+    }
+    #[cfg(feature = "cortex-m-countdown-probe")]
+    fn countdown_window_progress(&mut self, completed: u64) -> bool {
+        CortexM::countdown_window_progress(self, completed)
+    }
+    #[cfg(feature = "cortex-m-countdown-probe")]
+    fn countdown_window(&self) -> Option<&countdown_probe::CountdownWindow> {
+        CortexM::countdown_window(self)
+    }
+    #[cfg(feature = "cortex-m-countdown-probe")]
+    fn end_countdown_window(&mut self) -> Option<countdown_probe::CountdownWindow> {
+        CortexM::end_countdown_window(self)
+    }
+
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
     }
