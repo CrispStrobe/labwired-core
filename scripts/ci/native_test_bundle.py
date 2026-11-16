@@ -92,7 +92,7 @@ def wrapper(compiler, args):
             record["before"] = {str(product): file_state(product) for product in products(args)}
             record.update(started_ns=time.time_ns(), compiler_exit=None, complete=False)
             path.write_text(json.dumps(record, indent=2) + "\n")
-            result = subprocess.run([compiler, *args])
+            result = subprocess.run([compiler, *args], close_fds=False)
             record.update(compiler_exit=result.returncode, completed_ns=time.time_ns())
             try:
                 record["source_after"] = source_identity()
@@ -177,10 +177,49 @@ def dependency_crates(host):
     }
 
 
+def select_libraries(selected, libraries):
+    # Cargo can compile multiple full Core libraries in one workspace command.
+    # Authenticate the primary by the actual AVR extern, retaining every other
+    # variant referenced by a selected harness or library dependency.
+    def core_externs(record):
+        args = record["argv"]
+        return [target_path(args[i + 1].split("=", 1)[1])
+                for i, item in enumerate(args) if item == "--extern" and args[i + 1].startswith("labwired_core=")]
+
+    def matching(path):
+        candidates = [record for record in libraries if path in products(record["argv"])]
+        if len(candidates) != 1:
+            raise RuntimeError("missing or ambiguous exact Core library for " + str(path))
+        return candidates[0]
+
+    if "avr" in selected:
+        paths = core_externs(selected["avr"])
+        if len(paths) != 1:
+            raise RuntimeError("AVR must reference exactly one genuine Core library")
+        primary = matching(paths[0])
+    elif len(libraries) == 1:
+        primary = libraries[0]
+    elif libraries:
+        raise RuntimeError("ambiguous Core library without an AVR compiler record")
+    else:
+        return []
+    selected["library"] = primary
+    retained = [primary]
+    pending = list(selected.values())
+    while pending:
+        for path in core_externs(pending.pop()):
+            record = matching(path)
+            if record not in retained:
+                retained.append(record)
+                pending.append(record)
+    return retained[1:]
+
+
 def pack(mode, output, available=False):
     expected = {"default"} | ({"event-scheduler", "jit-framework"} if mode == "workspace" else set())
     source = source_identity()
     selected = {}
+    libraries = []
     for path in sorted(RECORDS.glob("*.json")):
         record = json.loads(path.read_text())
         args = record["argv"]
@@ -190,15 +229,20 @@ def pack(mode, output, available=False):
         validate_completion(record)
         crate = value(args, "--crate-name")
         role = "core-unit" if crate == "labwired_core" and "--test" in args else ("library" if crate == "labwired_core" else crate)
+        if role == "library":
+            libraries.append(record)
+            continue
         if role in selected:
             raise RuntimeError("ambiguous compiler record for " + role)
         selected[role] = record
+    variants = select_libraries(selected, libraries)
     required = {"library", "core-unit", "avr", "gates"}
     if not selected or (set(selected) != required and not available):
         raise RuntimeError("missing genuine native compiler records: " + str(sorted(selected)))
     first = selected.get("library", next(iter(selected.values())))
     selector = first["compiler"]
-    if any(record["compiler"] != selector for record in selected.values()):
+    records = [(role, record) for role, record in selected.items()] + [("library", record) for record in variants]
+    if any(record["compiler"] != selector for _, record in records):
         raise RuntimeError("compiler identity changed within the native bundle")
     version = subprocess.check_output([selector, "-Vv"], text=True)
     if not version.startswith("rustc 1.95.0 "):
@@ -212,14 +256,14 @@ def pack(mode, output, available=False):
     deps = target_path(value(first["argv"], "--out-dir"), directory=True)
     crates = dependency_crates(host)
     files = {"provenance/" + name: ROOT / name for name in ("Cargo.lock", "LICENSE")}
-    core_products = set(products(selected["library"]["argv"])) if "library" in selected else set()
+    core_products = {product for role, record in records if role == "library" for product in products(record["argv"])}
     for path in deps.iterdir():
         if path.name.startswith("liblabwired_core-") and path not in core_products:
             continue
         if path.is_file() and path.suffix in {".rlib", ".rmeta", ".so"} and any(path.name.startswith("lib" + name + "-") for name in crates):
             files["deps/" + path.name] = target_path(path)
     path_map = {str(deps): "deps"}
-    for role, record in selected.items():
+    for role, record in records:
         args = record["argv"]
         extra = next(args[i + 1].split("=", 1)[1] for i, item in enumerate(args) if item == "-C" and args[i + 1].startswith("extra-filename="))
         if role == "library":
@@ -238,7 +282,7 @@ def pack(mode, output, available=False):
         for i, item in enumerate(args):
             if item == "--extern":
                 path = Path(args[i + 1].split("=", 1)[1])
-                if "deps/" + path.name not in files:
+                if path != deps / path.name or "deps/" + path.name not in files:
                     raise RuntimeError("missing exact compiler dependency: " + str(path))
         generated = [record["env"]["OUT_DIR"]] if "OUT_DIR" in record["env"] else []
         generated += [args[i + 1][7:] for i, item in enumerate(args) if item == "-L" and args[i + 1].startswith("native=")]
@@ -269,7 +313,7 @@ def pack(mode, output, available=False):
             path.name: {"bytes": path.stat().st_size, "sha256": digest(path)}
             for path in drivers
         }},
-        "records": selected, "path_map": path_map, "uncompressed_bytes": total,
+        "records": selected, "library_variants": variants, "path_map": path_map, "uncompressed_bytes": total,
         "complete": set(selected) == required, "missing_roles": sorted(required - set(selected)),
         "provenance": {name: git("rev-parse", "HEAD:" + name) for name in ("Cargo.lock", "LICENSE")},
         "max_input_bytes": MAX_INPUT_BYTES, "max_archive_bytes": MAX_ARCHIVE_BYTES,
