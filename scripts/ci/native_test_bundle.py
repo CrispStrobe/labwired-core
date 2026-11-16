@@ -159,7 +159,7 @@ def validate_completion(record):
 
 def dependency_crates(host):
     metadata = json.loads(subprocess.check_output([
-        "cargo", "metadata", "--locked", "--offline", "--format-version=1", "--filter-platform", host,
+        "cargo", "metadata", "--locked", "--format-version=1", "--filter-platform", host,
     ], cwd=ROOT))
     packages = {package["id"]: package for package in metadata["packages"]}
     nodes = {node["id"]: node for node in metadata["resolve"]["nodes"]}
