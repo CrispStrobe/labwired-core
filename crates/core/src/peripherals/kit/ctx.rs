@@ -509,7 +509,7 @@ impl<'a> AttachCtx<'a> {
         // an unknown PB0 must never fall through as ESP GPIO0.
         let label = label.trim();
         if label.starts_with('P') {
-            let has_named_family = label.as_bytes().get(1).is_some_and(|letter| {
+            let has_known_named_model = label.as_bytes().get(1).is_some_and(|letter| {
                 if !letter.is_ascii_uppercase() {
                     return false;
                 }
@@ -523,21 +523,25 @@ impl<'a> AttachCtx<'a> {
                 .any(|family| {
                     self.bus
                         .find_peripheral_index_by_name(&family.instance_name(port))
-                        .is_some_and(|idx| match family {
-                            super::pad_label::PadFamily::Stm32 => {
-                                self.bus.peripherals[idx].dev.is_stm32_gpio_port()
-                            }
-                            super::pad_label::PadFamily::Sam => {
-                                self.bus.peripherals[idx].dev.is_sam_gpio_port()
-                            }
-                            super::pad_label::PadFamily::Avr => {
-                                self.bus.peripherals[idx].dev.avr_gpio_pin_count().is_some()
-                            }
+                        .is_some_and(|idx| {
+                            let dev = self.bus.peripherals[idx].dev.as_ref();
+                            dev.is_stm32_gpio_port()
+                                || dev.is_sam_gpio_port()
+                                || dev.avr_gpio_pin_count().is_some()
                         })
                 })
             });
-            if !has_named_family {
-                return self.port_pad(label);
+            if !has_known_named_model {
+                // Only an explicit board pin declaration may admit a different
+                // port model. The general ODR resolver also guesses canonical
+                // gpio/port names without checking this concrete family; that
+                // fallback must not bypass the refusals above.
+                return self
+                    .bus
+                    .pin_map
+                    .contains_key(&label.to_ascii_uppercase())
+                    .then(|| self.port_pad(label))
+                    .flatten();
             }
             return super::pad_label::parse_named_pad(label, |family, port, pin| {
                 let name = family.instance_name(port);
@@ -565,8 +569,14 @@ impl<'a> AttachCtx<'a> {
     /// resolves the label to a real output latch (chip pin map, AVR/SAM port
     /// blocks, ...). None when the board does not declare the pin.
     fn port_pad(&self, label: &str) -> Option<u8> {
-        let port = label.strip_prefix('P')?.chars().next()?;
-        if !port.is_ascii_uppercase() {
+        let rest = label.strip_prefix('P')?;
+        let mut chars = rest.chars();
+        let port = chars.next()?;
+        let digits = chars.as_str();
+        if !port.is_ascii_uppercase()
+            || digits.is_empty()
+            || !digits.bytes().all(|b| b.is_ascii_digit())
+        {
             return None;
         }
         let (_, bit) = self.resolve_pin_odr(label)?;

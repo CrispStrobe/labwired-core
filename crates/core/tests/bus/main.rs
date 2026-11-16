@@ -31,6 +31,7 @@ mod i2c_clock_stretch_wrappers;
 mod i2c_component;
 mod i2c_factory_kit_coverage;
 mod i2c_mux_tca9548a;
+mod merge_pad_preservation;
 mod part_pack_contract;
 mod parts_batch5;
 mod peripheral_kit_gate;
