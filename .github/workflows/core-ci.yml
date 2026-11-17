@@ -2280,6 +2280,17 @@ jobs:
           # now, not for archaeology.
           retention-days: 1
 
+      # Run the real CLI generator against the checked-in fixture once per
+      # workspace run; the registry test also checks the serialization itself.
+      - name: Verify generated peripheral manifest
+        if: ${{ !cancelled() && matrix.shard == 2 }}
+        env:
+          RUSTC_WRAPPER: ""
+        run: |
+          cargo run --locked -p labwired-cli --bin gen-peripherals-manifest -- \
+            --out "$RUNNER_TEMP/generated-peripherals-manifest.json"
+          cmp "$RUNNER_TEMP/generated-peripherals-manifest.json" crates/core/tests/fixtures/peripherals/manifest.json
+
       # One copy is sufficient: every shard builds the same full workspace.
       - name: Retain source-bound native workspace replay inputs
         id: native_replay_pack
