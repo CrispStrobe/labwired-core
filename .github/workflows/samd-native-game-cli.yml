@@ -43,7 +43,7 @@ jobs:
           test "$(wc -c < out/samd-native-game/sw0.bin)" = 1024
           test "$(wc -c < out/samd-native-game/serial.bin)" = 1024
           mkdir -p out/samd-native-game/cli-replay
-          git rev-parse HEAD HEAD^{tree} > out/samd-native-game/cli-replay/source.txt
+          git rev-parse HEAD 'HEAD^{tree}' > out/samd-native-game/cli-replay/source.txt
           rustc -Vv > out/samd-native-game/cli-replay/compiler.txt
           toolchain_root="$(rustc --print sysroot)"
           sha256sum "$toolchain_root/bin/rustc" "$toolchain_root"/lib/librustc_driver-*.so > out/samd-native-game/cli-replay/compiler.sha256
