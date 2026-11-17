@@ -174,10 +174,15 @@ struct Probe {
     mapped: bool,
     reset_ok: bool,
     responsive: bool,
+    // Raw observations for a failing chip's diagnostic log; never extra reads.
+    initial: Option<u32>,
+    ones: Option<u32>,
+    zeroes: Option<u32>,
 }
 
 fn probe_register(bus: &mut SystemBus, addr: u64, reset: u32) -> Probe {
     let sim = bus.read_u32(addr);
+    let initial = sim.as_ref().ok().copied();
     let mapped = sim.is_ok();
     let reset_ok = matches!(sim, Ok(v) if v == reset);
     let _ = bus.write_u32(addr, 0xFFFF_FFFF);
@@ -189,6 +194,9 @@ fn probe_register(bus: &mut SystemBus, addr: u64, reset: u32) -> Probe {
         mapped,
         reset_ok,
         responsive,
+        initial,
+        ones: r1,
+        zeroes: r2,
     }
 }
 
@@ -244,10 +252,20 @@ const SVD_FATAL_NOTE: &str = "This is a ratchet input, not an optional extra: a 
     disappeared silently and green. Restore the SVD, or delete the chip from CHIPS *and* from \
     docs/coverage/register-modeling.json in the same commit.";
 
-fn probe_all(bus: &mut SystemBus, regs: &[(u64, u32)]) -> (usize, usize, usize) {
+fn probe_all(chip: &str, bus: &mut SystemBus, regs: &[(u64, u32)]) -> (usize, usize, usize) {
     let (mut mapped, mut reset_ok, mut modeled) = (0usize, 0usize, 0usize);
     for &(addr, reset) in regs {
         let p = probe_register(bus, addr, reset);
+        if chip == "esp32s3" {
+            eprintln!(
+                "register-modeling probe {}",
+                serde_json::json!({
+                    "chip": chip, "address": addr, "reset": reset,
+                    "initial": p.initial, "ones": p.ones, "zeroes": p.zeroes,
+                    "mapped": p.mapped, "reset_ok": p.reset_ok, "responsive": p.responsive,
+                })
+            );
+        }
         if p.mapped {
             mapped += 1;
         }
@@ -281,7 +299,7 @@ fn measure_chip(name: &str, yaml: &str, svd: &str) -> (usize, usize, usize, usiz
             // enable bits wouldn't work: the probe writes 0 to every register,
             // including the RCC enable registers, re-gating later peripherals.)
             m.bus.set_clock_gating_bypass(true);
-            probe_all(&mut m.bus, &regs)
+            probe_all(name, &mut m.bus, &regs)
         }
         Arch::RiscV => {
             let cpu = system::riscv::configure_riscv(&mut bus);
@@ -294,7 +312,7 @@ fn measure_chip(name: &str, yaml: &str, svd: &str) -> (usize, usize, usize, usiz
             // words) unresponsive. That would report a coverage regression for
             // registers that became MORE modelled, not less.
             m.bus.set_pms_write_bypass(true);
-            probe_all(&mut m.bus, &regs)
+            probe_all(name, &mut m.bus, &regs)
         }
         Arch::Xtensa => {
             // Build the real per-chip peripheral set, the same way the runtime
@@ -317,7 +335,7 @@ fn measure_chip(name: &str, yaml: &str, svd: &str) -> (usize, usize, usize, usiz
             };
             let mut m = Machine::new(cpu, bus);
             m.bus.set_clock_gating_bypass(true);
-            probe_all(&mut m.bus, &regs)
+            probe_all(name, &mut m.bus, &regs)
         }
         // No probe path exists for these. Returning (0,0,0) here was the fourth
         // fail-open: a measured zero ratchets against a baseline zero forever, so

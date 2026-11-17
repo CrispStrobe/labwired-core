@@ -55,7 +55,24 @@ jobs:
           cargo build --release --locked -p labwired-cli --features event-scheduler
           cp target/release/labwired out/samd-native-game/cli-replay/labwired-event-scheduler
           sha256sum out/samd-native-game/cli-replay/labwired-event-scheduler >> out/samd-native-game/cli-replay/binaries.sha256
-          target/release/labwired test --script validation/samd-native-profile/native-game.yaml --output-dir out/samd-native-game/cli-scheduler 2>&1 | tee out/samd-native-game/cli-scheduler.log
+          sha256sum target/release/labwired validation/samd-native-profile/native-game.yaml \
+            configs/systems/samd51-no-asf-simulation.yaml configs/chips/samd51-no-asf-simulation.yaml \
+            configs/devices/st7735r-memory-simulation.yaml out/samd-native-game/game.elf \
+            out/samd-native-game/sw0.bin out/samd-native-game/serial.bin \
+            > out/samd-native-game/cli-replay/differential-inputs.sha256
+          hosted_status=0
+          target/release/labwired test --script validation/samd-native-profile/native-game.yaml --output-dir out/samd-native-game/cli-scheduler 2>&1 | tee out/samd-native-game/cli-scheduler.log || hosted_status=$?
+          reference_status=0
+          LABWIRED_HOSTED_FAST=0 target/release/labwired test --script validation/samd-native-profile/native-game.yaml --output-dir out/samd-native-game/cli-scheduler-reference 2>&1 | tee out/samd-native-game/cli-scheduler-reference.log || reference_status=$?
+          diagnostic_status=0
+          printf '{"hosted_status":%d,"reference_status":%d}\n' "$hosted_status" "$reference_status" > out/samd-native-game/cli-replay/differential-status.json || diagnostic_status=$?
+          if (( hosted_status != 0 )); then
+            exit "$hosted_status"
+          fi
+          if (( reference_status != 0 )); then
+            exit "$reference_status"
+          fi
+          exit "$diagnostic_status"
       - name: Retain source, compiler and actual CLI observations
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
