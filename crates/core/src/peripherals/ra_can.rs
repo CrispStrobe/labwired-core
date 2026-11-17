@@ -497,6 +497,11 @@ impl Peripheral for RaCan {
     fn tick(&mut self) -> PeripheralTickResult {
         PeripheralTickResult::default()
     }
+    // All mailbox service is synchronous with MMIO writes; ticking has no
+    // state, interrupt, DMA or event effect in any controller mode.
+    fn needs_legacy_walk(&self) -> bool {
+        false
+    }
     fn on_node_reset(&mut self) {
         let (sent, tx, rx) = (
             std::mem::take(&mut self.sent),
@@ -599,6 +604,39 @@ mod tests {
         assert_eq!(r16(&c, STR) & 0x0700, 0);
         w16(&mut c, CTLR, 0x0300);
         assert_eq!(r16(&c, STR) & 0x0700, STR_RSTST);
+    }
+
+    #[test]
+    fn inert_tick_never_requires_the_legacy_walk() {
+        let mut c = RaCan::new();
+        assert!(!c.needs_legacy_walk());
+        let before = c.snapshot();
+        let idle = c.tick_elapsed(1024);
+        assert!(!idle.irq && idle.dma_requests.is_none() && idle.explicit_irqs.is_none());
+        assert!(idle.system_exception.is_none() && idle.dma_signals.is_none());
+        assert_eq!(idle.cycles, 0);
+        assert!(idle.ticks_until_next.is_none());
+        assert!(idle.mmio_writes.is_empty() && idle.fired_events.is_empty());
+        assert_eq!(c.snapshot(), before);
+
+        bring_up(&mut c, 0, 0x07);
+        load_tx(&mut c, 0, 0x123 << 18, &[0xA5]);
+        operate(&mut c, 0);
+        w8(&mut c, MCTL + 1, MCTL_RECREQ);
+        w8(&mut c, MCTL, MCTL_TRMREQ);
+        assert_eq!(c.sent_frames().len(), 1, "MMIO loopback must still run");
+        let active = c.snapshot();
+        let result = c.tick_elapsed(1024);
+        assert!(!result.irq && result.dma_requests.is_none() && result.explicit_irqs.is_none());
+        assert!(result.system_exception.is_none() && result.dma_signals.is_none());
+        assert_eq!(result.cycles, 0);
+        assert!(result.ticks_until_next.is_none());
+        assert!(result.mmio_writes.is_empty() && result.fired_events.is_empty());
+        assert_eq!(
+            c.snapshot(),
+            active,
+            "tick must not change completed mailboxes"
+        );
     }
 
     #[test]
