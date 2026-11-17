@@ -36,6 +36,15 @@ fn run(name: &str, skip: bool) -> (serde_json::Value, String) {
 }
 
 fn run_fixture(elf: &str, name: &str, skip: bool) -> (serde_json::Value, String) {
+    run_fixture_mode(elf, name, skip, None)
+}
+
+fn run_fixture_mode(
+    elf: &str,
+    name: &str,
+    skip: bool,
+    hosted_fast: Option<bool>,
+) -> (serde_json::Value, String) {
     let root = workspace_root();
     let dir = labwired_cli::test_support::unique_temp_dir(&format!("labwired-cm-poll-{name}"));
     std::fs::create_dir_all(&dir).unwrap();
@@ -49,15 +58,18 @@ fn run_fixture(elf: &str, name: &str, skip: bool) -> (serde_json::Value, String)
         ),
     )
     .unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_labwired"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_labwired"));
+    command
         .args(["test", "--script"])
         .arg(&script)
         .arg("--output-dir")
         .arg(&dir)
         .args(["--no-uart-stdout", "--watch-gpio", "gpioa:5"])
-        .env("LABWIRED_IDLE_FAST_FORWARD", if skip { "1" } else { "0" })
-        .output()
-        .expect("run labwired");
+        .env("LABWIRED_IDLE_FAST_FORWARD", if skip { "1" } else { "0" });
+    if let Some(hosted_fast) = hosted_fast {
+        command.env("LABWIRED_HOSTED_FAST", if hosted_fast { "1" } else { "0" });
+    }
+    let output = command.output().expect("run labwired");
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     let result = std::fs::read_to_string(dir.join("result.json"))
         .unwrap_or_else(|_| panic!("no result.json; stderr:\n{stderr}"));
@@ -128,4 +140,21 @@ fn a_skipped_idle_hook_loop_that_stores_reports_the_same_run() {
         observable(reference),
         "the skip changed the run"
     );
+}
+
+#[test]
+fn observer_path_counts_skipped_poll_steps_once() {
+    let elf = "cortex_m_tick_wait/tick_wait.elf";
+    let (fast, fast_err) = run_fixture_mode(elf, "observer-skip", true, Some(false));
+    let (reference, _) = run_fixture_mode(elf, "observer-ref", false, Some(false));
+    assert!(
+        skipped(&fast_err) > 300_000,
+        "poll skip did not run: {fast_err}"
+    );
+    assert_eq!(
+        fast["steps_executed"], reference["steps_executed"],
+        "observer path must count each poll-loop step once"
+    );
+    assert_eq!(fast["stop_reason"], reference["stop_reason"]);
+    assert_eq!(fast["logic_edges"], reference["logic_edges"]);
 }
