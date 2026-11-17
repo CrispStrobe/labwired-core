@@ -158,3 +158,20 @@ fn observer_path_counts_skipped_poll_steps_once() {
     assert_eq!(fast["stop_reason"], reference["stop_reason"]);
     assert_eq!(fast["logic_edges"], reference["logic_edges"]);
 }
+
+#[test]
+fn counter_path_counts_proven_poll_fuel_once() {
+    let elf = "cortex_m_tick_wait/tick_wait.elf";
+    let (fast, fast_err) = run_fixture_mode(elf, "counter-skip", true, Some(true));
+    let (reference, _) = run_fixture_mode(elf, "counter-ref", false, Some(true));
+    assert!(
+        skipped(&fast_err) > 300_000,
+        "poll skip did not run: {fast_err}"
+    );
+    assert_eq!(
+        fast["steps_executed"], reference["steps_executed"],
+        "counter path must count each scheduling unit once"
+    );
+    assert_eq!(fast["stop_reason"], reference["stop_reason"]);
+    assert_eq!(fast["logic_edges"], reference["logic_edges"]);
+}

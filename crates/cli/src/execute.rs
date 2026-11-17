@@ -970,20 +970,14 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
             }
         };
 
-        // On the counter-metrics path a step is a machine cycle, retired or
-        // skipped (one instruction is one cycle on that core). Fuel counts
-        // both, so every call ends on the same cycle as a run without any
-        // skip, and so do the checks between calls: assertions, settling,
-        // `max_steps`. The wide-fuel arm above is off there for that reason.
-        // AdvanceReport.primary_steps already includes proven poll-loop
-        // steps accounted by Machine::advance. Adding skipped cycles again on
-        // the observer path charges those steps twice.
-        step += report.primary_steps
-            + if ctx.counter_metrics {
-                report.idle_cycles
-            } else {
-                0
-            };
+        // Fuel already counts primary scheduling quanta and idle skips once.
+        // The observer path instead reports primary steps, which already
+        // include the steps represented by a proven poll-loop skip.
+        step += if ctx.counter_metrics {
+            report.fuel_consumed
+        } else {
+            report.primary_steps
+        };
         steps_executed = step;
         // Statistical PC sampling: one histogram hit every
         // PC_SAMPLE_EVERY retired primary steps, using the post-batch
