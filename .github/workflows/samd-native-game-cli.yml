@@ -42,9 +42,19 @@ jobs:
           set -euo pipefail
           test "$(wc -c < out/samd-native-game/sw0.bin)" = 1024
           test "$(wc -c < out/samd-native-game/serial.bin)" = 1024
+          mkdir -p out/samd-native-game/cli-replay
+          git rev-parse HEAD HEAD^{tree} > out/samd-native-game/cli-replay/source.txt
+          rustc -Vv > out/samd-native-game/cli-replay/compiler.txt
+          toolchain_root="$(rustc --print sysroot)"
+          sha256sum "$toolchain_root/bin/rustc" "$toolchain_root"/lib/librustc_driver-*.so > out/samd-native-game/cli-replay/compiler.sha256
+          sha256sum Cargo.lock rust-toolchain.toml > out/samd-native-game/cli-replay/inputs.sha256
           cargo build --release --locked -p labwired-cli --no-default-features
+          cp target/release/labwired out/samd-native-game/cli-replay/labwired-default
+          sha256sum out/samd-native-game/cli-replay/labwired-default > out/samd-native-game/cli-replay/binaries.sha256
           target/release/labwired test --script validation/samd-native-profile/native-game.yaml --output-dir out/samd-native-game/cli-default 2>&1 | tee out/samd-native-game/cli-default.log
           cargo build --release --locked -p labwired-cli --features event-scheduler
+          cp target/release/labwired out/samd-native-game/cli-replay/labwired-event-scheduler
+          sha256sum out/samd-native-game/cli-replay/labwired-event-scheduler >> out/samd-native-game/cli-replay/binaries.sha256
           target/release/labwired test --script validation/samd-native-profile/native-game.yaml --output-dir out/samd-native-game/cli-scheduler 2>&1 | tee out/samd-native-game/cli-scheduler.log
       - name: Retain source, compiler and actual CLI observations
         if: always()
