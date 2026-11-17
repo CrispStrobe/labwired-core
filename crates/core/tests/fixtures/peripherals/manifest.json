@@ -7028,6 +7028,62 @@
       ],
       "labs": [],
       "inputs": []
+    },
+    {
+      "device_type": "ir_receiver_tsop38238",
+      "label": "TSOP38238 IR receiver",
+      "summary": "38 kHz IR receiver; NEC demodulated envelope on OUT (idle HIGH)",
+      "detail": "38 kHz IR receiver; NEC demodulated envelope on OUT (idle HIGH)",
+      "transport": "gpio_group",
+      "category": "gpio",
+      "config_keys": [],
+      "labs": [],
+      "inputs": [
+        {
+          "key": "address",
+          "label": "NEC address",
+          "unit": "code",
+          "min": 0.0,
+          "max": 65535.0,
+          "default": 48896.0
+        },
+        {
+          "key": "command",
+          "label": "NEC command",
+          "unit": "code",
+          "min": -1.0,
+          "max": 255.0,
+          "default": -1.0
+        }
+      ]
+    },
+    {
+      "device_type": "ir_remote_nec",
+      "label": "NEC IR remote",
+      "summary": "NEC / NEC-extended remote; demodulated envelope on IR",
+      "detail": "NEC / NEC-extended remote; demodulated envelope on IR",
+      "transport": "gpio_group",
+      "category": "gpio",
+      "config_keys": [],
+      "labs": [],
+      "inputs": [
+        {
+          "key": "address",
+          "label": "NEC address",
+          "unit": "code",
+          "min": 0.0,
+          "max": 65535.0,
+          "default": 48896.0
+        },
+        {
+          "key": "key",
+          "label": "NEC command",
+          "unit": "code",
+          "min": -1.0,
+          "max": 255.0,
+          "default": -1.0
+        }
+      ]
     }
   ]
 }

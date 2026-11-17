@@ -2289,7 +2289,10 @@ jobs:
         run: |
           cargo run --locked -p labwired-cli --bin gen-peripherals-manifest -- \
             --out "$RUNNER_TEMP/generated-peripherals-manifest.json"
-          cmp "$RUNNER_TEMP/generated-peripherals-manifest.json" crates/core/tests/fixtures/peripherals/manifest.json
+          if ! cmp -s "$RUNNER_TEMP/generated-peripherals-manifest.json" crates/core/tests/fixtures/peripherals/manifest.json; then
+            diff -u crates/core/tests/fixtures/peripherals/manifest.json "$RUNNER_TEMP/generated-peripherals-manifest.json" || true
+            exit 1
+          fi
 
       # One copy is sufficient: every shard builds the same full workspace.
       - name: Retain source-bound native workspace replay inputs
