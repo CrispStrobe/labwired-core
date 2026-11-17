@@ -210,19 +210,22 @@ fn gpio_edges_are_raised_at_the_write_and_do_not_block_the_fast_path() {
     assert_eq!(seen.lock().unwrap()[2], (0, 2, 1));
 }
 
-#[cfg(feature = "event-scheduler")]
 #[test]
 fn hosted_window_admission_keeps_gpio_consumers_on_instruction_sized_windows() {
     use crate::peripherals::{gpio::GpioPort, sam::eic::Samd51Eic};
 
     let mut bus = SystemBus::empty();
     bus.legacy_walk_disabled = true;
-    assert!(bus.per_cycle_tick_is_trivial());
-    assert!(bus.hosted_tick_window_is_trivial());
+    // The test runs in both feature graphs without introducing another cfg
+    // site: the shared bus policy supplies the graph's batching capability.
+    let batching = bus.per_cycle_tick_is_trivial();
+    assert_eq!(batching, bus.max_safe_tick_interval() > 1);
+    assert_eq!(bus.hosted_tick_window_is_trivial(), batching);
     bus.add_peripheral("gpioa", 0x4800_0000, 0x400, None, Box::new(GpioPort::new()));
-    assert!(bus.per_cycle_tick_is_trivial());
-    assert!(
+    assert_eq!(bus.per_cycle_tick_is_trivial(), batching);
+    assert_eq!(
         bus.hosted_tick_window_is_trivial(),
+        batching,
         "ordinary STM32 GPIO stays eligible"
     );
 
@@ -236,8 +239,9 @@ fn hosted_window_admission_keeps_gpio_consumers_on_instruction_sized_windows() {
             None,
             Box::new(GpioPort::new_nrf52(32)),
         );
-        assert!(
+        assert_eq!(
             nordic.per_cycle_tick_is_trivial(),
+            batching,
             "event hooks retain bus batching"
         );
         assert!(
@@ -251,8 +255,9 @@ fn hosted_window_admission_keeps_gpio_consumers_on_instruction_sized_windows() {
     let mut sam = SystemBus::empty();
     sam.legacy_walk_disabled = true;
     sam.add_peripheral("eic", 0x4000_2800, 0x100, None, Box::new(Samd51Eic::new()));
-    assert!(
+    assert_eq!(
         sam.per_cycle_tick_is_trivial(),
+        batching,
         "EIC event hooks retain bus batching"
     );
     assert!(
