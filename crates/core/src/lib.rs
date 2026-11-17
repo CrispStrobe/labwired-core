@@ -66,8 +66,8 @@ pub use machine::{
 };
 pub use peripheral::{
     AnalogProbe, DmaDirection, DmaRequest, DmaRoute, DmaUnitTransform, FlashStoreOutcome,
-    MmioAccessClass, Peripheral, PeripheralResetCause, PeripheralTickResult, DMA_SIGNAL_RX,
-    DMA_SIGNAL_TX,
+    MmioAccessClass, Peripheral, PeripheralResetCause, PeripheralTickResult, DMA_SIGNAL_DATA,
+    DMA_SIGNAL_RX, DMA_SIGNAL_TX,
 };
 
 use std::collections::HashSet;
@@ -349,6 +349,13 @@ pub struct StepProfile {
 /// event-scheduler fast-forward path consults the medium poll quantum.
 #[cfg(feature = "event-scheduler")]
 const WIFI_MEDIUM_IDLE_POLL_QUANTUM: u64 = 8192;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct IdleFastForwardResult {
+    cycles: u64,
+    primary_steps: u64,
+    secondary_steps: u64,
+}
 
 pub struct Machine<C: Cpu> {
     pub cpu: C,
@@ -1622,7 +1629,11 @@ impl<C: Cpu> Machine<C> {
             && self.bus.idle_fast_forward_legacy_safe()
     }
 
-    fn try_idle_fast_forward(&mut self, _max_steps: Option<u64>, _steps: u64) -> u64 {
+    fn try_idle_fast_forward(
+        &mut self,
+        _max_steps: Option<u64>,
+        _steps: u64,
+    ) -> Option<IdleFastForwardResult> {
         // POLLED logic capture disables the skip: a scheduler event inside the
         // skipped window could toggle a watched pad, and the per-cycle poll
         // guarantee must hold even under this opt-in acceleration. Push-only
@@ -1630,7 +1641,7 @@ impl<C: Cpu> Machine<C> {
         // instrumented peripheral code, which pushes its own edge with the
         // post-skip tap clock (seeded below before the scheduler drain).
         if !self.config.idle_fast_forward_enabled || self.logic_capture.poll_active() {
-            return 0;
+            return None;
         }
         // A cycle-accurate bus still skips a WFI wait while every resident is
         // idle (an idle DHT22 between reads). It does not coalesce timer polls:
@@ -1641,28 +1652,25 @@ impl<C: Cpu> Machine<C> {
             && (self.bus.idle_skip_requires_cycle_accurate()
                 || self.cpu.idle_fast_forward_budget(&self.bus).is_none())
         {
-            return 0;
+            return None;
         }
 
         #[cfg(not(feature = "event-scheduler"))]
         {
-            0
+            None
         }
 
         #[cfg(feature = "event-scheduler")]
         {
-            // This explicit assembly includes statically inert clock banks
-            // whose conservative legacy-active default is not a tick contract.
-            // Reuse its stricter inactive predicate: it admits those banks but
-            // refuses bus service, pending operations, residents and observers.
-            // Other assemblies retain the existing idle admission policy.
+            // The SAMD assembly uses its stricter quiescence check; other
+            // assemblies retain the legacy idle admission policy.
             let idle_bus_safe = if self.bus.samd_native_quiescent_chunks {
                 self.bus.samd_quiescent_chunk_ready()
             } else {
                 self.bus.idle_fast_forward_legacy_safe()
             };
             if !idle_bus_safe {
-                return 0;
+                return None;
             }
 
             // The common active-core case cannot fast-forward: it has no WFI
@@ -1684,7 +1692,7 @@ impl<C: Cpu> Machine<C> {
                 && self.cpu.idle_fast_forward_budget(&self.bus).is_none()
                 && !self.cpu.poll_loop_anchor_ready()
             {
-                return 0;
+                return None;
             }
 
             // Drain first: a due scheduler event may assert an interrupt, in
@@ -1711,15 +1719,16 @@ impl<C: Cpu> Machine<C> {
             // own wake deadline (CCOMPARE0) and its CCOUNT moves with the skip.
             //
             // A core busy in a proven cycle-counter poll loop (a CCOUNT
-            // busy-wait, `Cpu::poll_loop_skip_budget`) counts as idle too: it
-            // retires nothing but time until a known cycle, so skipping it is
-            // the same as running it. The skip is then a multiple of its loop
-            // period, and every core's timer edge clamps it.
+            // busy-wait, `Cpu::poll_loop_skip_budget`) can be skipped because
+            // its retired instructions and resulting state are known. Carry
+            // those instruction counts with the elapsed time below. The skip
+            // is a multiple of its loop period, and every core's timer edge
+            // clamps it.
             let remaining = _max_steps
                 .map(|limit| limit.saturating_sub(_steps))
                 .unwrap_or(1_000_000);
             if remaining == 0 {
-                return 0;
+                return None;
             }
             let mut secondary_wake = None;
             let mut secondary_spin: Option<(u64, u64)> = None;
@@ -1731,17 +1740,15 @@ impl<C: Cpu> Machine<C> {
                 match sec.secondary_execution_state() {
                     SecondaryExecutionState::Active => {
                         if !sec.poll_loop_anchor_ready() {
-                            return 0;
+                            return None;
                         }
                         match sec.poll_loop_skip_budget(&self.bus, remaining) {
                             Some(spin) => secondary_spin = Some(spin),
-                            None => return 0,
+                            None => return None,
                         }
                     }
                     SecondaryExecutionState::ParkedIdle => {
-                        if sec.idle_fast_forward_budget(&self.bus).is_none() {
-                            return 0;
-                        }
+                        sec.idle_fast_forward_budget(&self.bus)?;
                         secondary_wake = sec.parked_wake_deadline_cycles();
                     }
                     SecondaryExecutionState::ResetHeld => {}
@@ -1783,7 +1790,7 @@ impl<C: Cpu> Machine<C> {
             if (primary_stores && (secondary_spin.is_some() || deferred_end.is_some()))
                 || (secondary_stores && primary_spin.is_some())
             {
-                return 0;
+                return None;
             }
             let spinning =
                 primary_spin.is_some() || secondary_spin.is_some() || deferred_end.is_some();
@@ -1791,7 +1798,7 @@ impl<C: Cpu> Machine<C> {
                 (Some(budget), _) if budget > 0 => budget,
                 (_, Some((_, cycles))) => cycles,
                 _ if timer_poll => u64::MAX,
-                _ => return 0,
+                _ => return None,
             };
             // The timer-poll arm below is only the one the budget came from.
             let timer_poll = timer_poll && wfi_budget.is_none() && primary_spin.is_none();
@@ -1839,7 +1846,7 @@ impl<C: Cpu> Machine<C> {
 
             if let Some(deadline_cycle) = self.sched.next_event_deadline() {
                 if deadline_cycle <= self.total_cycles {
-                    return 0;
+                    return None;
                 }
                 budget = budget.min(deadline_cycle - self.total_cycles);
             } else if timer_poll && wfi_budget.is_none() {
@@ -1856,7 +1863,7 @@ impl<C: Cpu> Machine<C> {
             // Tiny windows are not worth the skip bookkeeping on the timer-poll
             // path (WFI may still skip short waits).
             if budget == 0 || (timer_poll && wfi_budget.is_none() && budget < 1024) {
-                return 0;
+                return None;
             }
             budget = budget.min(u32::MAX as u64);
             if spinning {
@@ -1879,24 +1886,29 @@ impl<C: Cpu> Machine<C> {
                 }
                 budget -= budget % step;
                 if budget == 0 {
-                    return 0;
+                    return None;
                 }
             }
             let skipped = budget as u32;
+            let mut primary_steps = 0;
             if primary_spin.is_some() {
-                let applied = self.cpu.fast_forward_poll_loop(skipped as u64);
-                debug_assert!(applied, "a proven poll-loop skip must apply");
+                primary_steps = self
+                    .cpu
+                    .fast_forward_poll_loop(skipped as u64)
+                    .expect("a proven primary poll-loop skip must apply");
             } else {
                 self.cpu.fast_forward_idle_cycles(skipped as u64);
             }
+            let mut secondary_steps = 0;
             if let Some(sec) = self
                 .cpu_secondary
                 .as_mut()
                 .filter(|_| deferred_end.is_none())
             {
                 if secondary_spin.is_some() {
-                    let applied = sec.fast_forward_poll_loop(skipped as u64);
-                    debug_assert!(applied, "a proven poll-loop skip must apply");
+                    secondary_steps = sec
+                        .fast_forward_poll_loop(skipped as u64)
+                        .expect("a proven secondary poll-loop skip must apply");
                 } else if sec.secondary_execution_state() == SecondaryExecutionState::ParkedIdle {
                     sec.fast_forward_idle_cycles(skipped as u64);
                 }
@@ -1936,7 +1948,11 @@ impl<C: Cpu> Machine<C> {
             // shared clock boundary a sleeping guest starves paced UART peers
             // and RX timeouts until unrelated CPU work resumes.
             self.advance_central_i2c_time();
-            u64::from(skipped)
+            Some(IdleFastForwardResult {
+                cycles: u64::from(skipped),
+                primary_steps,
+                secondary_steps,
+            })
         }
     }
 
