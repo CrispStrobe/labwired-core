@@ -7372,3 +7372,17 @@ fn an_armed_batch_stop_skips_only_pure_device_reads() {
         );
     }
 }
+
+#[test]
+fn inert_ra_can_does_not_pin_the_legacy_walk() {
+    let mut bus = SystemBus::new();
+    bus.peripherals.clear();
+    bus.add_peripheral(
+        "ra-can",
+        0x4005_0000,
+        0x1000,
+        None,
+        Box::new(crate::peripherals::ra_can::RaCan::new()),
+    );
+    assert!(bus.derive_walk_deletable(), "RA CAN has no tick work");
+}
