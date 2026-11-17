@@ -210,6 +210,57 @@ fn gpio_edges_are_raised_at_the_write_and_do_not_block_the_fast_path() {
     assert_eq!(seen.lock().unwrap()[2], (0, 2, 1));
 }
 
+#[cfg(feature = "event-scheduler")]
+#[test]
+fn hosted_window_admission_keeps_gpio_consumers_on_instruction_sized_windows() {
+    use crate::peripherals::{gpio::GpioPort, sam::eic::Samd51Eic};
+
+    let mut bus = SystemBus::empty();
+    bus.legacy_walk_disabled = true;
+    assert!(bus.per_cycle_tick_is_trivial());
+    assert!(bus.hosted_tick_window_is_trivial());
+    bus.add_peripheral("gpioa", 0x4800_0000, 0x400, None, Box::new(GpioPort::new()));
+    assert!(bus.per_cycle_tick_is_trivial());
+    assert!(
+        bus.hosted_tick_window_is_trivial(),
+        "ordinary STM32 GPIO stays eligible"
+    );
+
+    for name in ["gpio0", "gpio1"] {
+        let mut nordic = SystemBus::empty();
+        nordic.legacy_walk_disabled = true;
+        nordic.add_peripheral(
+            name,
+            0x5000_0000,
+            0x1000,
+            None,
+            Box::new(GpioPort::new_nrf52(32)),
+        );
+        assert!(
+            nordic.per_cycle_tick_is_trivial(),
+            "event hooks retain bus batching"
+        );
+        assert!(
+            !nordic.hosted_tick_window_is_trivial(),
+            "{name}: hosted GPIO admission stays conservative"
+        );
+    }
+
+    // The observer capability also covers lettered SAM ports: this must not
+    // depend solely on Nordic port names.
+    let mut sam = SystemBus::empty();
+    sam.legacy_walk_disabled = true;
+    sam.add_peripheral("eic", 0x4000_2800, 0x100, None, Box::new(Samd51Eic::new()));
+    assert!(
+        sam.per_cycle_tick_is_trivial(),
+        "EIC event hooks retain bus batching"
+    );
+    assert!(
+        !sam.hosted_tick_window_is_trivial(),
+        "SAM edge consumers keep instruction-sized hosted windows"
+    );
+}
+
 #[test]
 fn timer_poll_coalesce_uses_peripheral_access_class_not_chip_names() {
     let mut bus = SystemBus::new();

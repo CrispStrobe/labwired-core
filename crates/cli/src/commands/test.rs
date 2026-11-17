@@ -2198,7 +2198,7 @@ pub(crate) fn run_test(
                 // tester or bridge, no GPIO device needing service): those are
                 // serviced per tick and would see the wide window.
                 let wide = machine.max_safe_tick_interval();
-                if wide > 1 && machine.bus.per_cycle_tick_is_trivial() {
+                if wide > 1 && machine.bus.hosted_tick_window_is_trivial() {
                     machine.config.peripheral_tick_interval = wide;
                     machine.bus.config.peripheral_tick_interval = wide;
                     machine.exact_batch_boundaries = true;

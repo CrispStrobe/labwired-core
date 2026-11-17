@@ -224,6 +224,19 @@ impl SystemBus {
             && self.device_pin_pads.is_empty()
     }
 
+    /// Whether the hosted CLI may widen its instruction window.
+    ///
+    /// Event-driven GPIO hooks permit the bus's walk-free tick, but that does
+    /// not qualify a complete hosted execution loop for wider windows. Keep
+    /// GPIO edge consumers and Nordic ports on the established instruction-sized
+    /// hosted windows independently of the bus-level batching permission.
+    pub fn hosted_tick_window_is_trivial(&self) -> bool {
+        self.per_cycle_tick_is_trivial()
+            && !self.gpio_edge_observers
+            && self.find_peripheral_index_by_name("gpio0").is_none()
+            && self.find_peripheral_index_by_name("gpio1").is_none()
+    }
+
     /// Whether NO attached bus-resident device needs the per-cycle service pass
     /// — i.e. skipping [`service_gpio_devices`](Self::service_gpio_devices)
     /// changes nothing observable.
