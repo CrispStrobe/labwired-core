@@ -1252,6 +1252,12 @@ fn drive_uart(
                     .into(),
             };
         }
+        // The authored AT32F421 USART profile is the classic STS/DT/BAUDR/
+        // CTRL map. Reuse the real transmit sequence and independent decoder;
+        // this does not classify its unrelated GPIO/SPI/I2C layouts as STM32F1.
+        Family::Unknown if chip == "at32f421g8u7" => {
+            return drive_uart_stm32(machine, inst, Stm32UartMap::F1);
+        }
         Family::Unknown => {
             return KindResult::Unsupported {
                 instance: inst.name.clone(),

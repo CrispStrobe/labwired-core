@@ -14,8 +14,9 @@ use crate::common::root;
 
 use labwired_config::{ChipDescriptor, SystemManifest};
 use labwired_core::bus::SystemBus;
+use labwired_core::cpu::CortexM;
 use labwired_core::system::cortex_m::configure_cortex_m;
-use labwired_core::Bus;
+use labwired_core::{Bus, Cpu, Machine};
 
 const RP2350_ADC: u64 = 0x400A_0000;
 const RP2040_ADC: u64 = 0x4004_C000;
@@ -24,29 +25,39 @@ const INTF: u64 = 0x1C;
 const NVIC_ISER0: u64 = 0xE000_E100;
 const NVIC_ISPR0: u64 = 0xE000_E200;
 
-fn pending(bus: &SystemBus, line: u32) -> bool {
-    let word = bus.read_u32(NVIC_ISPR0 + u64::from(line / 32) * 4).unwrap();
+fn pending(bus: &Machine<CortexM>, line: u32) -> bool {
+    let word = bus
+        .bus
+        .read_u32(NVIC_ISPR0 + u64::from(line / 32) * 4)
+        .unwrap();
     word & (1 << (line % 32)) != 0
 }
 
-fn bus_for(chip_rel: &str, system_rel: &str) -> SystemBus {
+fn bus_for(chip_rel: &str, system_rel: &str) -> Machine<CortexM> {
     let chip_path = root(chip_rel);
     let chip = ChipDescriptor::from_file(&chip_path).expect("chip");
     let mut manifest = SystemManifest::from_file(root(system_rel)).expect("system");
     manifest.chip = chip_path.to_str().unwrap().to_string();
     let mut bus = SystemBus::from_config(&chip, &manifest).expect("bus");
-    let _ = configure_cortex_m(&mut bus);
-    bus
+    let (mut cpu, _nvic) = configure_cortex_m(&mut bus);
+    // Keep a real core running a RAM `b .` while the machine advances its
+    // event owner. The test observes pending IRQs, not exception entry.
+    bus.write_u16(0x2000_0000, 0xe7fe).unwrap();
+    cpu.set_pc(0x2000_0000);
+    cpu.primask = true;
+    Machine::new(cpu, bus)
 }
 
-fn fire_adc_fifo_irq(bus: &mut SystemBus, adc: u64, line: u32) {
+fn fire_adc_fifo_irq(bus: &mut Machine<CortexM>, adc: u64, line: u32) {
     // Enable the NVIC line, then force the FIFO interrupt (INTE.FIFO + INTF.FIFO).
-    bus.write_u32(NVIC_ISER0 + u64::from(line / 32) * 4, 1 << (line % 32))
+    bus.bus
+        .write_u32(NVIC_ISER0 + u64::from(line / 32) * 4, 1 << (line % 32))
         .unwrap();
-    bus.write_u32(adc + INTE, 1).unwrap();
-    bus.write_u32(adc + INTF, 1).unwrap();
+    bus.bus.write_u32(adc + INTE, 1).unwrap();
+    bus.bus.write_u32(adc + INTF, 1).unwrap();
     for _ in 0..4 {
-        let _ = bus.tick_peripherals_fully();
+        bus.step()
+            .expect("advance the real machine/event scheduler");
     }
 }
 
