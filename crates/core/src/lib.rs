@@ -1797,7 +1797,8 @@ impl<C: Cpu> Machine<C> {
             let mut budget = match (wfi_budget, primary_spin) {
                 (Some(budget), _) if budget > 0 => budget,
                 (_, Some((_, cycles))) => cycles,
-                _ if timer_poll => u64::MAX,
+                // Timer-read classification alone cannot prove that the
+                // active CPU has no observable work between reads.
                 _ => return None,
             };
             // The timer-poll arm below is only the one the budget came from.

@@ -45,6 +45,8 @@ pub(crate) struct CountingCpu {
     idle_skipped: u64,
     gpio_write_at_step: Option<(u32, u64, u32)>,
     step_cycles: u32,
+    // Test-only: repeated pure timer reads with a changing RAM store.
+    timer_poll_work: Option<(u64, u64)>,
 }
 
 impl Cpu for CountingCpu {
@@ -76,6 +78,11 @@ impl Cpu for CountingCpu {
         }
         if !self.halted {
             self.steps += 1;
+            if let Some((timer, ram)) = self.timer_poll_work {
+                let _ = bus.read_u32(timer)?;
+                let _ = bus.read_u32(timer)?;
+                bus.write_u32(ram, self.steps)?;
+            }
             if let Some((step, address, value)) = self.gpio_write_at_step {
                 if step == self.steps {
                     bus.write_u32(address, value)?;
@@ -1371,6 +1378,64 @@ fn active_cpu_keeps_idle_preflight_for_timer_poll_activity() {
         crate::profile::snapshot().sched_calls,
         expected_scheduler_calls,
         "timer-poll evidence must be consumed by idle preflight before it is reset"
+    );
+}
+
+/// Timer-classified reads alone do not prove that the active CPU is idle:
+/// each iteration also changes an architectural register and a RAM word.
+#[test]
+fn timer_reads_with_register_and_store_work_must_not_skip_cpu() {
+    if !crate::cycle_clock::event_scheduler_enabled() {
+        return; // This counterexample exercises the event-scheduler skip arm.
+    }
+    #[derive(Debug)]
+    struct PollTimer;
+    impl crate::Peripheral for PollTimer {
+        fn read(&self, _offset: u64) -> crate::SimResult<u8> {
+            Ok(0)
+        }
+        fn write(&mut self, _offset: u64, _value: u8) -> crate::SimResult<()> {
+            Ok(())
+        }
+        fn mmio_access_class(&self, _offset: u64) -> crate::MmioAccessClass {
+            crate::MmioAccessClass::FreerunningTimerPoll
+        }
+        fn read_is_pure(&self, _offset: u64) -> bool {
+            true
+        }
+        fn legacy_tick_active(&self) -> bool {
+            false
+        }
+    }
+    fn run(skip: bool) -> (u32, u32, u64) {
+        let mut bus = SystemBus::new();
+        bus.peripherals.clear();
+        bus.ram = LinearMemory::new(4096, 0x2000_0000);
+        bus.add_peripheral("poll-timer", 0x5000_0000, 0x100, None, Box::new(PollTimer));
+        let cpu = CountingCpu {
+            timer_poll_work: Some((0x5000_0000, 0x2000_0000)),
+            ..Default::default()
+        };
+        let mut machine = Machine::new(cpu, bus);
+        machine.config.idle_fast_forward_enabled = skip;
+        let request = AdvanceRequest::run(Some(4096)).with_batch_cap(NonZeroU32::new(1).unwrap());
+        let report = machine.advance(request).unwrap();
+        (
+            machine.cpu.steps,
+            machine.bus.read_u32(0x2000_0000).unwrap(),
+            report.primary_steps,
+        )
+    }
+    let reference = run(false);
+    let optimized = run(true);
+    assert_eq!(
+        reference,
+        (4096, 4096, 4096),
+        "reference must perform real CPU and RAM work"
+    );
+    assert_eq!(
+        optimized, reference,
+        "timer reads cannot authorize skipping active CPU work"
     );
 }
 
