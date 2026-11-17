@@ -774,6 +774,9 @@ jobs:
       # reopens" — was asking a human to do by hand. The two steps are still
       # identical, but drift between them can no longer open a hole silently:
       # the union of the three clippy scopes is asserted against the tree.
+      - name: Cargo check (merged default-member integration)
+        run: cargo check --locked
+
       - name: Clippy (default-members)
         run: cargo clippy --all-targets -- -D warnings
 
