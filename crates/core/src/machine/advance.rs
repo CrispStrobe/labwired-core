@@ -248,6 +248,10 @@ impl<C: Cpu> Machine<C> {
         self.advance_output(AdvanceRequest::single())
     }
 
+    // Keep the fixed single-step policy visible through the shared lifecycle.
+    // Otherwise the compatibility adapter pays for dynamic request handling on
+    // every instruction even though all of its policies are compile-time fixed.
+    #[inline(always)]
     fn advance_output<O: AdvanceOutput>(&mut self, request: AdvanceRequest) -> SimResult<O> {
         if let Some(report) = self.supply_gate(&request)? {
             return Ok(O::from_report(report));

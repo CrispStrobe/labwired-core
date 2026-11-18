@@ -179,6 +179,7 @@ impl<C: Cpu> Machine<C> {
         self.plan_cpu_window_with::<Ordinary>(request, fuel_consumed, elapsed_cycles)
     }
 
+    #[inline(always)]
     pub(crate) fn plan_cpu_window_with<H: WindowHooks>(
         &mut self,
         request: AdvanceRequest,

@@ -1100,14 +1100,7 @@ def measure_once(cli: Path, chip_arg: str, firmware: Path, steps: int, mode: str
             env=env,
         )
         evidence = env.get("LABWIRED_PERF_EVIDENCE_DIR")
-        # Select only which existing originals to retain, never which board
-        # or execution mode the full gate measures. An empty filter retains
-        # the previous all-board behavior for standalone diagnostic callers.
-        evidence_boards = {
-            board.strip() for board in env.get("LABWIRED_PERF_EVIDENCE_BOARDS", "").split(",")
-            if board.strip()
-        }
-        if evidence and (not evidence_boards or Path(chip_arg).stem in evidence_boards):
+        if evidence:
             retain_measurement(Path(evidence), command, env, proc,
                                Path(tmp) / "cg.out", cli, Path(chip_arg), firmware, steps, mode)
     if proc.returncode != 0:

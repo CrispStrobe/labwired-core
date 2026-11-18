@@ -224,10 +224,9 @@ jobs:
       - name: Measure per-board throughput
         id: perf
         env:
-          # Retain function attribution for the failing CPU families from the
-          # same required measurements. The full board/mode gate is unchanged.
+          # Use the held producer's existing retention interface for the same
+          # full required measurements; do not change measurement or gate logic.
           LABWIRED_PERF_EVIDENCE_DIR: perf-evidence
-          LABWIRED_PERF_EVIDENCE_BOARDS: atmega328p,esp32,esp32s3
         run: |
           set -o pipefail
           python3 scripts/perf/board_perf.py --require-all \

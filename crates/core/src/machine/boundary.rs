@@ -54,6 +54,7 @@ impl<C: Cpu> Machine<C> {
         self.bus.service_resident_scheduled_edges();
     }
 
+    #[inline(always)]
     pub(crate) fn execute_cpu_window<H: WindowHooks>(
         &mut self,
         mode: ExecutionMode,
@@ -623,6 +624,7 @@ impl<C: Cpu> Machine<C> {
         self.commit_advance_boundary_with::<super::plan::Ordinary>(mode, batch_start, progress)
     }
 
+    #[inline(always)]
     pub(crate) fn commit_advance_boundary_with<H: WindowHooks>(
         &mut self,
         mode: ExecutionMode,

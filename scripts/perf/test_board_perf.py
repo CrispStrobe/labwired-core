@@ -953,18 +953,13 @@ def test_the_ratio_gate_catches_a_duplicated_measurement():
     ] == []
 
 
-@pytest.mark.parametrize("retain_boards", [None, "board", "other"])
-def test_retention_keeps_the_same_callgrind_execution_and_binds_originals(tmp_path, monkeypatch, retain_boards):
+def test_retention_keeps_the_same_callgrind_execution_and_binds_originals(tmp_path, monkeypatch):
     import hashlib
     cli, chip, firmware = [tmp_path / name for name in ("cli", "board.yaml", "fw.elf")]
     for index, item in enumerate((cli, chip, firmware)):
         item.write_bytes(bytes([index + 1]) * 13)
     root = tmp_path / "evidence"
     monkeypatch.setenv("LABWIRED_PERF_EVIDENCE_DIR", str(root))
-    if retain_boards is None:
-        monkeypatch.delenv("LABWIRED_PERF_EVIDENCE_BOARDS", raising=False)
-    else:
-        monkeypatch.setenv("LABWIRED_PERF_EVIDENCE_BOARDS", retain_boards)
     calls = []
     raw_callgrind = b"events: Ir\nsummary: 1000\n"
 
@@ -979,9 +974,6 @@ def test_retention_keeps_the_same_callgrind_execution_and_binds_originals(tmp_pa
     # Path here put a non-JSON object into the retained argv (fork 9146a7414).
     measured = bp.measure_once(cli, str(chip), firmware, 200_000, bp.MODE_STEP)
     assert measured.irefs == 1000 and len(calls) == 1
-    if retain_boards == "other":
-        assert not root.exists(), "retention filtering must not filter the measurement"
-        return
     roster = [json.loads(line) for line in (root / "samples.jsonl").read_text().splitlines()]
     assert len(roster) == 1
     packet = root / roster[0]["packet"]
