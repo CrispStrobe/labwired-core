@@ -765,6 +765,58 @@ fn profile_accounting_overflow_refuses_without_partial_counter_updates() {
 }
 
 #[test]
+fn dispatch_partition_overflow_refuses_before_updating_total_or_batches() {
+    let mut profile = StepProfile {
+        cpu_instructions: 7,
+        instruction_work: Some(crate::InstructionWork {
+            dispatched: u64::MAX,
+            represented: 3,
+        }),
+        ..StepProfile::default()
+    };
+    let before = profile;
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        profile.record_dispatched_work(1);
+    }))
+    .is_err());
+    assert_eq!(profile, before);
+}
+
+#[test]
+fn dispatched_work_preserves_represented_and_unknown_historical_partitions() {
+    let mut profile = StepProfile {
+        cpu_instructions: 10,
+        instruction_work: Some(crate::InstructionWork {
+            dispatched: 3,
+            represented: 7,
+        }),
+        ..StepProfile::default()
+    };
+    profile.record_dispatched_work(5);
+    assert_eq!(profile.cpu_instructions, 15);
+    assert_eq!(profile.cpu_batches, 1);
+    assert_eq!(
+        profile.validated_instruction_work(),
+        Some(crate::InstructionWork {
+            dispatched: 8,
+            represented: 7,
+        })
+    );
+
+    let mut historical = StepProfile {
+        cpu_instructions: 10,
+        instruction_work: None,
+        skipped_cycles: None,
+        ..StepProfile::default()
+    };
+    historical.record_dispatched_work(5);
+    assert_eq!(historical.cpu_instructions, 15);
+    assert_eq!(historical.cpu_batches, 1);
+    assert_eq!(historical.instruction_work, None);
+    assert_eq!(historical.skipped_cycles, None);
+}
+
+#[test]
 fn represented_work_is_not_assumed_to_equal_or_fit_skipped_cycles() {
     // A ledger control, not a claim that a particular CPU runs at this density.
     let report = AdvanceReport::new(

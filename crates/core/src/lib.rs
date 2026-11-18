@@ -375,19 +375,22 @@ impl StepProfile {
             .cpu_instructions
             .checked_add(instructions)
             .expect("instruction total overflow");
-        let work = self.instruction_work.map(|work| InstructionWork {
-            dispatched: work
-                .dispatched
+        // Compute every checked replacement before committing any field, but
+        // do not copy and rewrite the unchanged partition and Option tag on
+        // every dispatch. Historical profiles with an unknown split stay unknown.
+        let dispatched = self.instruction_work.as_ref().map_or(0, |work| {
+            work.dispatched
                 .checked_add(instructions)
-                .expect("dispatch count overflow"),
-            represented: work.represented,
+                .expect("dispatch count overflow")
         });
         let batches = self
             .cpu_batches
             .checked_add(1)
             .expect("dispatch batch count overflow");
         self.cpu_instructions = total;
-        self.instruction_work = work;
+        if let Some(work) = self.instruction_work.as_mut() {
+            work.dispatched = dispatched;
+        }
         self.cpu_batches = batches;
     }
 

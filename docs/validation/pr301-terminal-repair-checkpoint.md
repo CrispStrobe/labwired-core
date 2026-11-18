@@ -159,3 +159,31 @@ The next normal source push must pass all exact-head runtime checks and the
 complete unchanged performance gate. The twelve failed measurements remain
 open until that happens. PR301 is unmerged and #300 remains open; no fixed Pico,
 full-performance or main-green claim is made.
+
+### Follow-up failure and counter-cost candidate — 20:35 UTC
+
+Head `f822cd92f073d3ee4012057100ced1a9cbdd0699` passed the default-member
+runtime suite (6144 core tests), source gate and frozen-harness suite. Its
+[full CorePerf attempt](https://github.com/CrispStrobe/labwired-core/actions/runs/44385709978/job/135098853829)
+failed C3 normalized RTF at 0.0009068 versus baseline 0.001212 and the unchanged
+25% tolerance. The Ir/step matrix was consequently skipped. At 20:35 UTC,
+overall checks were 29 success, two failure, eleven skips and three unfinished.
+Neither earlier Ir/step results nor these partial successes qualify this head.
+
+Compared with diagnostic head `04e5783da`, the C3 workload's median wall time
+improved from 13.0928 to 12.1034 seconds. Its best RTF improved from 0.03911 to
+0.04153, but the spin reference improved from 41.7301x to 45.7967x. The resulting
+normalized index fell from 0.0009372 to 0.0009068. All three workload samples
+still retired 79,320,206 instructions over 80,000,000 cycles. The normalization
+formula and tolerance remain unchanged; slowing the reference is not a repair.
+
+The next candidate retains the inlining improvement and reduces the shared
+per-dispatch profile update's copying. It computes all checked replacements
+before publishing any change, then updates only the dispatched scalar. The
+represented scalar and optional partition tag are preserved in place. Frequent
+MMIO-bound dispatches pay this cost more often than the wide spin-reference
+windows. This addresses the partition-copy cost observed in the original
+profiles without removing a counter or overflow check. New controls cover
+dispatch overflow atomicity, represented-work conservation and unknown
+historical partitions. They are written and formatted, but have not yet run;
+fresh exact-head hosted qualification is required.
