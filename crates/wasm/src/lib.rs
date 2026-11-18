@@ -231,7 +231,8 @@ pub fn wifi_host_fulfill_http(id: u32, response: &[u8]) {
 
 /// Public shape returned by `step_batch_profile`.
 ///
-/// The six execution counters intentionally mirror `StepProfile` exactly.
+/// Legacy execution counters retain their values; the optional instruction
+/// partition and skipped time preserve `StepProfile`'s known/unknown status.
 /// `executed_cycles` is the batch boundary observable; workload-specific
 /// markers such as ESP32-S3 OLED first-paint and completion remain outside
 /// this generic API and are measured by the workload harness in the same
@@ -243,11 +244,41 @@ struct WasmStepBatchProfile {
     wall_ms: f64,
     cycles_per_second: f64,
     cpu_instructions: u64,
+    instruction_work: Option<labwired_core::InstructionWork>,
+    skipped_cycles: Option<u64>,
     cpu_batches: u64,
     peripheral_ticks: u64,
     peripheral_ticked_entries: u64,
     bus_tick_entries: u64,
     legacy_tick_entries: u64,
+}
+
+impl WasmStepBatchProfile {
+    fn from_profile(
+        requested: u32,
+        executed: u32,
+        wall_ms: f64,
+        profile: labwired_core::StepProfile,
+    ) -> Self {
+        Self {
+            requested_cycles: requested,
+            executed_cycles: executed,
+            wall_ms,
+            cycles_per_second: if wall_ms > 0.0 {
+                f64::from(executed) * 1000.0 / wall_ms
+            } else {
+                0.0
+            },
+            cpu_instructions: profile.cpu_instructions,
+            instruction_work: profile.instruction_work,
+            skipped_cycles: profile.skipped_cycles,
+            cpu_batches: profile.cpu_batches,
+            peripheral_ticks: profile.peripheral_ticks,
+            peripheral_ticked_entries: profile.peripheral_ticked_entries,
+            bus_tick_entries: profile.bus_tick_entries,
+            legacy_tick_entries: profile.legacy_tick_entries,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1947,22 +1978,12 @@ impl WasmSimulator {
         let profile = machine.step_profile();
         let t1 = perf_now();
 
-        serde_wasm_bindgen::to_value(&WasmStepBatchProfile {
-            requested_cycles: max_cycles,
-            executed_cycles: executed,
-            wall_ms: t1 - t0,
-            cycles_per_second: if t1 > t0 {
-                (executed as f64) * 1000.0 / (t1 - t0)
-            } else {
-                0.0
-            },
-            cpu_instructions: profile.cpu_instructions,
-            cpu_batches: profile.cpu_batches,
-            peripheral_ticks: profile.peripheral_ticks,
-            peripheral_ticked_entries: profile.peripheral_ticked_entries,
-            bus_tick_entries: profile.bus_tick_entries,
-            legacy_tick_entries: profile.legacy_tick_entries,
-        })
+        serde_wasm_bindgen::to_value(&WasmStepBatchProfile::from_profile(
+            max_cycles,
+            executed,
+            t1 - t0,
+            profile,
+        ))
         .map_err(|e| JsValue::from_str(&format!("profile serialize: {e}")))
     }
 
@@ -2776,6 +2797,11 @@ mod machine_advance_tests {
             wall_ms: 3.0,
             cycles_per_second: 4.0,
             cpu_instructions: 5,
+            instruction_work: Some(labwired_core::InstructionWork {
+                dispatched: 3,
+                represented: 2,
+            }),
+            skipped_cycles: Some(4),
             cpu_batches: 6,
             peripheral_ticks: 7,
             peripheral_ticked_entries: 8,
@@ -2795,6 +2821,8 @@ mod machine_advance_tests {
             "cpu_instructions",
             "cycles_per_second",
             "executed_cycles",
+            "instruction_work",
+            "skipped_cycles",
             "legacy_tick_entries",
             "peripheral_ticked_entries",
             "peripheral_ticks",
@@ -2805,6 +2833,42 @@ mod machine_advance_tests {
         .collect::<BTreeSet<_>>();
 
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn browser_profile_conversion_retains_split_and_unknown_history() {
+        let profile = labwired_core::StepProfile {
+            cpu_instructions: 13,
+            instruction_work: Some(labwired_core::InstructionWork {
+                dispatched: 5,
+                represented: 8,
+            }),
+            skipped_cycles: Some(21),
+            cpu_batches: 2,
+            ..labwired_core::StepProfile::default()
+        };
+        let payload = WasmStepBatchProfile::from_profile(26, 31, 2.0, profile);
+        let value = serde_json::to_value(payload).unwrap();
+        assert_eq!(value["cpu_instructions"], 13);
+        assert_eq!(value["cpu_batches"], 2);
+        assert_eq!(
+            value["instruction_work"],
+            serde_json::json!({"dispatched":5,"represented":8})
+        );
+        assert_eq!(value["skipped_cycles"], 21);
+        assert_eq!(value["executed_cycles"], 31);
+        assert_eq!(value["cycles_per_second"], 15500.0);
+        let historical: labwired_core::StepProfile = serde_json::from_value(serde_json::json!({
+            "cpu_instructions":13,"cpu_batches":2,"peripheral_ticks":0,
+            "peripheral_ticked_entries":0,"bus_tick_entries":0,"legacy_tick_entries":0
+        }))
+        .unwrap();
+        let value =
+            serde_json::to_value(WasmStepBatchProfile::from_profile(26, 31, 0.0, historical))
+                .unwrap();
+        assert_eq!(value["cpu_instructions"], 13);
+        assert!(value["instruction_work"].is_null());
+        assert!(value["skipped_cycles"].is_null());
     }
 }
 

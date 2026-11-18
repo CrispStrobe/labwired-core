@@ -749,6 +749,88 @@ fn represented_work_is_not_assumed_to_equal_or_fit_skipped_cycles() {
 }
 
 #[test]
+fn run_budget_uses_report_fuel_for_idle_mixed_and_dense_work() {
+    use crate::InstructionWork;
+    for (work, skipped, fuel, total) in [
+        (InstructionWork::default(), 64, 64, 0),
+        (
+            InstructionWork {
+                dispatched: 5,
+                represented: 8,
+            },
+            21,
+            26,
+            13,
+        ),
+        (
+            InstructionWork {
+                dispatched: 3,
+                represented: 10,
+            },
+            5,
+            8,
+            13,
+        ),
+    ] {
+        let report = AdvanceReport::new(AdvanceStop::FuelLimit, fuel, work, 0, fuel, skipped, 1);
+        assert_eq!(report.primary_steps, total);
+        assert_eq!(report.checked_fuel_total_after(100), Some(100 + fuel));
+        if fuel != total {
+            assert_ne!(report.checked_fuel_total_after(100), Some(100 + total));
+        }
+        assert_eq!(report.checked_fuel_total_after(u64::MAX), None);
+        let mut corrupt = report;
+        corrupt.fuel_consumed += 1;
+        assert_eq!(corrupt.checked_fuel_total_after(100), None);
+    }
+}
+
+#[test]
+fn debug_run_report_preserves_watch_exit_priority_and_complete_fuel() {
+    const BASE: u64 = 0x5000_0000;
+    for watched in [false, true] {
+        let mut bus = SystemBus::new();
+        bus.add_peripheral(
+            "simctl",
+            BASE,
+            crate::peripherals::simctl::WINDOW,
+            None,
+            Box::new(crate::peripherals::simctl::SimCtl::new()),
+        );
+        let mut machine = Machine::new(
+            CountingCpu {
+                gpio_write_at_step: Some((1, BASE, 0)),
+                ..Default::default()
+            },
+            bus,
+        );
+        if watched {
+            assert!(machine.add_watchpoint(BASE, 4, false, true));
+        }
+        let report = machine.debug_run_report(Some(7)).unwrap();
+        assert_eq!(
+            report.stop,
+            if watched {
+                AdvanceStop::Watchpoint(BASE)
+            } else {
+                AdvanceStop::FirmwareExit { code: 0 }
+            }
+        );
+        assert_eq!(report.fuel_consumed, 1);
+        assert_eq!(report.primary_steps, 1);
+        assert_eq!(
+            report.primary_work,
+            crate::InstructionWork {
+                dispatched: 1,
+                represented: 0
+            }
+        );
+        assert!(report.instruction_accounting_is_conserved());
+        assert_eq!(machine.cpu.steps, 1);
+    }
+}
+
+#[test]
 fn ordinary_dispatch_accounting_matches_actual_cpu_progress() {
     let mut machine = Machine::new(CountingCpu::default(), SystemBus::new());
     machine.config.peripheral_tick_interval = 64;

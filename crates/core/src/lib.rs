@@ -2494,6 +2494,19 @@ impl<C: Cpu> Machine<C> {
         self.advance(AdvanceRequest::single()).map(|_| ())
     }
 
+    /// Report-returning form of `DebugControl::run`, retaining its watch-latch
+    /// policy so a budget consumer need not discard the authoritative fuel.
+    pub fn debug_run_report(&mut self, fuel: Option<u64>) -> SimResult<AdvanceReport> {
+        if self.bus.debug_watches.is_empty() {
+            let _ = self.bus.take_debug_watch_hit();
+        }
+        let mut report = self.advance(AdvanceRequest::run(fuel))?;
+        if let Some(addr) = self.bus.take_debug_watch_hit() {
+            report.stop = AdvanceStop::Watchpoint(addr);
+        }
+        Ok(report)
+    }
+
     /// Drain and apply the single pending H5 FLASH hardware operation, if any.
     ///
     /// The FLASH peripheral records at most one op per instruction (in a `Cell`);
@@ -3152,21 +3165,7 @@ impl<C: Cpu> DebugControl for Machine<C> {
     }
 
     fn run(&mut self, max_steps: Option<u32>) -> SimResult<StopReason> {
-        // Defensive: a watch the host removed can leave its last latch behind
-        // (only `clear_watchpoints` drops a pending hit); with no watch armed
-        // it must not stop this run.
-        if self.bus.debug_watches.is_empty() {
-            let _ = self.bus.take_debug_watch_hit();
-        }
-        let report = self.advance(AdvanceRequest::run(max_steps.map(u64::from)))?;
-        // `advance_inner` consumes the latch into `AdvanceStop::Watchpoint` at
-        // the window boundary. This catches a hit latched by a window that
-        // ended the run for another reason (firmware exit, net drive change)
-        // before the next boundary could see it — the access happened, so the
-        // watch is the stop.
-        if let Some(addr) = self.bus.take_debug_watch_hit() {
-            return Ok(StopReason::Watchpoint(addr));
-        }
+        let report = self.debug_run_report(max_steps.map(u64::from))?;
         Ok(match report.stop {
             AdvanceStop::Watchpoint(addr) => StopReason::Watchpoint(addr),
             AdvanceStop::Breakpoint(pc) => StopReason::Breakpoint(pc),

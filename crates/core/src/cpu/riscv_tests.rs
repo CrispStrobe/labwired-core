@@ -970,6 +970,101 @@ fn c3_machine_accounting_keeps_dispatched_and_represented_instruction_work() {
 }
 
 #[test]
+fn c3_poll_admission_matches_actual_storage_precedence() {
+    use crate::memory::LinearMemory;
+    let addresses = [0x6002_3004, 0x6002_3044, 0x6000_403c];
+    let (mut positive, mut positive_bus) = c3_update_poll_fixture();
+    c3_update_poll_lockstep(&mut positive, &mut positive_bus, 4);
+    assert!(positive.poll_loop_skip_budget(&positive_bus, 32).is_some());
+    for kind in 0..3 {
+        for address in addresses {
+            let (mut cpu, mut bus) = c3_update_poll_fixture();
+            // Install the topology before execution, including its fetch and
+            // routing caches. The ordinary CPU accessor must see the shadow.
+            match kind {
+                0 => bus.ram = LinearMemory::new(4, address),
+                1 => {
+                    bus.extra_mem.push(LinearMemory {
+                        base_addr: 0,
+                        data: bus.flash.data.clone(),
+                    });
+                    bus.flash = LinearMemory::new(4, address);
+                }
+                _ => bus.extra_mem.push(LinearMemory::new(4, address)),
+            }
+            bus.config.optimized_bus_access = true;
+            c3_update_poll_lockstep(&mut cpu, &mut bus, 4);
+            match kind {
+                0 => {
+                    assert!(bus.ram.write_u32(address, 0x1234_5678));
+                }
+                1 => {
+                    assert!(bus.flash.write_u32(address, 0x1234_5678));
+                }
+                _ => {
+                    assert!(bus
+                        .extra_mem
+                        .last_mut()
+                        .unwrap()
+                        .write_u32(address, 0x1234_5678));
+                }
+            }
+            assert_eq!(bus.read_u32(address).unwrap(), 0x1234_5678);
+            let before = (cpu.x, cpu.pc, cpu.mtime, bus.current_cycle);
+            let timer = bus.peripherals[0].dev.runtime_snapshot();
+            assert_eq!(cpu.poll_loop_skip_budget(&bus, 32), None);
+            assert_eq!(cpu.fast_forward_poll_loop_on_bus(&mut bus, 4), None);
+            assert_eq!(before, (cpu.x, cpu.pc, cpu.mtime, bus.current_cycle));
+            assert_eq!(timer, bus.peripherals[0].dev.runtime_snapshot());
+        }
+    }
+}
+
+#[test]
+fn c3_poll_rechecks_shadowed_route_before_committing_held_plan() {
+    use crate::memory::LinearMemory;
+    let (mut cpu, mut bus) = c3_update_poll_fixture();
+    c3_update_poll_lockstep(&mut cpu, &mut bus, 4);
+    assert!(cpu.poll_loop_skip_budget(&bus, 32).is_some());
+    bus.ram = LinearMemory::new(4, 0x6002_3044);
+    let before = (cpu.x, cpu.pc, cpu.mtime, bus.current_cycle);
+    let timer = bus.peripherals[0].dev.runtime_snapshot();
+    assert_eq!(cpu.fast_forward_poll_loop_on_bus(&mut bus, 32), None);
+    assert_eq!(before, (cpu.x, cpu.pc, cpu.mtime, bus.current_cycle));
+    assert_eq!(timer, bus.peripherals[0].dev.runtime_snapshot());
+    // A one-byte overlap also refuses; an optimistic whole-word lookup
+    // must not bypass partial backing or address translation.
+    bus.ram = LinearMemory::new(1, 0x6002_3047);
+    assert_eq!(cpu.poll_loop_skip_budget(&bus, 32), None);
+}
+
+#[test]
+fn c3_poll_refuses_real_bit_band_translation() {
+    use crate::memory::LinearMemory;
+    let (_, mut bus) = c3_update_poll_fixture();
+    bus.replace_or_add_peripheral_at(
+        "systimer",
+        0x4200_0000,
+        0x100,
+        None,
+        Box::new(crate::peripherals::esp32s3::systimer::Systimer::new_with_source(160_000_000, 37)),
+    );
+    bus.ram = LinearMemory::new(0x10, 0x4000_0000);
+    bus.ram.data.fill(0xff);
+    bus.bit_band_enabled = false;
+    let addresses = [0x4200_0004, 0x4200_0044, 0x6000_403c];
+    assert!(bus.c3_systimer_poll_values(0, 32, addresses).is_some());
+    bus.bit_band_enabled = true;
+    let timer = bus.peripherals[0].dev.runtime_snapshot();
+    bus.write_u32(addresses[0], 1 << 30).unwrap();
+    assert_eq!(bus.ram.read_u8(0x4000_0000), Some(0xfd));
+    assert_eq!(timer, bus.peripherals[0].dev.runtime_snapshot());
+    assert_eq!(bus.c3_systimer_poll_values(0, 32, addresses), None);
+    assert_eq!(bus.c3_commit_systimer_poll(0, 32, addresses), None);
+    assert_eq!(timer, bus.peripherals[0].dev.runtime_snapshot());
+}
+
+#[test]
 fn test_riscv_wfi_fast_forward_wakes_on_systimer_event() {
     let mut bus = SystemBus::empty();
     let mut cpu = RiscV::new();

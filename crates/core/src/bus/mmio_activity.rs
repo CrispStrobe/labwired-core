@@ -10,6 +10,37 @@
 use super::SystemBus;
 
 impl SystemBus {
+    /// A capability must describe the route a CPU word access actually uses.
+    /// Refuse storage overlap even when one optimized read ordering would let
+    /// the peripheral win: UPDATE stores have their own storage-first path.
+    fn poll_word_is_unshadowed(&self, address: u64) -> bool {
+        let Some(last) = address.checked_add(3) else {
+            return false;
+        };
+        if address & 3 != 0 {
+            return false;
+        }
+        if self.bit_band_enabled {
+            if let Some((physical, _)) = Self::bit_band_translate(address) {
+                if self.bit_band_target_is_mapped(physical) {
+                    return false;
+                }
+            }
+        }
+        (address..=last).all(|byte| {
+            self.resolve_ns_alias(byte) == byte
+                && self.ram.read_u8(byte).is_none()
+                && self.flash.read_u8(byte).is_none()
+                && !self
+                    .extra_mem
+                    .iter()
+                    .any(|memory| memory.read_u8(byte).is_some())
+                && !(self.flash_boot_alias
+                    && self.flash.base_addr != 0
+                    && byte < self.flash.data.len() as u64)
+        })
+    }
+
     pub(crate) fn c3_systimer_poll_values(
         &self,
         start: u64,
@@ -24,6 +55,12 @@ impl SystemBus {
             return None;
         }
         let end = start.checked_add(cycles)?;
+        if !addresses
+            .into_iter()
+            .all(|address| self.poll_word_is_unshadowed(address))
+        {
+            return None;
+        }
         for deadline in [
             crate::Bus::next_cpu_interrupt_deadline_cycle(self),
             self.next_motor_service_deadline_cycle(),

@@ -275,4 +275,13 @@ impl AdvanceReport {
             && self.primary_work.dispatched.checked_add(self.idle_cycles)
                 == Some(self.fuel_consumed)
     }
+
+    /// Add the consumed scheduling fuel, never the overlapping instruction
+    /// total, to a caller's run budget. Invalid or overflowing receipts refuse.
+    pub fn checked_fuel_total_after(&self, consumed: u64) -> Option<u64> {
+        if !self.instruction_accounting_is_conserved() {
+            return None;
+        }
+        consumed.checked_add(self.fuel_consumed)
+    }
 }
