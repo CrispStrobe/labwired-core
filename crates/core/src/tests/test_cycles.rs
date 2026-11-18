@@ -127,6 +127,11 @@ fn machine_run_records_step_profile_counters() {
 fn step_profile_serializes_the_standardized_counter_contract() {
     let profile = crate::StepProfile {
         cpu_instructions: 1,
+        instruction_work: Some(crate::InstructionWork {
+            dispatched: 1,
+            represented: 0,
+        }),
+        skipped_cycles: Some(0),
         cpu_batches: 2,
         peripheral_ticks: 3,
         peripheral_ticked_entries: 4,
@@ -138,6 +143,8 @@ fn step_profile_serializes_the_standardized_counter_contract() {
         value,
         serde_json::json!({
             "cpu_instructions": 1,
+            "instruction_work": { "dispatched": 1, "represented": 0 },
+            "skipped_cycles": 0,
             "cpu_batches": 2,
             "peripheral_ticks": 3,
             "peripheral_ticked_entries": 4,
@@ -145,6 +152,30 @@ fn step_profile_serializes_the_standardized_counter_contract() {
             "legacy_tick_entries": 6,
         })
     );
+}
+
+#[test]
+fn historical_profile_does_not_invent_missing_instruction_accounting() {
+    let value = serde_json::json!({
+        "cpu_instructions": 13,
+        "cpu_batches": 2,
+        "peripheral_ticks": 3,
+        "peripheral_ticked_entries": 4,
+        "bus_tick_entries": 5,
+        "legacy_tick_entries": 6,
+    });
+    let mut profile: crate::StepProfile = serde_json::from_value(value).unwrap();
+    assert_eq!(profile.cpu_instructions, 13);
+    assert_eq!(profile.instruction_work, None);
+    assert_eq!(profile.skipped_cycles, None);
+    assert_eq!(profile.validated_instruction_work(), None);
+    // Appending known work cannot reconstruct an absent historical partition.
+    profile.record_dispatched_work(2);
+    profile.record_skipped_work(4, 8);
+    assert_eq!(profile.cpu_instructions, 19);
+    assert_eq!(profile.cpu_batches, 3);
+    assert_eq!(profile.instruction_work, None);
+    assert_eq!(profile.skipped_cycles, None);
 }
 
 /// A peripheral that reports a fixed byte from the side-effect-free `peek`.

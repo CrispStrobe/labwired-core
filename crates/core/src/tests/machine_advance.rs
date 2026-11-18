@@ -548,7 +548,18 @@ fn request_builders_override_only_their_policy() {
 
 #[test]
 fn advance_report_constructor_assigns_every_field() {
-    let report = AdvanceReport::new(AdvanceStop::NoProgress, 1, 2, 3, 4, 5, 6);
+    let report = AdvanceReport::new(
+        AdvanceStop::NoProgress,
+        1,
+        crate::InstructionWork {
+            dispatched: 1,
+            represented: 1,
+        },
+        3,
+        4,
+        5,
+        6,
+    );
 
     assert_eq!(report.stop, AdvanceStop::NoProgress);
     assert_eq!(report.fuel_consumed, 1);
@@ -557,6 +568,211 @@ fn advance_report_constructor_assigns_every_field() {
     assert_eq!(report.elapsed_cycles, 4);
     assert_eq!(report.idle_cycles, 5);
     assert_eq!(report.cpu_batches, 6);
+    assert_eq!(
+        report.primary_work,
+        crate::InstructionWork {
+            dispatched: 1,
+            represented: 1
+        }
+    );
+}
+
+#[test]
+fn instruction_accounting_separates_dispatch_representation_and_skipped_time() {
+    use crate::InstructionWork;
+    let mut profile = StepProfile::default();
+    profile.record_dispatched_work(3);
+    profile.record_skipped_work(8, 16);
+    profile.record_dispatched_work(2);
+    profile.record_skipped_work(0, 5); // architectural idle, no instruction work
+    assert_eq!(profile.cpu_instructions, 13);
+    assert_eq!(profile.cpu_batches, 2);
+    assert_eq!(profile.skipped_cycles, Some(21));
+    assert_eq!(
+        profile.validated_instruction_work(),
+        Some(InstructionWork {
+            dispatched: 5,
+            represented: 8
+        })
+    );
+
+    let report = AdvanceReport::new(
+        AdvanceStop::FuelLimit,
+        26,
+        profile.validated_instruction_work().unwrap(),
+        5,
+        26,
+        21,
+        2,
+    );
+    assert_eq!(report.primary_steps, 13);
+    assert_eq!(report.secondary_steps, 5);
+    assert!(report.instruction_accounting_is_conserved());
+    // The old identity charges represented instructions again as idle time.
+    assert_eq!(report.primary_steps + report.idle_cycles, 34);
+    assert_ne!(
+        report.primary_steps + report.idle_cycles,
+        report.fuel_consumed
+    );
+}
+
+#[test]
+fn conservation_and_independent_work_witness_distinguish_bad_counts() {
+    use crate::InstructionWork;
+    let report = AdvanceReport::new(
+        AdvanceStop::FuelLimit,
+        26,
+        InstructionWork {
+            dispatched: 5,
+            represented: 8,
+        },
+        5,
+        26,
+        21,
+        2,
+    );
+    assert!(report.instruction_accounting_is_conserved());
+    let mut lost = report;
+    lost.primary_work.represented = 0;
+    assert!(!lost.instruction_accounting_is_conserved());
+    let mut double_charged = report;
+    double_charged.fuel_consumed += 8;
+    assert!(!double_charged.instruction_accounting_is_conserved());
+    let mut hidden_dispatch = report;
+    hidden_dispatch.primary_work.dispatched = 0;
+    assert!(!hidden_dispatch.instruction_accounting_is_conserved());
+    let mut padded = report;
+    padded.primary_work.represented = 21;
+    padded.primary_steps = 26;
+    // Algebra alone cannot establish a faithful work count. This forged
+    // packet balances but fails the independent known 5+8 instruction witness.
+    assert!(padded.instruction_accounting_is_conserved());
+    assert_ne!(padded.primary_steps, 13);
+
+    let full = InstructionWork {
+        dispatched: u64::MAX,
+        represented: 0,
+    };
+    assert_eq!(
+        full.checked_add(InstructionWork {
+            dispatched: 0,
+            represented: 1
+        }),
+        None
+    );
+    assert_eq!(
+        InstructionWork {
+            dispatched: u64::MAX,
+            represented: 1
+        }
+        .total(),
+        None
+    );
+    let mut corrupt = StepProfile::default();
+    corrupt.cpu_instructions = 13;
+    corrupt.instruction_work = Some(InstructionWork {
+        dispatched: 5,
+        represented: 21,
+    });
+    assert_eq!(corrupt.validated_instruction_work(), None);
+}
+
+#[test]
+fn profile_accounting_overflow_refuses_without_partial_counter_updates() {
+    let mut profile = StepProfile {
+        cpu_instructions: u64::MAX,
+        instruction_work: Some(crate::InstructionWork {
+            dispatched: u64::MAX,
+            represented: 0,
+        }),
+        ..StepProfile::default()
+    };
+    let before = profile;
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        profile.record_skipped_work(1, 1);
+    }))
+    .is_err());
+    assert_eq!(profile, before);
+    let mut profile = StepProfile {
+        cpu_batches: u64::MAX,
+        ..StepProfile::default()
+    };
+    let before = profile;
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        profile.record_dispatched_work(0);
+    }))
+    .is_err());
+    assert_eq!(profile, before);
+}
+
+#[test]
+fn represented_work_is_not_assumed_to_equal_or_fit_skipped_cycles() {
+    // A ledger control, not a claim that a particular CPU runs at this density.
+    let report = AdvanceReport::new(
+        AdvanceStop::FuelLimit,
+        8,
+        crate::InstructionWork {
+            dispatched: 3,
+            represented: 10,
+        },
+        0,
+        8,
+        5,
+        1,
+    );
+    assert_eq!(report.primary_steps, 13);
+    assert!(report.instruction_accounting_is_conserved());
+    assert!(report.primary_steps > report.fuel_consumed);
+    // Peripheral/instruction timing costs are elapsed time, not extra fuel
+    // or invented CPU work. No general fuel == elapsed assumption is valid.
+    let timed = AdvanceReport::new(
+        AdvanceStop::CycleLimit,
+        3,
+        crate::InstructionWork {
+            dispatched: 3,
+            represented: 0,
+        },
+        0,
+        12,
+        0,
+        1,
+    );
+    assert!(timed.instruction_accounting_is_conserved());
+    assert_eq!(
+        (
+            timed.primary_steps,
+            timed.fuel_consumed,
+            timed.elapsed_cycles
+        ),
+        (3, 3, 12)
+    );
+}
+
+#[test]
+fn ordinary_dispatch_accounting_matches_actual_cpu_progress() {
+    let mut machine = Machine::new(CountingCpu::default(), SystemBus::new());
+    machine.config.peripheral_tick_interval = 64;
+    let report = machine
+        .advance(AdvanceRequest::run(Some(7)).with_batch_cap(NonZeroU32::new(3).unwrap()))
+        .unwrap();
+    assert_eq!(machine.cpu.steps, 7);
+    assert_eq!(
+        report.primary_work,
+        crate::InstructionWork {
+            dispatched: 7,
+            represented: 0
+        }
+    );
+    assert_eq!(report.primary_steps, 7);
+    assert_eq!(report.idle_cycles, 0);
+    assert!(report.instruction_accounting_is_conserved());
+    let profile = machine.step_profile();
+    assert_eq!(
+        profile.validated_instruction_work(),
+        Some(report.primary_work)
+    );
+    assert_eq!(profile.skipped_cycles, Some(0));
+    assert_eq!(profile.cpu_batches, 3);
 }
 
 #[test]
@@ -1275,6 +1491,13 @@ pub(crate) fn idle_fast_forward_is_reconciled_in_report_and_cpu() {
     assert_eq!(report.elapsed_cycles, 5);
     assert_eq!(machine.cpu.idle_skipped, 5);
     assert_eq!(machine.idle_fast_forward_cycles_skipped, 5);
+    assert_eq!(report.primary_work, crate::InstructionWork::default());
+    assert!(report.instruction_accounting_is_conserved());
+    assert_eq!(
+        machine.step_profile().validated_instruction_work(),
+        Some(crate::InstructionWork::default())
+    );
+    assert_eq!(machine.step_profile().skipped_cycles, Some(5));
 }
 
 /// On an active single core with no WFI/poll-loop candidate, the idle

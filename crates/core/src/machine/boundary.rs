@@ -584,8 +584,8 @@ impl<C: Cpu> Machine<C> {
     }
 
     pub(crate) fn record_cpu_progress(&mut self, primary_steps: u32) {
-        self.step_profile.cpu_instructions += u64::from(primary_steps);
-        self.step_profile.cpu_batches += 1;
+        self.step_profile
+            .record_dispatched_work(u64::from(primary_steps));
     }
 
     fn release_secondary_cpu_if_requested(&mut self) {

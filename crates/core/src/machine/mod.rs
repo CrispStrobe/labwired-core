@@ -192,6 +192,31 @@ pub enum AdvanceStop {
     NetDriveChange,
 }
 
+/// Primary instruction work, classified at the machine seam.
+/// `dispatched` is work returned by a CPU execution dispatch (interpreter,
+/// batch or JIT); it is not a count of host/native instructions. `represented`
+/// is work applied by a proven machine poll-loop catch-up without that dispatch.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct InstructionWork {
+    pub dispatched: u64,
+    pub represented: u64,
+}
+
+impl InstructionWork {
+    pub fn total(self) -> Option<u64> {
+        self.dispatched.checked_add(self.represented)
+    }
+
+    pub fn checked_add(self, next: Self) -> Option<Self> {
+        let work = Self {
+            dispatched: self.dispatched.checked_add(next.dispatched)?,
+            represented: self.represented.checked_add(next.represented)?,
+        };
+        work.total()?;
+        Some(work)
+    }
+}
+
 /// Structured progress and stop accounting for one advance operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -203,12 +228,16 @@ pub struct AdvanceReport {
     /// Number of primary CPU instructions retired or represented by a proven
     /// poll-loop fast-forward.
     pub primary_steps: u64,
-    /// Number of secondary CPU instructions retired or represented by a proven
-    /// poll-loop fast-forward.
+    /// Legacy secondary progress, including parked scheduling quanta. This
+    /// field is preserved; the primary instruction partition does not classify it.
     pub secondary_steps: u64,
+    /// Explicit partition of the accurate primary instruction total above.
+    pub primary_work: InstructionWork,
     /// Simulated machine cycles elapsed, including peripheral tick costs.
     pub elapsed_cycles: u64,
-    /// Simulated cycles advanced specifically through idle fast-forwarding.
+    /// Simulated cycles advanced without CPU execution, through idle/poll
+    /// fast-forwarding or a held-reset interval. Represented instructions
+    /// overlap this time; they are never charged again as extra fuel.
     pub idle_cycles: u64,
     /// Successful CPU execution batches committed.
     pub cpu_batches: u64,
@@ -219,7 +248,7 @@ impl AdvanceReport {
     pub(crate) fn new(
         stop: AdvanceStop,
         fuel_consumed: u64,
-        primary_steps: u64,
+        primary_work: InstructionWork,
         secondary_steps: u64,
         elapsed_cycles: u64,
         idle_cycles: u64,
@@ -228,11 +257,22 @@ impl AdvanceReport {
         Self {
             stop,
             fuel_consumed,
-            primary_steps,
+            primary_steps: primary_work
+                .total()
+                .expect("primary instruction work overflow"),
             secondary_steps,
+            primary_work,
             elapsed_cycles,
             idle_cycles,
             cpu_batches,
         }
+    }
+
+    /// Represented work is already in the primary instruction total; skipped
+    /// cycles already spend fuel. Adding both to fuel would double-charge it.
+    pub fn instruction_accounting_is_conserved(&self) -> bool {
+        self.primary_work.total() == Some(self.primary_steps)
+            && self.primary_work.dispatched.checked_add(self.idle_cycles)
+                == Some(self.fuel_consumed)
     }
 }

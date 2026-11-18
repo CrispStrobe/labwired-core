@@ -1986,14 +1986,36 @@ impl std::error::Error for CosimAdvanceError {}
 
 /// `total` followed by `next`: counters add, the stop is `next`'s.
 fn chain_reports(total: AdvanceReport, next: AdvanceReport) -> AdvanceReport {
+    assert!(
+        total.instruction_accounting_is_conserved() && next.instruction_accounting_is_conserved(),
+        "cannot chain inconsistent instruction accounting"
+    );
     AdvanceReport::new(
         next.stop,
-        total.fuel_consumed + next.fuel_consumed,
-        total.primary_steps + next.primary_steps,
-        total.secondary_steps + next.secondary_steps,
-        total.elapsed_cycles + next.elapsed_cycles,
-        total.idle_cycles + next.idle_cycles,
-        total.cpu_batches + next.cpu_batches,
+        total
+            .fuel_consumed
+            .checked_add(next.fuel_consumed)
+            .expect("report chain fuel overflow"),
+        total
+            .primary_work
+            .checked_add(next.primary_work)
+            .expect("primary report chain overflow"),
+        total
+            .secondary_steps
+            .checked_add(next.secondary_steps)
+            .expect("secondary progress chain overflow"),
+        total
+            .elapsed_cycles
+            .checked_add(next.elapsed_cycles)
+            .expect("report chain cycle overflow"),
+        total
+            .idle_cycles
+            .checked_add(next.idle_cycles)
+            .expect("report chain skipped-cycle overflow"),
+        total
+            .cpu_batches
+            .checked_add(next.cpu_batches)
+            .expect("report chain dispatch-count overflow"),
     )
 }
 
@@ -2456,6 +2478,54 @@ mod tests {
     use super::*;
     use labwired_config::{CosimAdapter, CosimModelConfig};
     use std::collections::HashMap;
+
+    #[test]
+    fn chained_reports_preserve_dispatch_represented_work_and_fuel() {
+        use crate::InstructionWork;
+        let a = AdvanceReport::new(
+            AdvanceStop::FuelLimit,
+            8,
+            InstructionWork {
+                dispatched: 2,
+                represented: 6,
+            },
+            3,
+            8,
+            6,
+            1,
+        );
+        let b = AdvanceReport::new(
+            AdvanceStop::CycleLimit,
+            7,
+            InstructionWork {
+                dispatched: 3,
+                represented: 4,
+            },
+            3,
+            7,
+            4,
+            2,
+        );
+        let total = chain_reports(a, b);
+        assert_eq!(total.stop, AdvanceStop::CycleLimit);
+        assert_eq!(total.primary_steps, 15);
+        assert_eq!(total.secondary_steps, 6);
+        assert_eq!(
+            total.primary_work,
+            InstructionWork {
+                dispatched: 5,
+                represented: 10
+            }
+        );
+        assert_eq!(
+            (total.fuel_consumed, total.idle_cycles, total.cpu_batches),
+            (15, 10, 3)
+        );
+        assert!(total.instruction_accounting_is_conserved());
+        let mut broken = a;
+        broken.primary_steps = 0;
+        assert!(std::panic::catch_unwind(|| chain_reports(broken, b)).is_err());
+    }
 
     fn mock_model(
         id: &str,

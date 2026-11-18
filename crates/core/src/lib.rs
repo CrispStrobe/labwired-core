@@ -62,7 +62,7 @@ pub use cycle_clock::CycleClock;
 pub use host_time::HostTimeMode;
 pub use machine::{
     AdvanceLimits, AdvanceReport, AdvanceRequest, AdvanceStop, BatchPolicy, BreakpointPolicy,
-    IdlePolicy,
+    IdlePolicy, InstructionWork,
 };
 pub use peripheral::{
     AnalogProbe, DmaDirection, DmaRequest, DmaRoute, DmaUnitTransform, FlashStoreOutcome,
@@ -321,22 +321,95 @@ fn is_esp32_internal_sram(addr: u64) -> bool {
     (0x3FFA_E000..0x4000_0000).contains(&addr) || (0x4007_0000..0x400C_0000).contains(&addr)
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 /// Counters collected during one measured machine run.
 ///
 /// These are execution-path counters, not wall-clock or workload markers:
-/// `cpu_instructions` counts retired instructions, `cpu_batches` counts CPU
-/// dispatch batches, and the remaining fields describe peripheral/bus work
-/// driven by that same pass. Workload-specific observables (for example an
+/// `cpu_instructions` counts primary dispatched PLUS represented instructions;
+/// `instruction_work` exposes that partition without changing the total.
+/// `cpu_batches` counts CPU execution dispatches; the remaining fields describe
+/// peripheral/bus work driven by that same pass. Workload-specific observables (for example an
 /// OLED first-paint cycle or a serial completion marker) belong to the
 /// workload harness and must not be added here.
 pub struct StepProfile {
     pub cpu_instructions: u64,
+    /// None on a historical serialized profile that did not retain the split.
+    /// Never infer that missing historical represented work was zero.
+    #[serde(default)]
+    pub instruction_work: Option<InstructionWork>,
+    /// Cycles advanced without a CPU dispatch, including held-reset time.
+    /// This is a time/fuel quantity, not an instruction count.
+    #[serde(default)]
+    pub skipped_cycles: Option<u64>,
     pub cpu_batches: u64,
     pub peripheral_ticks: u64,
     pub peripheral_ticked_entries: u64,
     pub bus_tick_entries: u64,
     pub legacy_tick_entries: u64,
+}
+
+impl Default for StepProfile {
+    fn default() -> Self {
+        Self {
+            cpu_instructions: 0,
+            instruction_work: Some(InstructionWork::default()),
+            skipped_cycles: Some(0),
+            cpu_batches: 0,
+            peripheral_ticks: 0,
+            peripheral_ticked_entries: 0,
+            bus_tick_entries: 0,
+            legacy_tick_entries: 0,
+        }
+    }
+}
+
+impl StepProfile {
+    pub fn validated_instruction_work(&self) -> Option<InstructionWork> {
+        let work = self.instruction_work?;
+        (work.total()? == self.cpu_instructions).then_some(work)
+    }
+
+    pub(crate) fn record_dispatched_work(&mut self, instructions: u64) {
+        let total = self
+            .cpu_instructions
+            .checked_add(instructions)
+            .expect("instruction total overflow");
+        let work = self.instruction_work.map(|work| InstructionWork {
+            dispatched: work
+                .dispatched
+                .checked_add(instructions)
+                .expect("dispatch count overflow"),
+            represented: work.represented,
+        });
+        let batches = self
+            .cpu_batches
+            .checked_add(1)
+            .expect("dispatch batch count overflow");
+        self.cpu_instructions = total;
+        self.instruction_work = work;
+        self.cpu_batches = batches;
+    }
+
+    pub(crate) fn record_skipped_work(&mut self, instructions: u64, cycles: u64) {
+        let total = self
+            .cpu_instructions
+            .checked_add(instructions)
+            .expect("instruction total overflow");
+        let work = self.instruction_work.map(|work| InstructionWork {
+            dispatched: work.dispatched,
+            represented: work
+                .represented
+                .checked_add(instructions)
+                .expect("represented count overflow"),
+        });
+        let skipped = self.skipped_cycles.map(|old| {
+            old.checked_add(cycles)
+                .expect("skipped cycle count overflow")
+        });
+        self.cpu_instructions = total;
+        self.instruction_work = work;
+        self.skipped_cycles = skipped;
+    }
 }
 
 /// Maximum cycles CPU idle fast-forward may skip in one step while a bus
@@ -1918,6 +1991,8 @@ impl<C: Cpu> Machine<C> {
                 self.poll_loop_cycles_skipped += skipped as u64;
                 self.poll_loop_skips += 1;
             }
+            self.step_profile
+                .record_skipped_work(primary_steps, u64::from(skipped));
             self.total_cycles += skipped as u64;
             self.idle_fast_forward_cycles_skipped += skipped as u64;
             self.bus.set_current_cycle(self.total_cycles);

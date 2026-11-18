@@ -2216,19 +2216,28 @@ fn run_arm_step_loop(
 /// and `tick_cap=`); it is appended verbatim, after `peripheral_ticks=`, so the
 /// leading fields keep the order `scripts/perf/board_perf.py` parses.
 fn print_batched_summary(profile: labwired_core::StepProfile, tick_interval: u32, suffix: &str) {
+    let work = profile
+        .validated_instruction_work()
+        .expect("live instruction accounting must be conserved");
+    let skipped = profile
+        .skipped_cycles
+        .expect("live skipped-cycle accounting must be known");
     let per_batch = if profile.cpu_batches == 0 {
         0.0
     } else {
-        profile.cpu_instructions as f64 / profile.cpu_batches as f64
+        work.dispatched as f64 / profile.cpu_batches as f64
     };
     crate::log_ts::eventln!(
         "[batched] instructions={} batches={} steps_per_batch={:.2} \
-         tick_interval={} peripheral_ticks={}{}",
+         tick_interval={} peripheral_ticks={} dispatched_instructions={} represented_instructions={} skipped_cycles={}{}",
         profile.cpu_instructions,
         profile.cpu_batches,
         per_batch,
         tick_interval,
         profile.peripheral_ticks,
+        work.dispatched,
+        work.represented,
+        skipped,
         suffix,
     );
 }
@@ -2356,7 +2365,6 @@ fn run_arm_batched_loop(
     // total instruction budget.
     const CHUNK: u64 = 4_000_000;
     let mut ran: u64 = 0;
-    let mut idle_fuel: u64 = 0;
     while ran < limit {
         let fuel = CHUNK.min(limit - ran);
         let result = machine.advance(AdvanceRequest::run(Some(fuel)));
@@ -2364,13 +2372,6 @@ fn run_arm_batched_loop(
         match result {
             Ok(report) => {
                 ran += report.fuel_consumed;
-                // Proven poll-loop instructions are already represented in
-                // primary_steps. Only fuel without a represented instruction
-                // belongs in the idle side of the diagnostic partition.
-                idle_fuel += report
-                    .fuel_consumed
-                    .checked_sub(report.primary_steps)
-                    .expect("primary instructions cannot exceed scheduling fuel");
                 match report.stop {
                     AdvanceStop::FirmwareExit { code } => {
                         crate::log_ts::eventln!(
@@ -2438,9 +2439,12 @@ fn run_arm_batched_loop(
             machine.step_profile(),
             interval,
             &format!(
-                " jit={} tick_cap={tick_cap} fuel={ran} idle_cycles={} skipped_cycles={}",
+                " jit={} tick_cap={tick_cap} fuel={ran} idle_cycles={} idle_ff_cycles={}",
                 jit_state.marker(),
-                idle_fuel,
+                machine
+                    .step_profile()
+                    .skipped_cycles
+                    .expect("live skipped cycles must be known"),
                 machine.idle_fast_forward_cycles_skipped
             ),
         );

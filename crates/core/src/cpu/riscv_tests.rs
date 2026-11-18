@@ -658,12 +658,29 @@ fn c3_systimer_busy_poll_with_gpio_read_still_idle_fast_forwards() {
                  samples a GPIO button (skipped = {})",
             machine.idle_fast_forward_cycles_skipped
         );
+        // Total instruction work includes the instructions represented by a
+        // proven skip. It must stay complete; dispatch is the reduced work.
+        let profile = machine.step_profile();
+        let work = profile.validated_instruction_work().unwrap();
+        assert_eq!(profile.cpu_instructions, u64::from(TARGET));
         assert!(
-            machine.step_profile().cpu_instructions < u64::from(TARGET),
-            "the spin must be skipped, not fully simulated: retired {} over {} cycles",
-            machine.step_profile().cpu_instructions,
-            TARGET
+            work.dispatched < u64::from(TARGET),
+            "the spin must avoid CPU dispatch"
         );
+        assert!(
+            work.represented > 0,
+            "skipped instructions must stay represented"
+        );
+        assert_eq!(work.total(), Some(u64::from(TARGET)));
+        assert_eq!(
+            profile.skipped_cycles,
+            Some(machine.idle_fast_forward_cycles_skipped)
+        );
+        assert_eq!(
+            work.dispatched.checked_add(profile.skipped_cycles.unwrap()),
+            Some(u64::from(TARGET))
+        );
+        assert_eq!(work.represented, profile.skipped_cycles.unwrap());
         // SYSTIMER count must track the advanced cycle (single source of
         // truth). ~2M cycles / 10 ≈ 200k ticks; allow generous slack.
         assert!(
@@ -914,6 +931,42 @@ fn c3_timer_read_with_register_increment_and_ram_store_keeps_every_effect() {
         257
     );
     assert_eq!(machine.idle_fast_forward_cycles_skipped, 0);
+}
+
+#[test]
+fn c3_machine_accounting_keeps_dispatched_and_represented_instruction_work() {
+    let (cpu, bus) = c3_update_poll_fixture();
+    let mut machine = Machine::new(cpu, bus);
+    machine.config.idle_fast_forward_enabled = true;
+    machine.config.peripheral_tick_interval = crate::bus::RECOMMENDED_TICK_INTERVAL;
+    machine.bus.legacy_walk_disabled = true;
+    let report = machine
+        .advance(crate::AdvanceRequest::run(Some(4096)))
+        .unwrap();
+    let represented = if crate::cycle_clock::event_scheduler_enabled() {
+        4092
+    } else {
+        0
+    };
+    assert_eq!(report.primary_steps, 4096);
+    assert_eq!(report.fuel_consumed, 4096);
+    assert_eq!(
+        report.primary_work,
+        crate::InstructionWork {
+            dispatched: 4096 - represented,
+            represented,
+        }
+    );
+    assert_eq!(report.idle_cycles, represented);
+    assert!(report.instruction_accounting_is_conserved());
+    let profile = machine.step_profile();
+    assert_eq!(profile.cpu_instructions, 4096);
+    assert_eq!(
+        profile.validated_instruction_work(),
+        Some(report.primary_work)
+    );
+    assert_eq!(profile.skipped_cycles, Some(represented));
+    assert_eq!(machine.cpu.pc, 0);
 }
 
 #[test]

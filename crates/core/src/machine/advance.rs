@@ -4,7 +4,7 @@ use super::boundary::{CoreProgress, ExecutionMode};
 use super::plan::{CheckedChunks, Ordinary, WindowHooks};
 use crate::{
     AdvanceReport, AdvanceRequest, AdvanceStop, BreakpointPolicy, Cpu, HostTimeMode, IdlePolicy,
-    Machine, SimResult, SimulationConfig, SimulationObserver,
+    InstructionWork, Machine, SimResult, SimulationConfig, SimulationObserver,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -31,18 +31,71 @@ pub type WindowRunner<'a, C> = dyn FnMut(
 #[derive(Default)]
 struct AdvanceState {
     fuel_consumed: u64,
-    primary_steps: u64,
+    primary_work: InstructionWork,
     secondary_steps: u64,
     idle_cycles: u64,
     cpu_batches: u64,
 }
 
 impl AdvanceState {
+    fn record_dispatch(&mut self, primary: u32, secondary: u32) {
+        let primary = u64::from(primary);
+        let work = self
+            .primary_work
+            .checked_add(InstructionWork {
+                dispatched: primary,
+                represented: 0,
+            })
+            .expect("dispatched instruction work overflow");
+        let secondary = self
+            .secondary_steps
+            .checked_add(u64::from(secondary))
+            .expect("secondary progress overflow");
+        let fuel = self
+            .fuel_consumed
+            .checked_add(primary)
+            .expect("fuel overflow");
+        let batches = self
+            .cpu_batches
+            .checked_add(1)
+            .expect("dispatch count overflow");
+        self.primary_work = work;
+        self.secondary_steps = secondary;
+        self.fuel_consumed = fuel;
+        self.cpu_batches = batches;
+    }
+
+    fn record_skip(&mut self, primary: u64, secondary: u64, cycles: u64) {
+        let work = self
+            .primary_work
+            .checked_add(InstructionWork {
+                dispatched: 0,
+                represented: primary,
+            })
+            .expect("represented instruction work overflow");
+        let secondary = self
+            .secondary_steps
+            .checked_add(secondary)
+            .expect("secondary progress overflow");
+        let fuel = self
+            .fuel_consumed
+            .checked_add(cycles)
+            .expect("fuel overflow");
+        let idle = self
+            .idle_cycles
+            .checked_add(cycles)
+            .expect("skipped cycle overflow");
+        self.primary_work = work;
+        self.secondary_steps = secondary;
+        self.fuel_consumed = fuel;
+        self.idle_cycles = idle;
+    }
+
     fn report(&self, stop: AdvanceStop, elapsed_cycles: u64) -> AdvanceReport {
         AdvanceReport::new(
             stop,
             self.fuel_consumed,
-            self.primary_steps,
+            self.primary_work,
             self.secondary_steps,
             elapsed_cycles,
             self.idle_cycles,
@@ -123,8 +176,8 @@ impl<C: Cpu> Machine<C> {
         };
         self.total_cycles += skip;
         self.bus.set_current_cycle(self.total_cycles);
-        state.fuel_consumed = skip;
-        state.idle_cycles = skip;
+        self.step_profile.record_skipped_work(0, skip);
+        state.record_skip(0, 0, skip);
         Ok(Some(state.report(stop, skip)))
     }
 }
@@ -376,11 +429,11 @@ impl<C: Cpu> Machine<C> {
                 // that stepped through every idle cycle took a billion steps
                 // to get past one `delay(1000)`.
                 if let Some(skipped) = self.try_idle_fast_forward(skip_limit, 0) {
-                    state.fuel_consumed += skipped.cycles;
-                    state.idle_cycles += skipped.cycles;
-                    state.primary_steps += skipped.primary_steps;
-                    state.secondary_steps += skipped.secondary_steps;
-                    self.step_profile.cpu_instructions += skipped.primary_steps;
+                    state.record_skip(
+                        skipped.primary_steps,
+                        skipped.secondary_steps,
+                        skipped.cycles,
+                    );
                     self.logic_observe(self.total_cycles);
                     self.pace_realtime(start_cycles, start_wall);
                     if self.net_drive_stop_hit {
@@ -465,11 +518,11 @@ impl<C: Cpu> Machine<C> {
                         (None, None) => None,
                     };
                     if let Some(skipped) = self.try_idle_fast_forward(limit, 0) {
-                        state.fuel_consumed += skipped.cycles;
-                        state.idle_cycles += skipped.cycles;
-                        state.primary_steps += skipped.primary_steps;
-                        state.secondary_steps += skipped.secondary_steps;
-                        self.step_profile.cpu_instructions += skipped.primary_steps;
+                        state.record_skip(
+                            skipped.primary_steps,
+                            skipped.secondary_steps,
+                            skipped.cycles,
+                        );
                         self.logic_observe(self.total_cycles);
                         self.pace_realtime(start_cycles, start_wall);
                         if self.net_drive_stop_hit {
@@ -499,10 +552,7 @@ impl<C: Cpu> Machine<C> {
             let simctl_exit = self.drain_simctl_exit_code();
             let cpu_exit = self.cpu.take_firmware_exit();
             if let Some(code) = simctl_exit.or(cpu_exit) {
-                state.fuel_consumed += u64::from(progress.primary_steps);
-                state.primary_steps += u64::from(progress.primary_steps);
-                state.secondary_steps += u64::from(progress.secondary_steps);
-                state.cpu_batches += 1;
+                state.record_dispatch(progress.primary_steps, progress.secondary_steps);
                 self.pace_realtime(start_cycles, start_wall);
                 return Ok(state.report(
                     AdvanceStop::FirmwareExit { code },
@@ -510,10 +560,7 @@ impl<C: Cpu> Machine<C> {
                 ));
             }
 
-            state.fuel_consumed += u64::from(progress.primary_steps);
-            state.primary_steps += u64::from(progress.primary_steps);
-            state.secondary_steps += u64::from(progress.secondary_steps);
-            state.cpu_batches += 1;
+            state.record_dispatch(progress.primary_steps, progress.secondary_steps);
             self.pace_realtime(start_cycles, start_wall);
             // A world running this node until its next net pad drive change
             // stops at the boundary the change was recorded at.
