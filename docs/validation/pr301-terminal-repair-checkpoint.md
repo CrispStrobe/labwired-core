@@ -118,3 +118,44 @@ recorded red at `0aaf0bf57552e7c2457372b2ca3337885c3da744`; no fixed-main claim 
 
 Work is stopped at this checkpoint. No new experiments, model runs, heavy builds,
 manual CI dispatches or background watchers were started for the handoff.
+
+## Manual continuation — 2026-11-18 19:55 UTC
+
+The owner resumed this checkpoint under direct user instruction. The full
+`ae88ac6c0` gate failed twelve measurements: the ten historical step failures
+became nine (MIMXRT595S passed at 885.8), while the three AVR batch measurements
+also regressed. AVR step measured 1094.5, ESP32 1044.0 and ESP32-S3 1051.7;
+AVR batch measured 8.4. These are failed results, not performance closure.
+
+Diagnostic head `04e5783da47431bc231279fa2ffee4c68113de3c` retained original
+Callgrind samples from the same full required gate. Its terminal checks are
+32 success, three failure and eleven conditional skips. The failures are the
+frozen producer guard, board throughput and its dependent verdict. The
+[full report](https://github.com/CrispStrobe/labwired-core/actions/runs/44376788330/job/135058993854)
+reproduces all twelve regressions exactly; there are no scheduler-contract
+failures. The original artifact is `board-throughput-report`, ID 14465090675,
+SHA-256 `5866966877f71b018cf0c42908c9de1d58498a82372ce61b5abd7e422d2f18a0`.
+
+An independent reader verified its 24 sample manifests, seven content-addressed
+assets and every retained output hash. Official `callgrind_annotate` readings
+of the paired 200,000/1,200,000-step originals attribute 127 host instructions
+per AVR step and 133 per Xtensa step to `advance_output` itself. Planning,
+execution and boundary helpers remain outlined with dynamic request/mode
+arguments despite the adapter's fixed single-step policy. This identifies a
+current recurring cost; it does not establish the first historical regression
+commit or qualify a repair.
+
+The next source candidate inlines those four shared seams so fixed policies
+can propagate through the existing lifecycle. It adds no alternate dispatcher
+and changes no accounting, overflow checks, boundaries, reports or thresholds.
+The diagnostic filter violated the frozen producer guard, so the candidate also
+restores the held producer and its original tests byte-for-byte. Original
+sample retention uses that producer's existing unfiltered interface; no guard
+pin or assertion is changed. All 142 affected producer/diagnostic/raw-profile
+host controls pass, and the Rust files pass formatting. These host checks do
+not qualify runtime or performance.
+
+The next normal source push must pass all exact-head runtime checks and the
+complete unchanged performance gate. The twelve failed measurements remain
+open until that happens. PR301 is unmerged and #300 remains open; no fixed Pico,
+full-performance or main-green claim is made.
