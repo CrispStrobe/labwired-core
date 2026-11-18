@@ -1322,7 +1322,12 @@ impl Cpu for RiscV {
             }
             Instruction::Jal { rd, imm } => {
                 let target = self.pc.wrapping_add(imm as u32);
-                if rd == 0 && imm == -12 && inst_len == 4 && observers.is_empty() {
+                if rd == 0
+                    && imm == -12
+                    && inst_len == 4
+                    && observers.is_empty()
+                    && self.saw_systimer_poll_shape(bus, target, _config.decode_cache_enabled)
+                {
                     self.systimer_poll_anchor = Some(target);
                 }
                 // Link address is the NEXT instruction: pc + inst_len. The

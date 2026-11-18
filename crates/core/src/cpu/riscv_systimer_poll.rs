@@ -59,6 +59,62 @@ fn code_words(bus: &dyn Bus, pc: u32) -> Option<[u32; 4]> {
 }
 
 impl RiscV {
+    /// A batch boundary hint, not skip admission. Ordinary four-instruction
+    /// loops must not end every batch merely because their JAL has -12 as
+    /// its displacement. Reuse the instructions just decoded by execution;
+    /// the actual proof below still re-reads code and validates device state.
+    pub(super) fn saw_systimer_poll_shape(
+        &self,
+        bus: &dyn Bus,
+        head: u32,
+        decode_cache_enabled: bool,
+    ) -> bool {
+        if self.core_profile != RiscVCoreProfile::Esp32C3 {
+            return false;
+        }
+        let instructions = if decode_cache_enabled {
+            let mut instructions = [Instruction::Unknown(0); 3];
+            for (i, instruction) in instructions.iter_mut().enumerate() {
+                let pc = head.wrapping_add(4 * i as u32);
+                let Some(entry) = self.decode_cache[((pc >> 1) & 0xfff) as usize]
+                    .filter(|entry| entry.tag == pc && entry.inst_len == 4)
+                else {
+                    return false;
+                };
+                *instruction = entry.instruction;
+            }
+            instructions
+        } else {
+            let Some(words) = code_words(bus, head) else {
+                return false;
+            };
+            std::array::from_fn(|i| decode_rv32(words[i]))
+        };
+        let [Instruction::Sw {
+            rs1: tb,
+            rs2: value,
+            imm: 4,
+        }, Instruction::Lw {
+            rd: timer_rd,
+            rs1: read_tb,
+            imm: 0x44,
+        }, Instruction::Lw {
+            rd: gpio_rd,
+            rs1: gb,
+            imm: 0x3c,
+        }] = instructions
+        else {
+            return false;
+        };
+        tb == read_tb
+            && timer_rd != 0
+            && gpio_rd != 0
+            && timer_rd != gpio_rd
+            && [tb, gb, value]
+                .iter()
+                .all(|r| *r != timer_rd && *r != gpio_rd)
+    }
+
     fn systimer_poll_proof(&self, bus: &dyn Bus, limit: u64) -> Option<Plan> {
         if self.core_profile != RiscVCoreProfile::Esp32C3
             || self.systimer_poll_anchor != Some(self.pc)

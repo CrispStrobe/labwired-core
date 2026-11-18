@@ -751,6 +751,37 @@ fn c3_update_poll_lockstep(cpu: &mut RiscV, bus: &mut SystemBus, cycles: u64) {
 }
 
 #[test]
+fn c3_update_poll_anchor_requires_supported_shape_with_or_without_decode_cache() {
+    for decode_cache_enabled in [false, true] {
+        for supported in [false, true] {
+            let (mut cpu, mut bus) = c3_update_poll_fixture();
+            if !supported {
+                // An ordinary loop with the same JAL displacement. It must
+                // retain wide batches and must not be admitted as a poll.
+                bus.flash.data[0..4].copy_from_slice(&0x0015_0513u32.to_le_bytes());
+            }
+            let config = crate::SimulationConfig {
+                decode_cache_enabled,
+                idle_fast_forward_enabled: true,
+                ..crate::SimulationConfig::default()
+            };
+            for cycle in 0..4 {
+                bus.set_current_cycle(cycle);
+                cpu.step(&mut bus, &[], &config).unwrap();
+            }
+            assert_eq!(cpu.poll_loop_anchor_ready(), supported);
+            bus.set_current_cycle(4);
+            assert_eq!(cpu.poll_loop_skip_budget(&bus, 64).is_some(), supported);
+            if !supported {
+                assert_eq!(cpu.step_batch(&mut bus, &[], &config, 64).unwrap(), 64);
+                assert!(!cpu.poll_loop_anchor_ready());
+                assert_eq!(cpu.x[10], bus.ram.base_addr as u32 + 17);
+            }
+        }
+    }
+}
+
+#[test]
 fn c3_update_poll_catch_up_matches_changing_counter_and_registers() {
     for cycles in [4, 8, 12, 4096] {
         let (mut actual, mut bus) = c3_update_poll_fixture();
@@ -931,6 +962,10 @@ fn c3_timer_read_with_register_increment_and_ram_store_keeps_every_effect() {
         257
     );
     assert_eq!(machine.idle_fast_forward_cycles_skipped, 0);
+    assert_eq!(
+        report.cpu_batches, 1,
+        "an ordinary -12 JAL loop must not end each four-instruction batch"
+    );
 }
 
 #[test]
