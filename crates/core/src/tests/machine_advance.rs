@@ -668,12 +668,14 @@ fn conservation_and_independent_work_witness_distinguish_bad_counts() {
         .total(),
         None
     );
-    let mut corrupt = StepProfile::default();
-    corrupt.cpu_instructions = 13;
-    corrupt.instruction_work = Some(InstructionWork {
-        dispatched: 5,
-        represented: 21,
-    });
+    let corrupt = StepProfile {
+        cpu_instructions: 13,
+        instruction_work: Some(InstructionWork {
+            dispatched: 5,
+            represented: 21,
+        }),
+        ..StepProfile::default()
+    };
     assert_eq!(corrupt.validated_instruction_work(), None);
 }
 
