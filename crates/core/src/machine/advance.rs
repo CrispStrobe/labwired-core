@@ -346,6 +346,9 @@ impl<C: Cpu> Machine<C> {
         report
     }
 
+    // Propagate the adapter's fixed request through the nested loop as well;
+    // inlining only advance_output leaves this call's policies dynamic.
+    #[inline(always)]
     fn advance_inner<H: WindowHooks, O: AdvanceOutput>(
         &mut self,
         request: AdvanceRequest,

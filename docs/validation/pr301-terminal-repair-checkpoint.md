@@ -187,3 +187,38 @@ profiles without removing a counter or overflow check. New controls cover
 dispatch overflow atomicity, represented-work conservation and unknown
 historical partitions. They are written and formatted, but have not yet run;
 fresh exact-head hosted qualification is required.
+
+### Remaining nested-call cost — 22:13 UTC
+
+Head `f57f38e37fd80f395095957ca4c891ba8eefcfc1` passed all CoreCI checks,
+including 6146 core-library tests and both new counter controls. ARM fuel
+controls passed 8/8 and register coverage passed 3/3. The full performance
+[run 44394300796](https://github.com/CrispStrobe/labwired-core/actions/runs/44394300796)
+passed RTx/RTF (C3 normalized index 0.0009522 versus baseline 0.001212) but
+failed ten Ir/step measurements. The unchanged limits remain 3% relative and,
+for batch mode only, the existing 0.5 Ir/step absolute allowance.
+
+| Failing board/mode | Baseline | Measured |
+| --- | ---: | ---: |
+| atmega328p, batch | 7.6 | 8.2 |
+| atmega328pb, step / batch | 1026.4 / 7.6 | 1067.5 / 8.2 |
+| atmega32u4, step | 1020.0 | 1067.5 |
+| esp32, step | 955.5 | 1008.0 |
+| esp32-devkitc-32e-gpio-smoke, step | 977.8 | 1008.0 |
+| esp32-devkitc-32e-uart1, step | 977.8 | 1008.0 |
+| esp32s3 and its two measured variants, step | 991.9 | 1029.7 |
+
+The original full report/profile artifact is ID 14476756336, SHA-256
+`f29f87e25282a504e260fd6d1b078b497490552a8a8b719f2e0a5dddd0297c6c`.
+Independent readers verified the selected AVR/ESP32/ESP32-S3 sample and asset
+hashes and read the original paired profiles without replaying a guest. Those
+profiles show that `advance_inner` and `execute_cpu_window_inner` remain
+outlined after their outer wrappers were inlined. The former alone costs
+97–104 Ir/step in these families; the fixed single-step policies still cross
+that nested call as dynamic arguments.
+
+The next candidate inlines these two remaining nested seams, retaining the
+same loop, execution, boundary, report and error effects. No case, counter,
+floor, baseline or guard is changed. Formatting passes; fresh exact-head
+runtime and full performance qualification remain mandatory. The ten failures
+are unclosed, PR301 is unmerged and #300 remains open.

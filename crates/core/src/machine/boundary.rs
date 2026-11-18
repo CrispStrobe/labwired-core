@@ -95,6 +95,7 @@ impl<C: Cpu> Machine<C> {
         })
     }
 
+    #[inline(always)]
     fn execute_cpu_window_inner<H: WindowHooks>(
         &mut self,
         mode: ExecutionMode,
