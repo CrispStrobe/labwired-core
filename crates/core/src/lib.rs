@@ -369,6 +369,7 @@ impl StepProfile {
         (work.total()? == self.cpu_instructions).then_some(work)
     }
 
+    #[inline]
     pub(crate) fn record_dispatched_work(&mut self, instructions: u64) {
         let total = self
             .cpu_instructions
@@ -2487,11 +2488,12 @@ impl<C: Cpu> Machine<C> {
 
     /// Advances one primary-CPU boundary through the authoritative lifecycle.
     ///
-    /// This compatibility adapter delegates to [`Machine::advance`]. Frontends
+    /// This compatibility adapter uses the same lifecycle as [`Machine::advance`],
+    /// without collecting a discarded per-call report. Frontends
     /// that need bounded runs or stop reports should call `advance` directly;
     /// they must not reproduce the lifecycle with direct [`Cpu::step`] calls.
     pub fn step(&mut self) -> SimResult<()> {
-        self.advance(AdvanceRequest::single()).map(|_| ())
+        self.advance_single_without_report()
     }
 
     /// Report-returning form of `DebugControl::run`, retaining its watch-latch

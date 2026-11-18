@@ -583,6 +583,7 @@ impl<C: Cpu> Machine<C> {
         })
     }
 
+    #[inline]
     pub(crate) fn record_cpu_progress(&mut self, primary_steps: u32) {
         self.step_profile
             .record_dispatched_work(u64::from(primary_steps));

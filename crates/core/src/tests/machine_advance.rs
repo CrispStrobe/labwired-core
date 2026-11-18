@@ -417,6 +417,63 @@ fn step_adapter_publishes_and_profiles_one_cycle() {
 }
 
 #[test]
+fn discarded_single_report_keeps_architecture_clocks_and_live_profiles() {
+    for dual in [false, true] {
+        for interval in [1, 64] {
+            let mut reported = counting_dual_core_machine();
+            let mut discarded = counting_dual_core_machine();
+            for machine in [&mut reported, &mut discarded] {
+                if !dual {
+                    machine.cpu_secondary = None;
+                }
+                machine.config.peripheral_tick_interval = interval;
+                machine.bus.config.peripheral_tick_interval = interval;
+            }
+            for _ in 0..128 {
+                let report = reported.advance(AdvanceRequest::single()).unwrap();
+                discarded.step().unwrap();
+                assert!(report.instruction_accounting_is_conserved());
+                assert_eq!(report.primary_steps, 1);
+                assert_eq!(reported.total_cycles, discarded.total_cycles);
+                assert_eq!(reported.bus.current_cycle, discarded.bus.current_cycle);
+                assert_eq!(reported.step_profile(), discarded.step_profile());
+                assert_eq!(
+                    serde_json::to_value(reported.snapshot()).unwrap(),
+                    serde_json::to_value(discarded.snapshot()).unwrap()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn discarded_single_report_keeps_no_progress_and_error_effects() {
+    for fail in [false, true] {
+        let mut reported = Machine::new(CountingCpu::default(), SystemBus::new());
+        let mut discarded = Machine::new(CountingCpu::default(), SystemBus::new());
+        for machine in [&mut reported, &mut discarded] {
+            machine.cpu.zero_batch = !fail;
+            machine.cpu.fail_step = fail;
+        }
+        let report = reported.advance(AdvanceRequest::single());
+        let result = discarded.step();
+        assert_eq!(report.is_err(), fail);
+        assert_eq!(result.is_err(), fail);
+        if let Ok(report) = report {
+            assert_eq!(report.stop, AdvanceStop::NoProgress);
+            assert!(report.instruction_accounting_is_conserved());
+        }
+        assert_eq!(reported.total_cycles, discarded.total_cycles);
+        assert_eq!(reported.bus.current_cycle, discarded.bus.current_cycle);
+        assert_eq!(reported.step_profile(), discarded.step_profile());
+        assert_eq!(
+            serde_json::to_value(reported.snapshot()).unwrap(),
+            serde_json::to_value(discarded.snapshot()).unwrap()
+        );
+    }
+}
+
+#[test]
 fn reset_step_profile_clears_dirty_counters() {
     let mut machine = Machine::new(CountingCpu::default(), crate::bus::SystemBus::new());
     machine.step().expect("step should succeed");
