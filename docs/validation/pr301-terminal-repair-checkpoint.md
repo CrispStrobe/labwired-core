@@ -222,3 +222,28 @@ same loop, execution, boundary, report and error effects. No case, counter,
 floor, baseline or guard is changed. Formatting passes; fresh exact-head
 runtime and full performance qualification remain mandatory. The ten failures
 are unclosed, PR301 is unmerged and #300 remains open.
+
+### Preserve the gains and isolate caller cost — 23:40 UTC
+
+Head `d088acfbfe82642ca5afbd90c2cf8ad9824a9468` passed all CoreCI checks
+and RTx/RTF. The full [CorePerf run 44409664224](https://github.com/CrispStrobe/labwired-core/actions/runs/44409664224)
+still failed six measurements: the three AVR batch cases measured 8.6 versus
+7.6–7.7, and the three S3 step cases measured 1042.7 versus 991.9. AVR step
+improved to 980.5 and ESP32 step to 940.0, passing their unchanged limits.
+The C3 normalized RTF index was 0.0009359 versus baseline 0.001212.
+
+The original report/profile artifact is ID 14480699560, SHA-256
+`6999e708f107cdabb12e888a66c7e611bbaf9272a9d498f6895d7aeedd2855aa`.
+Readers verified 24 selected original samples and their seven assets, with
+identical CLI/chip/firmware identities across each low/high pair. CPU cost
+remained unchanged: AVR `step_batch` contributed 3.0408 Ir/instruction and the
+S3 CPU step 120.5. The increased shared-lifecycle cost is now attributed to
+the surrounding CLI functions, where the entire kernel was inlined.
+
+The next candidate keeps the internal inlining and its fixed-policy
+specialization, but retains call boundaries at public `advance` and the
+private single-step adapter. This is intended to isolate the kernel's register
+lifetimes from large frontend drivers. It changes no execution, reporting,
+profile, overflow or boundary effect. Formatting passes; exact-head runtime
+and the complete unchanged performance gate remain pending. No failed case
+is waived or rebaselined, no merge has occurred, and #300 remains open.

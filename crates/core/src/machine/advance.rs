@@ -240,10 +240,16 @@ impl<C: Cpu> Machine<C> {
     /// A request with no fuel or simulated-cycle limit can run indefinitely.
     /// Callers must arrange an honored breakpoint, CPU progress termination,
     /// or external termination when issuing such a request.
+    // Keep the loop's register lifetimes separate from large frontend drivers;
+    // the internal seams still inline within this authoritative entry point.
+    #[inline(never)]
     pub fn advance(&mut self, request: AdvanceRequest) -> SimResult<AdvanceReport> {
         self.advance_output(request)
     }
 
+    // The fixed request stays visible inside this kernel without expanding
+    // its entire lifecycle into each frontend's surrounding dispatch loop.
+    #[inline(never)]
     pub(crate) fn advance_single_without_report(&mut self) -> SimResult<()> {
         self.advance_output(AdvanceRequest::single())
     }
