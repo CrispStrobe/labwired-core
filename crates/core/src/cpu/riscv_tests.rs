@@ -962,9 +962,13 @@ fn c3_timer_read_with_register_increment_and_ram_store_keeps_every_effect() {
         257
     );
     assert_eq!(machine.idle_fast_forward_cycles_skipped, 0);
+    // The reference prefix left the machine at cycle 4. The mandatory
+    // 1024-cycle peripheral grid therefore splits this budget into 1020
+    // and 4 instructions. Only those two windows may end a batch; the
+    // ordinary loop's JAL must not introduce a boundary every four steps.
     assert_eq!(
-        report.cpu_batches, 1,
-        "an ordinary -12 JAL loop must not end each four-instruction batch"
+        report.cpu_batches, 2,
+        "only the peripheral tick grid may split this ordinary -12 JAL loop"
     );
 }
 
