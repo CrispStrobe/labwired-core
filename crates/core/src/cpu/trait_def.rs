@@ -445,6 +445,14 @@ pub trait Cpu: Send {
         None
     }
 
+    /// Apply a proven loop whose final state includes a peripheral snapshot.
+    /// Pure CPU/RAM proofs keep their existing implementation. A bus-aware
+    /// proof must revalidate before any mutation and leave both unchanged on
+    /// refusal; the machine still owns all deadline and event boundaries.
+    fn fast_forward_poll_loop_on_bus(&mut self, _bus: &mut dyn Bus, cycles: u64) -> Option<u64> {
+        self.fast_forward_poll_loop(cycles)
+    }
+
     /// While the machine defers this core's proven poll loop (the plan the
     /// last [`Self::poll_loop_skip_budget`] proved, not yet applied): has
     /// anything the deferred iterations depend on changed? True when a word
@@ -720,6 +728,9 @@ impl Cpu for Box<dyn Cpu> {
     }
     fn fast_forward_poll_loop(&mut self, cycles: u64) -> Option<u64> {
         (**self).fast_forward_poll_loop(cycles)
+    }
+    fn fast_forward_poll_loop_on_bus(&mut self, bus: &mut dyn Bus, cycles: u64) -> Option<u64> {
+        (**self).fast_forward_poll_loop_on_bus(bus, cycles)
     }
     fn poll_loop_plan_stores(&self) -> bool {
         (**self).poll_loop_plan_stores()

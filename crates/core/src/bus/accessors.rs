@@ -485,6 +485,24 @@ impl SystemBus {
 }
 
 impl crate::Bus for SystemBus {
+    fn c3_systimer_poll_values(
+        &self,
+        start: u64,
+        cycles: u64,
+        addresses: [u64; 3],
+    ) -> Option<(u64, u32)> {
+        SystemBus::c3_systimer_poll_values(self, start, cycles, addresses)
+    }
+
+    fn c3_commit_systimer_poll(
+        &mut self,
+        start: u64,
+        cycles: u64,
+        addresses: [u64; 3],
+    ) -> Option<(u32, u32)> {
+        SystemBus::c3_commit_systimer_poll(self, start, cycles, addresses)
+    }
+
     fn rp2350_dcp_mut(&mut self) -> Option<&mut crate::cpu::cortex_m::rp2350_dcp::Rp2350Dcp> {
         self.rp2350_dcp.as_deref_mut()
     }

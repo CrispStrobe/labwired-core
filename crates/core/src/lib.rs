@@ -1895,7 +1895,7 @@ impl<C: Cpu> Machine<C> {
             if primary_spin.is_some() {
                 primary_steps = self
                     .cpu
-                    .fast_forward_poll_loop(skipped as u64)
+                    .fast_forward_poll_loop_on_bus(&mut self.bus, skipped as u64)
                     .expect("a proven primary poll-loop skip must apply");
             } else {
                 self.cpu.fast_forward_idle_cycles(skipped as u64);
@@ -1908,7 +1908,7 @@ impl<C: Cpu> Machine<C> {
             {
                 if secondary_spin.is_some() {
                     secondary_steps = sec
-                        .fast_forward_poll_loop(skipped as u64)
+                        .fast_forward_poll_loop_on_bus(&mut self.bus, skipped as u64)
                         .expect("a proven secondary poll-loop skip must apply");
                 } else if sec.secondary_execution_state() == SecondaryExecutionState::ParkedIdle {
                     sec.fast_forward_idle_cycles(skipped as u64);

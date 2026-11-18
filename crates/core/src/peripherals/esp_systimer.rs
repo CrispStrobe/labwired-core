@@ -406,6 +406,44 @@ impl Systimer {
         counter
     }
 
+    /// Exact final UPDATE of a proven four-instruction C3 poll loop. Alarms
+    /// are deliberately excluded: their event owner must run normally.
+    /// This projects the changing counter, including fractional-cycle carry;
+    /// it never treats a timer read as a constant.
+    pub(crate) fn poll_unit0_snapshot_at(&self, start: u64, update_cycle: u64) -> Option<u64> {
+        if !self.scheduler_enabled
+            || self.target0_source != 37
+            || self.clock.as_ref()?.now() != start
+            || self.last_tick > start
+            || update_cycle < start
+            || self.unit0_alarms.iter().any(|a| a.enabled || a.pending)
+        {
+            return None;
+        }
+        let elapsed = update_cycle.checked_sub(self.last_tick)?;
+        let ticks = self.cpu_cycle_accum.checked_add(elapsed)? / self.cpu_per_systimer();
+        Some(if self.unit0_running() {
+            self.unit0.counter.wrapping_add(ticks)
+        } else {
+            self.unit0.counter
+        })
+    }
+
+    /// Revalidate before mutating; identical to the final real UPDATE after
+    /// all earlier UPDATEs, which only latched snapshots nobody consumed.
+    pub(crate) fn commit_poll_unit0_snapshot(
+        &mut self,
+        start: u64,
+        update_cycle: u64,
+    ) -> Option<u32> {
+        let snapshot = self.poll_unit0_snapshot_at(start, update_cycle)?;
+        self.advance_cycles(update_cycle - self.last_tick);
+        self.last_tick = update_cycle;
+        self.unit0.snapshot = snapshot;
+        self.value_valid[0] = true;
+        Some(snapshot as u32)
+    }
+
     /// Interrupt-matrix source IDs this SYSTIMER is asserting RIGHT NOW —
     /// per-alarm `pending && INT_ENA`, the same level condition
     /// `evaluate_alarms` emits on the legacy walk. In scheduler mode the
@@ -748,6 +786,17 @@ fn set_alarm_conf(alarm: &mut AlarmState, value: u32) {
 }
 
 impl Peripheral for Systimer {
+    fn c3_poll_unit0_snapshot(&self, offsets: (u64, u64), start: u64, update: u64) -> Option<u64> {
+        if offsets != (regs::UNIT0_OP, regs::UNIT0_VALUE_LO) {
+            return None;
+        }
+        self.poll_unit0_snapshot_at(start, update)
+    }
+
+    fn c3_commit_poll_unit0_snapshot(&mut self, start: u64, update: u64) -> Option<u32> {
+        self.commit_poll_unit0_snapshot(start, update)
+    }
+
     /// Authoritative simulated wall-clock in µs: UNIT0 ticks at a silicon-fixed
     /// 16 MHz, so µs = ticks / (16 MHz / 1 MHz) = ticks / 16. This is the
     /// counter esp-idf / esp-hal read for `esp_timer` elapsed time, so driving

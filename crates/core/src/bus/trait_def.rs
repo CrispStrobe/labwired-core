@@ -34,6 +34,27 @@ pub enum FetchPermission {
 }
 
 pub trait Bus {
+    /// Concrete C3 SYSTIMER/GPIO contract for one already-decoded four-step
+    /// loop. Returns (final UNIT0 snapshot, GPIO input) without mutation only
+    /// when routing, observation and device deadlines admit the whole span.
+    /// Unsupported buses refuse, including generic timer-read providers.
+    fn c3_systimer_poll_values(
+        &self,
+        _start: u64,
+        _cycles: u64,
+        _addresses: [u64; 3],
+    ) -> Option<(u64, u32)> {
+        None
+    }
+    /// Revalidate and apply the same span; failure leaves the bus unchanged.
+    fn c3_commit_systimer_poll(
+        &mut self,
+        _start: u64,
+        _cycles: u64,
+        _addresses: [u64; 3],
+    ) -> Option<(u32, u32)> {
+        None
+    }
     /// The RP2350 double-precision coprocessor attached to this core, if the
     /// chip has one (`coprocessors: [rp2350_dcp]`). Called only when a p4/p5
     /// coprocessor instruction executes. `None` keeps it UNDEFINED.

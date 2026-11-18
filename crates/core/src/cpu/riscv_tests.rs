@@ -675,6 +675,247 @@ fn c3_systimer_busy_poll_with_gpio_read_still_idle_fast_forwards() {
     }
 }
 
+// These controls deliberately use the real instruction decoder, CPU step,
+// SYSTIMER, GPIO and bus. The reference executes every loop instruction at
+// its actual cycle; no timer response or register result is stubbed.
+fn c3_update_poll_words() -> [u32; 4] {
+    let off = (-12i32) as u32;
+    let jal = ((off >> 20 & 1) << 31)
+        | ((off >> 1 & 0x3ff) << 21)
+        | ((off >> 11 & 1) << 20)
+        | ((off >> 12 & 0xff) << 12)
+        | 0x6f;
+    [
+        (7 << 20) | (5 << 15) | (2 << 12) | (4 << 7) | 0x23,
+        (0x44 << 20) | (5 << 15) | (2 << 12) | (8 << 7) | 3,
+        (0x3c << 20) | (6 << 15) | (2 << 12) | (9 << 7) | 3,
+        jal,
+    ]
+}
+
+fn c3_update_poll_fixture() -> (RiscV, SystemBus) {
+    let mut bus = SystemBus::new();
+    bus.flash.base_addr = 0;
+    bus.flash.data = c3_update_poll_words()
+        .into_iter()
+        .flat_map(u32::to_le_bytes)
+        .collect();
+    bus.add_peripheral(
+        "systimer",
+        0x6002_3000,
+        0x100,
+        None,
+        Box::new(crate::peripherals::esp32s3::systimer::Systimer::new_with_source(160_000_000, 37)),
+    );
+    bus.add_peripheral(
+        "gpio",
+        0x6000_4000,
+        0x1000,
+        None,
+        Box::new(crate::peripherals::esp32c3::gpio::Esp32c3Gpio::new()),
+    );
+    let mut cpu = RiscV::new();
+    cpu.mtimecmp = u64::MAX;
+    cpu.x[5] = 0x6002_3000;
+    cpu.x[6] = 0x6000_4000;
+    cpu.x[7] = 1 << 30;
+    cpu.x[10] = bus.ram.base_addr as u32;
+    (cpu, bus)
+}
+
+fn c3_update_poll_lockstep(cpu: &mut RiscV, bus: &mut SystemBus, cycles: u64) {
+    let start = bus.current_cycle;
+    for i in 0..cycles {
+        bus.set_current_cycle(start + i);
+        cpu.step(bus, &[], &crate::SimulationConfig::default())
+            .unwrap();
+    }
+    bus.set_current_cycle(start + cycles);
+}
+
+#[test]
+fn c3_update_poll_catch_up_matches_changing_counter_and_registers() {
+    for cycles in [4, 8, 12, 4096] {
+        let (mut actual, mut bus) = c3_update_poll_fixture();
+        let (mut reference, mut reference_bus) = c3_update_poll_fixture();
+        // Load a counter close to a low-word wrap. The final register is a
+        // changing value, not the value seen when the proof was admitted.
+        for b in [&mut bus, &mut reference_bus] {
+            b.write_u32(0x6002_300c, 1).unwrap();
+            b.write_u32(0x6002_3010, 0xffff_fffe).unwrap();
+            b.write_u32(0x6002_305c, 1).unwrap();
+        }
+        c3_update_poll_lockstep(&mut actual, &mut bus, 4);
+        c3_update_poll_lockstep(&mut reference, &mut reference_bus, 4);
+        assert_eq!(
+            actual.poll_loop_skip_budget(&bus, cycles),
+            Some((4, cycles))
+        );
+        assert_eq!(
+            actual.fast_forward_poll_loop_on_bus(&mut bus, cycles),
+            Some(cycles)
+        );
+        c3_update_poll_lockstep(&mut reference, &mut reference_bus, cycles);
+        assert_eq!(actual.x, reference.x, "all32 registers at {cycles}");
+        assert_eq!(
+            (actual.pc, actual.mtime, actual.mip),
+            (reference.pc, reference.mtime, reference.mip)
+        );
+        let timer = |b: &SystemBus| b.peripherals[0].dev.runtime_snapshot();
+        assert_eq!(
+            timer(&bus),
+            timer(&reference_bus),
+            "full timer state at {cycles}"
+        );
+        assert_eq!(bus.current_cycle, reference_bus.current_cycle);
+        assert!(actual.poll_loop_anchor_ready());
+    }
+}
+
+#[test]
+fn c3_update_poll_stops_before_internal_interrupt_and_short_windows() {
+    let (mut cpu, mut bus) = c3_update_poll_fixture();
+    c3_update_poll_lockstep(&mut cpu, &mut bus, 4);
+    cpu.mtimecmp = cpu.mtime + 10;
+    cpu.mstatus |= 1 << 3;
+    cpu.mie |= 1 << 7;
+    assert_eq!(cpu.poll_loop_skip_budget(&bus, 4096), Some((4, 8)));
+    assert_eq!(cpu.fast_forward_poll_loop_on_bus(&mut bus, 8), Some(8));
+    let before = (cpu.x, cpu.pc, cpu.mtime, bus.current_cycle);
+    assert_eq!(cpu.poll_loop_skip_budget(&bus, 4096), None);
+    assert_eq!(before, (cpu.x, cpu.pc, cpu.mtime, bus.current_cycle));
+    cpu.mtimecmp = u64::MAX;
+    for cycles in [0, 1, 2, 3] {
+        assert_eq!(cpu.poll_loop_skip_budget(&bus, cycles), None);
+    }
+    // MAX is still a real comparator edge if execution can reach it.
+    cpu.mtime = u64::MAX - 4;
+    assert_eq!(cpu.poll_loop_skip_budget(&bus, 4096), None);
+}
+
+#[test]
+fn c3_update_poll_machine_clamps_to_whole_iterations_before_scheduler_deadline() {
+    if !crate::cycle_clock::event_scheduler_enabled() {
+        return;
+    }
+    let (mut cpu, mut bus) = c3_update_poll_fixture();
+    c3_update_poll_lockstep(&mut cpu, &mut bus, 4);
+    let mut machine = Machine::new(cpu, bus);
+    machine.total_cycles = 4;
+    machine.sched.advance_to(4);
+    machine.config.idle_fast_forward_enabled = true;
+    machine.config.peripheral_tick_interval = crate::bus::RECOMMENDED_TICK_INTERVAL;
+    machine.bus.legacy_walk_disabled = true;
+    machine.sched.schedule(14, 1, 0);
+    let skipped = machine.try_idle_fast_forward(Some(4096), 0).unwrap();
+    assert_eq!(skipped.cycles, 8);
+    assert_eq!(skipped.primary_steps, 8);
+    assert_eq!(machine.total_cycles, 12);
+    assert_eq!(machine.sched.next_event_deadline(), Some(14));
+    assert!(machine.try_idle_fast_forward(Some(4096), 0).is_none());
+    assert_eq!(machine.total_cycles, 12);
+}
+
+#[test]
+fn c3_update_poll_refuses_ram_store_arithmetic_and_register_feedback() {
+    let words = c3_update_poll_words();
+    let bad_words = [
+        // A timer read beside a changing register is NOT an idle proof.
+        (0, 0x0015_0513), // ADDI x10,x10,1
+        // A different store, including a RAM destination, is never projected.
+        (0, (7 << 20) | (10 << 15) | (2 << 12) | 0x23),
+        // Loaded timer value becomes the next UPDATE's address base.
+        (1, (words[1] & !(31 << 7)) | (5 << 7)),
+        // Loaded GPIO value becomes the next UPDATE's value.
+        (2, (words[2] & !(31 << 7)) | (7 << 7)),
+        (2, words[2] & !(31 << 7)), // discarded GPIO destination
+        (2, (words[2] & !(31 << 7)) | (8 << 7)), // overlapping loads
+    ];
+    for (index, word) in bad_words {
+        let (mut cpu, mut bus) = c3_update_poll_fixture();
+        c3_update_poll_lockstep(&mut cpu, &mut bus, 4);
+        bus.flash.data[index * 4..index * 4 + 4].copy_from_slice(&word.to_le_bytes());
+        let before = (cpu.x, cpu.pc, cpu.mtime, bus.current_cycle);
+        let timer_before = bus.peripherals[0].dev.runtime_snapshot();
+        assert_eq!(
+            cpu.poll_loop_skip_budget(&bus, 4096),
+            None,
+            "word {word:#x}"
+        );
+        assert_eq!(cpu.fast_forward_poll_loop_on_bus(&mut bus, 4), None);
+        assert_eq!(before, (cpu.x, cpu.pc, cpu.mtime, bus.current_cycle));
+        assert_eq!(timer_before, bus.peripherals[0].dev.runtime_snapshot());
+    }
+}
+
+#[test]
+fn c3_update_poll_revalidates_code_cpu_and_timer_before_any_mutation() {
+    for change in 0..4 {
+        let (mut cpu, mut bus) = c3_update_poll_fixture();
+        c3_update_poll_lockstep(&mut cpu, &mut bus, 4);
+        assert!(cpu.poll_loop_skip_budget(&bus, 4096).is_some());
+        match change {
+            0 => bus.flash.data[0..4].copy_from_slice(&0x0015_0513u32.to_le_bytes()),
+            1 => cpu.x[7] = 0, // UPDATE no longer asserted
+            2 => {
+                bus.write_u32(0x6002_3000, 0x4700_0000).unwrap();
+            } // alarm enabled
+            _ => cpu.mtimecmp = cpu.mtime + 2, // proof's time window disappeared
+        }
+        let before = (cpu.x, cpu.pc, cpu.mtime, bus.current_cycle);
+        let timer_before = bus.peripherals[0].dev.runtime_snapshot();
+        assert_eq!(cpu.fast_forward_poll_loop_on_bus(&mut bus, 4096), None);
+        assert_eq!(before, (cpu.x, cpu.pc, cpu.mtime, bus.current_cycle));
+        assert_eq!(timer_before, bus.peripherals[0].dev.runtime_snapshot());
+    }
+}
+
+#[test]
+fn c3_update_poll_refuses_armed_bus_observation_and_reservation() {
+    let (mut cpu, mut bus) = c3_update_poll_fixture();
+    c3_update_poll_lockstep(&mut cpu, &mut bus, 4);
+    bus.batch_stop.arm(&[]);
+    assert_eq!(cpu.poll_loop_skip_budget(&bus, 4096), None);
+    bus.batch_stop.disarm();
+    cpu.reservation = Some(0x2000_0000);
+    assert_eq!(cpu.poll_loop_skip_budget(&bus, 4096), None);
+    cpu.reservation = None;
+    assert!(cpu.poll_loop_skip_budget(&bus, 4096).is_some());
+}
+
+#[test]
+fn c3_timer_read_with_register_increment_and_ram_store_keeps_every_effect() {
+    let (mut cpu, mut bus) = c3_update_poll_fixture();
+    let words = [
+        c3_update_poll_words()[1],                  // timer snapshot read
+        0x0015_0513,                                // ADDI x10,x10,1
+        (10 << 20) | (11 << 15) | (2 << 12) | 0x23, // SW x10,0(x11)
+        c3_update_poll_words()[3],
+    ];
+    bus.flash.data = words.into_iter().flat_map(u32::to_le_bytes).collect();
+    cpu.x[10] = 0;
+    cpu.x[11] = bus.ram.base_addr as u32;
+    c3_update_poll_lockstep(&mut cpu, &mut bus, 4);
+    assert_eq!(cpu.x[10], 1);
+    assert_eq!(cpu.poll_loop_skip_budget(&bus, 4096), None);
+    let mut machine = Machine::new(cpu, bus);
+    machine.total_cycles = 4;
+    machine.config.idle_fast_forward_enabled = true;
+    machine.config.peripheral_tick_interval = crate::bus::RECOMMENDED_TICK_INTERVAL;
+    machine.bus.legacy_walk_disabled = true;
+    let report = machine
+        .advance(crate::AdvanceRequest::run(Some(1024)))
+        .unwrap();
+    assert_eq!(report.fuel_consumed, 1024);
+    assert_eq!(report.primary_steps, 1024);
+    assert_eq!(machine.cpu.x[10], 257);
+    assert_eq!(
+        machine.bus.read_u32(machine.bus.ram.base_addr).unwrap(),
+        257
+    );
+    assert_eq!(machine.idle_fast_forward_cycles_skipped, 0);
+}
+
 #[test]
 fn test_riscv_wfi_fast_forward_wakes_on_systimer_event() {
     let mut bus = SystemBus::empty();

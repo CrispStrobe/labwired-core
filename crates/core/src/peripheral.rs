@@ -188,6 +188,24 @@ pub enum MmioAccessClass {
 }
 
 pub trait Peripheral: std::fmt::Debug + Send {
+    /// C3 UNIT0 UPDATE projection for a proven decoded poll loop. Defaults
+    /// refuse; a generic timer classification supplies no such guarantee.
+    fn c3_poll_unit0_snapshot(
+        &self,
+        _offsets: (u64, u64),
+        _start: u64,
+        _update: u64,
+    ) -> Option<u64> {
+        None
+    }
+    /// Apply that final UPDATE, refusing without mutation on failure.
+    fn c3_commit_poll_unit0_snapshot(&mut self, _start: u64, _update: u64) -> Option<u32> {
+        None
+    }
+    /// C3 GPIO input word, inert until a machine-owned external event/write.
+    fn c3_poll_gpio_input(&self, _offset: u64) -> Option<u32> {
+        None
+    }
     /// An STM32 GPIO port can bind physical pad names such as PB0.
     /// Reject a non-GPIO peripheral that accidentally uses the same instance name.
     fn is_stm32_gpio_port(&self) -> bool {

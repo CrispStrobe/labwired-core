@@ -10,6 +10,102 @@
 use super::SystemBus;
 
 impl SystemBus {
+    pub(crate) fn c3_systimer_poll_values(
+        &self,
+        start: u64,
+        cycles: u64,
+        addresses: [u64; 3],
+    ) -> Option<(u64, u32)> {
+        if !self.peripheral_poll_unobserved()
+            || self.current_cycle != start
+            || cycles == 0
+            || cycles % 4 != 0
+        {
+            return None;
+        }
+        let end = start.checked_add(cycles)?;
+        for deadline in [
+            crate::Bus::next_cpu_interrupt_deadline_cycle(self),
+            self.next_motor_service_deadline_cycle(),
+            self.next_resident_edge_deadline_cycle(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if deadline < end {
+                return None;
+            }
+        }
+        let [op, value, input] = addresses;
+        let timer_index = self.find_peripheral_index(op)?;
+        let gpio_index = self.find_peripheral_index(input)?;
+        if self.find_peripheral_index(op.checked_add(3)?) != Some(timer_index)
+            || self.find_peripheral_index(value) != Some(timer_index)
+            || self.find_peripheral_index(value.checked_add(3)?) != Some(timer_index)
+            || self.find_peripheral_index(input.checked_add(3)?) != Some(gpio_index)
+        {
+            return None;
+        }
+        let timer = self.peripherals.get(timer_index)?;
+        let gpio = self.peripherals.get(gpio_index)?;
+        // No clock/fault hook with counting side effects in a speculative
+        // proof. Model capabilities, rather than runtime type downcasts,
+        // admit only the explicitly implemented UPDATE and GPIO semantics.
+        if timer.clock_gate.is_some() || gpio.clock_gate.is_some() {
+            return None;
+        }
+        Some((
+            timer.dev.c3_poll_unit0_snapshot(
+                (op.checked_sub(timer.base)?, value.checked_sub(timer.base)?),
+                start,
+                end - 4,
+            )?,
+            gpio.dev.c3_poll_gpio_input(input.checked_sub(gpio.base)?)?,
+        ))
+    }
+
+    pub(crate) fn c3_commit_systimer_poll(
+        &mut self,
+        start: u64,
+        cycles: u64,
+        addresses: [u64; 3],
+    ) -> Option<(u32, u32)> {
+        let (_, gpio) = self.c3_systimer_poll_values(start, cycles, addresses)?;
+        let iterations = u32::try_from(cycles / 4).ok()?;
+        let [op, value, input] = addresses;
+        let timer_index = self.find_peripheral_index(op)?;
+        let gpio_index = self.find_peripheral_index(input)?;
+        let update = start + cycles - 4;
+        let snapshot = self
+            .peripherals
+            .get_mut(timer_index)?
+            .dev
+            .c3_commit_poll_unit0_snapshot(start, update)?;
+        // No fallible step follows the first mutation. These are the last
+        // iteration's real UPDATE/read/read cycle stamps; counts cover all
+        // iterations represented by the proven skip.
+        self.set_current_cycle(update);
+        self.note_mmio_writes(
+            timer_index,
+            op - self.peripherals[timer_index].base,
+            iterations,
+        );
+        self.set_current_cycle(update + 1);
+        self.note_mmio_activities(
+            timer_index,
+            value - self.peripherals[timer_index].base,
+            iterations,
+        );
+        self.set_current_cycle(update + 2);
+        self.note_mmio_activities(
+            gpio_index,
+            input - self.peripherals[gpio_index].base,
+            iterations,
+        );
+        self.set_current_cycle(start + cycles);
+        Some((snapshot, gpio))
+    }
+
     /// Clear batch-local MMIO activity counters (call before each CPU batch).
     #[inline]
     pub fn reset_mmio_activity_counters(&self) {
@@ -328,6 +424,23 @@ impl SystemBus {
     #[inline]
     pub(crate) fn note_mmio_activities(&self, peri_idx: usize, offset: u64, count: u32) {
         self.note_mmio_accesses::<true>(peri_idx, offset, count);
+    }
+
+    pub(crate) fn note_mmio_writes(&self, peri_idx: usize, offset: u64, count: u32) {
+        self.note_mmio_accesses::<false>(peri_idx, offset, count);
+    }
+
+    /// A peripheral-loop proof must not bypass active faults or observers.
+    pub(crate) fn peripheral_poll_unobserved(&self) -> bool {
+        self.debug_watches.is_empty()
+            && !self.memory_policy.active()
+            && !self.esp32c3_pms_armed()
+            && self.observers.is_empty()
+            && self.mem_aliases.is_empty()
+            && !self.atomic_register_aliases.is_enabled()
+            && !self.batch_stop.armed()
+            && !self.logic_tap.push_armed()
+            && self.fault_unclocked.is_empty()
     }
 
     #[inline]

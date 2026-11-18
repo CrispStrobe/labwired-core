@@ -11,6 +11,9 @@ use std::sync::Arc;
 #[path = "riscv_trigger.rs"]
 pub mod trigger;
 
+#[path = "riscv_systimer_poll.rs"]
+mod systimer_poll;
+
 /// Chunk H: land on a basic-block entry PC this many times before compiling
 /// it to wasm. Matches the framework default; keeps one-shot init/boot code
 /// on the interpreter and only pays translation cost for genuinely hot loops.
@@ -185,6 +188,8 @@ pub struct RiscV {
     pub triggers: trigger::TriggerModule,
 
     waiting_for_interrupt: bool,
+    systimer_poll_anchor: Option<u32>,
+    systimer_poll_plan: Option<systimer_poll::Plan>,
     decode_cache: Box<[Option<RiscVDecodeCacheEntry>; 4096]>,
 
     /// Side-effect-free instruction-fetch window over flash-XIP and linear
@@ -266,6 +271,8 @@ impl RiscV {
             reservation: None,
             triggers: trigger::TriggerModule::default(),
             waiting_for_interrupt: false,
+            systimer_poll_anchor: None,
+            systimer_poll_plan: None,
             decode_cache: Box::new([None; 4096]),
             fetch_base: 0,
             fetch_len: 0,
@@ -1244,6 +1251,8 @@ impl Cpu for RiscV {
         observers: &[Arc<dyn SimulationObserver>],
         _config: &crate::SimulationConfig,
     ) -> SimResult<()> {
+        self.systimer_poll_anchor = None;
+        self.systimer_poll_plan = None;
         self.waiting_for_interrupt = false;
         let opcode = self.fetch_opcode_u32(bus)?;
 
@@ -1313,6 +1322,9 @@ impl Cpu for RiscV {
             }
             Instruction::Jal { rd, imm } => {
                 let target = self.pc.wrapping_add(imm as u32);
+                if rd == 0 && imm == -12 && inst_len == 4 && observers.is_empty() {
+                    self.systimer_poll_anchor = Some(target);
+                }
                 // Link address is the NEXT instruction: pc + inst_len. The
                 // decoder maps the 2-byte C.JAL to Jal, so a hardcoded +4 would
                 // set ra 2 bytes too far and corrupt every compressed call's
@@ -2046,8 +2058,7 @@ impl Cpu for RiscV {
             self.step(bus, observers, config)?;
             i += 1;
             if config.idle_fast_forward_enabled
-                && self.waiting_for_interrupt
-                && self.idle_fast_forward_budget(bus).is_some()
+                && (self.idle_fast_forward_budget(bus).is_some() || self.poll_loop_anchor_ready())
             {
                 return Ok(i);
             }
@@ -2075,6 +2086,8 @@ impl Cpu for RiscV {
     }
 
     fn set_pc(&mut self, val: u32) {
+        self.systimer_poll_anchor = None;
+        self.systimer_poll_plan = None;
         self.pc = val;
     }
     fn get_pc(&self) -> u32 {
@@ -2108,6 +2121,24 @@ impl Cpu for RiscV {
 
     fn fast_forward_idle_cycles(&mut self, cycles: u64) {
         self.update_mtime_after_elapsed_cycles(cycles);
+    }
+
+    fn poll_loop_anchor_ready(&self) -> bool {
+        self.systimer_poll_anchor == Some(self.pc)
+    }
+
+    fn poll_loop_skip_budget(&mut self, bus: &dyn Bus, limit: u64) -> Option<(u64, u64)> {
+        self.prove_systimer_poll(bus, limit)
+    }
+
+    fn poll_loop_plan_stores(&self) -> bool {
+        // UPDATE changes the peripheral snapshot. Never defer it beside an
+        // executing second core that could observe intermediate snapshots.
+        self.systimer_poll_plan.is_some()
+    }
+
+    fn fast_forward_poll_loop_on_bus(&mut self, bus: &mut dyn Bus, cycles: u64) -> Option<u64> {
+        self.apply_systimer_poll(bus, cycles)
     }
 
     fn get_register(&self, id: u8) -> u32 {
