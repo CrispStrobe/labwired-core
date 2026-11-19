@@ -483,6 +483,16 @@ class DiagnosticsControls(unittest.TestCase):
         for entry in latest_successor['source_transitions']:
             path = entry['path']
             current_source = (root/path).read_text()
+            if path == 'scripts/perf/board_perf.py':
+                # PR292 changes only the early-retirement error label. Admit
+                # that exact successor, then prove every immutable predecessor
+                # and all existing metric/floor/workflow contracts unchanged.
+                self.assertEqual('e5c3ca2ebd6330030a11e44f9186e8e0d91aae2330d051b632add56a7c4b28df',
+                                 hashlib.sha256(current_source.encode()).hexdigest(), path)
+                fixed = 'f"{chip_label}: batched run was asked for {steps} steps but retired "'
+                previous = 'f"{chip.stem}: batched run was asked for {steps} steps but retired "'
+                self.assertEqual(current_source.count(fixed), 1, path)
+                current_source = current_source.replace(fixed, previous, 1)
             self.assertEqual(entry['successor_sha256'], hashlib.sha256(current_source.encode()).hexdigest(), path)
             restored = current_source
             for replacement in entry['replacements']:
