@@ -471,10 +471,29 @@ class DiagnosticsControls(unittest.TestCase):
         self.assertEqual(hashlib.sha256(next_path.read_bytes()).hexdigest(),
                          'e8b5e6c80a21fce60b1f30d7e6a36aa87f054398c848c0432c5047fc2db0633d', 'reviewed a4b097c0 successor fixture')
         next_successor = json.loads(next_path.read_text())
+        # Keep every historical pin immutable; admit only these reviewed typed
+        # additions and restore the exact a4 predecessor before older checks.
+        latest_path = root / 'scripts/ci/fixtures/cortex_m_perf_successor_7afe07eb.json'
+        self.assertEqual(hashlib.sha256(latest_path.read_bytes()).hexdigest(),
+                         'dd4633bf8568a2db5af512b0c8bbb6228671e36251eacd9c5f7103162b993913', 'reviewed 7afe07eb successor fixture')
+        latest_successor = json.loads(latest_path.read_text())
+        self.assertEqual({'scripts/perf/board_perf.py', 'scripts/perf/baselines.json'},
+                         {entry['path'] for entry in latest_successor['source_transitions']})
+        latest_predecessors = {}
+        for entry in latest_successor['source_transitions']:
+            path = entry['path']
+            current_source = (root/path).read_text()
+            self.assertEqual(entry['successor_sha256'], hashlib.sha256(current_source.encode()).hexdigest(), path)
+            restored = current_source
+            for replacement in entry['replacements']:
+                self.assertEqual(restored.count(replacement['after']), 1, path)
+                restored = restored.replace(replacement['after'], replacement['before'], 1)
+            self.assertEqual(entry['predecessor_sha256'], hashlib.sha256(restored.encode()).hexdigest(), path)
+            latest_predecessors[path] = restored
         predecessor_sources = {}
         for entry in next_successor['source_transitions']:
             path = entry['path']
-            current_source = (root/path).read_text()
+            current_source = latest_predecessors[path]
             self.assertEqual(entry['successor_sha256'], hashlib.sha256(current_source.encode()).hexdigest(), path)
             restored = current_source
             for replacement in entry['replacements']:
@@ -551,7 +570,8 @@ class DiagnosticsControls(unittest.TestCase):
                  'scripts/perf/board_perf.py', 'scripts/perf/baselines.json',
                  'scripts/ci/fixtures/cortex_m_perf_preservation_393b5310.json',
                  'scripts/ci/fixtures/cortex_m_perf_successor_10284b00.json',
-                 'scripts/ci/fixtures/cortex_m_perf_successor_a4b097c0.json')
+                 'scripts/ci/fixtures/cortex_m_perf_successor_a4b097c0.json',
+                 'scripts/ci/fixtures/cortex_m_perf_successor_7afe07eb.json')
         for path in paths:
             target = cold / path
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -609,6 +629,71 @@ class DiagnosticsControls(unittest.TestCase):
         baseline.write_text(json.dumps(values, indent=2) + '\n')
         with self.assertRaisesRegex(AssertionError, 'scripts/perf/baselines.json'):
             self.assert_preservation(cold)
+
+    def test_preservation_rejects_relabelled_latest_successor(self):
+        cold = self.preservation_copy()
+        receipt = cold / 'scripts/ci/fixtures/cortex_m_perf_successor_7afe07eb.json'
+        record = json.loads(receipt.read_text())
+        record['kind'] = 'new measured performance'
+        receipt.write_text(json.dumps(record))
+        with self.assertRaisesRegex(AssertionError, 'reviewed 7afe07eb successor fixture'):
+            self.assert_preservation(cold)
+
+    def test_latest_successor_rejects_extra_entries_functions_and_noise_floor(self):
+        cold = self.preservation_copy()
+        self.assert_preservation(cold)
+        source = cold / 'scripts/perf/board_perf.py'
+        original = source.read_text()
+        mutations = (
+            original.replace('WAIVED: dict[str, str] = {', 'WAIVED: dict[str, str] = {\n    "unreviewed-chip": "unreviewed exception",', 1),
+            original.replace('The CH32L103 model runs RV32IMAC', 'The CH32L103 model has changed its claim', 1),
+            original.replace('BATCH_ABSOLUTE_NOISE_FLOOR = 0.5', 'BATCH_ABSOLUTE_NOISE_FLOOR = 500', 1),
+            original.replace('return relative > REGRESSION_TOLERANCE and measured - baseline > absolute_floor', 'return False', 1),
+        )
+        for changed in mutations:
+            self.assertNotEqual(changed, original)
+            source.write_text(changed)
+            with self.assertRaisesRegex(AssertionError, 'scripts/perf/board_perf.py'):
+                self.assert_preservation(cold)
+            source.write_text(original)
+            self.assert_preservation(cold)
+        baseline = cold / 'scripts/perf/baselines.json'
+        saved = baseline.read_text()
+        values = json.loads(saved)
+        values['unreviewed-chip'] = {'batch': 999.0}
+        baseline.write_text(json.dumps(values, indent=2) + '\n')
+        with self.assertRaisesRegex(AssertionError, 'scripts/perf/baselines.json'):
+            self.assert_preservation(cold)
+        baseline.write_text(saved)
+        self.assert_preservation(cold)
+
+    def test_latest_successor_changes_only_new_chip_coverage_and_reference(self):
+        receipt = ROOT / 'scripts/ci/fixtures/cortex_m_perf_successor_7afe07eb.json'
+        record = json.loads(receipt.read_text())
+        self.assertEqual(record['imported_upstream_waivers'], ['ch32l103c8t6', 'ch32x035c8t6'])
+        self.assertEqual(set(record['imported_upstream_baselines']), {'at32f421g8u7'})
+        for entry in record['source_transitions']:
+            current = (ROOT / entry['path']).read_text()
+            before = current
+            for replacement in entry['replacements']:
+                before = before.replace(replacement['after'], replacement['before'], 1)
+            if entry['path'].endswith('baselines.json'):
+                old, new = json.loads(before), json.loads(current)
+                self.assertEqual({k: new[k] for k in old}, old)
+                self.assertEqual({k: v for k, v in new.items() if k not in old}, record['imported_upstream_baselines'])
+            else:
+                def parts(text):
+                    tree = ast.parse(text)
+                    flags = {'show_empty': True} if sys.version_info >= (3, 13) else {}
+                    functions = {n.name: ast.dump(n, include_attributes=False, **flags) for n in tree.body if isinstance(n, ast.FunctionDef)}
+                    waived = next(n.value for n in tree.body if isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) and n.target.id == 'WAIVED')
+                    return functions, ast.literal_eval(waived)
+                old_functions, old_waivers = parts(before)
+                new_functions, new_waivers = parts(current)
+                self.assertEqual(new_functions, old_functions)
+                self.assertEqual({k: new_waivers[k] for k in old_waivers}, old_waivers)
+                self.assertEqual(set(new_waivers) - set(old_waivers), set(record['imported_upstream_waivers']))
+        self.assert_preservation(ROOT)
 
     def test_preservation_rejects_relabelled_historical_collector_fixture(self):
         cold = self.preservation_copy()

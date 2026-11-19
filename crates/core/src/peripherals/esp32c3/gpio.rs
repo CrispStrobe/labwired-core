@@ -1009,6 +1009,10 @@ impl PinPort for Esp32c3Gpio {
 }
 
 impl Peripheral for Esp32c3Gpio {
+    fn c3_poll_gpio_input(&self, offset: u64) -> Option<u32> {
+        (offset == IN).then(|| self.effective_input())
+    }
+
     /// Classify the input-data register (`IN`, 0x3C) and the boot-strap latch
     /// (`STRAP`) as pure freerunning samples: reading them observes pad levels
     /// without mutating any peripheral or world state. This lets the idle

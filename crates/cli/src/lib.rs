@@ -687,6 +687,12 @@ struct TestArgs {
     #[arg(long)]
     vcd: Option<PathBuf>,
 
+    /// Export actual engine I2C/SPI byte events from the same test run.
+    /// .json preserves cycle-stamped events; other extensions export VCD.
+    /// This is a diagnostic capture, never a synthetic waveform or assertion.
+    #[arg(long = "bus-trace-out", value_name = "PATH")]
+    bus_trace_out: Option<PathBuf>,
+
     /// Optional path for the in-core analog engine's waveform trace (`.csv`
     /// writes `time_ns,<channel>...`, any other extension writes VCD `real`
     /// vars). Empty unless a co-simulation runner is attached to the run.
@@ -2542,6 +2548,16 @@ mod tests {
     use labwired_config::UdsTesterDetails;
     use labwired_config::UdsTesterResult;
     use labwired_core::bus::{CanUdsTester, CanUdsTesterState};
+
+    #[test]
+    fn run_chunk_preserves_u64_budget_and_refuses_overrun() {
+        use crate::commands::run::next_run_chunk;
+        assert_eq!(next_run_chunk((1u64 << 32) + 17, 0), 4_000_000);
+        assert_eq!(next_run_chunk((1u64 << 32) + 17, 1u64 << 32), 17);
+        assert_eq!(next_run_chunk(u64::MAX, 0), 4_000_000);
+        assert_eq!(next_run_chunk(3, 3), 0);
+        assert!(std::panic::catch_unwind(|| next_run_chunk(3, 4)).is_err());
+    }
 
     fn make_tester(id: &str, state: CanUdsTesterState, failure: Option<&str>) -> CanUdsTester {
         let mut t = CanUdsTester::new(id.to_string(), "bxcan1".to_string());

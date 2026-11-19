@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "kind": "reviewed-source-successor-not-new-performance-measurement",
+  "fork_predecessor": "0aaf0bf57552e7c2457372b2ca3337885c3da744",
+  "upstream_source": "7afe07eb18a1fab3d4325896cd184a78ba392603",
+  "scope": [
+    "Only import upstream no-fixture entries for newly onboarded CH32L103/CH32X035; all existing coverage choices and all 25 measurement/helper function ASTs remain identical.",
+    "Only add the upstream AT32F421 reference; all 113 existing board metric mappings remain identical. No new performance qualification is claimed.",
+    "Reverse these exact typed source deltas to the immutable a4b097c0 successor, then 10284 and historical393. No RTF floor, tolerance, retirement guard, issue300 gate or workflow verdict changes."
+  ],
+  "imported_upstream_waivers": [
+    "ch32l103c8t6",
+    "ch32x035c8t6"
+  ],
+  "imported_upstream_baselines": {
+    "at32f421g8u7": {
+      "batch": 1.5,
+      "step": 982.3
+    }
+  },
+  "source_transitions": [
+    {
+      "path": "scripts/perf/board_perf.py",
+      "predecessor_sha256": "76674185bdc8fd1cffca89d04dcd460ce97096876c917833e3af239ec5d3286a",
+      "successor_sha256": "8f56573d5697e7818c64f654ff5f59fbbbbb9847c416f90045eaf80d3e4122cc",
+      "replacements": [
+        {
+          "before": "# their own chip config and get their own baseline. A generic CPU-only smoke\n# fixture must not stand in for an unimplemented board platform.\nWAIVED: dict[str, str] = {\n    \"ch32v005f6p6\": (\n        \"The CH32V005 model uses RV32EmC, but CI has no RV32E-specific \"\n        \"perf-spin fixture or compiler. No throughput claim is made for this \"\n        \"part yet.\"\n    ),\n    \"ch32v006k8u6\": (\n        \"The CH32V006 model uses RV32EmC, but CI has no RV32E-specific \"\n",
+          "after": "# their own chip config and get their own baseline. A generic CPU-only smoke\n# fixture must not stand in for an unimplemented board platform.\nWAIVED: dict[str, str] = {\n    \"ch32l103c8t6\": (\n        \"The CH32L103 model runs RV32IMAC with F1-layout peripherals; CI \"\n        \"has no perf-spin fixture built for this memory map. No throughput \"\n        \"claim is made for this part yet.\"\n    ),\n    \"ch32v005f6p6\": (\n        \"The CH32V005 model uses RV32EmC, but CI has no RV32E-specific \"\n        \"perf-spin fixture or compiler. No throughput claim is made for this \"\n        \"part yet.\"\n    ),\n    \"ch32x035c8t6\": (\n        \"The CH32X035 model runs RV32IMAC with WCH/F1-layout peripherals; CI \"\n        \"has no perf-spin fixture built for this memory map. No throughput \"\n        \"claim is made for this part yet.\"\n    ),\n    \"ch32v006k8u6\": (\n        \"The CH32V006 model uses RV32EmC, but CI has no RV32E-specific \"\n"
+        }
+      ]
+    },
+    {
+      "path": "scripts/perf/baselines.json",
+      "predecessor_sha256": "56a1c5061b605f0e9acc930f0fe276ffb7e83cd491c2f77bf1c882563499b69c",
+      "successor_sha256": "825fab0b3228867c8f3fc564a3d6f8f7aa8c28daca4c69df3d53fe92940cd5da",
+      "replacements": [
+        {
+          "before": "  \"amap42kp\": {\n    \"batch\": 1.4,\n    \"step\": 892.0\n  },\n  \"atmega328p\": {\n    \"batch\": 7.6,\n",
+          "after": "  \"amap42kp\": {\n    \"batch\": 1.4,\n    \"step\": 892.0\n  },\n  \"at32f421g8u7\": {\n    \"batch\": 1.5,\n    \"step\": 982.3\n  },\n  \"atmega328p\": {\n    \"batch\": 7.6,\n"
+        }
+      ]
+    }
+  ]
+}

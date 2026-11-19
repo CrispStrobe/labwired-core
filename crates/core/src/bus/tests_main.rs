@@ -135,6 +135,138 @@ fn gpio_edge_snapshot_skips_generic_gpio_without_edge_observers() {
 }
 
 #[test]
+fn gpio_edges_are_raised_at_the_write_and_do_not_block_the_fast_path() {
+    use std::sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc, Mutex,
+    };
+
+    #[derive(Debug)]
+    struct Port(Arc<AtomicU32>);
+    impl crate::Peripheral for Port {
+        fn read(&self, _offset: u64) -> crate::SimResult<u8> {
+            Ok(0)
+        }
+        fn write(&mut self, _offset: u64, value: u8) -> crate::SimResult<()> {
+            self.0.store(u32::from(value), Ordering::SeqCst);
+            Ok(())
+        }
+        fn read_gpio_input_word(&self) -> u32 {
+            self.0.load(Ordering::SeqCst)
+        }
+    }
+
+    #[derive(Debug)]
+    struct Sink(Arc<Mutex<Vec<(u8, u8, u8)>>>);
+    impl crate::Peripheral for Sink {
+        fn read(&self, _offset: u64) -> crate::SimResult<u8> {
+            Ok(0)
+        }
+        fn write(&mut self, _offset: u64, _value: u8) -> crate::SimResult<()> {
+            Ok(())
+        }
+        fn observes_gpio_edges(&self) -> bool {
+            true
+        }
+        fn observe_gpio_change(&mut self, changes: &[(u8, u8, u8)]) -> bool {
+            self.0.lock().unwrap().extend_from_slice(changes);
+            false
+        }
+    }
+
+    let levels = Arc::new(AtomicU32::new(0));
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let mut bus = SystemBus::empty();
+    bus.add_peripheral("gpio0", 0x5000_0000, 0x1000, None, Box::new(Port(levels)));
+    bus.add_peripheral("sink", 0x1000, 0x100, None, Box::new(Sink(seen.clone())));
+    bus.legacy_walk_disabled = true;
+    // Only meaningful where the scheduler can delete the walk.
+    assert_eq!(
+        bus.per_cycle_tick_is_trivial(),
+        cfg!(feature = "event-scheduler"),
+        "an edge observer must not pin the per-cycle tick"
+    );
+
+    // First tick adopts the baseline; nothing has moved.
+    bus.tick_peripherals_fully();
+    assert!(seen.lock().unwrap().is_empty());
+
+    // A pulse inside one window: both transitions are seen, in order, with no
+    // tick in between.
+    bus.write_u8(0x5000_0000, 1).unwrap();
+    bus.write_u8(0x5000_0000, 0).unwrap();
+    assert_eq!(*seen.lock().unwrap(), vec![(0, 0, 1), (0, 0, 0)]);
+
+    // A write to an unrelated peripheral raises nothing.
+    bus.write_u8(0x1000, 7).unwrap();
+    assert_eq!(seen.lock().unwrap().len(), 2);
+
+    // A level change that bypassed the write choke is still caught by the
+    // next tick, exactly once.
+    bus.write_u8(0x5000_0000, 4).unwrap();
+    bus.tick_peripherals_fully();
+    bus.tick_peripherals_fully();
+    assert_eq!(seen.lock().unwrap().len(), 3);
+    assert_eq!(seen.lock().unwrap()[2], (0, 2, 1));
+}
+
+#[test]
+fn hosted_window_admission_keeps_gpio_consumers_on_instruction_sized_windows() {
+    use crate::peripherals::{gpio::GpioPort, sam::eic::Samd51Eic};
+
+    let mut bus = SystemBus::empty();
+    bus.legacy_walk_disabled = true;
+    // The test runs in both feature graphs without introducing another cfg
+    // site: the shared bus policy supplies the graph's batching capability.
+    let batching = bus.per_cycle_tick_is_trivial();
+    assert_eq!(batching, bus.max_safe_tick_interval() > 1);
+    assert_eq!(bus.hosted_tick_window_is_trivial(), batching);
+    bus.add_peripheral("gpioa", 0x4800_0000, 0x400, None, Box::new(GpioPort::new()));
+    assert_eq!(bus.per_cycle_tick_is_trivial(), batching);
+    assert_eq!(
+        bus.hosted_tick_window_is_trivial(),
+        batching,
+        "ordinary STM32 GPIO stays eligible"
+    );
+
+    for name in ["gpio0", "gpio1"] {
+        let mut nordic = SystemBus::empty();
+        nordic.legacy_walk_disabled = true;
+        nordic.add_peripheral(
+            name,
+            0x5000_0000,
+            0x1000,
+            None,
+            Box::new(GpioPort::new_nrf52(32)),
+        );
+        assert_eq!(
+            nordic.per_cycle_tick_is_trivial(),
+            batching,
+            "event hooks retain bus batching"
+        );
+        assert!(
+            !nordic.hosted_tick_window_is_trivial(),
+            "{name}: hosted GPIO admission stays conservative"
+        );
+    }
+
+    // The observer capability also covers lettered SAM ports: this must not
+    // depend solely on Nordic port names.
+    let mut sam = SystemBus::empty();
+    sam.legacy_walk_disabled = true;
+    sam.add_peripheral("eic", 0x4000_2800, 0x100, None, Box::new(Samd51Eic::new()));
+    assert_eq!(
+        sam.per_cycle_tick_is_trivial(),
+        batching,
+        "EIC event hooks retain bus batching"
+    );
+    assert!(
+        !sam.hosted_tick_window_is_trivial(),
+        "SAM edge consumers keep instruction-sized hosted windows"
+    );
+}
+
+#[test]
 fn timer_poll_coalesce_uses_peripheral_access_class_not_chip_names() {
     let mut bus = SystemBus::new();
     // Systimer model owns ESP register map; bus only sees MmioAccessClass.
@@ -3908,6 +4040,7 @@ fn test_flash_boot_alias_read_and_write() {
         legacy_tick_indices: Vec::new(),
         bus_tick_indices: Vec::new(),
         scheduler_driver_indices: Vec::new(),
+        exti_line_driver_indices: Vec::new(),
         matrix_source_scratch: Vec::new(),
         peripheral_hint: Cell::new(None),
         last_route: Cell::new(None),
@@ -3960,7 +4093,7 @@ fn test_flash_boot_alias_read_and_write() {
         pms_write_bypass: false,
         esp32c3_pms_armed: false,
         flash_models_ops: false,
-        nordic_gpio_service: false,
+        gpio_edge_observers: false,
         timer_capture_wired: false,
         wire_inputs_live: false,
         resident_scheduling_disabled: false,
@@ -4050,6 +4183,7 @@ fn h5_flash_bus(gate: bool) -> SystemBus {
         legacy_tick_indices: Vec::new(),
         bus_tick_indices: Vec::new(),
         scheduler_driver_indices: Vec::new(),
+        exti_line_driver_indices: Vec::new(),
         matrix_source_scratch: Vec::new(),
         peripheral_hint: Cell::new(None),
         last_route: Cell::new(None),
@@ -4102,7 +4236,7 @@ fn h5_flash_bus(gate: bool) -> SystemBus {
         pms_write_bypass: false,
         esp32c3_pms_armed: false,
         flash_models_ops: false,
-        nordic_gpio_service: false,
+        gpio_edge_observers: false,
         timer_capture_wired: false,
         wire_inputs_live: false,
         resident_scheduling_disabled: false,
@@ -4345,6 +4479,7 @@ fn h5_rww_bus(gate: bool) -> SystemBus {
         legacy_tick_indices: Vec::new(),
         bus_tick_indices: Vec::new(),
         scheduler_driver_indices: Vec::new(),
+        exti_line_driver_indices: Vec::new(),
         matrix_source_scratch: Vec::new(),
         peripheral_hint: Cell::new(None),
         last_route: Cell::new(None),
@@ -4397,7 +4532,7 @@ fn h5_rww_bus(gate: bool) -> SystemBus {
         pms_write_bypass: false,
         esp32c3_pms_armed: false,
         flash_models_ops: false,
-        nordic_gpio_service: false,
+        gpio_edge_observers: false,
         timer_capture_wired: false,
         wire_inputs_live: false,
         resident_scheduling_disabled: false,
@@ -4636,6 +4771,7 @@ fn test_peripheral_range_index_lookup() {
         legacy_tick_indices: Vec::new(),
         bus_tick_indices: Vec::new(),
         scheduler_driver_indices: Vec::new(),
+        exti_line_driver_indices: Vec::new(),
         matrix_source_scratch: Vec::new(),
         peripheral_hint: Cell::new(None),
         last_route: Cell::new(None),
@@ -4688,7 +4824,7 @@ fn test_peripheral_range_index_lookup() {
         pms_write_bypass: false,
         esp32c3_pms_armed: false,
         flash_models_ops: false,
-        nordic_gpio_service: false,
+        gpio_edge_observers: false,
         timer_capture_wired: false,
         wire_inputs_live: false,
         resident_scheduling_disabled: false,
@@ -4783,6 +4919,7 @@ fn test_dma_tick_executes_copy_and_raises_irq() {
         legacy_tick_indices: Vec::new(),
         bus_tick_indices: Vec::new(),
         scheduler_driver_indices: Vec::new(),
+        exti_line_driver_indices: Vec::new(),
         matrix_source_scratch: Vec::new(),
         peripheral_hint: Cell::new(None),
         last_route: Cell::new(None),
@@ -4835,7 +4972,7 @@ fn test_dma_tick_executes_copy_and_raises_irq() {
         pms_write_bypass: false,
         esp32c3_pms_armed: false,
         flash_models_ops: false,
-        nordic_gpio_service: false,
+        gpio_edge_observers: false,
         timer_capture_wired: false,
         wire_inputs_live: false,
         resident_scheduling_disabled: false,
@@ -6882,7 +7019,13 @@ impl crate::Peripheral for FlashStoreProbe {
     fn owns_flash_stores(&self) -> bool {
         true
     }
-    fn flash_cpu_store(&mut self, offset: u64, width: u8, value: u32) -> crate::FlashStoreOutcome {
+    fn flash_cpu_store(
+        &mut self,
+        offset: u64,
+        width: u8,
+        value: u32,
+        _existing: u32,
+    ) -> crate::FlashStoreOutcome {
         self.seen.lock().unwrap().push((offset, width, value));
         self.outcome
     }
@@ -7171,4 +7314,75 @@ external_devices:
         after_mode_change,
         "a pad released from AF must not forward the timer wire (had {before})"
     );
+}
+
+/// Under exact batch boundaries every device access ends the CPU batch so the
+/// machine can tick where state changed. A read the device declares pure
+/// changes nothing and must not; a write, or a read the device does not vouch
+/// for, still must.
+#[test]
+fn an_armed_batch_stop_skips_only_pure_device_reads() {
+    let rtc_base = 0x4001_1000;
+    let stub_base = 0x4002_0000;
+    for optimized in [false, true] {
+        let mut bus = SystemBus::empty();
+        bus.config.optimized_bus_access = optimized;
+        bus.ram = crate::memory::LinearMemory::new(0x1000, 0x2000_0000);
+        bus.add_peripheral(
+            "rtc1",
+            rtc_base,
+            0x1000,
+            None,
+            Box::new(crate::peripherals::nrf52::rtc::Nrf52Rtc::new()),
+        );
+        bus.add_peripheral(
+            "stub",
+            stub_base,
+            0x1000,
+            None,
+            Box::new(crate::peripherals::stub::StubPeripheral::new(0)),
+        );
+        let stops = |bus: &mut SystemBus, access: &dyn Fn(&mut SystemBus)| {
+            bus.batch_stop.arm(&[]);
+            access(bus);
+            bus.batch_stop.disarm()
+        };
+        // COUNTER, at every width the CPU can load it with.
+        assert!(!stops(&mut bus, &|b| {
+            b.read_u32(rtc_base + 0x504).unwrap();
+        }));
+        assert!(!stops(&mut bus, &|b| {
+            b.read_u16(rtc_base + 0x504).unwrap();
+        }));
+        assert!(!stops(&mut bus, &|b| {
+            b.read_u8(rtc_base + 0x504).unwrap();
+        }));
+        assert!(!stops(&mut bus, &|b| {
+            b.read_u32(0x2000_0010).unwrap();
+        }));
+        assert!(
+            stops(&mut bus, &|b| b.write_u32(rtc_base + 0x508, 0).unwrap()),
+            "a write to a pure-read device still ends the batch (optimized={optimized})"
+        );
+        assert!(
+            stops(&mut bus, &|b| {
+                b.read_u32(stub_base).unwrap();
+            }),
+            "a read of a device that makes no promise still ends the batch (optimized={optimized})"
+        );
+    }
+}
+
+#[test]
+fn inert_ra_can_does_not_pin_the_legacy_walk() {
+    let mut bus = SystemBus::new();
+    bus.peripherals.clear();
+    bus.add_peripheral(
+        "ra-can",
+        0x4005_0000,
+        0x1000,
+        None,
+        Box::new(crate::peripherals::ra_can::RaCan::new()),
+    );
+    assert!(bus.derive_walk_deletable(), "RA CAN has no tick work");
 }

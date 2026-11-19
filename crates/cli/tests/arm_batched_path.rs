@@ -137,15 +137,37 @@ fn batched_run_reports_the_loop_and_accounts_for_every_requested_fuel_unit() {
     for (board, chip, elf) in boards {
         let out = run(&chip, &elf, true);
         let (instructions, per_batch) = parse_marker(&out.stderr);
-        // The budget counts CPU steps plus coalesced idle cycles. Neither can
-        // disappear from the accounting when default acceleration is active.
+        // Fuel counts dispatched primary work plus skipped cycles once.
+        // The total instruction work also retains represented poll work.
         let fuel: u64 = marker_field(&out.stderr, "fuel=").parse().unwrap();
         let idle: u64 = marker_field(&out.stderr, "idle_cycles=").parse().unwrap();
+        let dispatched: u64 = marker_field(&out.stderr, "dispatched_instructions=")
+            .parse()
+            .unwrap();
+        let represented: u64 = marker_field(&out.stderr, "represented_instructions=")
+            .parse()
+            .unwrap();
+        let skipped: u64 = marker_field(&out.stderr, "skipped_cycles=")
+            .parse()
+            .unwrap();
         assert_eq!(
             fuel, STEPS,
             "{board}: batched run consumed {fuel} of {STEPS} requested fuel"
         );
-        assert_eq!(instructions + idle, fuel, "{board}: unaccounted fuel");
+        assert_eq!(
+            dispatched.checked_add(represented),
+            Some(instructions),
+            "{board}: instruction work lost or padded"
+        );
+        assert_eq!(
+            dispatched.checked_add(skipped),
+            Some(fuel),
+            "{board}: unaccounted or double-charged fuel"
+        );
+        assert_eq!(
+            idle, skipped,
+            "{board}: idle cycles must be raw skipped time"
+        );
         assert!(
             per_batch >= 1.0,
             "{board}: nonsensical batch width {per_batch}"

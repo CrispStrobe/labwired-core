@@ -208,7 +208,6 @@ impl SystemBus {
         cfg!(feature = "event-scheduler")
             && self.legacy_walk_disabled
             && self.bus_tick_indices.is_empty()
-            && !self.nordic_gpio_service
             && self
                 .irq_fabric
                 .per_cycle_aggregation_free(self.legacy_walk_disabled)
@@ -223,6 +222,19 @@ impl SystemBus {
             // exactly the shape of bug `no_gpio_device_needs_service` exists
             // for, arriving through the other door.
             && self.device_pin_pads.is_empty()
+    }
+
+    /// Whether the hosted CLI may widen its instruction window.
+    ///
+    /// Event-driven GPIO hooks permit the bus's walk-free tick, but that does
+    /// not qualify a complete hosted execution loop for wider windows. Keep
+    /// GPIO edge consumers and Nordic ports on the established instruction-sized
+    /// hosted windows independently of the bus-level batching permission.
+    pub fn hosted_tick_window_is_trivial(&self) -> bool {
+        self.per_cycle_tick_is_trivial()
+            && !self.gpio_edge_observers
+            && self.find_peripheral_index_by_name("gpio0").is_none()
+            && self.find_peripheral_index_by_name("gpio1").is_none()
     }
 
     /// Whether NO attached bus-resident device needs the per-cycle service pass

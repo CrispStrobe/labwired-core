@@ -49,7 +49,7 @@ def hotpath(path):
 def select(event, repository, head_ref, paths):
     if event != "pull_request":
         return True, "existing main/manual/schedule gate"
-    if repository != OWNED_REPOSITORY:
+    if repository not in (OWNED_REPOSITORY, "CrispStrobe/labwired-core"):
         return False, "existing upstream PR policy"
     if head_ref.startswith(("merge/upstream-", "up/")):
         return True, "existing upstream-sync PR gate"

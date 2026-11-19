@@ -185,6 +185,11 @@ pub struct Timer {
     /// `config: { input_capture: stm32f4 }` sets it.
     #[serde(skip)]
     ccer_np: bool,
+    /// Separate capture/compare vector, when the chip splits the timer's
+    /// interrupt (AT32F421 TMR1: OVF/TRG/HALL on IRQ13, channels on IRQ14).
+    /// `None` keeps the single shared line every other timer has.
+    #[serde(skip)]
+    capture_compare_irq: Option<u32>,
     /// The V2 alternate-function table the bus routes this timer's channel
     /// OUTPUTS through, when it is not the F4 one (chip yaml `config: {
     /// pad_map: stm32g0 | stm32g4 | stm32l0 | stm32l4 | stm32wb | stm32wba |
@@ -395,6 +400,7 @@ impl Timer {
             clock: None,
             kernel_div: 1,
             ccer_np: false,
+            capture_compare_irq: None,
             pad_map: None,
             ic_psc_count: [0; 4],
             ti_level: [false; 4],
@@ -409,6 +415,13 @@ impl Timer {
     /// [`Self::basic`].
     pub fn ccer_np(mut self, np: bool) -> Self {
         self.ccer_np = np;
+        self
+    }
+
+    /// Route CC1..CC4 flags to their own vector instead of the timer's line.
+    /// Builder form, like [`Self::ccer_np`].
+    pub fn capture_compare_irq(mut self, irq: Option<u32>) -> Self {
+        self.capture_compare_irq = irq;
         self
     }
 
@@ -786,6 +799,23 @@ impl Timer {
     #[inline]
     fn irq_level_held(&self) -> bool {
         (self.sr.get() & self.dier & 0x1F) != 0
+    }
+
+    /// The timer's own line: UIF only when CC flags have a separate vector.
+    #[inline]
+    fn own_irq_held(&self) -> bool {
+        if self.capture_compare_irq.is_some() {
+            self.sr.get() & self.dier & 1 != 0
+        } else {
+            self.irq_level_held()
+        }
+    }
+
+    /// The separate capture/compare vector, while an enabled CCxIF is held.
+    #[inline]
+    fn capture_compare_irq_held(&self) -> Option<u32> {
+        self.capture_compare_irq
+            .filter(|_| self.sr.get() & self.dier & 0x1e != 0)
     }
 
     /// The counter-freeze predicate. The same conjunction as
@@ -1727,7 +1757,11 @@ impl crate::Peripheral for Timer {
 
     fn tick(&mut self) -> crate::PeripheralTickResult {
         let freeze_before = self.freeze_revision.get();
-        let result = self.tick_counter();
+        let mut result = self.tick_counter();
+        if self.capture_compare_irq.is_some() {
+            result.irq = self.own_irq_held();
+            result.explicit_irqs = self.capture_compare_irq_held().map(|irq| vec![irq]);
+        }
         if !self.scheduler_mode() {
             self.wave.walk_ticks += 1;
             if !self.wave.wired {
@@ -1778,6 +1812,35 @@ impl crate::Peripheral for Timer {
                 let now = self.wave_now();
                 self.wave.pads.advance_to(now);
             }
+        }
+    }
+
+    /// Peripheral reset (RCC/CRM APBxRST) or node reset: every register goes
+    /// back to its reset value (RM0008 §15.4, RM_AT32F421 §14: all zero but
+    /// ARR, which resets to its all-ones width). What the bus wired to the
+    /// instance stays: its width and layout, the cycle clock, the kernel
+    /// clock divider and the output wire, which is re-driven from the reset
+    /// registers (every channel released). An in-flight event chain dies on
+    /// its stale token.
+    fn on_node_reset(&mut self) {
+        let now = self.clock.as_ref().map(|c| c.now());
+        let mut fresh = Self::new_with_layout(self.width, self.advanced)
+            .basic(self.basic)
+            .ccer_np(self.ccer_np)
+            .capture_compare_irq(self.capture_compare_irq)
+            .pad_map(self.pad_map);
+        fresh.clock = self.clock.take();
+        fresh.kernel_div = self.kernel_div;
+        fresh.anchor.set(now.unwrap_or(0));
+        fresh.arm_seq = self.arm_seq.wrapping_add(1) & !WAVE_TOKEN_BIT;
+        fresh.phase_revision = self.phase_revision.wrapping_add(1);
+        fresh
+            .freeze_revision
+            .set(self.freeze_revision.get().wrapping_add(1));
+        fresh.wave = std::mem::take(&mut self.wave);
+        *self = fresh;
+        if self.wave.wired {
+            self.redrive_outputs(self.wave_now());
         }
     }
 
@@ -1868,7 +1931,8 @@ impl crate::Peripheral for Timer {
             // `pend_irq_for_event` choke the legacy walk uses. Re-pends merge
             // in ISPR exactly as the walk's per-tick pends do.
             crate::sched::EventResult {
-                raise_own_irq: true,
+                raise_own_irq: self.own_irq_held(),
+                explicit_irqs: self.capture_compare_irq_held().into_iter().collect(),
                 reschedule_delay: Some(1),
                 ..Default::default()
             }
@@ -1932,7 +1996,13 @@ impl crate::Peripheral for Timer {
     /// post-MMIO-write reconcile reads the flag the write just cleared.
     fn irq_line_level(&self) -> Option<bool> {
         self.sync_from_clock();
-        Some(self.irq_level_held())
+        Some(self.own_irq_held())
+    }
+
+    fn irq_line_levels(&self, report: &mut dyn FnMut(u32, bool)) {
+        if let Some(irq) = self.capture_compare_irq {
+            report(irq, self.sr.get() & self.dier & 0x1e != 0);
+        }
     }
 
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
@@ -2115,6 +2185,49 @@ mod tests {
         let mut tim = Timer::new_with_layout(16, true);
         tim.write(0x30, 0x05).unwrap();
         assert_eq!(tim.read(0x30).unwrap(), 0x05);
+    }
+
+    /// A peripheral reset (RCC/CRM APBxRST) returns every register to its
+    /// reset value, ARR to all-ones; the instance keeps its layout.
+    #[test]
+    fn node_reset_returns_registers_to_reset_and_keeps_the_layout() {
+        let mut t = Timer::new_with_layout(16, true).ccer_np(true);
+        t.write_u32(0x28, 7).unwrap(); // PSC
+        t.write_u32(0x2C, 99).unwrap(); // ARR
+        t.write_u32(0x34, 40).unwrap(); // CCR1
+        t.write_u32(0x18, 0x68).unwrap(); // CCMR1: OC1M=PWM1, OC1PE
+        t.write_u32(0x20, 1).unwrap(); // CCER: CC1E
+        t.write_u32(0x44, 1 << 15).unwrap(); // BDTR: MOE
+        t.write_u32(0x0C, 1).unwrap(); // DIER: UIE
+        t.write_u32(0x00, 1).unwrap(); // CR1: CEN
+        for _ in 0..50 {
+            t.tick();
+        }
+        assert_ne!(t.read_u32(0x24).unwrap(), 0, "counting before the reset");
+        t.on_node_reset();
+        for (off, want) in [
+            (0x00, 0),
+            (0x0C, 0),
+            (0x10, 0),
+            (0x18, 0),
+            (0x20, 0),
+            (0x24, 0),
+            (0x28, 0),
+            (0x2C, 0xFFFF),
+            (0x34, 0),
+            (0x44, 0),
+        ] {
+            assert_eq!(t.read_u32(off).unwrap(), want, "register {off:#x}");
+        }
+        assert!(!t.output_snapshot().counter_enabled);
+        for _ in 0..10 {
+            t.tick();
+        }
+        assert_eq!(t.read_u32(0x24).unwrap(), 0, "a reset timer is stopped");
+        // Still the advanced layout with the F4 capture stage.
+        t.write_u32(0x44, 1 << 15).unwrap();
+        assert_eq!(t.read_u32(0x44).unwrap(), 1 << 15);
+        assert!(t.has_f4_input_capture());
     }
 
     #[test]

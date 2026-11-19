@@ -20,10 +20,11 @@
 //!   * `responsive` — writing 0xFFFF_FFFF then 0 yields different read-backs,
 //!     i.e. the register stores state (definitive proof of modeling)
 //!
-//! Headline `modeled` is the conservative union: `responsive || (reset_ok &&
-//! reset != 0)`. It under-counts write-only and read-only-reset-0 registers
-//! that are modeled but indistinguishable from an unhandled-offset default, so
-//! treat it as a lower bound; `mapped` is the upper bound.
+//! Headline `modeled` retains `responsive || (reset_ok && reset != 0)` and
+//! may also count individually mapped SVD registers with a passing behavioral
+//! witness. A witness must exercise real device transitions and reject generic
+//! storage and inert stubs. Unwitnessed write-only and read-only-reset-0
+//! registers remain under-counted; `mapped` is the upper bound.
 //!
 //! It also under-counts **write-protected** registers whose reset value is 0:
 //! the probe writes without any unlock sequence, so a register that correctly
@@ -174,10 +175,15 @@ struct Probe {
     mapped: bool,
     reset_ok: bool,
     responsive: bool,
+    // Raw observations for a failing chip's diagnostic log; never extra reads.
+    initial: Option<u32>,
+    ones: Option<u32>,
+    zeroes: Option<u32>,
 }
 
 fn probe_register(bus: &mut SystemBus, addr: u64, reset: u32) -> Probe {
     let sim = bus.read_u32(addr);
+    let initial = sim.as_ref().ok().copied();
     let mapped = sim.is_ok();
     let reset_ok = matches!(sim, Ok(v) if v == reset);
     let _ = bus.write_u32(addr, 0xFFFF_FFFF);
@@ -189,7 +195,123 @@ fn probe_register(bus: &mut SystemBus, addr: u64, reset: u32) -> Probe {
         mapped,
         reset_ok,
         responsive,
+        initial,
+        ones: r1,
+        zeroes: r2,
     }
+}
+
+/// A functional witness uses the public MMIO interface, not register metadata.
+trait BehaviorIo {
+    fn read(&mut self, address: u64) -> Option<u32>;
+    fn write(&mut self, address: u64, value: u32) -> Option<()>;
+}
+impl BehaviorIo for SystemBus {
+    fn read(&mut self, address: u64) -> Option<u32> {
+        self.read_u32(address).ok()
+    }
+    fn write(&mut self, address: u64, value: u32) -> Option<()> {
+        self.write_u32(address, value).ok()
+    }
+}
+
+/// Verify an endpoint-disable event, including W1C and zero-write semantics.
+fn w1c_event_witness<B: BehaviorIo>(bus: &mut B, control: u64, status: u64) -> Option<()> {
+    const ENABLE: u32 = 1 << 31;
+    const DISABLE: u32 = 1 << 30;
+    const DISABLED_EVENT: u32 = 1 << 1;
+    // The SVD reset for the event bit is zero. Clear any residual event from
+    // another witness, then produce it through the endpoint control register.
+    if bus.read(status)? & DISABLED_EVENT != 0 {
+        return None;
+    }
+    bus.write(status, u32::MAX)?;
+    if bus.read(status)? & DISABLED_EVENT != 0 {
+        return None;
+    }
+    bus.write(control, 0)?;
+    bus.write(control, ENABLE)?;
+    bus.write(control, ENABLE | DISABLE)?;
+    if bus.read(status)? & DISABLED_EVENT == 0 {
+        return None;
+    }
+    bus.write(status, 0)?;
+    if bus.read(status)? & DISABLED_EVENT == 0 {
+        return None;
+    }
+    bus.write(status, DISABLED_EVENT)?;
+    if bus.read(status)? & DISABLED_EVENT != 0 {
+        return None;
+    }
+    Some(())
+}
+
+/// Verify FIFO free-space is hardware-derived and read-only, across a fill
+/// and a real FIFO flush. Values are measured in words, as in the SVD.
+fn fifo_space_witness<B: BehaviorIo>(
+    bus: &mut B,
+    status: u64,
+    fifo: u64,
+    reset: u64,
+    endpoint: u32,
+) -> Option<()> {
+    let before = bus.read(status)?;
+    if before == 0 || before > 0xffff {
+        return None;
+    }
+    bus.write(status, 0)?;
+    if bus.read(status)? != before {
+        return None;
+    }
+    bus.write(status, u32::MAX)?;
+    if bus.read(status)? != before {
+        return None;
+    }
+    bus.write(fifo, 0xa5a5_5a5a)?;
+    if bus.read(status)? != before - 1 {
+        return None;
+    }
+    bus.write(reset, (1 << 5) | (endpoint << 6))?;
+    if bus.read(status)? != before {
+        return None;
+    }
+    Some(())
+}
+
+/// Only SVD-enumerated, reset-zero addresses with a passing live witness can
+/// add coverage. Each of the 21 addresses is independently exercised.
+fn esp32s3_endpoint_witnesses<B: BehaviorIo>(
+    bus: &mut B,
+    regs: &[(u64, u32)],
+) -> std::collections::HashSet<u64> {
+    const BASE: u64 = 0x6008_0000;
+    let mut witnessed = std::collections::HashSet::new();
+    for n in 0..7u64 {
+        let input = BASE + 0x900 + 0x20 * n;
+        let output = BASE + 0xb00 + 0x20 * n;
+        for control in [input, output] {
+            let status = control + 8;
+            if regs.iter().any(|&(a, r)| a == status && r == 0)
+                && w1c_event_witness(bus, control, status).is_some()
+            {
+                witnessed.insert(status);
+            }
+        }
+        let status = input + 0x18;
+        if regs.iter().any(|&(a, r)| a == status && r == 0)
+            && fifo_space_witness(
+                bus,
+                status,
+                BASE + 0x1000 + 0x1000 * n,
+                BASE + 0x10,
+                n as u32,
+            )
+            .is_some()
+        {
+            witnessed.insert(status);
+        }
+    }
+    witnessed
 }
 
 /// Enumerate every SVD register as (absolute address, reset value).
@@ -244,17 +366,32 @@ const SVD_FATAL_NOTE: &str = "This is a ratchet input, not an optional extra: a 
     disappeared silently and green. Restore the SVD, or delete the chip from CHIPS *and* from \
     docs/coverage/register-modeling.json in the same commit.";
 
-fn probe_all(bus: &mut SystemBus, regs: &[(u64, u32)]) -> (usize, usize, usize) {
+fn probe_all(
+    chip: &str,
+    bus: &mut SystemBus,
+    regs: &[(u64, u32)],
+    witnessed: &std::collections::HashSet<u64>,
+) -> (usize, usize, usize) {
     let (mut mapped, mut reset_ok, mut modeled) = (0usize, 0usize, 0usize);
     for &(addr, reset) in regs {
         let p = probe_register(bus, addr, reset);
+        if chip == "esp32s3" {
+            eprintln!(
+                "register-modeling probe {}",
+                serde_json::json!({
+                    "chip": chip, "address": addr, "reset": reset,
+                    "initial": p.initial, "ones": p.ones, "zeroes": p.zeroes,
+                    "mapped": p.mapped, "reset_ok": p.reset_ok, "responsive": p.responsive,
+                })
+            );
+        }
         if p.mapped {
             mapped += 1;
         }
         if p.reset_ok {
             reset_ok += 1;
         }
-        if p.responsive || (p.reset_ok && reset != 0) {
+        if p.responsive || (p.reset_ok && reset != 0) || (p.mapped && witnessed.contains(&addr)) {
             modeled += 1;
         }
     }
@@ -268,6 +405,17 @@ fn measure_chip(name: &str, yaml: &str, svd: &str) -> (usize, usize, usize, usiz
     let total = regs.len();
     let chip = ChipDescriptor::from_file(root(yaml)).expect("chip yaml");
     let mut bus = SystemBus::from_config(&chip, &dummy_manifest(yaml)).expect("bus");
+    let witnessed = if name == "esp32s3" {
+        let mut witness_bus =
+            SystemBus::from_config(&chip, &dummy_manifest(yaml)).expect("witness bus");
+        system::xtensa::configure_xtensa_esp32s3(
+            &mut witness_bus,
+            &system::xtensa::Esp32s3Opts::default(),
+        );
+        esp32s3_endpoint_witnesses(&mut witness_bus, &regs)
+    } else {
+        std::collections::HashSet::new()
+    };
     let (mapped, reset_ok, modeled) = match chip.arch {
         Arch::Arm => {
             let (cpu, _nvic) = system::cortex_m::configure_cortex_m(&mut bus);
@@ -281,7 +429,7 @@ fn measure_chip(name: &str, yaml: &str, svd: &str) -> (usize, usize, usize, usiz
             // enable bits wouldn't work: the probe writes 0 to every register,
             // including the RCC enable registers, re-gating later peripherals.)
             m.bus.set_clock_gating_bypass(true);
-            probe_all(&mut m.bus, &regs)
+            probe_all(name, &mut m.bus, &regs, &witnessed)
         }
         Arch::RiscV => {
             let cpu = system::riscv::configure_riscv(&mut bus);
@@ -294,7 +442,7 @@ fn measure_chip(name: &str, yaml: &str, svd: &str) -> (usize, usize, usize, usiz
             // words) unresponsive. That would report a coverage regression for
             // registers that became MORE modelled, not less.
             m.bus.set_pms_write_bypass(true);
-            probe_all(&mut m.bus, &regs)
+            probe_all(name, &mut m.bus, &regs, &witnessed)
         }
         Arch::Xtensa => {
             // Build the real per-chip peripheral set, the same way the runtime
@@ -317,7 +465,7 @@ fn measure_chip(name: &str, yaml: &str, svd: &str) -> (usize, usize, usize, usiz
             };
             let mut m = Machine::new(cpu, bus);
             m.bus.set_clock_gating_bypass(true);
-            probe_all(&mut m.bus, &regs)
+            probe_all(name, &mut m.bus, &regs, &witnessed)
         }
         // No probe path exists for these. Returning (0,0,0) here was the fourth
         // fail-open: a measured zero ratchets against a baseline zero forever, so
@@ -469,4 +617,105 @@ fn register_coverage_ratchet() {
         "register-modeling coverage regressed:\n  {}",
         regressions.join("\n  ")
     );
+}
+
+#[cfg(test)]
+mod behavior_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn real_s3() -> SystemBus {
+        let yaml = "configs/chips/esp32s3.yaml";
+        let chip = ChipDescriptor::from_file(root(yaml)).expect("chip yaml");
+        let mut bus = SystemBus::from_config(&chip, &dummy_manifest(yaml)).expect("bus");
+        system::xtensa::configure_xtensa_esp32s3(&mut bus, &system::xtensa::Esp32s3Opts::default());
+        bus
+    }
+    fn regs() -> Vec<(u64, u32)> {
+        svd_registers("tests/fixtures/svd/esp32s3.svd")
+    }
+
+    #[test]
+    fn s3_endpoint_witnesses_require_real_event_and_fifo_transitions() {
+        let witnessed = esp32s3_endpoint_witnesses(&mut real_s3(), &regs());
+        assert_eq!(
+            witnessed.len(),
+            21,
+            "each of seven IN, OUT, and FIFO registers must be witnessed"
+        );
+        for n in 0..7 {
+            for offset in [0x908 + 0x20 * n, 0xb08 + 0x20 * n, 0x918 + 0x20 * n] {
+                assert!(
+                    witnessed.contains(&(0x6008_0000 + offset)),
+                    "missing endpoint {n} offset {offset:#x}"
+                );
+            }
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum Mutation {
+        ZeroStub,
+        GenericRw,
+        WrongW1c,
+        WritableRo,
+    }
+    struct Mutated {
+        bus: SystemBus,
+        mode: Mutation,
+        storage: HashMap<u64, u32>,
+    }
+    impl BehaviorIo for Mutated {
+        fn read(&mut self, a: u64) -> Option<u32> {
+            match self.mode {
+                Mutation::ZeroStub => Some(0),
+                Mutation::GenericRw => Some(*self.storage.get(&a).unwrap_or(&0)),
+                Mutation::WritableRo if self.storage.contains_key(&a) => {
+                    self.storage.get(&a).copied()
+                }
+                _ => self.bus.read_u32(a).ok(),
+            }
+        }
+        fn write(&mut self, a: u64, v: u32) -> Option<()> {
+            let off = a.checked_sub(0x6008_0000)?;
+            match self.mode {
+                Mutation::ZeroStub => Some(()),
+                Mutation::GenericRw => {
+                    self.storage.insert(a, v);
+                    Some(())
+                }
+                Mutation::WrongW1c
+                    if ((0x900..0x9e0).contains(&off) || (0xb00..0xbe0).contains(&off))
+                        && off % 0x20 == 8
+                        && v == 0 =>
+                {
+                    self.bus.write_u32(a, u32::MAX).ok()
+                }
+                Mutation::WritableRo if (0x900..0x9e0).contains(&off) && off % 0x20 == 0x18 => {
+                    self.storage.insert(a, v);
+                    Some(())
+                }
+                _ => self.bus.write_u32(a, v).ok(),
+            }
+        }
+    }
+    #[test]
+    fn witness_rejects_stubs_generic_rw_and_wrong_register_semantics() {
+        for (mode, want) in [
+            (Mutation::ZeroStub, 0),
+            (Mutation::GenericRw, 0),
+            (Mutation::WrongW1c, 7),
+            (Mutation::WritableRo, 14),
+        ] {
+            let mut mutated = Mutated {
+                bus: real_s3(),
+                mode,
+                storage: HashMap::new(),
+            };
+            assert_eq!(
+                esp32s3_endpoint_witnesses(&mut mutated, &regs()).len(),
+                want
+            );
+        }
+    }
 }

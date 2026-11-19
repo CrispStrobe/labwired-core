@@ -168,8 +168,12 @@ const F1_RSTCAL_CYCLES: u32 = 2;
 /// silicon-accurate duration.
 const F1_CAL_CYCLES: u32 = 14;
 
-/// Scheduler / walk event tokens for the F1 side-band (conversion uses 0).
-const F1_EVT_CONVERT: u32 = 0;
+/// Scheduler / walk event tokens for the F1 side-band. A conversion wake is
+/// `F1_EVT_CONVERT | generation`: the generation changes whenever a write
+/// starts or cancels a conversion, so a wake armed for a superseded conversion
+/// fires stale and does nothing.
+const F1_EVT_CONVERT: u32 = 0x8000_0000;
+const F1_EVT_GEN_MASK: u32 = 0x00FF_FFFF;
 const F1_EVT_RSTCAL: u32 = 1;
 const F1_EVT_CAL: u32 = 2;
 
@@ -243,12 +247,30 @@ impl FromStr for AdcRegisterLayout {
 pub struct F1AdcRegs {
     cr1: u32, // 0x04
     cr2: u32, // 0x08
-    /// ADC_SQR3 @ 0x34 (RM0008 §11.12.14). Only SQ1[4:0] — the first (and, on
-    /// this single-shot model, only) regular-sequence channel — is consumed,
-    /// by `advance_conversion`. Reset value 0 selects channel 0, which is what
-    /// firmware that never programs the sequence converts on silicon.
+    /// ADC_SQR3 @ 0x34 (RM0008 §11.12.14): SQ1..SQ6. Reset value 0 selects
+    /// channel 0, which is what firmware that never programs the sequence
+    /// converts on silicon.
     sqr3: u32,
+    /// ADC_SMPR1/2 @ 0x0C/0x10: per-channel sample times. Stored for
+    /// read-back; the conversion takes the model's fixed `conversion_time`.
+    #[serde(default)]
+    smpr1: u32,
+    #[serde(default)]
+    smpr2: u32,
+    /// ADC_SQR1 @ 0x2C: L[23:20] (sequence length - 1) and SQ13..SQ16.
+    #[serde(default)]
+    sqr1: u32,
+    /// ADC_SQR2 @ 0x30: SQ7..SQ12.
+    #[serde(default)]
+    sqr2: u32,
 }
+
+/// ADC_CR1.SCAN (RM0008 §11.12.2; AT32 ADC_CTRL1.SQEN): convert the whole
+/// regular sequence on one trigger.
+const F1_CR1_SCAN: u32 = 1 << 8;
+/// ADC_CR2.DMA (RM0008 §11.12.3; AT32 ADC_CTRL2.OCDMAEN): a DMA request each
+/// time a regular conversion updates DR.
+const F1_CR2_DMA: u32 = 1 << 8;
 
 /// STM32L4 ADC register file (data `dr` is shared on `Adc`).
 #[derive(Debug, Default, serde::Serialize)]
@@ -403,6 +425,14 @@ pub struct Adc {
     /// F1 sample-and-hold value captured at SWSTART. A later pad, mux or Vdda
     /// change applies to the next sample.
     sampled_input: Option<HeldAdcInput>,
+    /// Position in the regular sequence of the conversion in progress
+    /// (0 = SQ1). Always 0 outside scan mode.
+    #[serde(skip)]
+    seq_index: u8,
+    /// A DR update with CR2.DMA set requested a DMA transfer that has not been
+    /// handed to the bus yet.
+    #[serde(skip)]
+    dma_pending: bool,
 
     /// Bus-published cycle clock (walk-free campaign). `Some` once attached →
     /// event-schedulable; `None` keeps the legacy walk.
@@ -411,6 +441,17 @@ pub struct Adc {
     /// Scheduler mode: `true` while the conversion-countdown event is live.
     #[serde(skip)]
     chain_live: bool,
+    /// Scheduler mode: generation of the live conversion wake (see
+    /// [`F1_EVT_CONVERT`]).
+    #[serde(skip)]
+    conv_gen: u32,
+    /// Scheduler mode: the conversion wake is asleep until the completion
+    /// cycle. `(cycle, remaining)` = the bus cycle of the last executed
+    /// countdown tick and the value `cycles_remaining` had then; the ticks
+    /// since only decremented it, so [`Adc::projected_cycles_remaining`]
+    /// derives the live value.
+    #[serde(skip)]
+    conv_sleep: Option<(u64, u32)>,
     /// F1 RSTCAL countdown remaining (model cycles). `None` = idle.
     #[serde(skip)]
     f1_rstcal_remaining: Option<u32>,
@@ -504,8 +545,12 @@ impl Adc {
             channel_inputs_mv: [None; MAX_CHANNELS],
             reference_millivolts: ADC_VREF_MV,
             sampled_input: None,
+            seq_index: 0,
+            dma_pending: false,
             clock: None,
             chain_live: false,
+            conv_gen: 0,
+            conv_sleep: None,
             f1_rstcal_remaining: None,
             f1_cal_remaining: None,
             f1_rstcal_live: false,
@@ -624,6 +669,22 @@ impl Adc {
                 } else {
                     self.dr = (self.dr + 1) & 0xFFF;
                 }
+                // CR2.DMA: every DR update requests a transfer (RM0008
+                // §11.12.3; RM_AT32F421 §18.4.4.2).
+                if cr2 & F1_CR2_DMA != 0 {
+                    self.dma_pending = true;
+                }
+                // Scan mode: the next channel of the sequence follows at once;
+                // EOC marks the end of the group (RM0008 §11.12.1 / AT32
+                // ADC_STS.OCCE).
+                if self.seq_index + 1 < self.f1_sequence_len() {
+                    self.seq_index += 1;
+                    // In-chain continuation, like CONT: the running wake
+                    // carries on (no new generation).
+                    self.begin_conversion();
+                    return irq;
+                }
+                self.seq_index = 0;
 
                 self.sr |= 1 << 1; // EOC
 
@@ -632,7 +693,9 @@ impl Adc {
                 }
                 // Continuous mode (CONT + ADON).
                 if (cr2 & F1_CR2_CONT) != 0 && (cr2 & F1_CR2_ADON) != 0 {
-                    self.start_conversion();
+                    // The chain that is running this restarts itself: same
+                    // wake, same generation.
+                    self.begin_conversion();
                 }
             }
         }
@@ -682,7 +745,33 @@ impl Adc {
         }
     }
 
+    /// A write starts a conversion: any conversion wake already armed (asleep
+    /// until the old completion, or awake) is superseded, and
+    /// `take_scheduled_events` arms a fresh one for the new countdown.
     fn start_conversion(&mut self) {
+        self.conv_gen = self.conv_gen.wrapping_add(1) & F1_EVT_GEN_MASK;
+        self.conv_sleep = None;
+        self.chain_live = false;
+        self.begin_conversion();
+    }
+
+    fn conv_token(&self) -> u32 {
+        F1_EVT_CONVERT | (self.conv_gen & F1_EVT_GEN_MASK)
+    }
+
+    /// `cycles_remaining` as the countdown stands at the published bus cycle:
+    /// an asleep chain skipped ticks that only decremented it.
+    fn projected_cycles_remaining(&self) -> u32 {
+        match (&self.conv_sleep, &self.clock) {
+            (Some((anchor, remaining)), Some(clock)) => {
+                let elapsed = clock.now().saturating_sub(*anchor);
+                remaining.saturating_sub(elapsed.min(u64::from(u32::MAX)) as u32)
+            }
+            _ => self.cycles_remaining,
+        }
+    }
+
+    fn begin_conversion(&mut self) {
         self.converting = true;
         self.cycles_remaining = self.conversion_time;
         self.sampled_input = self.sample_f1_input();
@@ -699,13 +788,38 @@ impl Adc {
         }
     }
 
-    /// Regular channel being converted: SQR3 SQ1[4:0] on the F1 layout; 0 on
-    /// the other families (their engines select from their own SQR1/PCSEL).
+    /// Regular channel being converted: SQ(n+1) of SQR3/SQR2/SQR1 for
+    /// sequence position n on the F1 layout; 0 on the other families (their
+    /// engines select from their own SQR1/PCSEL).
     fn f1_regular_channel(&self) -> usize {
         match &self.regs {
-            AdcRegs::Stm32F1(r) | AdcRegs::Stm32F4(r) => (r.sqr3 & 0x1F) as usize,
+            AdcRegs::Stm32F1(r) | AdcRegs::Stm32F4(r) => {
+                let n = u32::from(self.seq_index);
+                let (word, slot) = match n {
+                    0..=5 => (r.sqr3, n),
+                    6..=11 => (r.sqr2, n - 6),
+                    _ => (r.sqr1, n - 12),
+                };
+                ((word >> (5 * slot)) & 0x1F) as usize
+            }
             AdcRegs::Stm32L4(_) | AdcRegs::Stm32H7(_) | AdcRegs::Stm32U5(_) => 0,
         }
+    }
+
+    /// Regular-sequence length: SQR1.L + 1 with CR1.SCAN set, else one.
+    fn f1_sequence_len(&self) -> u8 {
+        match &self.regs {
+            AdcRegs::Stm32F1(r) | AdcRegs::Stm32F4(r) if r.cr1 & F1_CR1_SCAN != 0 => {
+                ((r.sqr1 >> 20) & 0xF) as u8 + 1
+            }
+            _ => 1,
+        }
+    }
+
+    /// A trigger converts the regular sequence from SQ1.
+    fn start_sequence(&mut self) {
+        self.seq_index = 0;
+        self.start_conversion();
     }
 
     fn read_reg_l4(r: &L4AdcRegs, dr: u32, reg: u64) -> u32 {
@@ -1162,6 +1276,8 @@ impl Adc {
         self.converting = false;
         self.cycles_remaining = 0;
         self.chain_live = false;
+        self.conv_gen = self.conv_gen.wrapping_add(1) & F1_EVT_GEN_MASK;
+        self.conv_sleep = None;
         self.f1_rstcal_remaining = None;
         self.f1_cal_remaining = None;
         self.f1_rstcal_live = false;
@@ -1334,6 +1450,10 @@ impl Peripheral for Adc {
                 0x00..=0x03 => self.sr,
                 0x04..=0x07 => r.cr1,
                 0x08..=0x0B => r.cr2,
+                0x0C..=0x0F => r.smpr1,
+                0x10..=0x13 => r.smpr2,
+                0x2C..=0x2F => r.sqr1,
+                0x30..=0x33 => r.sqr2,
                 0x34..=0x37 => r.sqr3,
                 0x4C..=0x4F => self.dr,
                 _ => {
@@ -1378,15 +1498,24 @@ impl Peripheral for Adc {
                         self.apply_f4_cr2(old_cr2, merged)
                     };
                     if trigger {
-                        self.start_conversion();
+                        self.start_sequence();
                     }
                 }
-                0x34..=0x37 => match &mut self.regs {
-                    AdcRegs::Stm32F1(r) | AdcRegs::Stm32F4(r) => {
-                        r.sqr3 = (r.sqr3 & !mask) | val_shifted;
+                0x0C..=0x0F | 0x10..=0x13 | 0x2C..=0x2F | 0x30..=0x33 | 0x34..=0x37 => {
+                    if let AdcRegs::Stm32F1(r) | AdcRegs::Stm32F4(r) = &mut self.regs {
+                        let (reg, writable) = match offset & !3 {
+                            // SMP17..10 / SMP9..0, three bits each.
+                            0x0C => (&mut r.smpr1, 0x00FF_FFFF),
+                            0x10 => (&mut r.smpr2, 0x3FFF_FFFF),
+                            // L[23:20] + SQ16..13.
+                            0x2C => (&mut r.sqr1, 0x00FF_FFFF),
+                            // SQ12..7 / SQ6..1.
+                            0x30 => (&mut r.sqr2, 0x3FFF_FFFF),
+                            _ => (&mut r.sqr3, 0x3FFF_FFFF),
+                        };
+                        *reg = ((*reg & !mask) | val_shifted) & writable;
                     }
-                    _ => {}
-                },
+                }
                 _ => {
                     crate::census_reg!("adc:Adc", offset, "write");
                 }
@@ -1453,9 +1582,12 @@ impl Peripheral for Adc {
         // scheduler never runs a per-cycle tick to charge it). Both modes now
         // charge zero, so the walk-on reference and the scheduler path agree
         // cycle-for-cycle.
+        let dma_signals =
+            std::mem::take(&mut self.dma_pending).then(|| vec![crate::DMA_SIGNAL_DATA]);
         PeripheralTickResult {
             irq,
             cycles: 0,
+            dma_signals,
             ..Default::default()
         }
     }
@@ -1488,7 +1620,7 @@ impl Peripheral for Adc {
         let mut out = Vec::new();
         if self.converting && !self.chain_live {
             self.chain_live = true;
-            out.push((0u64, F1_EVT_CONVERT));
+            out.push((0u64, self.conv_token()));
         }
         if self.f1_rstcal_remaining.is_some() && !self.f1_rstcal_live {
             self.f1_rstcal_live = true;
@@ -1504,7 +1636,7 @@ impl Peripheral for Adc {
     fn on_event(
         &mut self,
         event_token: u32,
-        _sched: &mut crate::sched::EventScheduler,
+        sched: &mut crate::sched::EventScheduler,
         _bus: &mut dyn crate::Bus,
     ) -> crate::sched::EventResult {
         if !self.scheduler_mode() {
@@ -1529,16 +1661,44 @@ impl Peripheral for Adc {
                     ..Default::default()
                 }
             }
-            _ => {
-                // Conversion countdown (token 0) — same engine as the walk.
+            token if token == self.conv_token() => {
+                // Conversion countdown — same engine as the walk. The ticks
+                // since the last event only decremented `cycles_remaining`
+                // (the chain sleeps through them, see below); replay them, then
+                // run this cycle's tick.
+                if let Some((anchor, _)) = self.conv_sleep.take() {
+                    let skipped = sched.now().saturating_sub(anchor).saturating_sub(1);
+                    let skipped = skipped.min(u64::from(u32::MAX)) as u32;
+                    self.cycles_remaining = self.cycles_remaining.saturating_sub(skipped);
+                }
                 let irq = self.advance_conversion();
                 self.chain_live = self.converting;
+                // While `cycles_remaining` ticks down nothing observable
+                // changes: SR/DR/EOC and the IRQ move only on the completion
+                // tick, which is `cycles_remaining + 1` cycles away. Sleep
+                // until then; a write that restarts or cancels the conversion
+                // bumps the generation so this wake goes stale.
+                let reschedule_delay = self.converting.then(|| {
+                    let remaining = self.cycles_remaining;
+                    if remaining > 0 {
+                        self.conv_sleep = Some((sched.now(), remaining));
+                    }
+                    u64::from(remaining) + 1
+                });
                 crate::sched::EventResult {
                     raise_own_irq: irq,
-                    reschedule_delay: self.converting.then_some(1),
+                    reschedule_delay,
+                    dma_signals: if std::mem::take(&mut self.dma_pending) {
+                        vec![crate::DMA_SIGNAL_DATA]
+                    } else {
+                        Vec::new()
+                    },
                     ..Default::default()
                 }
             }
+            // A conversion wake of a superseded generation: the write that
+            // restarted or cancelled the conversion armed its own.
+            _ => crate::sched::EventResult::default(),
         }
     }
 
@@ -1550,7 +1710,14 @@ impl Peripheral for Adc {
     }
 
     fn snapshot(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
+        let mut value = serde_json::to_value(self).unwrap_or(serde_json::Value::Null);
+        // An asleep conversion wake has not decremented the countdown yet.
+        if self.conv_sleep.is_some() {
+            if let Some(slot) = value.get_mut("cycles_remaining") {
+                *slot = serde_json::Value::from(self.projected_cycles_remaining());
+            }
+        }
+        value
     }
 }
 
@@ -2363,16 +2530,17 @@ mod scheduler_diff {
     /// path; assert the register snapshot AND the EOC-IRQ pend cycles are
     /// identical every cycle. The conversion countdown, DR latch, EOC flag and
     /// continuous-mode restart must all line up cycle-for-cycle.
-    fn assert_walk_identical(script: &[(u64, Op)], cycles: u64) {
-        assert_walk_layout_identical(script, cycles, AdcRegisterLayout::Stm32F1);
+    fn assert_walk_identical(script: &[(u64, Op)], cycles: u64) -> usize {
+        assert_walk_layout_identical(script, cycles, AdcRegisterLayout::Stm32F1).2
     }
 
     fn assert_walk_layout_identical(
         script: &[(u64, Op)],
         cycles: u64,
         layout: AdcRegisterLayout,
-    ) -> (Adc, Adc) {
+    ) -> (Adc, Adc, usize) {
         let mut walk = build(false, layout);
+        let mut delivered = 0usize;
         let mut sched = build(true, layout);
         let clock = sched.clock.clone().unwrap();
 
@@ -2402,6 +2570,7 @@ mod scheduler_diff {
             let mut esched = crate::sched::EventScheduler::new();
             esched.advance_to(c);
             for (_, token) in due {
+                delivered += 1;
                 let res = sched.on_event(token, &mut esched, bus);
                 if res.raise_own_irq {
                     sched_pends.push(c);
@@ -2418,7 +2587,7 @@ mod scheduler_diff {
             );
         }
         assert_eq!(walk_pends, sched_pends, "EOC-IRQ pend cycles diverged");
-        (walk, sched)
+        (walk, sched, delivered)
     }
 
     #[test]
@@ -2429,7 +2598,7 @@ mod scheduler_diff {
             (1, Op::Write(0x08, 1)),         // CR2.ADON
             (2, Op::Write(0x0B, 1 << 6)),    // F4 CR2.SWSTART at bit 30
         ];
-        let (walk, scheduled) =
+        let (walk, scheduled, _) =
             assert_walk_layout_identical(&script, 26, AdcRegisterLayout::Stm32F4);
         for adc in [walk, scheduled] {
             assert_ne!(
@@ -2471,6 +2640,44 @@ mod scheduler_diff {
         ];
         // 2 + 15 + 15 + 15 ≈ 47 cycles covers three back-to-back conversions.
         assert_walk_identical(&script, 50);
+    }
+
+    /// Continuous mode used to tick the countdown every cycle; it now wakes
+    /// once per completion. Snapshot (including the live countdown) and EOC
+    /// pend cycles stay identical to the per-cycle walk for many conversions.
+    #[test]
+    fn f1_continuous_conversion_wakes_once_per_completion() {
+        let script = [
+            (1u64, Op::Write(0x04, 1 << 5)),
+            (1, Op::Write(0x34, 3)),
+            (1, Op::Write(0x08, 1 | (1 << 1))),
+            (1, Op::Write(0x0A, 0x0E)),
+            (2, Op::Write(0x0A, 0x4E)),
+        ];
+        let cycles = 2 + 15 * 40;
+        let delivered = assert_walk_identical(&script, cycles);
+        // One arming wake plus one wake per completion, not one per cycle.
+        assert!(delivered <= 2 + 40, "delivered {delivered} events");
+    }
+
+    /// A restart (SWSTART again) and a cancel (ADON cleared) while the wake is
+    /// asleep supersede it: the stale wake must not complete the old countdown.
+    #[test]
+    fn f1_restart_and_cancel_supersede_a_sleeping_wake() {
+        let script = [
+            (1u64, Op::Write(0x04, 1 << 5)),
+            (1, Op::Write(0x34, 3)),
+            (1, Op::Write(0x08, 1 | (1 << 1))), // ADON | CONT
+            (1, Op::Write(0x0A, 0x0E)),
+            (2, Op::Write(0x0A, 0x4E)),          // SWSTART
+            (9, Op::Write(0x0A, 0x0E)),          // SWSTART low
+            (10, Op::Write(0x0A, 0x4E)),         // SWSTART again mid-conversion: restart
+            (31, Op::Write(0x08, 0)),            // ADON cleared mid-conversion: cancel
+            (40, Op::Write(0x08, 1 | (1 << 1))), // ADON again
+            (41, Op::Write(0x0A, 0x0E)),
+            (42, Op::Write(0x0A, 0x4E)),
+        ];
+        assert_walk_identical(&script, 90);
     }
 
     // ── STM32H7 ADC (RM0468) ────────────────────────────────────────────────

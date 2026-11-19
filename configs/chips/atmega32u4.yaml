@@ -43,6 +43,7 @@ ram:
 # 26 bonded GPIO pads from DS7766J sections 2.2.3--2.2.7 (pages 5--6).
 # PC0..5, PE0/1/3/4/5/7 and PF2/3 are absent on the package. These are
 # logical PORT bits, not alternate-function ownership or package pin numbers.
+# Arduino Leonardo LED_BUILTIN is D13 = PC7; board wiring is in the system file.
 # https://ww1.microchip.com/downloads/en/DeviceDoc/Atmel-7766-8-bit-AVR-ATmega16U4-32U4_Datasheet.pdf
 pins:
   PB0: { gpio: "portb", bit: 0 }

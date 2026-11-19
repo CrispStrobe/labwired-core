@@ -34,6 +34,27 @@ pub enum FetchPermission {
 }
 
 pub trait Bus {
+    /// Concrete C3 SYSTIMER/GPIO contract for one already-decoded four-step
+    /// loop. Returns (final UNIT0 snapshot, GPIO input) without mutation only
+    /// when routing, observation and device deadlines admit the whole span.
+    /// Unsupported buses refuse, including generic timer-read providers.
+    fn c3_systimer_poll_values(
+        &self,
+        _start: u64,
+        _cycles: u64,
+        _addresses: [u64; 3],
+    ) -> Option<(u64, u32)> {
+        None
+    }
+    /// Revalidate and apply the same span; failure leaves the bus unchanged.
+    fn c3_commit_systimer_poll(
+        &mut self,
+        _start: u64,
+        _cycles: u64,
+        _addresses: [u64; 3],
+    ) -> Option<(u32, u32)> {
+        None
+    }
     /// The RP2350 double-precision coprocessor attached to this core, if the
     /// chip has one (`coprocessors: [rp2350_dcp]`). Called only when a p4/p5
     /// coprocessor instruction executes. `None` keeps it UNDEFINED.
@@ -531,6 +552,15 @@ pub trait Bus {
     /// nothing. Used by poll-loop proofs. Default: [`Self::fetch_slice`].
     fn plain_memory_slice(&self, addr: u64) -> Option<(u64, u64, &[u8])> {
         self.fetch_slice(addr)
+    }
+
+    /// True when a CPU store of `len` bytes at `addr` would only change the
+    /// bytes [`Self::plain_memory_slice`] serves there: plain RAM, with no
+    /// watch, observer, memory policy or batch stop that a store reaches, and
+    /// no alias in between. Used by poll-loop proofs that allow stores.
+    /// Default: `false` (every store is observable).
+    fn plain_ram_store_unobserved(&self, _addr: u64, _len: u64) -> bool {
+        false
     }
 
     fn fetch_slice(&self, _pc: u64) -> Option<(u64, u64, &[u8])> {

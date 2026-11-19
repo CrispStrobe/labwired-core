@@ -47,6 +47,13 @@ class PolicyControls(unittest.TestCase):
                  "crates/core/src/tests/scb_reset.rs", "scripts/unrelated.py"]
         self.assertFalse(gate.select("pull_request", gate.OWNED_REPOSITORY, "docs/x", paths)[0])
 
+    def test_owned_fork_sync_and_runtime_paths_require_perf(self):
+        fork = "CrispStrobe/labwired-core"
+        self.assertTrue(gate.select("pull_request", fork, "merge/upstream-20261116-next", [])[0])
+        self.assertTrue(gate.select("pull_request", fork, "fix/runtime", ["crates/core/src/machine/boundary.rs"])[0])
+        self.assertFalse(gate.select("pull_request", fork, "docs/x", ["README.md"])[0])
+        self.assertFalse(gate.select("pull_request", "someone-else/labwired-core", "merge/upstream-x", [])[0])
+
     def test_existing_event_and_upstream_sync_admission(self):
         for event in ["push", "schedule", "workflow_dispatch"]:
             self.assertTrue(gate.select(event, gate.OWNED_REPOSITORY, "", [])[0])
@@ -54,7 +61,7 @@ class PolicyControls(unittest.TestCase):
         self.assertTrue(gate.select("pull_request", gate.OWNED_REPOSITORY, "up/crisp-sync", [])[0])
         self.assertFalse(
             gate.select(
-                "pull_request", "CrispStrobe/labwired-core", "fix/x", ["crates/core/src/lib.rs"]
+                "pull_request", "external-fork/labwired-core", "fix/x", ["crates/core/src/lib.rs"]
             )[0]
         )
 

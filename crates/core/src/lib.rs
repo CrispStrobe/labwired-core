@@ -62,12 +62,12 @@ pub use cycle_clock::CycleClock;
 pub use host_time::HostTimeMode;
 pub use machine::{
     AdvanceLimits, AdvanceReport, AdvanceRequest, AdvanceStop, BatchPolicy, BreakpointPolicy,
-    IdlePolicy,
+    IdlePolicy, InstructionWork,
 };
 pub use peripheral::{
     AnalogProbe, DmaDirection, DmaRequest, DmaRoute, DmaUnitTransform, FlashStoreOutcome,
-    MmioAccessClass, Peripheral, PeripheralResetCause, PeripheralTickResult, DMA_SIGNAL_RX,
-    DMA_SIGNAL_TX,
+    MmioAccessClass, Peripheral, PeripheralResetCause, PeripheralTickResult, DMA_SIGNAL_DATA,
+    DMA_SIGNAL_RX, DMA_SIGNAL_TX,
 };
 
 use std::collections::HashSet;
@@ -321,22 +321,99 @@ fn is_esp32_internal_sram(addr: u64) -> bool {
     (0x3FFA_E000..0x4000_0000).contains(&addr) || (0x4007_0000..0x400C_0000).contains(&addr)
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 /// Counters collected during one measured machine run.
 ///
 /// These are execution-path counters, not wall-clock or workload markers:
-/// `cpu_instructions` counts retired instructions, `cpu_batches` counts CPU
-/// dispatch batches, and the remaining fields describe peripheral/bus work
-/// driven by that same pass. Workload-specific observables (for example an
+/// `cpu_instructions` counts primary dispatched PLUS represented instructions;
+/// `instruction_work` exposes that partition without changing the total.
+/// `cpu_batches` counts CPU execution dispatches; the remaining fields describe
+/// peripheral/bus work driven by that same pass. Workload-specific observables (for example an
 /// OLED first-paint cycle or a serial completion marker) belong to the
 /// workload harness and must not be added here.
 pub struct StepProfile {
     pub cpu_instructions: u64,
+    /// None on a historical serialized profile that did not retain the split.
+    /// Never infer that missing historical represented work was zero.
+    #[serde(default)]
+    pub instruction_work: Option<InstructionWork>,
+    /// Cycles advanced without a CPU dispatch, including held-reset time.
+    /// This is a time/fuel quantity, not an instruction count.
+    #[serde(default)]
+    pub skipped_cycles: Option<u64>,
     pub cpu_batches: u64,
     pub peripheral_ticks: u64,
     pub peripheral_ticked_entries: u64,
     pub bus_tick_entries: u64,
     pub legacy_tick_entries: u64,
+}
+
+impl Default for StepProfile {
+    fn default() -> Self {
+        Self {
+            cpu_instructions: 0,
+            instruction_work: Some(InstructionWork::default()),
+            skipped_cycles: Some(0),
+            cpu_batches: 0,
+            peripheral_ticks: 0,
+            peripheral_ticked_entries: 0,
+            bus_tick_entries: 0,
+            legacy_tick_entries: 0,
+        }
+    }
+}
+
+impl StepProfile {
+    pub fn validated_instruction_work(&self) -> Option<InstructionWork> {
+        let work = self.instruction_work?;
+        (work.total()? == self.cpu_instructions).then_some(work)
+    }
+
+    #[inline]
+    pub(crate) fn record_dispatched_work(&mut self, instructions: u64) {
+        let total = self
+            .cpu_instructions
+            .checked_add(instructions)
+            .expect("instruction total overflow");
+        // Compute every checked replacement before committing any field, but
+        // do not copy and rewrite the unchanged partition and Option tag on
+        // every dispatch. Historical profiles with an unknown split stay unknown.
+        let dispatched = self.instruction_work.as_ref().map_or(0, |work| {
+            work.dispatched
+                .checked_add(instructions)
+                .expect("dispatch count overflow")
+        });
+        let batches = self
+            .cpu_batches
+            .checked_add(1)
+            .expect("dispatch batch count overflow");
+        self.cpu_instructions = total;
+        if let Some(work) = self.instruction_work.as_mut() {
+            work.dispatched = dispatched;
+        }
+        self.cpu_batches = batches;
+    }
+
+    pub(crate) fn record_skipped_work(&mut self, instructions: u64, cycles: u64) {
+        let total = self
+            .cpu_instructions
+            .checked_add(instructions)
+            .expect("instruction total overflow");
+        let work = self.instruction_work.map(|work| InstructionWork {
+            dispatched: work.dispatched,
+            represented: work
+                .represented
+                .checked_add(instructions)
+                .expect("represented count overflow"),
+        });
+        let skipped = self.skipped_cycles.map(|old| {
+            old.checked_add(cycles)
+                .expect("skipped cycle count overflow")
+        });
+        self.cpu_instructions = total;
+        self.instruction_work = work;
+        self.skipped_cycles = skipped;
+    }
 }
 
 /// Maximum cycles CPU idle fast-forward may skip in one step while a bus
@@ -349,6 +426,13 @@ pub struct StepProfile {
 /// event-scheduler fast-forward path consults the medium poll quantum.
 #[cfg(feature = "event-scheduler")]
 const WIFI_MEDIUM_IDLE_POLL_QUANTUM: u64 = 8192;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct IdleFastForwardResult {
+    cycles: u64,
+    primary_steps: u64,
+    secondary_steps: u64,
+}
 
 pub struct Machine<C: Cpu> {
     pub cpu: C,
@@ -483,6 +567,10 @@ pub struct Machine<C: Cpu> {
     /// the bus), so the per-cycle drain short-circuits without a peripheral
     /// walk or downcast.
     scb_index: Option<usize>,
+    /// The SCB's SYSRESETREQ mirror (`Scb::sysreset_signal`), resolved with
+    /// [`Self::scb_index`] under the same fixed-set assumption. Lets the
+    /// boundary drain skip the downcast while no reset is latched.
+    scb_sysreset_signal: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     /// Cached bus index of the nRF52 NVMC peripheral. Resolved once at
     /// construction; the advance boundary drains a latched erase op every
     /// instruction and used to walk the whole ~40-entry peripheral list,
@@ -1202,12 +1290,18 @@ impl<C: Cpu> Machine<C> {
                 .and_then(|a| a.downcast_ref::<crate::peripherals::simctl::SimCtl>())
                 .is_some()
         });
-        let scb_index = bus.peripherals.iter().position(|p| {
-            p.dev
-                .as_any()
-                .and_then(|a| a.downcast_ref::<crate::peripherals::scb::Scb>())
-                .is_some()
-        });
+        // The SCB's index and its SYSRESETREQ mirror, in the one downcast.
+        let (scb_index, scb_sysreset_signal) = bus
+            .peripherals
+            .iter()
+            .enumerate()
+            .find_map(|(i, p)| {
+                p.dev
+                    .as_any()
+                    .and_then(|a| a.downcast_ref::<crate::peripherals::scb::Scb>())
+                    .map(|scb| (i, scb.sysreset_signal()))
+            })
+            .unzip();
         let reset_request_indices: Vec<usize> = bus
             .peripherals
             .iter()
@@ -1285,6 +1379,7 @@ impl<C: Cpu> Machine<C> {
             flash_index,
             simctl_index,
             scb_index,
+            scb_sysreset_signal,
             nvmc_index,
             reset_request_indices,
             sd_hle: None,
@@ -1574,6 +1669,11 @@ impl<C: Cpu> Machine<C> {
         let Some((_, cycles)) = sec.poll_loop_skip_budget(&self.bus, limit) else {
             return false;
         };
+        // The primary runs beside a deferral and could read a store's
+        // intermediate value.
+        if sec.poll_loop_plan_stores() {
+            return false;
+        }
         // The step that raises CCOMPARE0 (the `edge`-th from now) runs live.
         let len = edge.map_or(cycles, |edge| cycles.min(edge.saturating_sub(1)));
         if len < 2 {
@@ -1606,7 +1706,11 @@ impl<C: Cpu> Machine<C> {
             && self.bus.idle_fast_forward_legacy_safe()
     }
 
-    fn try_idle_fast_forward(&mut self, _max_steps: Option<u64>, _steps: u64) -> u64 {
+    fn try_idle_fast_forward(
+        &mut self,
+        _max_steps: Option<u64>,
+        _steps: u64,
+    ) -> Option<IdleFastForwardResult> {
         // POLLED logic capture disables the skip: a scheduler event inside the
         // skipped window could toggle a watched pad, and the per-cycle poll
         // guarantee must hold even under this opt-in acceleration. Push-only
@@ -1614,7 +1718,7 @@ impl<C: Cpu> Machine<C> {
         // instrumented peripheral code, which pushes its own edge with the
         // post-skip tap clock (seeded below before the scheduler drain).
         if !self.config.idle_fast_forward_enabled || self.logic_capture.poll_active() {
-            return 0;
+            return None;
         }
         // A cycle-accurate bus still skips a WFI wait while every resident is
         // idle (an idle DHT22 between reads). It does not coalesce timer polls:
@@ -1625,28 +1729,47 @@ impl<C: Cpu> Machine<C> {
             && (self.bus.idle_skip_requires_cycle_accurate()
                 || self.cpu.idle_fast_forward_budget(&self.bus).is_none())
         {
-            return 0;
+            return None;
         }
 
         #[cfg(not(feature = "event-scheduler"))]
         {
-            0
+            None
         }
 
         #[cfg(feature = "event-scheduler")]
         {
-            // This explicit assembly includes statically inert clock banks
-            // whose conservative legacy-active default is not a tick contract.
-            // Reuse its stricter inactive predicate: it admits those banks but
-            // refuses bus service, pending operations, residents and observers.
-            // Other assemblies retain the existing idle admission policy.
+            // The SAMD assembly uses its stricter quiescence check; other
+            // assemblies retain the legacy idle admission policy.
             let idle_bus_safe = if self.bus.samd_native_quiescent_chunks {
                 self.bus.samd_quiescent_chunk_ready()
             } else {
                 self.bus.idle_fast_forward_legacy_safe()
             };
             if !idle_bus_safe {
-                return 0;
+                return None;
+            }
+
+            // The common active-core case cannot fast-forward: it has no WFI
+            // budget, no proven timer-poll loop, and no new timer-poll MMIO
+            // evidence to consume. Once bootstrap is complete and there is no
+            // due or buffered event, skip this redundant preflight drain.
+            // `plan_cpu_window` still services resident edges before execution,
+            // and the regular commit boundary still ticks peripherals and
+            // drains scheduler events.
+            if self.cpu_secondary.is_none()
+                && self.secondary_defer.is_none()
+                && self.scheduler_bootstrapped
+                && self
+                    .sched
+                    .next_event_deadline()
+                    .is_none_or(|deadline| deadline > self.total_cycles)
+                && self.bus.pending_schedule.is_empty()
+                && !self.bus.timer_poll_coalesce_has_pending_activity()
+                && self.cpu.idle_fast_forward_budget(&self.bus).is_none()
+                && !self.cpu.poll_loop_anchor_ready()
+            {
+                return None;
             }
 
             // Drain first: a due scheduler event may assert an interrupt, in
@@ -1673,15 +1796,16 @@ impl<C: Cpu> Machine<C> {
             // own wake deadline (CCOMPARE0) and its CCOUNT moves with the skip.
             //
             // A core busy in a proven cycle-counter poll loop (a CCOUNT
-            // busy-wait, `Cpu::poll_loop_skip_budget`) counts as idle too: it
-            // retires nothing but time until a known cycle, so skipping it is
-            // the same as running it. The skip is then a multiple of its loop
-            // period, and every core's timer edge clamps it.
+            // busy-wait, `Cpu::poll_loop_skip_budget`) can be skipped because
+            // its retired instructions and resulting state are known. Carry
+            // those instruction counts with the elapsed time below. The skip
+            // is a multiple of its loop period, and every core's timer edge
+            // clamps it.
             let remaining = _max_steps
                 .map(|limit| limit.saturating_sub(_steps))
                 .unwrap_or(1_000_000);
             if remaining == 0 {
-                return 0;
+                return None;
             }
             let mut secondary_wake = None;
             let mut secondary_spin: Option<(u64, u64)> = None;
@@ -1693,17 +1817,15 @@ impl<C: Cpu> Machine<C> {
                 match sec.secondary_execution_state() {
                     SecondaryExecutionState::Active => {
                         if !sec.poll_loop_anchor_ready() {
-                            return 0;
+                            return None;
                         }
                         match sec.poll_loop_skip_budget(&self.bus, remaining) {
                             Some(spin) => secondary_spin = Some(spin),
-                            None => return 0,
+                            None => return None,
                         }
                     }
                     SecondaryExecutionState::ParkedIdle => {
-                        if sec.idle_fast_forward_budget(&self.bus).is_none() {
-                            return 0;
-                        }
+                        sec.idle_fast_forward_budget(&self.bus)?;
                         secondary_wake = sec.parked_wake_deadline_cycles();
                     }
                     SecondaryExecutionState::ResetHeld => {}
@@ -1734,13 +1856,27 @@ impl<C: Cpu> Machine<C> {
                 }
                 _ => None,
             };
+            // A loop that stores is a fixed point only on its own: a second
+            // core running beside it could read an intermediate value.
+            let primary_stores = primary_spin.is_some() && self.cpu.poll_loop_plan_stores();
+            let secondary_stores = secondary_spin.is_some()
+                && self
+                    .cpu_secondary
+                    .as_ref()
+                    .is_some_and(|sec| sec.poll_loop_plan_stores());
+            if (primary_stores && (secondary_spin.is_some() || deferred_end.is_some()))
+                || (secondary_stores && primary_spin.is_some())
+            {
+                return None;
+            }
             let spinning =
                 primary_spin.is_some() || secondary_spin.is_some() || deferred_end.is_some();
             let mut budget = match (wfi_budget, primary_spin) {
                 (Some(budget), _) if budget > 0 => budget,
                 (_, Some((_, cycles))) => cycles,
-                _ if timer_poll => u64::MAX,
-                _ => return 0,
+                // Timer-read classification alone cannot prove that the
+                // active CPU has no observable work between reads.
+                _ => return None,
             };
             // The timer-poll arm below is only the one the budget came from.
             let timer_poll = timer_poll && wfi_budget.is_none() && primary_spin.is_none();
@@ -1788,7 +1924,7 @@ impl<C: Cpu> Machine<C> {
 
             if let Some(deadline_cycle) = self.sched.next_event_deadline() {
                 if deadline_cycle <= self.total_cycles {
-                    return 0;
+                    return None;
                 }
                 budget = budget.min(deadline_cycle - self.total_cycles);
             } else if timer_poll && wfi_budget.is_none() {
@@ -1805,7 +1941,7 @@ impl<C: Cpu> Machine<C> {
             // Tiny windows are not worth the skip bookkeeping on the timer-poll
             // path (WFI may still skip short waits).
             if budget == 0 || (timer_poll && wfi_budget.is_none() && budget < 1024) {
-                return 0;
+                return None;
             }
             budget = budget.min(u32::MAX as u64);
             if spinning {
@@ -1828,24 +1964,29 @@ impl<C: Cpu> Machine<C> {
                 }
                 budget -= budget % step;
                 if budget == 0 {
-                    return 0;
+                    return None;
                 }
             }
             let skipped = budget as u32;
+            let mut primary_steps = 0;
             if primary_spin.is_some() {
-                let applied = self.cpu.fast_forward_poll_loop(skipped as u64);
-                debug_assert!(applied, "a proven poll-loop skip must apply");
+                primary_steps = self
+                    .cpu
+                    .fast_forward_poll_loop_on_bus(&mut self.bus, skipped as u64)
+                    .expect("a proven primary poll-loop skip must apply");
             } else {
                 self.cpu.fast_forward_idle_cycles(skipped as u64);
             }
+            let mut secondary_steps = 0;
             if let Some(sec) = self
                 .cpu_secondary
                 .as_mut()
                 .filter(|_| deferred_end.is_none())
             {
                 if secondary_spin.is_some() {
-                    let applied = sec.fast_forward_poll_loop(skipped as u64);
-                    debug_assert!(applied, "a proven poll-loop skip must apply");
+                    secondary_steps = sec
+                        .fast_forward_poll_loop_on_bus(&mut self.bus, skipped as u64)
+                        .expect("a proven secondary poll-loop skip must apply");
                 } else if sec.secondary_execution_state() == SecondaryExecutionState::ParkedIdle {
                     sec.fast_forward_idle_cycles(skipped as u64);
                 }
@@ -1854,6 +1995,8 @@ impl<C: Cpu> Machine<C> {
                 self.poll_loop_cycles_skipped += skipped as u64;
                 self.poll_loop_skips += 1;
             }
+            self.step_profile
+                .record_skipped_work(primary_steps, u64::from(skipped));
             self.total_cycles += skipped as u64;
             self.idle_fast_forward_cycles_skipped += skipped as u64;
             self.bus.set_current_cycle(self.total_cycles);
@@ -1885,7 +2028,11 @@ impl<C: Cpu> Machine<C> {
             // shared clock boundary a sleeping guest starves paced UART peers
             // and RX timeouts until unrelated CPU work resumes.
             self.advance_central_i2c_time();
-            u64::from(skipped)
+            Some(IdleFastForwardResult {
+                cycles: u64::from(skipped),
+                primary_steps,
+                secondary_steps,
+            })
         }
     }
 
@@ -2344,11 +2491,25 @@ impl<C: Cpu> Machine<C> {
 
     /// Advances one primary-CPU boundary through the authoritative lifecycle.
     ///
-    /// This compatibility adapter delegates to [`Machine::advance`]. Frontends
+    /// This compatibility adapter uses the same lifecycle as [`Machine::advance`],
+    /// without collecting a discarded per-call report. Frontends
     /// that need bounded runs or stop reports should call `advance` directly;
     /// they must not reproduce the lifecycle with direct [`Cpu::step`] calls.
     pub fn step(&mut self) -> SimResult<()> {
-        self.advance(AdvanceRequest::single()).map(|_| ())
+        self.advance_single_without_report()
+    }
+
+    /// Report-returning form of `DebugControl::run`, retaining its watch-latch
+    /// policy so a budget consumer need not discard the authoritative fuel.
+    pub fn debug_run_report(&mut self, fuel: Option<u64>) -> SimResult<AdvanceReport> {
+        if self.bus.debug_watches.is_empty() {
+            let _ = self.bus.take_debug_watch_hit();
+        }
+        let mut report = self.advance(AdvanceRequest::run(fuel))?;
+        if let Some(addr) = self.bus.take_debug_watch_hit() {
+            report.stop = AdvanceStop::Watchpoint(addr);
+        }
+        Ok(report)
     }
 
     /// Drain and apply the single pending H5 FLASH hardware operation, if any.
@@ -2774,6 +2935,16 @@ impl<C: Cpu> Machine<C> {
     /// resolved at construction — non-Cortex-M configs (no SCB on the bus)
     /// short-circuit to `false` without touching the peripheral vector at all.
     pub(crate) fn drain_scb_reset_request(&self) -> bool {
+        // The SCB raises this lock-free mirror together with its latch, so a
+        // clear mirror answers "nothing pending" without the `as_any` call and
+        // `TypeId` compare a downcast costs at every boundary.
+        if self
+            .scb_sysreset_signal
+            .as_ref()
+            .is_some_and(|signal| !signal.load(std::sync::atomic::Ordering::Relaxed))
+        {
+            return false;
+        }
         let Some(idx) = self.scb_index else {
             return false;
         };
@@ -2795,6 +2966,12 @@ impl<C: Cpu> Machine<C> {
     fn drain_flash_op(&self) -> Option<crate::peripherals::flash::FlashOp> {
         let idx = self.flash_index?;
         let p = self.bus.peripherals.get(idx)?;
+        // Runs at every boundary of every board with a FLASH model, and an
+        // op is almost never pending: ask through the trait (one call) before
+        // paying `as_any` plus a `TypeId` compare to downcast.
+        if !p.dev.has_pending_op() {
+            return None;
+        }
         p.dev
             .as_any()
             .and_then(|a| a.downcast_ref::<crate::peripherals::flash::Flash>())
@@ -2993,21 +3170,7 @@ impl<C: Cpu> DebugControl for Machine<C> {
     }
 
     fn run(&mut self, max_steps: Option<u32>) -> SimResult<StopReason> {
-        // Defensive: a watch the host removed can leave its last latch behind
-        // (only `clear_watchpoints` drops a pending hit); with no watch armed
-        // it must not stop this run.
-        if self.bus.debug_watches.is_empty() {
-            let _ = self.bus.take_debug_watch_hit();
-        }
-        let report = self.advance(AdvanceRequest::run(max_steps.map(u64::from)))?;
-        // `advance_inner` consumes the latch into `AdvanceStop::Watchpoint` at
-        // the window boundary. This catches a hit latched by a window that
-        // ended the run for another reason (firmware exit, net drive change)
-        // before the next boundary could see it — the access happened, so the
-        // watch is the stop.
-        if let Some(addr) = self.bus.take_debug_watch_hit() {
-            return Ok(StopReason::Watchpoint(addr));
-        }
+        let report = self.debug_run_report(max_steps.map(u64::from))?;
         Ok(match report.stop {
             AdvanceStop::Watchpoint(addr) => StopReason::Watchpoint(addr),
             AdvanceStop::Breakpoint(pc) => StopReason::Breakpoint(pc),

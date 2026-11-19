@@ -10,11 +10,155 @@
 use super::SystemBus;
 
 impl SystemBus {
+    /// A capability must describe the route a CPU word access actually uses.
+    /// Refuse storage overlap even when one optimized read ordering would let
+    /// the peripheral win: UPDATE stores have their own storage-first path.
+    fn poll_word_is_unshadowed(&self, address: u64) -> bool {
+        let Some(last) = address.checked_add(3) else {
+            return false;
+        };
+        if address & 3 != 0 {
+            return false;
+        }
+        if self.bit_band_enabled {
+            if let Some((physical, _)) = Self::bit_band_translate(address) {
+                if self.bit_band_target_is_mapped(physical) {
+                    return false;
+                }
+            }
+        }
+        (address..=last).all(|byte| {
+            self.resolve_ns_alias(byte) == byte
+                && self.ram.read_u8(byte).is_none()
+                && self.flash.read_u8(byte).is_none()
+                && !self
+                    .extra_mem
+                    .iter()
+                    .any(|memory| memory.read_u8(byte).is_some())
+                && !(self.flash_boot_alias
+                    && self.flash.base_addr != 0
+                    && byte < self.flash.data.len() as u64)
+        })
+    }
+
+    pub(crate) fn c3_systimer_poll_values(
+        &self,
+        start: u64,
+        cycles: u64,
+        addresses: [u64; 3],
+    ) -> Option<(u64, u32)> {
+        if !self.peripheral_poll_unobserved()
+            || self.current_cycle != start
+            || cycles == 0
+            || cycles % 4 != 0
+        {
+            return None;
+        }
+        let end = start.checked_add(cycles)?;
+        if !addresses
+            .into_iter()
+            .all(|address| self.poll_word_is_unshadowed(address))
+        {
+            return None;
+        }
+        for deadline in [
+            crate::Bus::next_cpu_interrupt_deadline_cycle(self),
+            self.next_motor_service_deadline_cycle(),
+            self.next_resident_edge_deadline_cycle(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if deadline < end {
+                return None;
+            }
+        }
+        let [op, value, input] = addresses;
+        let timer_index = self.find_peripheral_index(op)?;
+        let gpio_index = self.find_peripheral_index(input)?;
+        if self.find_peripheral_index(op.checked_add(3)?) != Some(timer_index)
+            || self.find_peripheral_index(value) != Some(timer_index)
+            || self.find_peripheral_index(value.checked_add(3)?) != Some(timer_index)
+            || self.find_peripheral_index(input.checked_add(3)?) != Some(gpio_index)
+        {
+            return None;
+        }
+        let timer = self.peripherals.get(timer_index)?;
+        let gpio = self.peripherals.get(gpio_index)?;
+        // No clock/fault hook with counting side effects in a speculative
+        // proof. Model capabilities, rather than runtime type downcasts,
+        // admit only the explicitly implemented UPDATE and GPIO semantics.
+        if timer.clock_gate.is_some() || gpio.clock_gate.is_some() {
+            return None;
+        }
+        Some((
+            timer.dev.c3_poll_unit0_snapshot(
+                (op.checked_sub(timer.base)?, value.checked_sub(timer.base)?),
+                start,
+                end - 4,
+            )?,
+            gpio.dev.c3_poll_gpio_input(input.checked_sub(gpio.base)?)?,
+        ))
+    }
+
+    pub(crate) fn c3_commit_systimer_poll(
+        &mut self,
+        start: u64,
+        cycles: u64,
+        addresses: [u64; 3],
+    ) -> Option<(u32, u32)> {
+        let (_, gpio) = self.c3_systimer_poll_values(start, cycles, addresses)?;
+        let iterations = u32::try_from(cycles / 4).ok()?;
+        let [op, value, input] = addresses;
+        let timer_index = self.find_peripheral_index(op)?;
+        let gpio_index = self.find_peripheral_index(input)?;
+        let update = start + cycles - 4;
+        let snapshot = self
+            .peripherals
+            .get_mut(timer_index)?
+            .dev
+            .c3_commit_poll_unit0_snapshot(start, update)?;
+        // No fallible step follows the first mutation. These are the last
+        // iteration's real UPDATE/read/read cycle stamps; counts cover all
+        // iterations represented by the proven skip.
+        self.set_current_cycle(update);
+        self.note_mmio_writes(
+            timer_index,
+            op - self.peripherals[timer_index].base,
+            iterations,
+        );
+        self.set_current_cycle(update + 1);
+        self.note_mmio_activities(
+            timer_index,
+            value - self.peripherals[timer_index].base,
+            iterations,
+        );
+        self.set_current_cycle(update + 2);
+        self.note_mmio_activities(
+            gpio_index,
+            input - self.peripherals[gpio_index].base,
+            iterations,
+        );
+        self.set_current_cycle(start + cycles);
+        Some((snapshot, gpio))
+    }
+
     /// Clear batch-local MMIO activity counters (call before each CPU batch).
     #[inline]
     pub fn reset_mmio_activity_counters(&self) {
         self.freerunning_timer_poll_mmio.set(0);
         self.side_effecting_mmio.set(0);
+    }
+
+    /// True when the idle preflight still has batch-local MMIO evidence to
+    /// consume for timer-poll coalescing. The preflight must run in that case;
+    /// otherwise a split `time_us_64` read could be lost at the next window.
+    #[allow(dead_code)]
+    #[inline]
+    pub(crate) fn timer_poll_coalesce_has_pending_activity(&self) -> bool {
+        self.freerunning_timer_poll_mmio.get() != 0
+            || self.side_effecting_mmio.get() != 0
+            || self.timer_poll_carry.get() != 0
     }
 
     /// True when the just-finished batch only performed freerunning-timer
@@ -70,6 +214,37 @@ impl SystemBus {
         let (idx, off, n, cycle) = self.poll_streak.get();
         let p = self.peripherals.get(idx as usize)?;
         (n > 0).then(|| (p.name.clone(), u64::from(off), n, cycle))
+    }
+
+    /// Extend (or restart) the back-to-back register streak that
+    /// [`Self::mmio_poll_streak`] reports.
+    #[inline]
+    fn note_poll_streak(&self, peri_idx: usize, offset: u64, count: u32) {
+        let (i, o, n, _) = self.poll_streak.get();
+        let (idx, off) = (peri_idx as u32, offset as u32);
+        let n = if i == idx && o == off { n } else { 0 };
+        self.poll_streak.set((
+            idx,
+            off,
+            n.saturating_add(u64::from(count)),
+            self.current_cycle,
+        ));
+    }
+
+    /// A CPU read of a clock-gated peripheral: it returns 0 and never reaches
+    /// the model, but a firmware waiting on a status bit of an unclocked block
+    /// is the commonest wait that never ends, so the read still counts toward
+    /// the poll streak. Nothing else is bookkept: the block saw no access.
+    #[cold]
+    pub(crate) fn note_gated_read(&self, peri_idx: usize, offset: u64) {
+        self.note_poll_streak(peri_idx, offset, 1);
+    }
+
+    /// Whether the named peripheral is clocked right now (`None` when no
+    /// peripheral has that name). For end-of-run diagnosis.
+    pub fn peripheral_clocked(&self, name: &str) -> Option<bool> {
+        let idx = self.peripherals.iter().position(|p| p.name == name)?;
+        Some(self.is_peripheral_clocked(idx))
     }
 
     /// Snapshot and zero the run-lifetime access counters.
@@ -270,13 +445,43 @@ impl SystemBus {
     /// (resource metrics P1) — every peri MMIO, regardless of access class.
     #[inline]
     pub(crate) fn note_mmio_activity(&self, peri_idx: usize, offset: u64) {
-        self.note_mmio_activities(peri_idx, offset, 1);
+        self.note_mmio_accesses::<false>(peri_idx, offset, 1);
+    }
+
+    /// [`Self::note_mmio_activity`] for a CPU read. A read the device
+    /// declares pure ([`crate::Peripheral::read_is_pure`]) does not end an
+    /// armed batch: it changes nothing a boundary would have to observe.
+    #[inline]
+    pub(crate) fn note_mmio_read(&self, peri_idx: usize, offset: u64) {
+        self.note_mmio_accesses::<true>(peri_idx, offset, 1);
     }
 
     /// Bulk form used only after a peripheral has explicitly promised that
     /// repeated reads are stable and side-effect-free until the next event.
     #[inline]
     pub(crate) fn note_mmio_activities(&self, peri_idx: usize, offset: u64, count: u32) {
+        self.note_mmio_accesses::<true>(peri_idx, offset, count);
+    }
+
+    pub(crate) fn note_mmio_writes(&self, peri_idx: usize, offset: u64, count: u32) {
+        self.note_mmio_accesses::<false>(peri_idx, offset, count);
+    }
+
+    /// A peripheral-loop proof must not bypass active faults or observers.
+    pub(crate) fn peripheral_poll_unobserved(&self) -> bool {
+        self.debug_watches.is_empty()
+            && !self.memory_policy.active()
+            && !self.esp32c3_pms_armed()
+            && self.observers.is_empty()
+            && self.mem_aliases.is_empty()
+            && !self.atomic_register_aliases.is_enabled()
+            && !self.batch_stop.armed()
+            && !self.logic_tap.push_armed()
+            && self.fault_unclocked.is_empty()
+    }
+
+    #[inline]
+    fn note_mmio_accesses<const READ: bool>(&self, peri_idx: usize, offset: u64, count: u32) {
         // Before the bounds check: a model that lazily advances off the clock
         // must see "now" even if the index lookup below bails.
         //
@@ -296,20 +501,15 @@ impl SystemBus {
             self.batch_stop.note_device_access();
             return;
         };
-        if self.batch_stop.armed() && !p.dev.is_plain_memory() {
+        if self.batch_stop.armed()
+            && !p.dev.is_plain_memory()
+            && !(READ && p.dev.read_is_pure(offset))
+        {
             self.batch_stop.note_device_access();
         }
         let class = p.dev.mmio_access_class(offset);
         if !matches!(class, crate::MmioAccessClass::FreerunningTimerPoll) {
-            let (i, o, n, _) = self.poll_streak.get();
-            let (idx, off) = (peri_idx as u32, offset as u32);
-            let n = if i == idx && o == off { n } else { 0 };
-            self.poll_streak.set((
-                idx,
-                off,
-                n.saturating_add(u64::from(count)),
-                self.current_cycle,
-            ));
+            self.note_poll_streak(peri_idx, offset, count);
         }
         match class {
             crate::MmioAccessClass::FreerunningTimerPoll => {

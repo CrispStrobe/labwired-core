@@ -775,6 +775,13 @@ enum WriteBinding {
         connection: String,
         channel: u8,
     },
+    /// A pad level by label: its `analog_pins:` ADC channel and every
+    /// comparator sampling the pad (`SystemBus::set_analog_pad_mv`).
+    AnalogPad {
+        pad: String,
+        connection: String,
+        channel: u8,
+    },
     /// The chip's VDD, fed to its supply supervisor.
     SupplyVdd,
     /// Collected and published once as an atomic device-rail batch.
@@ -805,6 +812,25 @@ enum WriteBinding {
     Ina219BusV {
         id: String,
     },
+}
+
+impl WriteBinding {
+    /// A pad route also writes its ADC channel. Keep that shared destination
+    /// visible when checking writers, without losing the pad's comparator fan-out.
+    fn adc_endpoint(&self) -> Option<(&str, u8)> {
+        match self {
+            Self::AdcChannel {
+                connection,
+                channel,
+            }
+            | Self::AnalogPad {
+                connection,
+                channel,
+                ..
+            } => Some((connection, *channel)),
+            _ => None,
+        }
+    }
 }
 
 /// Routes manifest signal paths between a running machine and the co-sim
@@ -1120,7 +1146,8 @@ impl SignalRouter {
                         pad: pad.clone(),
                     })?;
                 check_adc_channel(bus, path, &connection, channel)?;
-                Ok(WriteBinding::AdcChannel {
+                Ok(WriteBinding::AnalogPad {
+                    pad: pad.to_ascii_uppercase(),
                     connection,
                     channel,
                 })
@@ -1241,10 +1268,13 @@ impl SignalRouter {
     /// `board.analog.pa0_volts` and `adc.adc1.0_volts` can name one ADC input.
     pub(crate) fn validate_unique_writers(&self) -> Result<(), String> {
         for (index, (path, binding)) in self.writes.iter().enumerate() {
-            if let Some((other, _)) = self.writes[..index]
-                .iter()
-                .find(|(_, previous)| previous == binding)
-            {
+            if let Some((other, _)) = self.writes[..index].iter().find(|(_, previous)| {
+                previous == binding
+                    || match (previous.adc_endpoint(), binding.adc_endpoint()) {
+                        (Some(a), Some(b)) => a == b,
+                        _ => false,
+                    }
+            }) {
                 return Err(format!(
                     "world analog routes '{other}' and '{path}' have multiple output writers for one hardware endpoint"
                 ));
@@ -1316,20 +1346,20 @@ impl SignalRouter {
                     } else {
                         0.0
                     };
-                    signals.insert(path.clone(), CosimSignalValue::F64(volts));
+                    put_signal(signals, path, CosimSignalValue::F64(volts));
                 }
                 continue;
             }
             if let ReadBinding::MotorPhaseBackEmf { motor, phase } = *binding {
                 if let Some(volts) = bus.circuit_bldc_phase_back_emf_v(motor, phase) {
-                    signals.insert(path.clone(), CosimSignalValue::F64(volts));
+                    put_signal(signals, path, CosimSignalValue::F64(volts));
                 }
                 continue;
             }
             if let ReadBinding::MotorBackEmf { motor } = *binding {
                 // Absent, not 0 V, if the motor cannot answer.
                 if let Some(volts) = bus.circuit_motor_back_emf_v(motor) {
-                    signals.insert(path.clone(), CosimSignalValue::F64(volts));
+                    put_signal(signals, path, CosimSignalValue::F64(volts));
                 }
                 continue;
             }
@@ -1364,7 +1394,7 @@ impl SignalRouter {
                 | ReadBinding::PadVolts { .. } => None,
             };
             if let Some(level) = level {
-                signals.insert(path.clone(), CosimSignalValue::Bool(level));
+                put_signal(signals, path, CosimSignalValue::Bool(level));
             }
         }
     }
@@ -1463,6 +1493,23 @@ impl SignalRouter {
                         errors.push(RoutingError::AdcUnavailable {
                             path: path.clone(),
                             channel: *channel,
+                        });
+                    }
+                }
+                WriteBinding::AnalogPad { pad, .. } => {
+                    let Some(volts) = signal_as_f64(value) else {
+                        errors.push(RoutingError::TypeMismatch {
+                            path: path.clone(),
+                            value: value.clone(),
+                        });
+                        continue;
+                    };
+                    let millivolts = volts_to_millivolts(volts);
+                    if !bus.set_analog_pad_mv(pad, millivolts) {
+                        let channel = bus.analog_pin_map.get(pad).map_or(0, |(_, c)| *c);
+                        errors.push(RoutingError::AdcUnavailable {
+                            path: path.clone(),
+                            channel,
                         });
                     }
                 }
@@ -1581,6 +1628,16 @@ impl SignalRouter {
         }
         bus.flush_ina219_circuit(time_ns);
         errors
+    }
+}
+
+/// Store `value` under `path`, allocating the key only the first time.
+fn put_signal(signals: &mut CosimSignals, path: &str, value: CosimSignalValue) {
+    match signals.get_mut(path) {
+        Some(slot) => *slot = value,
+        None => {
+            signals.insert(path.to_string(), value);
+        }
     }
 }
 
@@ -1929,14 +1986,36 @@ impl std::error::Error for CosimAdvanceError {}
 
 /// `total` followed by `next`: counters add, the stop is `next`'s.
 fn chain_reports(total: AdvanceReport, next: AdvanceReport) -> AdvanceReport {
+    assert!(
+        total.instruction_accounting_is_conserved() && next.instruction_accounting_is_conserved(),
+        "cannot chain inconsistent instruction accounting"
+    );
     AdvanceReport::new(
         next.stop,
-        total.fuel_consumed + next.fuel_consumed,
-        total.primary_steps + next.primary_steps,
-        total.secondary_steps + next.secondary_steps,
-        total.elapsed_cycles + next.elapsed_cycles,
-        total.idle_cycles + next.idle_cycles,
-        total.cpu_batches + next.cpu_batches,
+        total
+            .fuel_consumed
+            .checked_add(next.fuel_consumed)
+            .expect("report chain fuel overflow"),
+        total
+            .primary_work
+            .checked_add(next.primary_work)
+            .expect("primary report chain overflow"),
+        total
+            .secondary_steps
+            .checked_add(next.secondary_steps)
+            .expect("secondary progress chain overflow"),
+        total
+            .elapsed_cycles
+            .checked_add(next.elapsed_cycles)
+            .expect("report chain cycle overflow"),
+        total
+            .idle_cycles
+            .checked_add(next.idle_cycles)
+            .expect("report chain skipped-cycle overflow"),
+        total
+            .cpu_batches
+            .checked_add(next.cpu_batches)
+            .expect("report chain dispatch-count overflow"),
     )
 }
 
@@ -2120,6 +2199,14 @@ impl CosimSession {
     /// The lockstep granularity, in nanoseconds (the finest model `step_ns`).
     pub fn step_ns(&self) -> u64 {
         self.step_ns
+    }
+
+    /// Whether [`CosimAdvance::routed`] is filled in. On by default; a caller
+    /// that never reads it (the CLI run loop without debug logging) turns it
+    /// off to take the per-step report off the hot path. The signal store and
+    /// every routed pin are unaffected.
+    pub fn set_record_routed(&mut self, record: bool) {
+        self.runner.set_record_routed(record);
     }
 
     /// The signal store, for inspection after a step.
@@ -2391,6 +2478,54 @@ mod tests {
     use super::*;
     use labwired_config::{CosimAdapter, CosimModelConfig};
     use std::collections::HashMap;
+
+    #[test]
+    fn chained_reports_preserve_dispatch_represented_work_and_fuel() {
+        use crate::InstructionWork;
+        let a = AdvanceReport::new(
+            AdvanceStop::FuelLimit,
+            8,
+            InstructionWork {
+                dispatched: 2,
+                represented: 6,
+            },
+            3,
+            8,
+            6,
+            1,
+        );
+        let b = AdvanceReport::new(
+            AdvanceStop::CycleLimit,
+            7,
+            InstructionWork {
+                dispatched: 3,
+                represented: 4,
+            },
+            3,
+            7,
+            4,
+            2,
+        );
+        let total = chain_reports(a, b);
+        assert_eq!(total.stop, AdvanceStop::CycleLimit);
+        assert_eq!(total.primary_steps, 15);
+        assert_eq!(total.secondary_steps, 6);
+        assert_eq!(
+            total.primary_work,
+            InstructionWork {
+                dispatched: 5,
+                represented: 10
+            }
+        );
+        assert_eq!(
+            (total.fuel_consumed, total.idle_cycles, total.cpu_batches),
+            (15, 10, 3)
+        );
+        assert!(total.instruction_accounting_is_conserved());
+        let mut broken = a;
+        broken.primary_steps = 0;
+        assert!(std::panic::catch_unwind(|| chain_reports(broken, b)).is_err());
+    }
 
     fn mock_model(
         id: &str,

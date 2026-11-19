@@ -9,6 +9,14 @@
 use crate::artifacts::{write_interactive_snapshot, InteractiveSnapshotInputs};
 use crate::*;
 
+/// Keep the remaining run budget in u64 until the bounded advance request.
+pub(crate) fn next_run_chunk(limit: u64, consumed: u64) -> u64 {
+    limit
+        .checked_sub(consumed)
+        .expect("run fuel exceeded its budget")
+        .min(4_000_000)
+}
+
 /// Export every attached parallel-panel framebuffer, if `--display-out <path>`
 /// was given: a binary PPM per panel (`<path>` for the first, `<path>.<id>`
 /// for any others) plus a luma ASCII map on stderr.
@@ -577,7 +585,7 @@ fn run_firmware_riscv_batched(
     limit: u64,
 ) -> ExitCode {
     use labwired_core::bus::RECOMMENDED_TICK_INTERVAL;
-    use labwired_core::DebugControl;
+    use labwired_core::AdvanceStop;
 
     // Escape hatch: LABWIRED_RISCV_JIT=0 forces the interpreter (default on).
     let jit_on = std::env::var("LABWIRED_RISCV_JIT").as_deref() != Ok("0");
@@ -593,33 +601,16 @@ fn run_firmware_riscv_batched(
     machine.bus.config.riscv_jit_enabled = jit_on;
 
     // Chunk the run so a u64::MAX `limit` (no --max-steps) stays bounded per
-    // `Machine::run` call. `Machine::run` batches internally at the tick
-    // interval; we only cap the total instruction budget here.
-    const CHUNK: u32 = 4_000_000;
+    // `advance` call. The report's scheduling fuel includes idle time; a
+    // total-instruction delta cannot account for that run budget.
     let mut ran: u64 = 0;
     let mut faulted = false;
     while ran < limit {
-        let n = if limit == u64::MAX {
-            CHUNK
-        } else {
-            CHUNK.min((limit - ran) as u32)
-        };
-        let before = machine.step_profile().cpu_instructions;
-        let result = machine.run(Some(n));
+        let fuel = next_run_chunk(limit, ran);
+        let result = machine.debug_run_report(Some(fuel));
         crate::log_ts::refresh_cycles(machine.total_cycles);
-        match result {
-            // The firmware stated its own result. `DebugControl::run` is the
-            // only reader of that stop, and this loop used to drop it on the
-            // floor and keep issuing chunks — the single-step loop above breaks
-            // on it, so the two disagreed. Unreachable today (no RISC-V chip
-            // descriptor declares a `simctl` device, and this path synthesises
-            // its own manifest), which is why it is wired up rather than left
-            // to be discovered by the first board that does declare one.
-            Ok(labwired_core::StopReason::FirmwareExit(code)) => {
-                crate::log_ts::eventln!("[firmware] {}", crate::firmware_exit_message(code));
-                break;
-            }
-            Ok(_) => {}
+        let report = match result {
+            Ok(report) => report,
             Err(e) => {
                 // Was `tracing::debug!("… halt: {e}")` under a comment claiming
                 // a halt is the normal end of a fixture run. It is not: a
@@ -631,12 +622,15 @@ fn run_firmware_riscv_batched(
                 faulted = true;
                 break;
             }
+        };
+        ran = report
+            .checked_fuel_total_after(ran)
+            .expect("invalid run fuel accounting");
+        if let AdvanceStop::FirmwareExit { code } = report.stop {
+            crate::log_ts::eventln!("[firmware] {}", crate::firmware_exit_message(code));
+            break;
         }
-        let delta = machine.step_profile().cpu_instructions - before;
-        ran += delta;
-        // No forward progress (idle with no fast-forward budget): stop rather
-        // than spin re-issuing empty batches up to `limit`.
-        if delta == 0 {
+        if report.stop == AdvanceStop::NoProgress || report.fuel_consumed == 0 {
             break;
         }
     }
@@ -796,11 +790,9 @@ fn run_firmware_xtensa_batched(
     machine.config.peripheral_tick_interval = interval;
     machine.bus.config.peripheral_tick_interval = interval;
 
-    const CHUNK: u64 = 4_000_000;
     let mut ran = 0u64;
     while ran < limit {
-        let fuel = CHUNK.min(limit - ran);
-        let before = machine.step_profile().cpu_instructions;
+        let fuel = next_run_chunk(limit, ran);
         let result = machine.advance(AdvanceRequest::run(Some(fuel)));
         crate::log_ts::refresh_cycles(machine.total_cycles);
         let report = match result {
@@ -815,15 +807,16 @@ fn run_firmware_xtensa_batched(
                 return ExitCode::from(EXIT_RUNTIME_ERROR);
             }
         };
-        let delta = machine.step_profile().cpu_instructions - before;
-        ran += delta;
+        ran = report
+            .checked_fuel_total_after(ran)
+            .expect("invalid run fuel accounting");
         match report.stop {
             AdvanceStop::NoProgress => break,
             AdvanceStop::FirmwareExit { code } => {
                 crate::log_ts::eventln!("[firmware] {}", crate::firmware_exit_message(code));
                 break;
             }
-            _ if delta == 0 => break,
+            _ if report.fuel_consumed == 0 => break,
             _ => {}
         }
     }
@@ -1527,27 +1520,24 @@ fn run_xtensa_batched_loop(
     // fuel handed to any single `advance` call, mirroring the ARM/RISC-V
     // batched loops. `advance` batches internally at the tick interval; the
     // chunk only caps the total instruction budget.
-    const CHUNK: u64 = 4_000_000;
     let mut ran: u64 = 0;
     while ran < limit {
-        let fuel = CHUNK.min(limit - ran);
-        let before = machine.step_profile().cpu_instructions;
+        let fuel = next_run_chunk(limit, ran);
         let result = machine.advance(AdvanceRequest::run(Some(fuel)));
         crate::log_ts::refresh_cycles(machine.total_cycles);
-        let stop = match result {
-            Ok(report) => Some(report.stop),
+        let report = match result {
+            Ok(report) => report,
             Err(e) => {
                 crate::log_ts::eventln!("labwired run (xtensa, batched): simulation error: {e}");
                 faulted = true;
-                None
+                break;
             }
         };
-        let delta = machine.step_profile().cpu_instructions - before;
-        ran += delta;
-        match stop {
-            Some(AdvanceStop::NoProgress) | None => break,
-            Some(_) if delta == 0 => break,
-            Some(_) => {}
+        ran = report
+            .checked_fuel_total_after(ran)
+            .expect("invalid run fuel accounting");
+        if report.stop == AdvanceStop::NoProgress || report.fuel_consumed == 0 {
+            break;
         }
     }
 
@@ -2216,19 +2206,28 @@ fn run_arm_step_loop(
 /// and `tick_cap=`); it is appended verbatim, after `peripheral_ticks=`, so the
 /// leading fields keep the order `scripts/perf/board_perf.py` parses.
 fn print_batched_summary(profile: labwired_core::StepProfile, tick_interval: u32, suffix: &str) {
+    let work = profile
+        .validated_instruction_work()
+        .expect("live instruction accounting must be conserved");
+    let skipped = profile
+        .skipped_cycles
+        .expect("live skipped-cycle accounting must be known");
     let per_batch = if profile.cpu_batches == 0 {
         0.0
     } else {
-        profile.cpu_instructions as f64 / profile.cpu_batches as f64
+        work.dispatched as f64 / profile.cpu_batches as f64
     };
     crate::log_ts::eventln!(
         "[batched] instructions={} batches={} steps_per_batch={:.2} \
-         tick_interval={} peripheral_ticks={}{}",
+         tick_interval={} peripheral_ticks={} dispatched_instructions={} represented_instructions={} skipped_cycles={}{}",
         profile.cpu_instructions,
         profile.cpu_batches,
         per_batch,
         tick_interval,
         profile.peripheral_ticks,
+        work.dispatched,
+        work.represented,
+        skipped,
         suffix,
     );
 }
@@ -2354,15 +2353,16 @@ fn run_arm_batched_loop(
     // handed to any single `advance` call, mirroring the RISC-V batched loop.
     // `advance` batches internally at the tick interval; the chunk only caps the
     // total instruction budget.
-    const CHUNK: u64 = 4_000_000;
     let mut ran: u64 = 0;
     while ran < limit {
-        let fuel = CHUNK.min(limit - ran);
+        let fuel = next_run_chunk(limit, ran);
         let result = machine.advance(AdvanceRequest::run(Some(fuel)));
         crate::log_ts::refresh_cycles(machine.total_cycles);
         match result {
             Ok(report) => {
-                ran += report.fuel_consumed;
+                ran = report
+                    .checked_fuel_total_after(ran)
+                    .expect("invalid run fuel accounting");
                 match report.stop {
                     AdvanceStop::FirmwareExit { code } => {
                         crate::log_ts::eventln!(
@@ -2430,8 +2430,12 @@ fn run_arm_batched_loop(
             machine.step_profile(),
             interval,
             &format!(
-                " jit={} tick_cap={tick_cap} fuel={ran} idle_cycles={}",
+                " jit={} tick_cap={tick_cap} fuel={ran} idle_cycles={} idle_ff_cycles={}",
                 jit_state.marker(),
+                machine
+                    .step_profile()
+                    .skipped_cycles
+                    .expect("live skipped cycles must be known"),
                 machine.idle_fast_forward_cycles_skipped
             ),
         );

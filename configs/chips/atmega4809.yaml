@@ -32,7 +32,7 @@ ram:
 # Offsets, sizes and vector numbers: Microchip ATmega4809 ATDF (ATmega DFP)
 # and data sheet DS40002173. The package is the 48-pin VQFN/TQFP the Nano
 # Every carries: PA0-7, PB0-5, PC0-7, PD0-7, PE0-3, PF0-6.
-# 41 GPIO pads on the 48-pin package (DS40002173C device overview, page 3).
+# The official 48-pin VQFN/TQFP GPIO set has 41 pads (DS40002173C, page 3).
 # Labels map to their PORT bit, not to package pin numbers; absent PB6/7,
 # PE4..7 and PF7 are deliberately not declared.
 pins:

@@ -12,6 +12,12 @@
 //! reports, edges and final state included, while skipping most cycles. The
 //! countdown is the negative control's target: a skip that ignored the
 //! changing register would move the last edge.
+//!
+//! `fixtures/cortex_m_idle_hook` is the same wait as an RTOS idle loop: each
+//! iteration calls a hook that pushes to the stack and enters and leaves a
+//! critical section through a RAM nesting counter, storing the bytes memory
+//! already holds. Its negative control bumps a RAM idle counter through the
+//! same hook (memory changes every iteration).
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -26,6 +32,19 @@ fn workspace_root() -> PathBuf {
 }
 
 fn run(name: &str, skip: bool) -> (serde_json::Value, String) {
+    run_fixture("cortex_m_tick_wait/tick_wait.elf", name, skip)
+}
+
+fn run_fixture(elf: &str, name: &str, skip: bool) -> (serde_json::Value, String) {
+    run_fixture_mode(elf, name, skip, None)
+}
+
+fn run_fixture_mode(
+    elf: &str,
+    name: &str,
+    skip: bool,
+    hosted_fast: Option<bool>,
+) -> (serde_json::Value, String) {
     let root = workspace_root();
     let dir = labwired_cli::test_support::unique_temp_dir(&format!("labwired-cm-poll-{name}"));
     std::fs::create_dir_all(&dir).unwrap();
@@ -34,20 +53,23 @@ fn run(name: &str, skip: bool) -> (serde_json::Value, String) {
         &script,
         format!(
             "schema_version: \"1.0\"\ninputs:\n  firmware: \"{}\"\n  system: \"{}\"\nlimits:\n  max_steps: 10000000\n  max_cycles: 400000\n",
-            root.join("crates/cli/tests/fixtures/cortex_m_tick_wait/tick_wait.elf").display(),
+            root.join("crates/cli/tests/fixtures").join(elf).display(),
             root.join("configs/systems/nucleo-l476rg.yaml").display(),
         ),
     )
     .unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_labwired"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_labwired"));
+    command
         .args(["test", "--script"])
         .arg(&script)
         .arg("--output-dir")
         .arg(&dir)
         .args(["--no-uart-stdout", "--watch-gpio", "gpioa:5"])
-        .env("LABWIRED_IDLE_FAST_FORWARD", if skip { "1" } else { "0" })
-        .output()
-        .expect("run labwired");
+        .env("LABWIRED_IDLE_FAST_FORWARD", if skip { "1" } else { "0" });
+    if let Some(hosted_fast) = hosted_fast {
+        command.env("LABWIRED_HOSTED_FAST", if hosted_fast { "1" } else { "0" });
+    }
+    let output = command.output().expect("run labwired");
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     let result = std::fs::read_to_string(dir.join("result.json"))
         .unwrap_or_else(|_| panic!("no result.json; stderr:\n{stderr}"));
@@ -98,4 +120,58 @@ fn a_skipped_tick_wait_reports_the_same_run() {
         observable(reference),
         "the skip changed the run"
     );
+}
+
+#[test]
+fn a_skipped_idle_hook_loop_that_stores_reports_the_same_run() {
+    let elf = "cortex_m_idle_hook/idle_hook.elf";
+    let (fast, fast_err) = run_fixture(elf, "idle-skip", true);
+    let (reference, _) = run_fixture(elf, "idle-ref", false);
+    let edges = fast["logic_edges"]["channels"][0]["transitions"]
+        .as_array()
+        .map_or(0, Vec::len);
+    assert_eq!(edges, 101, "100 waits and the post-counter toggle");
+    assert!(
+        skipped(&fast_err) > 300_000,
+        "the idle-hook waits and `b .` were not skipped:\n{fast_err}"
+    );
+    assert_eq!(
+        observable(fast),
+        observable(reference),
+        "the skip changed the run"
+    );
+}
+
+#[test]
+fn observer_path_counts_skipped_poll_steps_once() {
+    let elf = "cortex_m_tick_wait/tick_wait.elf";
+    let (fast, fast_err) = run_fixture_mode(elf, "observer-skip", true, Some(false));
+    let (reference, _) = run_fixture_mode(elf, "observer-ref", false, Some(false));
+    assert!(
+        skipped(&fast_err) > 300_000,
+        "poll skip did not run: {fast_err}"
+    );
+    assert_eq!(
+        fast["steps_executed"], reference["steps_executed"],
+        "observer path must count each poll-loop step once"
+    );
+    assert_eq!(fast["stop_reason"], reference["stop_reason"]);
+    assert_eq!(fast["logic_edges"], reference["logic_edges"]);
+}
+
+#[test]
+fn counter_path_counts_proven_poll_fuel_once() {
+    let elf = "cortex_m_tick_wait/tick_wait.elf";
+    let (fast, fast_err) = run_fixture_mode(elf, "counter-skip", true, Some(true));
+    let (reference, _) = run_fixture_mode(elf, "counter-ref", false, Some(true));
+    assert!(
+        skipped(&fast_err) > 300_000,
+        "poll skip did not run: {fast_err}"
+    );
+    assert_eq!(
+        fast["steps_executed"], reference["steps_executed"],
+        "counter path must count each scheduling unit once"
+    );
+    assert_eq!(fast["stop_reason"], reference["stop_reason"]);
+    assert_eq!(fast["logic_edges"], reference["logic_edges"]);
 }

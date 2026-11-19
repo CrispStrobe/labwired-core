@@ -223,6 +223,10 @@ jobs:
       # never hide whether the product actually meets real time.
       - name: Measure per-board throughput
         id: perf
+        env:
+          # Use the held producer's existing retention interface for the same
+          # full required measurements; do not change measurement or gate logic.
+          LABWIRED_PERF_EVIDENCE_DIR: perf-evidence
         run: |
           set -o pipefail
           python3 scripts/perf/board_perf.py --require-all \
@@ -241,6 +245,7 @@ jobs:
             rtf-update.json
             rtf-update-report.txt
             rtf_baselines.updated.json
+            perf-evidence/
 
       # A regression is a real product defect (every extra host instruction per
       # simulated step slows the browser twin by the same proportion), so it

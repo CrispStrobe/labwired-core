@@ -54,6 +54,7 @@ impl<C: Cpu> Machine<C> {
         self.bus.service_resident_scheduled_edges();
     }
 
+    #[inline(always)]
     pub(crate) fn execute_cpu_window<H: WindowHooks>(
         &mut self,
         mode: ExecutionMode,
@@ -94,6 +95,7 @@ impl<C: Cpu> Machine<C> {
         })
     }
 
+    #[inline(always)]
     fn execute_cpu_window_inner<H: WindowHooks>(
         &mut self,
         mode: ExecutionMode,
@@ -583,9 +585,10 @@ impl<C: Cpu> Machine<C> {
         })
     }
 
+    #[inline]
     pub(crate) fn record_cpu_progress(&mut self, primary_steps: u32) {
-        self.step_profile.cpu_instructions += u64::from(primary_steps);
-        self.step_profile.cpu_batches += 1;
+        self.step_profile
+            .record_dispatched_work(u64::from(primary_steps));
     }
 
     fn release_secondary_cpu_if_requested(&mut self) {
@@ -622,6 +625,7 @@ impl<C: Cpu> Machine<C> {
         self.commit_advance_boundary_with::<super::plan::Ordinary>(mode, batch_start, progress)
     }
 
+    #[inline(always)]
     pub(crate) fn commit_advance_boundary_with<H: WindowHooks>(
         &mut self,
         mode: ExecutionMode,
@@ -799,9 +803,12 @@ impl<C: Cpu> Machine<C> {
         // nRF52 peripheral that cannot exist on, say, an ESP32-C3.
         {
             let op = self.nvmc_index.and_then(|idx| {
-                self.bus
-                    .peripherals
-                    .get_mut(idx)?
+                let entry = self.bus.peripherals.get_mut(idx)?;
+                // One trait call while nothing is latched, not a downcast.
+                if !entry.dev.has_pending_op() {
+                    return None;
+                }
+                entry
                     .dev
                     .as_any_mut()?
                     .downcast_mut::<crate::peripherals::nrf52::nvmc::Nrf52Nvmc>()
