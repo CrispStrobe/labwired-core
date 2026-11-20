@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "kind": "reviewed-source-successor-not-new-performance-measurement",
+  "fork_predecessor": "aa0ec2bf8685e37c1848df4f355696eb2c0e2e12",
+  "upstream_source": "f9ad21ad234ceb1fa2c969759d41559dcbd79a3e",
+  "scope": [
+    "Import only upstream no-fixture policy for new ESP32-C2, ESP32-S2 Arduino and MSPM0G3507 profiles. None existed in the qualified fork or its measured roster; no previously measured case is removed.",
+    "Add only the upstream STM32H533RE reference. All existing fork baseline mappings, measurement functions, tolerances, noise floors and Pico retirement floor remain unchanged. No new performance qualification is claimed by this fixture.",
+    "Reverse exact typed additions to PR292, then prove immutable 7afe07eb/a4b097c0/10284/historical393 predecessors. Preserve PR292 short-retirement reporting."
+  ],
+  "imported_upstream_waivers": [
+    "esp32c2",
+    "esp32s2-arduino",
+    "mspm0g3507"
+  ],
+  "imported_upstream_baselines": {
+    "stm32h533re": {
+      "batch": 1.2,
+      "step": 809.2
+    }
+  },
+  "source_transitions": [
+    {
+      "path": "scripts/perf/board_perf.py",
+      "predecessor_sha256": "e5c3ca2ebd6330030a11e44f9186e8e0d91aae2330d051b632add56a7c4b28df",
+      "successor_sha256": "51fc72449b4e2ea2a9bf8d2175797a1b66c3d12c8f7e9baca172005c966b6a00",
+      "replacements": [
+        {
+          "before": "",
+          "after": "    \"esp32c2\": (\n        \"ESP8684-DevKitM-1-H4X fast-boot profile: a bare-ELF UART0 and GPIO0 \"\n        \"smoke (flash 0x42000000, RAM 0x3FCA0000). The ESP32-C3 fixture uses a \"\n        \"different RAM base and no C2 perf-spin fixture is built; no throughput \"\n        \"claim is made for this profile (examples/esp8684-devkitm-1-h4x).\"\n    ),\n"
+        },
+        {
+          "before": "",
+          "after": "    ),\n    \"esp32s2-arduino\": (\n        \"ESP32-S2 stock Arduino-ESP32 profile: genuine mask ROM plus external \"\n        \"flash through the S2 MMU (flash 0x40080000, RAM 0x3FFB0000), proven by \"\n        \"the Arduino matrix row. Same LX7 map as esp32s2, for which no Xtensa \"\n        \"perf-spin build exists, so no throughput claim is made for this part.\"\n    ),\n    \"mspm0g3507\": (\n        \"LP-MSPM0G3507 is a narrow UART0 smoke profile, not a representative \"\n        \"throughput workload. CI has no perf-spin fixture linked for its \"\n        \"0x00000000 flash / 0x20200000 RAM map; no throughput claim is made \"\n        \"for this profile yet (examples/lp-mspm0g3507-launchpad).\"\n"
+        }
+      ]
+    },
+    {
+      "path": "scripts/perf/baselines.json",
+      "predecessor_sha256": "825fab0b3228867c8f3fc564a3d6f8f7aa8c28daca4c69df3d53fe92940cd5da",
+      "successor_sha256": "3ca2db360de44fb60ad42e62b06439b9cef1d4f0f452c8549b4987919d10900e",
+      "replacements": [
+        {
+          "before": "",
+          "after": "  },\n  \"stm32h533re\": {\n    \"batch\": 1.2,\n    \"step\": 809.2\n"
+        }
+      ]
+    }
+  ]
+}

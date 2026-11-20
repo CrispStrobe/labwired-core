@@ -1,3 +1,4 @@
+id: stm32h563
 # 2026-11-05: reviewed G0 DMA extension in shared UART/DMA source. Strict
 # channel completion/circular/IRQ semantics are opt-in (profile: stm32g0);
 # existing constructors retain their legacy profile. The bus completion
@@ -22,6 +23,16 @@
 # 2026-09-15 (#1124): gpio.rs gained SAM PORT / RA PORT / i.MX GPIO families behind profile discriminants the STM32 construction path never sets. No silicon-visible STM32 behaviour change.
 # 2026-09-15 (#1073): NVIC level-sensitive pending follows the IRQ line down (timer SR&DIER); software ISPR pends still fire once. Matches STM32 silicon; F103 integration tests. Re-capture still owed.
 # 2026-09-15 (#1120): Cortex-M wasm-JIT is opt-in (`cortex_m_jit_enabled` default off). Interpreter path unchanged; JIT-on vs off lockstep in cortex_m_jit_nrf_differential. No silicon capture pins JIT.
+doc: docs/boards/stm32h563.md
+chip: configs/chips/stm32h563.yaml
+tier: silicon-verified
+offline_tests:
+  - "h563_conformance (6 tests vs frozen 2026-06-10..12 captures)"
+  - "h563_mmio_diff::{h563_mmio_sim_only,h563_parity_sim_only,h563_class_sim_only}"
+silicon:
+  last_capture: 2026-08-10
+  probe: "STLINK-V3 (V3J13, serial 002100174741500220383733, USB 0483:374e, NUCLEO-H563ZI on-board CN1/STLK, dapdirect AP1 recipe)"
+  result: "Re-captured live 2026-08-10 with H563_STRICT=1 on merge commit e1851d80 (a clean tree — see the caveat below): h563_mmio_diff 8/8, h563_parity_diff 48/48, h563_class_diff 65/65, 121 cases total, 0 divergence / 0 both_disagree / 0 sim_err. Clean on arrival; nothing to fix. Target answered SWD DPIDR 0x6ba02477, Cortex-M33 r0p4, target voltage 3.289 V. Probe serial is recorded from this run on — the 2026-06-22 entry named the USB PID but no serial, so whether this is the same physical NUCLEO as that capture cannot be established either way. SCOPE CAVEAT, read before treating this as a full re-validation: this run re-executed the MMIO/parity/class register diff ONLY. The FLASH program-behaviour live-diff described below (real program/erase driven over SWD) was NOT re-run on 2026-08-10; its findings are carried forward from 2026-06-22 and are older than this date stamp implies. TREE CAVEAT: an initial run of the same 121 cases also passed, but was executed while another session had an uncommitted merge of origin/main staged in this worktree, so it was not attributable to any commit; it was discarded and the run recorded here was repeated against a 0-dirty checkout of e1851d80. FLASH program-behaviour live-diff run on the board 2026-06-22 (drives real program/erase over SWD): write buffer (NSSR.WBNE) accumulates a 16-byte quad-word, commits + sets EOP only on completion; a misaligned quad-word raises INCERR alone and commits nothing; program-over-not-erased is permitted and ANDs the bits (no PGSERR); flags clear via NSCCR (0x30), not by writing NSSR. The sim H5 flash error-flag + read-while-write fidelity gates were CORRECTED to match this capture (earlier datasheet model was wrong on all four points). Prior MMIO/reset diff (h563_mmio_diff + h563_parity_diff + h563_class_diff, 0 divergence) still holds."
 # FLASH model extended for UDS OTA: NSCR sector-erase + OPTSR_PRG.SWAP_BANK/
 # OBL_LAUNCH (drained in Machine::step / batched run) + H563 sized in MiB,
 # plus opt-in program error-flag (WRPERR/PGSERR/INCERR) and read-while-write
@@ -536,6 +547,32 @@
 # `cargo test -p labwired-core --test stm32 flash_h5_ops::` (6/6) and
 # `--test stm32 h563_conformance::` (6/6) on this branch; no live re-capture.
 # This is an ACK, NOT A CAPTURE — a live re-capture is owed.
+models:
+  - crates/core/src/peripherals/esp_ledc_wave.rs
+  - crates/core/src/cpu/cortex_m.rs
+  - crates/core/src/cpu/cortex_m/exec
+  - crates/core/src/decoder/arm.rs
+  - crates/core/src/decoder/arm_thumb32.rs
+  - crates/core/src/peripherals/rcc.rs
+  - crates/core/src/peripherals/gpio.rs
+  - crates/core/src/peripherals/uart.rs
+  - crates/core/src/peripherals/spi.rs
+  - crates/core/src/peripherals/i2c.rs
+  - crates/core/src/peripherals/timer.rs
+  - crates/core/src/peripherals/timer_output.rs
+  - crates/core/src/peripherals/gpdma.rs
+  - crates/core/src/peripherals/adc.rs
+  - crates/core/src/peripherals/rtc_v3.rs
+  - crates/core/src/peripherals/fdcan.rs
+  - crates/core/src/peripherals/crc.rs
+  - crates/core/src/peripherals/pwr.rs
+  - crates/core/src/peripherals/flash.rs
+  - crates/core/src/peripherals/iwdg.rs
+  - crates/core/src/peripherals/wwdg.rs
+  - crates/core/src/peripherals/rng.rs
+  - configs/chips/stm32h563.yaml
+
+  # ── Silicon-verified once, but shared models drifted since (acknowledged) ─────
 # 2026-08-31: adc.rs — CR.ADCAL is now the self-clearing COMMAND bit silicon
 # makes it, on both the L4 and H7 layouts, and stm32h563 returns to the
 # `stm32l4` ADC profile it was moved off on 2026-08-12. The move was wrong:
@@ -1100,6 +1137,16 @@
 # (diode/BJT/MOSFET/JFET + misc) touched shared files on this board's
 # watch list. Re-acked by owner 2026-11-07 during PR triage. ACK, NOT A
 # SILICON CAPTURE; live re-capture remains pending.
+# 2026-11-09 (feat/f1-flash-program-round374): flash.rs gains an F1-only
+# program gate and an F1 arm in flash_geometry(). Every H5 branch is
+# unchanged; this board's reads, writes, erase and swap paths see no change.
+# ACK, NOT A SILICON CAPTURE.
+# 2026-11-09 (L4/G4/WB ADC, feat/stm32-l4-l0-adc): changes the shared
+# adc.rs digest. The `stm32l4` layout keeps its conversion path; the
+# stm32g0/c0 CHSELR layout and the f0/l0 block are separate models. F1/F4/H7/
+# U5 layouts are unchanged. This is a reviewed model-drift acknowledgment,
+# NOT a new silicon capture; no capture or ack date moves.
+drift_ack: 2026-11-13
 # 2026-11-09 (feat/rp2040-cleanroom-rom-float): exec/system.rs serves
 # BKPT #0xC0..0xFF via a clean-room RP2040 ROM float HLE. The trap
 # arms only when PC is in the 16 KiB ROM window and the RP2040 ROM
@@ -1107,6 +1154,7 @@
 # immediate range still Halt, same as before. Shared interpreter
 # path otherwise unchanged. ACK, NOT A SILICON CAPTURE; live
 # re-capture remains pending.
+drift_ack_digest: c34c1defb4708d8f1211480aaf402c05001a067630f13f4b1d60c683c144c214
 # 2026-11-01 (feat/rv64-core): uart.rs gained the 16550 LCR.DLAB divisor
 # latches (DLL/DLM), reached only by the `ns16550` / `dw_apb_uart`
 # layouts. STM32 UART register maps, byte paths and IRQ timing are
@@ -1177,59 +1225,3 @@
 # that key only in the SCI arm. Only the `sci` layout reaches it. STM32
 # UART register maps, byte paths and IRQ timing are unchanged. ACK, NOT A
 # SILICON CAPTURE; live re-capture remains pending.
-chip: configs/chips/stm32h563.yaml
-doc: docs/boards/stm32h563.md
-drift_ack: 2026-11-13
-drift_ack_digest: c34c1defb4708d8f1211480aaf402c05001a067630f13f4b1d60c683c144c214
-id: stm32h563
-models:
-- crates/core/src/peripherals/esp_ledc_wave.rs
-- crates/core/src/cpu/cortex_m.rs
-- crates/core/src/cpu/cortex_m/exec
-- crates/core/src/decoder/arm.rs
-- crates/core/src/decoder/arm_thumb32.rs
-- crates/core/src/peripherals/rcc.rs
-- crates/core/src/peripherals/gpio.rs
-- crates/core/src/peripherals/uart.rs
-- crates/core/src/peripherals/spi.rs
-- crates/core/src/peripherals/i2c.rs
-- crates/core/src/peripherals/timer.rs
-- crates/core/src/peripherals/timer_output.rs
-- crates/core/src/peripherals/gpdma.rs
-- crates/core/src/peripherals/adc.rs
-- crates/core/src/peripherals/rtc_v3.rs
-- crates/core/src/peripherals/fdcan.rs
-- crates/core/src/peripherals/crc.rs
-- crates/core/src/peripherals/pwr.rs
-- crates/core/src/peripherals/flash.rs
-- crates/core/src/peripherals/iwdg.rs
-- crates/core/src/peripherals/wwdg.rs
-- crates/core/src/peripherals/rng.rs
-- configs/chips/stm32h563.yaml
-offline_tests:
-- h563_conformance (6 tests vs frozen 2026-06-10..12 captures)
-- h563_mmio_diff::{h563_mmio_sim_only,h563_parity_sim_only,h563_class_sim_only}
-silicon:
-  last_capture: 2026-08-10
-  probe: STLINK-V3 (V3J13, serial 002100174741500220383733, USB 0483:374e, NUCLEO-H563ZI on-board CN1/STLK,
-    dapdirect AP1 recipe)
-  result: 'Re-captured live 2026-08-10 with H563_STRICT=1 on merge commit e1851d80 (a clean tree — see
-    the caveat below): h563_mmio_diff 8/8, h563_parity_diff 48/48, h563_class_diff 65/65, 121 cases total,
-    0 divergence / 0 both_disagree / 0 sim_err. Clean on arrival; nothing to fix. Target answered SWD
-    DPIDR 0x6ba02477, Cortex-M33 r0p4, target voltage 3.289 V. Probe serial is recorded from this run
-    on — the 2026-06-22 entry named the USB PID but no serial, so whether this is the same physical NUCLEO
-    as that capture cannot be established either way. SCOPE CAVEAT, read before treating this as a full
-    re-validation: this run re-executed the MMIO/parity/class register diff ONLY. The FLASH program-behaviour
-    live-diff described below (real program/erase driven over SWD) was NOT re-run on 2026-08-10; its findings
-    are carried forward from 2026-06-22 and are older than this date stamp implies. TREE CAVEAT: an initial
-    run of the same 121 cases also passed, but was executed while another session had an uncommitted merge
-    of origin/main staged in this worktree, so it was not attributable to any commit; it was discarded
-    and the run recorded here was repeated against a 0-dirty checkout of e1851d80. FLASH program-behaviour
-    live-diff run on the board 2026-06-22 (drives real program/erase over SWD): write buffer (NSSR.WBNE)
-    accumulates a 16-byte quad-word, commits + sets EOP only on completion; a misaligned quad-word raises
-    INCERR alone and commits nothing; program-over-not-erased is permitted and ANDs the bits (no PGSERR);
-    flags clear via NSCCR (0x30), not by writing NSSR. The sim H5 flash error-flag + read-while-write
-    fidelity gates were CORRECTED to match this capture (earlier datasheet model was wrong on all four
-    points). Prior MMIO/reset diff (h563_mmio_diff + h563_parity_diff + h563_class_diff, 0 divergence)
-    still holds.'
-tier: silicon-verified

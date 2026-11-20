@@ -259,8 +259,19 @@ impl<C: Cpu> Machine<C> {
     // every instruction even though all of its policies are compile-time fixed.
     #[inline(always)]
     fn advance_output<O: AdvanceOutput>(&mut self, request: AdvanceRequest) -> SimResult<O> {
+        self.enforce_peripheral_tick_cap();
         if let Some(report) = self.supply_gate(&request)? {
             return Ok(O::from_report(report));
+        }
+        let cache_device_time_presence = !request.is_single();
+        if cache_device_time_presence {
+            self.central_device_time_cache_enabled = true;
+            self.central_device_time_attached_cache = None;
+        } else if self.central_device_time_cache_enabled {
+            // Recover only if a caller caught a panic from a previous advance.
+            // The ordinary single-step path leaves this state untouched.
+            self.central_device_time_cache_enabled = false;
+            self.central_device_time_attached_cache = None;
         }
         // The checked SAMD profile is fixed at bus construction. Every other
         // machine enters the loop monomorphised without its hooks.
@@ -284,6 +295,10 @@ impl<C: Cpu> Machine<C> {
         // A deferred secondary never outlives the call: whoever looks at the
         // machine next sees the core where lockstep would have left it.
         self.end_secondary_defer(self.total_cycles);
+        if cache_device_time_presence {
+            self.central_device_time_cache_enabled = false;
+            self.central_device_time_attached_cache = None;
+        }
         report
     }
 
@@ -326,8 +341,15 @@ impl<C: Cpu> Machine<C> {
             u32,
         ) -> SimResult<u32>,
     {
+        self.enforce_peripheral_tick_cap();
         if let Some(report) = self.supply_gate(&request)? {
             return Ok(report);
+        }
+        // A caught panic from an earlier in-tree advance must not suppress the
+        // runner's per-window attachment probes.
+        if self.central_device_time_cache_enabled {
+            self.central_device_time_cache_enabled = false;
+            self.central_device_time_attached_cache = None;
         }
         let report = if !self.bus.samd_native_quiescent_chunks {
             self.advance_inner::<Ordinary, AdvanceReport>(request, Some(&mut run_window))
@@ -595,7 +617,12 @@ impl<C: Cpu> Machine<C> {
                 return Ok(state.report(AdvanceStop::NoProgress, self.total_cycles - start_cycles));
             }
 
-            self.commit_advance_boundary_with::<H>(mode, batch_start, progress)?;
+            self.commit_advance_boundary_with::<H>(
+                mode,
+                batch_start,
+                progress,
+                run_window.is_some(),
+            )?;
             if self.sd_hle.is_some() {
                 self.service_sd_hle()?;
             }

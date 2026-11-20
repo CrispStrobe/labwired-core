@@ -47,6 +47,7 @@ fn validate_chip(path: &PathBuf) -> anyhow::Result<()> {
 
     // Create Manual System Manifest
     let dummy_manifest = labwired_config::SystemManifest {
+        max_peripheral_tick_interval: None,
         parts: Vec::new(),
         walk_deleted: Some(false),
         schema_version: "1.0".to_string(),
@@ -133,6 +134,13 @@ fn validate_chip(path: &PathBuf) -> anyhow::Result<()> {
             // No SVD-backed register list for the RX parts yet.
             println!(
                 "Skipping RX register compliance for {:?} (no SVD map)",
+                path
+            );
+        }
+        Arch::Msp430 => {
+            // No SVD-backed register list for the MSP430 parts yet.
+            println!(
+                "Skipping MSP430 register compliance for {:?} (no SVD map)",
                 path
             );
         }

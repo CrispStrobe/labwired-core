@@ -19,6 +19,7 @@ pub mod debug;
 pub mod decoder;
 pub mod fault_verdict;
 pub mod fidelity;
+pub mod flex;
 pub mod hashers;
 pub mod host_time;
 pub mod inspect;
@@ -67,7 +68,9 @@ pub use machine::{
 pub use peripheral::{
     AnalogProbe, DmaDirection, DmaRequest, DmaRoute, DmaUnitTransform, FlashStoreOutcome,
     MmioAccessClass, Peripheral, PeripheralResetCause, PeripheralTickResult, DMA_SIGNAL_DATA,
-    DMA_SIGNAL_RX, DMA_SIGNAL_TX,
+    DMA_SIGNAL_RX, DMA_SIGNAL_TIMER_CH1, DMA_SIGNAL_TIMER_CH2, DMA_SIGNAL_TIMER_CH3,
+    DMA_SIGNAL_TIMER_CH4, DMA_SIGNAL_TIMER_COMMUTATION, DMA_SIGNAL_TIMER_TRIGGER,
+    DMA_SIGNAL_TIMER_UPDATE, DMA_SIGNAL_TX,
 };
 
 use std::collections::HashSet;
@@ -94,6 +97,8 @@ pub enum Arch {
     Rx,
     /// MIPS32r2 (PIC32MZ EF, M5150 class).
     Mips,
+    /// Texas Instruments MSP430 (16-bit CPU and 20-bit CPUX).
+    Msp430,
     Unknown,
 }
 
@@ -513,6 +518,9 @@ pub struct Machine<C: Cpu> {
     /// Off by default (the browser runs wide and quantised); `labwired test`
     /// sets it for Cortex-M, where hosted runs must be cycle-exact.
     pub exact_batch_boundaries: bool,
+    /// The wide interval set aside while the per-cycle walk is live. See
+    /// [`Machine::sync_exact_window_with_walk`].
+    exact_wide_interval: Option<u32>,
     pub config: SimulationConfig,
     /// Injectable host clock used by [`HostTimeMode::Realtime`] pacing.
     host_clock: Box<dyn host_time::HostClock + Send>,
@@ -699,6 +707,14 @@ pub struct Machine<C: Cpu> {
     /// expensive u128 divide (and fan-out) on every instruction when the
     /// attached devices only need one update per simulated microsecond.
     next_i2c_time_cycle: u64,
+    /// Whether the current in-tree Machine::advance call may reuse its
+    /// attached-time-device presence probe. The public window runner exposes a
+    /// mutable bus to its callback, so it keeps probing at each boundary.
+    central_device_time_cache_enabled: bool,
+    /// Cached presence for the current Machine::advance call. Attachments may
+    /// change between public calls, but not while the in-tree runner holds
+    /// &mut self across all its internal CPU windows.
+    central_device_time_attached_cache: Option<bool>,
     /// Has this machine already told the fidelity census that its device time
     /// is DERIVED from `cpu_hz` rather than read off a modelled µs counter?
     ///
@@ -1364,6 +1380,7 @@ impl<C: Cpu> Machine<C> {
             secondary_defer: None,
             batch_watch_scratch: Vec::new(),
             exact_batch_boundaries: false,
+            exact_wide_interval: None,
             config: SimulationConfig::default(),
             host_clock: Box::new(host_time::StdHostClock::new()),
             step_profile: StepProfile::default(),
@@ -1400,6 +1417,8 @@ impl<C: Cpu> Machine<C> {
             i2c_time_controller_indices,
             last_i2c_time_us: u64::MAX,
             next_i2c_time_cycle: 0,
+            central_device_time_cache_enabled: false,
+            central_device_time_attached_cache: None,
             derived_device_time_noted: false,
             unpowered_rail_noted: false,
             net_drive_stop_from: u64::MAX,
@@ -1440,6 +1459,9 @@ impl<C: Cpu> Machine<C> {
         // saves. Most CPU steps do not cross a derived microsecond boundary.
         if self.i2c_time_controller_indices.is_empty()
             || (self.i2c_time_source_index.is_none()
+                && self.central_device_time_cache_enabled
+                && self.central_device_time_attached_cache == Some(false))
+            || (self.i2c_time_source_index.is_none()
                 && self.total_cycles < self.next_i2c_time_cycle)
         {
             return;
@@ -1472,11 +1494,23 @@ impl<C: Cpu> Machine<C> {
                 // No attached device needs a clock: skip the divide and the
                 // controller fan-out. Re-scanned at the next µs boundary, so a
                 // device attached later is picked up without re-construction.
-                if !self
-                    .i2c_time_controller_indices
-                    .iter()
-                    .any(|&idx| self.bus.peripherals[idx].dev.has_attached_time_devices())
-                {
+                let has_attached_time_devices = if self.central_device_time_cache_enabled {
+                    match self.central_device_time_attached_cache {
+                        Some(present) => present,
+                        None => {
+                            let present = self.i2c_time_controller_indices.iter().any(|&idx| {
+                                self.bus.peripherals[idx].dev.has_attached_time_devices()
+                            });
+                            self.central_device_time_attached_cache = Some(present);
+                            present
+                        }
+                    }
+                } else {
+                    self.i2c_time_controller_indices
+                        .iter()
+                        .any(|&idx| self.bus.peripherals[idx].dev.has_attached_time_devices())
+                };
+                if !has_attached_time_devices {
                     return;
                 }
                 // u128 so a long run cannot wrap: `total_cycles * 1_000_000`
@@ -1527,6 +1561,45 @@ impl<C: Cpu> Machine<C> {
     pub fn with_host_clock(mut self, clock: Box<dyn host_time::HostClock + Send>) -> Self {
         self.host_clock = clock;
         self
+    }
+
+    /// Set both execution and bus grids, respecting the system's explicit
+    /// timing cap. Return the effective interval for host reporting.
+    pub fn set_peripheral_tick_interval(&mut self, requested: u32) -> u32 {
+        let effective = self.bus.clamp_peripheral_tick_interval(requested);
+        self.config.peripheral_tick_interval = effective;
+        self.bus.config.peripheral_tick_interval = effective;
+        effective
+    }
+
+    /// Native clients can write public config fields; apply the cap before
+    /// either authoritative execution API plans a CPU or custom-runner window.
+    #[inline]
+    fn enforce_peripheral_tick_cap(&mut self) {
+        if self.bus.max_peripheral_tick_interval.is_some() {
+            self.set_peripheral_tick_interval(self.config.peripheral_tick_interval);
+        }
+    }
+
+    /// Exact windows hold only on a walk-free bus: a boundary tick hands the
+    /// walk the whole interval as elapsed time, whatever the window's real
+    /// length. A model that wakes the walk (`legacy_tick_dynamic`, e.g. a
+    /// timer firmware just started) would then count a full interval per
+    /// device access. Run at interval 1 while the walk is live and return to
+    /// the wide interval once it is deleted again.
+    #[inline]
+    pub(crate) fn sync_exact_window_with_walk(&mut self) {
+        if !self.exact_batch_boundaries {
+            return;
+        }
+        if self.bus.legacy_walk_disabled {
+            if let Some(wide) = self.exact_wide_interval.take() {
+                self.set_peripheral_tick_interval(wide);
+            }
+        } else if self.config.peripheral_tick_interval > 1 {
+            self.exact_wide_interval = Some(self.config.peripheral_tick_interval);
+            self.set_peripheral_tick_interval(1);
+        }
     }
 
     /// The largest `peripheral_tick_interval` THIS MACHINE can run at without
@@ -1832,7 +1905,10 @@ impl<C: Cpu> Machine<C> {
                 }
             }
             let wfi_budget = self.cpu.idle_fast_forward_budget(&self.bus);
-            let timer_poll = !cycle_accurate && self.bus.take_timer_poll_coalesce_eligible();
+            let timer_poll = !cycle_accurate
+                && self
+                    .bus
+                    .take_timer_poll_coalesce_eligible(u64::from(self.cpu.get_pc()));
             let primary_spin = match wfi_budget {
                 Some(budget) if budget > 0 => None,
                 _ if self.cpu.poll_loop_anchor_ready() => {
@@ -2373,6 +2449,7 @@ impl<C: Cpu> Machine<C> {
             0xE000_ED18,
             0xE000_ED1C,
             0xE000_ED20,
+            0xE000_ED88,
         ] {
             let _ = self.bus.write_u32(addr, 0);
         }
@@ -2739,11 +2816,28 @@ impl<C: Cpu> Machine<C> {
             // Phase 2B.3b: a level-triggered peripheral re-arms its own event
             // (same token) while it has active work. We own the idx the
             // scheduler needs, so we do it here.
-            if let Some(delay) = result.reschedule_delay {
-                let deadline = self.sched.now() + delay;
-                self.sched.schedule(deadline, idx as u32, ev.event_token);
-            }
+            //
+            // A level-hold re-arm (`EventResult::level_hold`) parks instead
+            // while the lines it raises already stand in the NVIC. Scheduling
+            // after `apply_event_result` is order-identical: the fan-out
+            // never touches `self.sched`.
+            let reschedule = result.reschedule_delay;
+            let hold_lines = (result.level_hold && reschedule == Some(1)).then(|| {
+                let mut lines = result.explicit_irqs.clone();
+                if result.raise_own_irq {
+                    lines.extend(self.bus.peripherals[idx].irq);
+                }
+                lines
+            });
             self.apply_event_result(idx, result);
+            if let Some(delay) = reschedule {
+                let parked = hold_lines
+                    .is_some_and(|lines| self.bus.park_level_event(idx, ev.event_token, &lines));
+                if !parked {
+                    let deadline = self.sched.now() + delay;
+                    self.sched.schedule(deadline, idx as u32, ev.event_token);
+                }
+            }
         }
         // `drain(..)` above emptied it but kept its capacity; restore for reuse.
         self.due_events_scratch = due;

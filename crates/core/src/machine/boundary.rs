@@ -621,8 +621,14 @@ impl<C: Cpu> Machine<C> {
         mode: ExecutionMode,
         batch_start: u64,
         progress: CoreProgress,
+        run_window_active: bool,
     ) -> SimResult<()> {
-        self.commit_advance_boundary_with::<super::plan::Ordinary>(mode, batch_start, progress)
+        self.commit_advance_boundary_with::<super::plan::Ordinary>(
+            mode,
+            batch_start,
+            progress,
+            run_window_active,
+        )
     }
 
     #[inline(always)]
@@ -631,6 +637,7 @@ impl<C: Cpu> Machine<C> {
         mode: ExecutionMode,
         _batch_start: u64,
         progress: CoreProgress,
+        _run_window_active: bool,
     ) -> SimResult<()> {
         let internally_committed_per_cycle_batch =
             mode == ExecutionMode::RunBatch && progress.internally_committed_cycles;
@@ -647,6 +654,9 @@ impl<C: Cpu> Machine<C> {
         }
 
         let logic_boundary = self.total_cycles;
+        // A device access in this window may have woken the walk; its first
+        // tick must already see one cycle, not the wide interval.
+        self.sync_exact_window_with_walk();
         let tick_interval = u64::from(self.config.peripheral_tick_interval.max(1));
         if self
             .bus
@@ -712,7 +722,16 @@ impl<C: Cpu> Machine<C> {
         #[cfg(feature = "event-scheduler")]
         {
             self.bus.set_current_cycle(self.total_cycles);
-            self.drain_scheduler_events();
+            let scheduler_drain_needed = _run_window_active
+                || !self.scheduler_bootstrapped
+                || !self.bus.pending_schedule.is_empty()
+                || self
+                    .sched
+                    .next_event_deadline()
+                    .is_some_and(|deadline| deadline <= self.total_cycles);
+            if scheduler_drain_needed {
+                self.drain_scheduler_events();
+            }
         }
 
         // Central I²C data-ready time drive (Option A): advance every attached

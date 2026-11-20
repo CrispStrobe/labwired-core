@@ -154,6 +154,7 @@ const CHIPS: &[ChipEntry] = &[
 
 fn dummy_manifest(path: &str) -> labwired_config::SystemManifest {
     labwired_config::SystemManifest {
+        max_peripheral_tick_interval: None,
         parts: Vec::new(),
         walk_deleted: Some(false),
         schema_version: "1.0".to_string(),
@@ -478,6 +479,7 @@ fn measure_chip(name: &str, yaml: &str, svd: &str) -> (usize, usize, usize, usiz
         | Arch::Pic16
         | Arch::Rx
         | Arch::Mips
+        | Arch::Msp430
         | Arch::Aarch64
         | Arch::Unknown) => {
             panic!(
