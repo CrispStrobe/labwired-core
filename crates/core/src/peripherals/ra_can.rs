@@ -509,11 +509,6 @@ impl Peripheral for RaCan {
     fn tick(&mut self) -> PeripheralTickResult {
         PeripheralTickResult::default()
     }
-    // All mailbox service is synchronous with MMIO writes; ticking has no
-    // state, interrupt, DMA or event effect in any controller mode.
-    fn needs_legacy_walk(&self) -> bool {
-        false
-    }
     fn on_node_reset(&mut self) {
         let (sent, tx, rx) = (
             std::mem::take(&mut self.sent),

@@ -489,7 +489,13 @@ impl Systimer {
             return None;
         }
         let elapsed = update_cycle.checked_sub(self.last_tick)?;
-        let ticks = self.cpu_cycle_accum.checked_add(elapsed)? / self.cpu_per_systimer();
+        let (num, den) = self.tick_ratio();
+        // The carry is in numerator units, including non-integral CPU/timer
+        // ratios. Refuse overflow instead of claiming a projected UPDATE.
+        let ticks = self
+            .cpu_cycle_accum
+            .checked_add(elapsed.checked_mul(num)?)?
+            / den;
         Some(if self.unit0_running() {
             self.unit0.counter.wrapping_add(ticks)
         } else {
@@ -1314,6 +1320,65 @@ mod tests {
         assert_eq!(s.unit0.counter, 16_002);
         s.tick();
         assert_eq!(s.unit0.counter, 16_003, "the predicted cycle reaches it");
+    }
+
+    #[test]
+    fn poll_projection_matches_real_update_with_fractional_carry() {
+        for hz in [160_000_000, 120_000_000, 80_000_000, 8_000_000] {
+            let clock = CycleClock::default();
+            let mut projected = Systimer::new_with_source(hz, 37);
+            let mut ordinary = Systimer::new_with_source(hz, 37);
+            projected.attach_cycle_clock(clock.clone());
+            ordinary.attach_cycle_clock(clock.clone());
+            projected.tick_elapsed(14);
+            ordinary.tick_elapsed(14);
+            clock.publish(14);
+            let before = (projected.unit0.counter, projected.cpu_cycle_accum);
+            ordinary.tick_elapsed(1);
+            ordinary.write_word(regs::UNIT0_OP, OP_UPDATE_BIT);
+            assert_eq!(
+                projected.poll_unit0_snapshot_at(14, 15),
+                Some(ordinary.unit0.snapshot),
+                "{hz}"
+            );
+            assert_eq!(
+                (projected.unit0.counter, projected.cpu_cycle_accum),
+                before,
+                "projection must not mutate {hz}"
+            );
+            assert_eq!(
+                projected.commit_poll_unit0_snapshot(14, 15),
+                Some(ordinary.unit0.snapshot as u32),
+                "{hz}"
+            );
+            assert_eq!(projected.unit0.counter, ordinary.unit0.counter, "{hz}");
+            assert_eq!(projected.cpu_cycle_accum, ordinary.cpu_cycle_accum, "{hz}");
+            assert_eq!(projected.last_tick, ordinary.last_tick, "{hz}");
+            assert!(projected.value_valid[0]);
+        }
+    }
+
+    #[test]
+    fn poll_projection_overflow_refuses_without_mutating() {
+        let mut timer = Systimer::new_with_source(120_000_000, 37);
+        timer.attach_cycle_clock(CycleClock::default());
+        let before = (
+            timer.unit0.counter,
+            timer.unit0.snapshot,
+            timer.cpu_cycle_accum,
+            timer.last_tick,
+        );
+        assert_eq!(timer.poll_unit0_snapshot_at(0, u64::MAX), None);
+        assert_eq!(timer.commit_poll_unit0_snapshot(0, u64::MAX), None);
+        assert_eq!(
+            (
+                timer.unit0.counter,
+                timer.unit0.snapshot,
+                timer.cpu_cycle_accum,
+                timer.last_tick
+            ),
+            before
+        );
     }
 
     #[test]
