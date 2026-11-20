@@ -743,7 +743,7 @@ fn fleet() -> Vec<String> {
 fn ram_base(chip: &str) -> u64 {
     match chip {
         "esp32c3" => 0x3FC8_0000,
-        "esp32c6" | "esp32c6fh4" => 0x4080_0000,
+        "esp32c5" | "esp32c6" | "esp32c6fh4" => 0x4080_0000,
         "esp32"
         | "esp32s3"
         | "esp32s3-zero"
@@ -1131,7 +1131,13 @@ fn measure_kind(chip: &str, kind: BusKind) -> KindResult {
     // Prefer instances that already own a PadLines cell, then keep yaml order.
     instances.sort_by_key(|i| (!i.has_wire_cell, i.name.clone()));
 
-    let family = family_of(chip);
+    // C5's I2C model shares the C3 command-list engine. Its other buses
+    // retain their own classification and existing visibility requirements.
+    let family = if chip == "esp32c5" && kind == BusKind::I2c {
+        Family::Esp32c3
+    } else {
+        family_of(chip)
+    };
     let mut last_fail: Option<KindResult> = None;
     for inst in &instances {
         let mut machine = machine_for(chip);
@@ -1857,6 +1863,26 @@ fn drive_i2c(
 
     enable_clock(machine, &inst.name);
     let _ = machine.bus.attach_i2c_slave(&inst.name, Box::new(I2cSink));
+
+    if chip == "esp32c5" {
+        // Same GPIO8 SDA / GPIO9 SCL route as the supplied BME280 system.
+        // C5 input selectors 46/47 use bit8 and its own shifted matrix map.
+        let gpio = 0x6009_1000;
+        for (pin, signal) in [(8, 47), (9, 46)] {
+            machine
+                .bus
+                .write_u32(gpio + 0xAD4 + pin * 4, signal | (1 << 10))
+                .unwrap();
+            machine
+                .bus
+                .write_u32(gpio + 0x2D4 + u64::from(signal) * 4, pin as u32 | (1 << 8))
+                .unwrap();
+        }
+        machine
+            .bus
+            .write_u32(gpio + 0x38, (1 << 8) | (1 << 9))
+            .unwrap();
+    }
 
     match family {
         Family::Stm32V2 | Family::Stm32F1 | Family::Stm32H5 => {

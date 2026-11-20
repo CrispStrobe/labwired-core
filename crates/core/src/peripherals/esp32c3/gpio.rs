@@ -435,6 +435,9 @@ impl Esp32c3Gpio {
             return FUNC_OUT_SEL + (word - 0xAD4) + byte;
         }
         let canonical = match word {
+            // C3's enable bank has moved on C5/C61. These unmodelled
+            // addresses must not remain aliases for the old C3 registers.
+            0x20 | 0x24 | 0x28 => return (u64::MAX & !3) | byte,
             0x34 => ENABLE,
             0x38 => ENABLE_W1TS,
             0x3C => ENABLE_W1TC,
@@ -1253,10 +1256,10 @@ impl Peripheral for Esp32c3Gpio {
     }
 
     fn write_u16(&mut self, offset: u64, value: u16) -> SimResult<()> {
-        let offset = self.normalize_register_offset(offset);
-        if offset & 1 == 0 {
-            let word_off = offset & !3;
-            let shift = (offset & 3) * 8;
+        let canonical = self.normalize_register_offset(offset);
+        if canonical & 1 == 0 {
+            let word_off = canonical & !3;
+            let shift = (canonical & 3) * 8;
             if matches!(
                 word_off,
                 OUT_W1TS | OUT_W1TC | ENABLE_W1TS | ENABLE_W1TC | STATUS_W1TS | STATUS_W1TC
@@ -1274,9 +1277,11 @@ impl Peripheral for Esp32c3Gpio {
     }
 
     fn write_u32(&mut self, offset: u64, value: u32) -> SimResult<()> {
-        let offset = self.normalize_register_offset(offset);
-        if offset & 3 == 0 {
-            self.mutate_pads(|g| g.with_own_drive_edges(offset, |g| g.write_word(offset, value)));
+        let canonical = self.normalize_register_offset(offset);
+        if canonical & 3 == 0 {
+            self.mutate_pads(|g| {
+                g.with_own_drive_edges(canonical, |g| g.write_word(canonical, value))
+            });
             Ok(())
         } else {
             for i in 0..4 {
@@ -1528,6 +1533,12 @@ mod tests {
 
         assert_eq!(gpio.pin_count(), 29);
         gpio.write_u32(ENABLE_W1TS, GPIO27).unwrap();
+        assert_eq!(
+            gpio.enable_value(),
+            0,
+            "C3 enable address is not a C5 alias"
+        );
+        gpio.write_u32(0x38, GPIO27).unwrap(); // C5 GPIO_ENABLE_W1TS
         gpio.write_u32(C5_GPIO27_OUT_SEL, SIG_GPIO_OUT_C5 | (1 << 10))
             .unwrap();
         gpio.write_u32(OUT_W1TS, GPIO27).unwrap();
