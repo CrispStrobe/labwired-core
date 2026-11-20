@@ -852,6 +852,14 @@ pub struct Efr32s2Gpio {
     /// WIREDAND*PULLUP* pins: pulled up while released.
     #[serde(skip)]
     cached_and_up: u32,
+    /// Mode/DOUT-derived resolution masks. External levels remain live on
+    /// every DIN read; only these write-derived terms are retained here.
+    #[serde(skip)]
+    cached_driven: u32,
+    #[serde(skip)]
+    cached_pulled: u32,
+    #[serde(skip)]
+    cached_up: u32,
     /// Pins the outside world is holding; the pull applies only where this
     /// bit is clear. Not a register.
     #[serde(skip)]
@@ -874,6 +882,9 @@ impl Default for Efr32s2Gpio {
             cached_pull: 0,
             cached_or_down: 0,
             cached_and_up: 0,
+            cached_driven: 0,
+            cached_pulled: 0,
+            cached_up: 0,
             external: 0,
         }
     }
@@ -923,24 +934,29 @@ impl Efr32s2Gpio {
         self.cached_pull = self.mask_where(|m| matches!(m, 2 | 3));
         self.cached_or_down = self.mask_where(|m| m == 7);
         self.cached_and_up = self.mask_where(|m| matches!(m, 10 | 11 | 14 | 15));
+        self.recompute_level_masks();
+    }
+
+    fn recompute_level_masks(&mut self) {
+        self.cached_driven = self.cached_push_pull
+            | (self.cached_wired_or & self.dout)
+            | (self.cached_wired_and & !self.dout);
+        self.cached_pulled =
+            (self.cached_pull | self.cached_or_down | self.cached_and_up) & !self.cached_driven;
+        self.cached_up = (self.cached_pull & self.dout) | self.cached_and_up;
     }
 
     /// Mask of pins whose output stage drives the pad right now: push-pull
     /// always, WIREDOR only a 1, WIREDAND only a 0.
     fn driven_mask(&self) -> u32 {
-        self.cached_push_pull
-            | (self.cached_wired_or & self.dout)
-            | (self.cached_wired_and & !self.dout)
+        self.cached_driven
     }
 
     /// Undriven pins sitting on a pull, and the subset pulled up: INPUTPULL*
     /// on the rail DOUT picks, a released WIREDORPULLDOWN down, a released
     /// WIREDAND*PULLUP* up.
     fn pull_masks(&self) -> (u32, u32) {
-        let pulled =
-            (self.cached_pull | self.cached_or_down | self.cached_and_up) & !self.driven_mask();
-        let up = (self.cached_pull & self.dout) | self.cached_and_up;
-        (pulled, up)
+        (self.cached_pulled, self.cached_up)
     }
 
     /// The pull rail `pin` sits on when nothing drives it, if any.
@@ -991,7 +1007,10 @@ impl Efr32s2Gpio {
             // bonded on this package. DIN is read-only for firmware — like
             // silicon, a store to it is ignored; external input arrives via
             // set_external_input.
-            0x10 => self.dout = value & self.pin_mask(),
+            0x10 => {
+                self.dout = value & self.pin_mask();
+                self.recompute_level_masks();
+            }
             _ => {
                 crate::census_reg!("gpio:Efr32s2Gpio", offset, "write");
             }
@@ -3362,10 +3381,17 @@ impl GpioPort {
     /// per-pin latch GPIOTE writes (`NRF52_GPIO_PAD_LATCH`). PIN_CNF.INPUT =
     /// Disconnect is otherwise not modelled (IN still reads OUT there), so
     /// this changes nothing for those pins.
+    #[inline(always)]
     fn nrf52_in_with_claims(&self, g: &Nrf52Gpio, value: u32) -> u32 {
-        if self.pad_routes.is_empty() || self.pad_claims.is_none() {
+        if g.dir == 0 || self.pad_routes.is_empty() || self.pad_claims.is_none() {
             return value;
         }
+        self.nrf52_claimed_output_levels(g, value)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn nrf52_claimed_output_levels(&self, g: &Nrf52Gpio, value: u32) -> u32 {
         let mut value = value;
         let mut candidates = g.dir & g.pin_mask();
         while candidates != 0 {
