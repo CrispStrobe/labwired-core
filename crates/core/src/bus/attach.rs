@@ -4598,6 +4598,7 @@ impl SystemBus {
             .map(|(i, _)| i)
             .collect();
         for idx in indices {
+            released |= self.peripherals[idx].dev.take_gpio_cs_release();
             // Levels first (immutable borrow of bus), then mutate devices.
             let levels: Vec<Option<bool>> = {
                 let Some(devs) = self.peripherals[idx].dev.spi_attached_devices() else {

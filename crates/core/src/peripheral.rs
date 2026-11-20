@@ -1852,6 +1852,13 @@ pub trait Peripheral: std::fmt::Debug + Send {
     /// time or move bytes.
     fn sync_gpio_chip_selects(&mut self, _bus: &dyn Bus) {}
 
+    /// Take a GPIO CS-release notification already delivered by the bus.
+    /// CPU byte bridges use this to discard an incomplete software byte when
+    /// the GPIO write hook delivered the edge before their own synchronization.
+    fn take_gpio_cs_release(&mut self) -> bool {
+        false
+    }
+
     /// Hand this peripheral the bus's shared [`CycleClock`] so `&self` reads
     /// can lazily sync `Cell`-held counter state to the published "now"
     /// (batch-boundary freshness — exact at batch boundaries, < one

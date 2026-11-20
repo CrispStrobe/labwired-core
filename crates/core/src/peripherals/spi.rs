@@ -1863,6 +1863,10 @@ pub struct Spi {
     /// (`bus/spi_cs.rs`).
     #[serde(skip)]
     stm32_cs: Vec<Option<bool>>,
+    /// A GPIO write already delivered CS release to a parked device. Retain
+    /// the notification until its CPU-owned byte bridge observes the edge.
+    #[serde(skip)]
+    gpio_cs_release_pending: bool,
 
     // ── World `gpio_net` mode (see `spi_net`) ───────────────────────────────
     /// Slave shift state between net edges.
@@ -2080,6 +2084,7 @@ impl Spi {
                 device.cs_select();
             } else if was_selected && !selected {
                 device.cs_release();
+                self.gpio_cs_release_pending = true;
             }
             self.stm32_cs[index] = next;
         }
@@ -4199,6 +4204,10 @@ impl crate::Peripheral for Spi {
 
     fn sync_gpio_chip_selects(&mut self, bus: &dyn Bus) {
         self.sync_stm32_gpio_cs(bus);
+    }
+
+    fn take_gpio_cs_release(&mut self) -> bool {
+        std::mem::take(&mut self.gpio_cs_release_pending)
     }
 
     /// This controller hosts off-chip SPI devices, so the machine's central

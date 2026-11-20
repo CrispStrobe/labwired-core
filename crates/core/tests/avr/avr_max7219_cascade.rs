@@ -23,6 +23,7 @@ use std::path::PathBuf;
 
 const DDRB: u16 = 0x24;
 const PORTB: u16 = 0x25;
+const PIND: u16 = 0x29;
 const DDRD: u16 = 0x2A;
 const PORTD: u16 = 0x2B;
 const SPCR: u16 = 0x4C;
@@ -251,29 +252,32 @@ fn avr_guest_software_spi_clocks_with_load_high() {
 
 #[test]
 fn avr_guest_cross_port_load_release_resets_an_incomplete_software_byte() {
-    let (mut cpu, mut bus) = rig("PD2", false);
-    let mut init = Guest::default();
-    init.write(DDRB, DIN | CLK);
-    init.write(DDRD, LOAD);
-    init.write(PORTD, LOAD);
-    init.write(PORTD, 0);
-    init.bits(&[0x0C, 1], false);
-    init.write(PORTD, LOAD);
-    init.run(&mut cpu, &mut bus);
+    for load_address in [PORTD, PIND] {
+        let (mut cpu, mut bus) = rig("PD2", false);
+        let mut init = Guest::default();
+        init.write(DDRB, DIN | CLK);
+        init.write(DDRD, LOAD);
+        init.write(PORTD, LOAD);
+        init.write(PORTD, 0);
+        init.bits(&[0x0C, 1], false);
+        init.write(PORTD, LOAD);
+        init.run(&mut cpu, &mut bus);
 
-    let mut guest = Guest::default();
-    guest.write(PORTD, 0);
-    for _ in 0..3 {
-        guest.write(PORTB, DIN);
-        guest.write(PORTB, DIN | CLK);
-        guest.write(PORTB, DIN);
+        let mut guest = Guest::default();
+        guest.write(PORTD, 0);
+        for _ in 0..3 {
+            guest.write(PORTB, DIN);
+            guest.write(PORTB, DIN | CLK);
+            guest.write(PORTB, DIN);
+        }
+        // Both a PORT write and a PIN write-one-to-toggle release LOAD.
+        guest.write(load_address, LOAD); // partial byte must not survive
+        guest.write(PORTD, 0);
+        guest.bits(&[0x01, 0xA5], false);
+        guest.write(load_address, LOAD);
+        guest.run(&mut cpu, &mut bus);
+        assert_row(&bus, "near", 0, 0xA5);
     }
-    guest.write(PORTD, LOAD); // partial byte must not survive this edge
-    guest.write(PORTD, 0);
-    guest.bits(&[0x01, 0xA5], false);
-    guest.write(PORTD, LOAD);
-    guest.run(&mut cpu, &mut bus);
-    assert_row(&bus, "near", 0, 0xA5);
 }
 
 #[test]

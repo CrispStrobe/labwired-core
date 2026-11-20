@@ -2179,16 +2179,7 @@ impl Avr {
                 Ok(())
             }
             a if self.is_pin_reg(a) => {
-                // PINx is write-one-to-toggle on classic megaAVR. The CPU
-                // owns the port latch, so update its PORT shadow and publish
-                // the resulting latch through the DDR/PORT window; writing
-                // the PIN input window would change the bus-side input level
-                // instead of toggling the output.
-                let port_addr = a + 2;
-                let port_index = usize::from(port_addr - 0x20);
-                self.io[port_index] ^= value;
-                let pad = self.port_pad_value(port_addr, self.io[port_index]);
-                let _mirror = bus.write_u8(AVR_IO_MIRROR_BASE + u64::from(port_addr), pad);
+                self.write_pin_toggle(a, value, bus);
                 Ok(())
             }
             a if self.wdt.handles(a) => {
@@ -2197,10 +2188,6 @@ impl Avr {
             }
             a if self.eeprom.handles(a) => {
                 self.cycles += self.eeprom.write(a, value, self.cycles);
-                Ok(())
-            }
-            a if self.is_pin_reg(a) => {
-                self.write_pin_toggle(a, value, bus);
                 Ok(())
             }
             0x0020..=0x00FF => {
