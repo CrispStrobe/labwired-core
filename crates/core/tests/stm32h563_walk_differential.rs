@@ -86,17 +86,30 @@ fn stm32h563_zephyr_boot_walk_vs_scheduler_is_byte_identical() {
     );
 }
 
-/// NUCLEO-H533RE USART2 + LD2 smoke on the H533 profile, which shares the
-/// H5 RCC/GPIO/USART models. This loads `configs/chips/stm32h533re.yaml` via
-/// its board system. Keep it in the existing H5 differential target so it
-/// inherits the target's required feature and PR scheduler lane.
+/// NUCLEO-H533RE BME280 + USART2 + LD2 smoke on the H533 profile. Pair the
+/// committed I2C smoke guest with its sensor-equipped system and require the
+/// real CHIP_ID response, while retaining every walk/scheduler snapshot check.
 #[test]
 fn stm32h533re_boot_walk_vs_scheduler_is_byte_identical() {
     harness::assert_walk_free_boot_identical(
         "stm32h533re",
+        "nucleo-h533re-bme280",
+        "stm32h533re-smoke.elf",
+        b"NUCLEO_H533RE_BME280_OK ID=0x60 I2C1=PB6/PB7\n",
+        800_000,
+        50_000,
+    );
+}
+
+/// The bare board must execute the missing-sensor error path identically;
+/// it cannot satisfy the sensor-equipped positive control above.
+#[test]
+fn stm32h533re_missing_sensor_walk_vs_scheduler_is_byte_identical() {
+    harness::assert_walk_free_boot_identical(
+        "stm32h533re",
         "nucleo-h533re",
         "stm32h533re-smoke.elf",
-        b"NUCLEO_H533RE_OK",
+        b"NUCLEO_H533RE_BME280_I2C_ERROR\n",
         800_000,
         50_000,
     );
