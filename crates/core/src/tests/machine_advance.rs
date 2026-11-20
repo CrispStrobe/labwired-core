@@ -942,6 +942,79 @@ fn debug_run_report_preserves_watch_exit_priority_and_complete_fuel() {
 }
 
 #[test]
+fn single_stop_preserves_report_verdict_state_and_live_accounting() {
+    const BASE: u64 = 0x5000_0000;
+    for (exit, fail, halted, idle) in [
+        (None, false, false, None),
+        (Some(0), false, false, None),
+        (Some(7), false, false, None),
+        (None, true, false, None),
+        (None, false, true, None),
+        (None, false, true, Some(5)),
+    ] {
+        let make = || {
+            let mut bus = SystemBus::new();
+            bus.add_peripheral(
+                "simctl",
+                BASE,
+                crate::peripherals::simctl::WINDOW,
+                None,
+                Box::new(crate::peripherals::simctl::SimCtl::new()),
+            );
+            Machine::new(
+                CountingCpu {
+                    gpio_write_at_step: exit.map(|code| (1, BASE, code)),
+                    fail_step: fail,
+                    halted,
+                    idle_budget: idle,
+                    ..Default::default()
+                },
+                bus,
+            )
+        };
+        let mut report_machine = make();
+        let mut stop_machine = make();
+        let report = report_machine.advance(AdvanceRequest::single());
+        let stop = stop_machine.advance_single_stop();
+        match (report, stop) {
+            (Ok(report), Ok(stop)) => {
+                assert_eq!(report.stop, stop);
+                if let Some(code) = exit {
+                    assert_eq!(stop, AdvanceStop::FirmwareExit { code });
+                }
+            }
+            (Err(report), Err(stop)) => assert_eq!(report.to_string(), stop.to_string()),
+            pair => panic!("single output paths disagree: {pair:?}"),
+        }
+        assert_eq!(report_machine.cpu.pc, stop_machine.cpu.pc);
+        assert_eq!(report_machine.cpu.steps, stop_machine.cpu.steps);
+        assert_eq!(report_machine.total_cycles, stop_machine.total_cycles);
+        assert_eq!(
+            report_machine.bus.current_cycle,
+            stop_machine.bus.current_cycle
+        );
+        assert_eq!(report_machine.sched.now(), stop_machine.sched.now());
+        assert_eq!(report_machine.step_profile(), stop_machine.step_profile());
+    }
+}
+
+#[test]
+fn single_stop_keeps_checked_profile_overflow_and_atomic_counter_updates() {
+    let mut machine = Machine::new(CountingCpu::default(), SystemBus::new());
+    machine.step_profile.cpu_instructions = u64::MAX;
+    machine.step_profile.instruction_work = Some(crate::InstructionWork {
+        dispatched: u64::MAX,
+        represented: 0,
+    });
+    let before = machine.step_profile();
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        machine.advance_single_stop()
+    }))
+    .is_err());
+    assert_eq!(machine.step_profile(), before);
+}
+
+#[test]
 fn ordinary_dispatch_accounting_matches_actual_cpu_progress() {
     let mut machine = Machine::new(CountingCpu::default(), SystemBus::new());
     machine.config.peripheral_tick_interval = 64;

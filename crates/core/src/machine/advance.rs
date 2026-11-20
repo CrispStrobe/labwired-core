@@ -73,6 +73,18 @@ impl AdvanceOutput for () {
     fn from_report(_report: AdvanceReport) {}
 }
 
+impl AdvanceOutput for AdvanceStop {
+    const COLLECT_REPORT: bool = false;
+
+    fn from_state(_state: &AdvanceState, stop: AdvanceStop, _elapsed: u64) -> Self {
+        stop
+    }
+
+    fn from_report(report: AdvanceReport) -> Self {
+        report.stop
+    }
+}
+
 impl AdvanceState {
     fn record_dispatch<O: AdvanceOutput>(&mut self, primary: u32, secondary: u32) {
         let primary = u64::from(primary);
@@ -251,6 +263,14 @@ impl<C: Cpu> Machine<C> {
     // its entire lifecycle into each frontend's surrounding dispatch loop.
     #[inline(never)]
     pub(crate) fn advance_single_without_report(&mut self) -> SimResult<()> {
+        self.advance_output(AdvanceRequest::single())
+    }
+
+    /// Execute a fixed single request and return its authoritative stop reason.
+    /// The shared lifecycle retains complete live StepProfile accounting;
+    /// callers that need per-request counters use [`Self::advance`].
+    #[inline(never)]
+    pub fn advance_single_stop(&mut self) -> SimResult<AdvanceStop> {
         self.advance_output(AdvanceRequest::single())
     }
 

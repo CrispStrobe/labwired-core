@@ -2177,11 +2177,11 @@ fn run_arm_step_loop(
         if dbg_trace != 0 && i % dbg_trace == 0 {
             crate::log_ts::eventln!("[arm-trace] step {i} pc={:#010x}", machine.cpu.get_pc());
         }
-        // `advance` rather than `step`: `step` discards the AdvanceReport, and
-        // a firmware-authored verdict appears nowhere else.
-        match machine.advance(labwired_core::AdvanceRequest::single()) {
-            Ok(report) => {
-                if let labwired_core::AdvanceStop::FirmwareExit { code } = report.stop {
+        // Keep the firmware-authored verdict from the authoritative kernel.
+        // This loop consumes its stop reason; live accounting stays on Machine.
+        match machine.advance_single_stop() {
+            Ok(stop) => {
+                if let labwired_core::AdvanceStop::FirmwareExit { code } = stop {
                     crate::log_ts::eventln!(
                         "[firmware] {} (step {i})",
                         crate::firmware_exit_message(code)
