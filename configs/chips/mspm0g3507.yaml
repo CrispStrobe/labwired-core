@@ -22,6 +22,17 @@ ram:
   base: 0x20200000
   size: "32KB"
 peripherals:
+  - id: "systick"
+    type: "systick"
+    base_address: 0xE000E010
+    size: "16B"
+  # Address declaration only, for the authoritative pad locations below.
+  # GPIO register behavior and IOMUX routing remain unmodelled.
+  # TI SDK mspm0g350x.h: GPIOA_BASE = 0x400A0000.
+  - id: "gpioa"
+    type: "stub"
+    base_address: 0x400A0000
+    size: "8KB"
   # MSPM0 UART0 (TRM / SDK): STAT@0x1108, CTL0@0x1100, TXDATA@0x1120.
   # The custom UART model captures TXDATA only when CTL0.EN and CTL0.TXE are
   # both set. TXFE is reported set with TXFF clear; FIFO timing and pin routing
@@ -38,3 +49,10 @@ peripherals:
       status_idle: 0x40
       enable_offset: 0x1100
       enable_mask: 0x11
+
+# LP-MSPM0G3507 user's guide, SLAU873E: UART0 backchannel PA10/PA11.
+# https://www.ti.com/lit/ug/slau873e/slau873e.pdf
+# This records pad locations; the declared GPIO stub exposes no pad driver.
+pins:
+  PA10: { gpio: "gpioa", bit: 10 }
+  PA11: { gpio: "gpioa", bit: 11 }

@@ -22,6 +22,10 @@ ram:
   size: "272KiB"
 
 peripherals:
+  - id: "systick"
+    type: "systick"
+    base_address: 0xE000E010
+    size: "16B"
   - id: "rcc"
     type: "rcc"
     base_address: 0x44020C00
