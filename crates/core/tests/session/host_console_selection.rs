@@ -280,6 +280,8 @@ fn s3_descriptor_bus_accepts_native_uart_names_for_rx() {
     let native_rx = bus.attach_uart_rx_source_named("uart0_s3").unwrap();
     assert!(Arc::ptr_eq(&declared_rx, &native_rx));
     assert_eq!(bus.deliver_uart_rx_named("uart0_s3", b"RX"), Ok(2));
+    assert!(declared_rx.lock().unwrap().is_empty(), "receiver disabled");
+    service_generic_uart_receiver(&mut bus, "uart0");
     assert_eq!(
         declared_rx
             .lock()
@@ -290,6 +292,17 @@ fn s3_descriptor_bus_accepts_native_uart_names_for_rx() {
         b"RX"
     );
     assert!(bus.deliver_uart_rx_named("uart1_s3", b"X").is_err());
+}
+
+// The generic descriptor UART uses the STM32F1 register layout. Declared
+// delivery now retains its bytes on the wire until UE+RE and a receive tick;
+// name-routing controls must exercise that receiver rather than bypass it.
+fn service_generic_uart_receiver(bus: &mut SystemBus, name: &str) {
+    use labwired_core::Bus;
+    let index = bus.find_peripheral_index_by_name(name).unwrap();
+    let base = bus.peripherals[index].base;
+    bus.write_u32(base + 0x0c, (1 << 13) | (1 << 2)).unwrap();
+    bus.peripherals[index].dev.tick();
 }
 
 /// Aliases are a fallback only. A bus with two explicitly registered names
@@ -306,12 +319,19 @@ fn an_exact_uart_name_wins_over_the_alias() {
     let native = bus.attach_uart_rx_source_named("uart0_s3").unwrap();
     assert!(!Arc::ptr_eq(&declared, &native));
     bus.deliver_uart_rx_named("uart0", b"D").unwrap();
+    assert!(declared.lock().unwrap().is_empty(), "receiver disabled");
+    // Service the other instance first: a mistaken alias fallback would
+    // deliver D there and fail this isolation check.
+    service_generic_uart_receiver(&mut bus, "uart0_s3");
+    assert!(native.lock().unwrap().is_empty());
+    service_generic_uart_receiver(&mut bus, "uart0");
     assert_eq!(
         declared.lock().unwrap().iter().copied().collect::<Vec<_>>(),
         b"D"
     );
     assert!(native.lock().unwrap().is_empty());
     bus.deliver_uart_rx_named("uart0_s3", b"N").unwrap();
+    service_generic_uart_receiver(&mut bus, "uart0_s3");
     assert_eq!(
         native.lock().unwrap().iter().copied().collect::<Vec<_>>(),
         b"N"
