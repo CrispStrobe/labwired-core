@@ -437,7 +437,7 @@ impl Esp32c3Gpio {
         let canonical = match word {
             // C3's enable bank has moved on C5/C61. These unmodelled
             // addresses must not remain aliases for the old C3 registers.
-            0x20 | 0x24 | 0x28 => return (u64::MAX & !3) | byte,
+            0x20 | 0x24 | 0x28 => return !3 | byte,
             0x34 => ENABLE,
             0x38 => ENABLE_W1TS,
             0x3C => ENABLE_W1TC,

@@ -100,7 +100,7 @@ This page covers the public models. For every chip we model — public and priva
 | stm32g474re | **L1** | ✓ | 23 | — | — | firmware_survival::test_stm32g474_zephyr_survival |
 | stm32g431rb | **L0** | ✓ | 22 | — | — | — |
 | stm32h563 | **L1** | ✓ | 37 | — | — | firmware_survival::test_stm32h563_demo_survival |
-| stm32h533re | **L1** | ✓ | 5 | — | — | stm32h563_walk_differential::stm32h533re_boot_walk_vs_scheduler_is_byte_identical |
+| stm32h533re | **L1** | ✓ | 6 | — | — | stm32h563_walk_differential::stm32h533re_boot_walk_vs_scheduler_is_byte_identical |
 | stm32u575 | **L1** | ✓ | 43 | — | — | firmware_survival::test_stm32u575_zephyr_survival |
 | stm32u545 | **L1** | ✓ | 39 | — | — | firmware_survival::test_stm32u545_blinky_survival |
 | stm32u5a5zj | **L1** | ✓ | 45 | — | — | stm32u5_exec_oracle::u5a5_hash_saes_and_pka_execute_register_level_operations |
@@ -119,13 +119,13 @@ This page covers the public models. For every chip we model — public and priva
 | atmega2561 | **L1** | ✓ | 11 | — | — | avr_atmega2561::atmega2561_boots_and_prints |
 | atmega4809 | **L1** | ✓ | 21 | — | — | avr_nano_every_bme280::nano_every_wire_reads_compensated_bme280_values |
 | atmega32u4 | **L0** | ✓ | 8 | — | — | — |
-| mimxrt1062-teensy41 | **L0** | ✓ | 50 | — | — | — |
+| mimxrt1062-teensy41 | **L0** | ✓ | 49 | — | — | — |
 | atmega1281 | **L1** | ✓ | 11 | — | — | avr_atmega1281_firmware::atmega1281_compiled_firmware_prints_and_drives_pb5 |
 | atsamd21 | **L1** | ✓ | 7 | — | — | firmware_survival::test_atsamd21_nano33_smoke_survival |
 | atsamd51 | **L1** | ✓ | 27 | — | — | firmware_survival::test_atsamd51_metro_m4_smoke_survival |
 | samd51-no-asf-simulation | **L0** | ✓ | 32 | — | — | — |
 | atsamd51-pybadge | **L0** | ✓ | 28 | — | — | — |
-| mspm0g3507 | **L0** | ✓ | 1 | — | — | — |
+| mspm0g3507 | **L0** | ✓ | 3 | — | — | — |
 | ra4m1 | **L1** | ✓ | 34 | — | — | firmware_survival::test_ra4m1_uno_r4_smoke_survival |
 | imxrt1064 | **L1** | ✓ | 6 | — | — | firmware_survival::test_imxrt1064_teensy41_smoke_survival |
 | stm32f746 | **L1** | ✓ | 17 | — | — | firmware_survival::test_stm32f746_discovery_smoke_survival |

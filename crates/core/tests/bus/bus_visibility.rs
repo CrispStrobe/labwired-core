@@ -120,6 +120,16 @@ const EXCLUSIONS: &[(&str, BusKind, &str)] = &[
         "esp32p4 UART0 is a TX FIFO/console model with no PadLines wire cell; \
          bytes are proven by the esp32p4x-c5-function-ev-board smoke",
     ),
+    // ESP32-P4 I2C0 uses the classic ESP32 command-list engine, which owns
+    // no PadLines wire cell. The BME280 ID/raw-temperature transaction is
+    // proven by examples/esp32p4x-c5-function-ev-board/io-smoke.yaml.
+    (
+        "esp32p4",
+        BusKind::I2c,
+        "esp32p4 I2C0 is the classic ESP32 command-list engine with no PadLines \
+         wire cell; the BME280 transaction is proven by the \
+         esp32p4x-c5-function-ev-board io-smoke",
+    ),
     // ESP32-S2: UART0 has no bring-up arm for the S2 family in this harness.
     // Bytes are proven by the esp32s2-devkitc-1-n8r2 board smoke (uart_contains).
     (
@@ -127,6 +137,52 @@ const EXCLUSIONS: &[(&str, BusKind, &str)] = &[
         BusKind::Uart,
         "no ESP32-S2 UART bring-up in this harness; bytes are proven by the \
          esp32s2-devkitc-1-n8r2 board smoke",
+    ),
+    // ESP32-S2 Arduino profile: same UART0 gap as the S2 smoke profile above,
+    // and I2C0 is the classic ESP32 command-list engine with no PadLines wire
+    // cell. Console bytes are proven by tests/esp/esp32s2_arduino_boot.rs and
+    // I2C transactions by tests/esp/esp32s2_arduino_i2c.rs.
+    (
+        "esp32s2-arduino",
+        BusKind::Uart,
+        "no ESP32-S2 UART bring-up in this harness; console bytes are proven \
+         by esp32s2_arduino_boot",
+    ),
+    (
+        "esp32s2-arduino",
+        BusKind::I2c,
+        "esp32s2-arduino I2C0 is the classic ESP32 command-list engine with no \
+         PadLines wire cell; transactions are proven by esp32s2_arduino_i2c",
+    ),
+    // MSPM0G3507: UART0 is a TXDATA capture model (CTL0.EN|TXE gate, constant
+    // FIFO status) with no pin routing. Bytes are proven by
+    // examples/lp-mspm0g3507-launchpad/io-smoke.yaml (uart_contains).
+    (
+        "mspm0g3507",
+        BusKind::Uart,
+        "mspm0g3507 UART0 is a TXDATA capture model with no pin routing; bytes \
+         are proven by the lp-mspm0g3507-launchpad io-smoke",
+    ),
+    // STM32F103x6 low-density parts have no USART3. On F1, USART3 is the
+    // only USART left unbound to a pad (its PB10 TX collides with I2C2_SCL,
+    // see `wire_stm32_uart_pads`), so it was the one instance whose TX line
+    // toggled here. USART1/2 bind PA9/PA2 and stay pad-gated until firmware
+    // selects the alternate-function output in CRL/CRH.
+    (
+        "stm32f103c6",
+        BusKind::Uart,
+        "low-density F103: USART3 is absent (RM0008/DS5936), and USART1/2 TX are \
+         pad-gated on PA9/PA2 until firmware selects the F1 alternate-function \
+         output in CRL/CRH, which this harness does not program; no exact-part \
+         UART byte is asserted (validation/bus_proof)",
+    ),
+    (
+        "stm32f103r6",
+        BusKind::Uart,
+        "low-density F103: USART3 is absent (RM0008/DS5936), and USART1/2 TX are \
+         pad-gated on PA9/PA2 until firmware selects the F1 alternate-function \
+         output in CRL/CRH, which this harness does not program; no exact-part \
+         UART byte is asserted (validation/bus_proof)",
     ),
     // ESP32-C5: the esp32c5_uart model is a UART0 TX FIFO/console only. It
     // publishes no PadLines wire cell, so no TX edge reaches a pad. Bytes are
@@ -743,7 +799,7 @@ fn fleet() -> Vec<String> {
 fn ram_base(chip: &str) -> u64 {
     match chip {
         "esp32c3" => 0x3FC8_0000,
-        "esp32c5" | "esp32c6" | "esp32c6fh4" => 0x4080_0000,
+        "esp32c5" | "esp32c6" | "esp32c6fh4" | "esp32c61" => 0x4080_0000,
         "esp32"
         | "esp32s3"
         | "esp32s3-zero"
@@ -1131,9 +1187,9 @@ fn measure_kind(chip: &str, kind: BusKind) -> KindResult {
     // Prefer instances that already own a PadLines cell, then keep yaml order.
     instances.sort_by_key(|i| (!i.has_wire_cell, i.name.clone()));
 
-    // C5's I2C model shares the C3 command-list engine. Its other buses
-    // retain their own classification and existing visibility requirements.
-    let family = if chip == "esp32c5" && kind == BusKind::I2c {
+    // C5's and C61's I2C models share the C3 command-list engine. Their other
+    // buses retain their own classification and visibility requirements.
+    let family = if matches!(chip, "esp32c5" | "esp32c61") && kind == BusKind::I2c {
         Family::Esp32c3
     } else {
         family_of(chip)
@@ -1864,11 +1920,17 @@ fn drive_i2c(
     enable_clock(machine, &inst.name);
     let _ = machine.bus.attach_i2c_slave(&inst.name, Box::new(I2cSink));
 
-    if chip == "esp32c5" {
-        // Same GPIO8 SDA / GPIO9 SCL route as the supplied BME280 system.
-        // C5 input selectors 46/47 use bit8 and its own shifted matrix map.
+    // Same SDA/SCL routes as the supplied BME280 systems: C5 GPIO8/GPIO9,
+    // C61 GPIO6/GPIO22. Input selectors 46 (SCL) / 47 (SDA) use bit8 and the
+    // chips' shared shifted matrix map.
+    let route = match chip {
+        "esp32c5" => Some((8u64, 9u64)),
+        "esp32c61" => Some((6, 22)),
+        _ => None,
+    };
+    if let Some((sda, scl)) = route {
         let gpio = 0x6009_1000;
-        for (pin, signal) in [(8, 47), (9, 46)] {
+        for (pin, signal) in [(sda, 47), (scl, 46)] {
             machine
                 .bus
                 .write_u32(gpio + 0xAD4 + pin * 4, signal | (1 << 10))
@@ -1880,7 +1942,7 @@ fn drive_i2c(
         }
         machine
             .bus
-            .write_u32(gpio + 0x38, (1 << 8) | (1 << 9))
+            .write_u32(gpio + 0x38, (1 << sda) | (1 << scl))
             .unwrap();
     }
 

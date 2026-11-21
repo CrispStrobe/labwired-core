@@ -86,9 +86,11 @@ fn stm32h563_zephyr_boot_walk_vs_scheduler_is_byte_identical() {
     );
 }
 
-/// NUCLEO-H533RE BME280 + USART2 + LD2 smoke on the H533 profile. Pair the
-/// committed I2C smoke guest with its sensor-equipped system and require the
-/// real CHIP_ID response, while retaining every walk/scheduler snapshot check.
+/// NUCLEO-H533RE BME280 + USART2 + LD2 smoke on the H533 profile, which
+/// shares the H5 RCC/GPIO/USART models. This loads
+/// `configs/chips/stm32h533re.yaml` via its board system. Pair the committed
+/// I2C smoke guest with its sensor-equipped system and require the real
+/// CHIP_ID response, while retaining every walk/scheduler snapshot check.
 #[test]
 fn stm32h533re_boot_walk_vs_scheduler_is_byte_identical() {
     harness::assert_walk_free_boot_identical(

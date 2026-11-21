@@ -23,12 +23,3 @@ peripherals:
     type: "uart"
     base_address: 0x4000C000
     size: "1KB"
-    # Synthetic SR/DR console ABI used by the committed fixture guests.
-    config:
-      profile: "custom"
-      tx_offset: 0x04
-      rx_offset: 0x04
-      status_offset: 0x00
-      status_width: 1
-      status_idle: 0xC0
-      rx_present_set: 0x20
