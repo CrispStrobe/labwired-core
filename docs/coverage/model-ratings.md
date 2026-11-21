@@ -101,7 +101,7 @@ same fields but never their source, chip YAML, binary or build paths.
 | stm32g474re | open | L1 | 23 | 936.3 | 1.5 | ≥1× (CI) | [doc](docs/boards/stm32g474re.md) |
 | stm32g431rb | open | L0 | 22 | 931.9 | 1.6 | ≥1× (CI) | [doc](docs/boards/stm32g431rb.md) |
 | stm32h563 | open | L1 | 37 | 986.5 | 1.8 | ≥1× (CI) | [doc](docs/boards/stm32h563.md) |
-| stm32h533re | open | L1 | 5 | 809.2 | 1.2 | ≥1× (CI) | — |
+| stm32h533re | open | L1 | 6 | 809.2 | 1.2 | ≥1× (CI) | — |
 | stm32u575 | open | L1 | 43 | 986.8 | 1.8 | ≥1× (CI) | [doc](docs/boards/stm32u575.md) |
 | stm32u545 | open | L1 | 39 | 986.8 | 1.8 | ≥1× (CI) | — |
 | stm32u5a5zj | open | L1 | 45 | 984.9 | 1.8 | ≥1× (CI) | [doc](docs/boards/stm32u5a5zj.md) |
@@ -120,13 +120,13 @@ same fields but never their source, chip YAML, binary or build paths.
 | atmega2561 | open | L1 | 11 | — | — | ≥1× (CI) | [doc](docs/boards/atmega2561.md) |
 | atmega4809 | open | L1 | 21 | — | — | ≥1× (CI) | — |
 | atmega32u4 | open | L0 | 8 | 1020.0 | 7.7 | ≥1× (CI) | — |
-| mimxrt1062-teensy41 | open | L0 | 50 | — | — | ≥1× (CI) | — |
+| mimxrt1062-teensy41 | open | L0 | 49 | — | — | ≥1× (CI) | — |
 | atmega1281 | open | L1 | 11 | — | — | ≥1× (CI) | [doc](docs/boards/atmega1281.md) |
 | atsamd21 | open | L1 | 7 | 895.0 | 1.4 | ≥1× (CI) | — |
 | atsamd51 | open | L1 | 27 | 1240.0 | 1.4 | ≥1× (CI) | — |
 | samd51-no-asf-simulation | open | L0 | 32 | 1339.0 | 1.9 | ≥1× (CI) | — |
 | atsamd51-pybadge | open | L0 | 28 | 1251.8 | 1.5 | ≥1× (CI) | — |
-| mspm0g3507 | open | L0 | 1 | — | — | ≥1× (CI) | — |
+| mspm0g3507 | open | L0 | 3 | — | — | ≥1× (CI) | — |
 | ra4m1 | open | L1 | 34 | 895.0 | 1.4 | ≥1× (CI) | — |
 | imxrt1064 | open | L1 | 6 | 895.0 | 1.4 | ≥1× (CI) | [doc](docs/boards/imxrt1064.md) |
 | stm32f746 | open | L1 | 17 | 895.0 | 1.4 | ≥1× (CI) | [doc](docs/boards/stm32f746.md) |
