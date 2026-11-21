@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
     
     
       
@@ -5915,13 +5915,18 @@ rather than guessed.</p>
 <td><code>cpu_hz: 4_000_000</code> (<code>configs/systems/nucleo-l476rg.yaml</code>)</td>
 </tr>
 <tr>
+<td><code>max_peripheral_tick_interval</code></td>
+<td>Optional positive integer cap, in CPU cycles, on the peripheral service grid. Both native and custom-runner advances clamp larger host requests before execution. Omit to preserve existing defaults. Zero, negative, fractional, and out-of-range values are invalid.</td>
+<td><code>max_peripheral_tick_interval: 32</code> (<code>examples/nokia5110-invaders-lab/system.yaml</code>)</td>
+</tr>
+<tr>
 <td><code>memory_overrides</code></td>
 <td>Parsed but <strong>not consulted by the engine today</strong> — region sizes come from the chip descriptor. The field exists so manifests may carry it; do not rely on it.</td>
 <td><code>memory_overrides: {flash: "512KB"}</code></td>
 </tr>
 <tr>
 <td><code>peripherals</code></td>
-<td>Chip-peripheral patches/additions. An entry whose <code>id</code> matches a chip peripheral merges its <code>config</code> keys and overrides <code>base_address</code> (when nonzero; <code>0</code> keeps the chip's), <code>irq</code> and <code>size</code>; an unmatched <code>id</code> adds a new peripheral. <code>id</code>, <code>type</code> and <code>base_address</code> are required on every entry.</td>
+<td>Chip-peripheral patches/additions. An entry whose <code>id</code> matches a chip peripheral merges its <code>config</code> keys and overrides <code>base_address</code> (when nonzero; <code>0</code> keeps the chip's), <code>irq</code> and <code>size</code>; a <code>type</code> that differs from the chip's replaces the model and drops the chip's <code>config</code> and <code>irq</code> (a SAM SERCOM as the SPI or I2C controller a board uses it as); an unmatched <code>id</code> adds a new peripheral. <code>id</code>, <code>type</code> and <code>base_address</code> are required on every entry.</td>
 <td><code>peripherals: [{id: "usart1", type: "uart", base_address: 0, config: {profile: "stm32f1"}}]</code></td>
 </tr>
 <tr>
@@ -6188,6 +6193,11 @@ canonical <code>type:</code>; the table below is rendered from that file by
 <td><code>ens160</code></td>
 <td>I²C</td>
 <td>ScioSense ENS160 MOx multi-gas sensor (TVOC, eCO2, AQI-UBA) over I²C</td>
+</tr>
+<tr>
+<td><code>ft5x06</code></td>
+<td>I²C</td>
+<td>Single-contact FT5x06 I2C touch report model</td>
 </tr>
 <tr>
 <td><code>fxos8700</code></td>

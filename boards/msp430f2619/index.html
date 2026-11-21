@@ -19,11 +19,11 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
     
     
       
-        <title>Validation Report: msp430f2619 - LabWired docs</title>
+        <title>MSP430F2619 onboarding scope - LabWired docs</title>
       
     
     
@@ -58,14 +58,14 @@
     
     <meta property="og:type" content="website">
   <meta property="og:site_name" content="LabWired docs">
-  <meta property="og:title" content="Validation Report: msp430f2619 - LabWired docs">
+  <meta property="og:title" content="MSP430F2619 onboarding scope - LabWired docs">
   <meta property="og:description" content="Run real firmware on a digital twin of the board, in the browser, from an agent, or in CI. Same models. Deterministic results.">
   <meta property="og:url" content="https://docs.labwired.com/boards/msp430f2619/">
   <meta property="og:image" content="https://docs.labwired.com/assets/brand/social-preview.png">
   <meta property="og:image:width" content="1280">
   <meta property="og:image:height" content="640">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Validation Report: msp430f2619 - LabWired docs">
+  <meta name="twitter:title" content="MSP430F2619 onboarding scope - LabWired docs">
   <meta name="twitter:description" content="Run real firmware on a digital twin of the board, in the browser, from an agent, or in CI. Same models. Deterministic results.">
   <meta name="twitter:image" content="https://docs.labwired.com/assets/brand/social-preview.png">
 
@@ -88,7 +88,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#validation-report-msp430f2619" class="md-skip">
+        <a href="#msp430f2619-onboarding-scope" class="md-skip">
           Skip to content
         </a>
       
@@ -124,7 +124,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Validation Report: msp430f2619
+              MSP430F2619 onboarding scope
             
           </span>
         </div>
@@ -4867,10 +4867,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#1-dynamic-simulation-validation" class="md-nav__link">
+  <a href="#cpu" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Dynamic Simulation Validation
+        CPU
       
     </span>
   </a>
@@ -4878,10 +4878,32 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#hardware-coverage-report" class="md-nav__link">
+  <a href="#memory-map" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Hardware Coverage Report
+        Memory map
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#modules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Modules
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#smoke" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Smoke
       
     </span>
   </a>
@@ -4908,55 +4930,157 @@
   
 
 
-<h1 id="validation-report-msp430f2619">Validation Report: msp430f2619</h1>
-<p><strong>Architecture:</strong> MSP430 (16-bit).</p>
-<h2 id="1-dynamic-simulation-validation">1. Dynamic Simulation Validation</h2>
-<p><strong>Status:</strong> ✅ Structural Check Passed (structural-ok)</p>
-<div class="language-json highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="p">{</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">"system_manifest"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span><span class="nt">"chip_descriptor"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span><span class="nt">"flash_base_present"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span><span class="nt">"ram_base_present"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="p">}</span>
-</span></code></pre></div>
-<h2 id="hardware-coverage-report">Hardware Coverage Report</h2>
+<h1 id="msp430f2619-onboarding-scope">MSP430F2619 onboarding scope</h1>
+<p><strong>Status: boots and passes its smoke on the MSP430X core.</strong> SIM-DERIVED: no
+MSP430F2619 bench part was measured. The evidence is the committed run under
+<code>docs/coverage/renode-onboarding/metrics/msp430f2619/</code>.</p>
+<p>The same core and module set also run the imported <code>mspsim-msp430f149</code>,
+<code>mspsim-msp430f1611</code> (16-bit CPU, x1xx USART) and <code>mspsim-msp430f2617</code> (CPUX,
+x2xx USCI_A) descriptors. <code>mspsim-msp430f5437</code> runs on the same core with the
+x5xx module set; see <code>mspsim-msp430f5437.md</code>.</p>
+<h2 id="cpu">CPU</h2>
+<p><code>arch: msp430</code>, <code>core: msp430x</code> selects the 20-bit CPUX in
+<code>crates/core/src/cpu/msp430.rs</code>. It implements the 27 core instructions, all
+addressing modes, both constant generators, the extension word, the address
+instructions, <code>PUSHM</code>/<code>POPM</code>, <code>CALLA</code>, the multi-bit register shifts, the
+20-bit interrupt frame, and <code>SR.CPUOFF</code> with interrupt wake-up.</p>
+<p>The core is compared register-for-register with the GDB <code>msp430-elf</code>
+simulator on compiler-built programs
+(<code>crates/core/tests/vendor/msp430_gdb_sim_lockstep.rs</code>, fixtures in
+<code>tests/fixtures/msp430/</code>).</p>
+<p>Limits: every instruction takes one clock cycle (silicon takes 1 to 6 MCLK
+cycles). The oscillator-fault and access-violation NMI sources are not
+modelled. An unmapped access is a simulation error.</p>
+<h2 id="memory-map">Memory map</h2>
 <table>
 <thead>
 <tr>
-<th>Peripheral ID</th>
-<th>Base Address</th>
-<th>Type</th>
+<th>Region</th>
+<th style="text-align: right;">Address</th>
+<th style="text-align: right;">Size</th>
+<th>Model</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>mpy</code></td>
-<td><code>0x00000130</code></td>
-<td><code>msp430f2xxx_mpy</code></td>
+<td>SFRs</td>
+<td style="text-align: right;"><code>0x0000</code></td>
+<td style="text-align: right;">8 B</td>
+<td><code>msp430_sfr</code></td>
 </tr>
 <tr>
-<td><code>boot</code></td>
-<td><code>0x00000c00</code></td>
-<td><code>arraymemory</code></td>
+<td>RAM mirror</td>
+<td style="text-align: right;"><code>0x0200</code></td>
+<td style="text-align: right;">2 KiB</td>
+<td>alias of the first 2 KiB of RAM</td>
 </tr>
 <tr>
-<td><code>ram_extended</code></td>
-<td><code>0x00001900</code></td>
-<td><code>arraymemory</code></td>
+<td>Information memory</td>
+<td style="text-align: right;"><code>0x1000</code></td>
+<td style="text-align: right;">256 B</td>
+<td>reads erased (<code>0xFF</code>); no factory DCO calibration constants</td>
 </tr>
 <tr>
-<td><code>code</code></td>
-<td><code>0x00002100</code></td>
-<td><code>arraymemory</code></td>
+<td>RAM</td>
+<td style="text-align: right;"><code>0x1100</code></td>
+<td style="text-align: right;">4 KiB</td>
+<td>memory</td>
 </tr>
 <tr>
-<td><code>info_mem</code></td>
-<td><code>0x00001000</code></td>
-<td><code>arraymemory</code></td>
+<td>Flash</td>
+<td style="text-align: right;"><code>0x2100</code></td>
+<td style="text-align: right;">122,624 B</td>
+<td>memory; vectors at <code>0xFFC0</code>-<code>0xFFFF</code></td>
 </tr>
 </tbody>
 </table>
-<p><strong>Total Peripherals:</strong> 5</p>
+<h2 id="modules">Modules</h2>
+<table>
+<thead>
+<tr>
+<th>Module</th>
+<th style="text-align: right;">Address</th>
+<th>Type</th>
+<th>Modelled</th>
+<th>Limits</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>IE1/IE2/IFG1/IFG2/ME1/ME2/UC1IE/UC1IFG</td>
+<td style="text-align: right;"><code>0x0000</code></td>
+<td><code>msp430_sfr</code></td>
+<td>flags and enables are the interrupt request lines</td>
+<td>bits with no mapped line are storage</td>
+</tr>
+<tr>
+<td>BCSCTL3</td>
+<td style="text-align: right;"><code>0x0053</code></td>
+<td><code>msp430_bcsctl3</code></td>
+<td>storage with reset value</td>
+<td>no clock rate follows it</td>
+</tr>
+<tr>
+<td>DCOCTL/BCSCTL1/BCSCTL2</td>
+<td style="text-align: right;"><code>0x0056</code></td>
+<td><code>msp430_bcm_plus</code></td>
+<td>storage with reset values</td>
+<td>no clock rate follows it</td>
+</tr>
+<tr>
+<td>USCI_A0</td>
+<td style="text-align: right;"><code>0x005D</code></td>
+<td><code>msp430_usci_a</code></td>
+<td>UART mode, receive flag and interrupt, <code>UCLISTEN</code> loopback</td>
+<td>transmit is immediate; no receive errors; SPI, IrDA and auto-baud are storage</td>
+</tr>
+<tr>
+<td>USCI_A1</td>
+<td style="text-align: right;"><code>0x00CD</code></td>
+<td><code>msp430_usci_a</code></td>
+<td>same as USCI_A0, flags in UC1IFG</td>
+<td>same</td>
+</tr>
+<tr>
+<td>WDTCTL</td>
+<td style="text-align: right;"><code>0x0120</code></td>
+<td><code>msp430_wdt</code></td>
+<td>password check; a key violation sets WDTIFG and requests a PUC</td>
+<td>the counter does not run</td>
+</tr>
+<tr>
+<td>Hardware multiplier</td>
+<td style="text-align: right;"><code>0x0130</code></td>
+<td><code>msp430_mpy</code></td>
+<td>MPY, MPYS, MAC, MACS, RESLO, RESHI, SUMEXT</td>
+<td>none known</td>
+</tr>
+</tbody>
+</table>
+<p>Not modelled and not mapped (an access is a bus error): the bootstrap loader
+ROM at <code>0x0C00</code>, digital I/O ports, Timer_A, Timer_B, USCI_B0/B1, ADC12,
+DAC12, DMA, SVS, Comparator_A+, and the flash controller.</p>
+<h2 id="smoke">Smoke</h2>
+<p><code>examples/renode-onboarding/msp430f2619-uart-smoke.yaml</code> runs
+<code>tests/fixtures/msp430f2619-uart-smoke.elf</code> (source
+<code>examples/renode-onboarding/msp430-uart-smoke.c</code>, built with TI msp430-gcc
+9.3.1.11 <code>-mlarge</code> by <code>scripts/build_msp430_uart_smoke.sh</code>). The firmware
+prints one letter per check on USCI_A0:</p>
+<ol>
+<li>hardware multiplier through compiler-generated code</li>
+<li>MPYS sign extension and MAC carry</li>
+<li>32-bit division and remainder</li>
+<li>OFIFG set after power-on, cleared by firmware</li>
+<li>polled UART loopback</li>
+<li>receive interrupt in loopback</li>
+<li>LPM0 wake-up by the receive interrupt</li>
+<li>a host byte through the receive interrupt</li>
+<li>a call into flash above 64 KiB and a data read there</li>
+</ol>
+<p>Then it prints one line on USCI_A1 and writes WDTCTL without the password.
+The restarted firmware finds WDTIFG set and reports it.</p>
+<p>The smoke does not exercise the clock registers, the information memory, the
+NMI path, or the transmit interrupt.</p>
 
 
 
