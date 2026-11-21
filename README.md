@@ -238,6 +238,51 @@ Supported cores: ARM Cortex-M0+, M3, M4, M7, M33; RISC-V; Xtensa LX6 and LX7 (se
 ESP32 paths). The hosted browser [Playground](https://app.labwired.com/) and the MCP
 connector run the same models.
 
+Supported cores:
+
+* ARM Cortex-M0+, Cortex-M3, Cortex-M4, Cortex-M7, Cortex-M33
+* RISC-V
+* Xtensa LX6 and LX7 (selected ESP32 paths)
+
+This repository is the engine behind [labwired.com](https://labwired.com/). The hosted
+browser [Playground](https://app.labwired.com/) and the hosted MCP connector run the same
+models. To look before installing anything, open a lab:
+[SSD1306 hello](https://app.labwired.com/?lab=ssd1306-hello-lab),
+[U575 Star Catcher](https://app.labwired.com/?lab=nucleo-u575-star-catcher&run=1),
+[BME280 weather](https://app.labwired.com/?lab=bme280-weather-lab), or
+[IO-Link DI/DO](https://app.labwired.com/?lab=iolink-dido).
+
+For firmware connected to circuits, use the
+[online circuit simulator guide](https://labwired.com/circuit-simulator/).
+It links to a browser RC/touch demo with GPIO and oscilloscope signals.
+The browser analog adapter models linear R/L/C, sources, and switches.
+Native ngspice co-simulation is a separate path for supported nonlinear
+or vendor models.
+
+For original designs, the
+[KiCad PCB import and simulation guide](https://labwired.com/kicad-pcb-simulation/)
+shows pinned source-board acceptance and model gaps. Importing a PCB is not
+proof that its full electrical system runs. Both guides distinguish model
+behavior from physical hardware acceptance.
+
+## Why use LabWired Core?
+
+Testing firmware on real boards is slow. You wait for hardware, you flash it, and when
+something breaks you get a dark LED and no trace. Do that for every board in a product line
+and a hardware CI bench stops being worth the upkeep.
+
+LabWired runs the same binary you would flash. You assert on what the firmware made the
+hardware do.
+
+Two things separate it from a CPU emulator.
+
+**The board is modeled, not only the chip.** Sensors, displays, and bus devices live in the
+system manifest. You can assert on I2C traffic, SPI framing, or what a panel was told to
+draw.
+
+**We publish where the model is thin.** Every capability sits in a named tier. Anywhere the
+simulator short-circuits real hardware, we write it down in the
+[Fidelity Ledger](FIDELITY.md). You cannot gate on a simulator you cannot audit.
 
 ## Quickstart
 

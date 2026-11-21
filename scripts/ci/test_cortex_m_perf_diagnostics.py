@@ -479,10 +479,29 @@ class DiagnosticsControls(unittest.TestCase):
         latest_successor = json.loads(latest_path.read_text())
         self.assertEqual({'scripts/perf/board_perf.py', 'scripts/perf/baselines.json'},
                          {entry['path'] for entry in latest_successor['source_transitions']})
+        # Full upstream sync adds policy only for newly introduced profiles and
+        # one reference; reverse it before proving every qualified fork pin.
+        sync_path = root / 'scripts/ci/fixtures/cortex_m_perf_successor_f9ad21ad.json'
+        self.assertEqual('d7159ce13acac9335b923e0a298de6d75554c1107cdfbd13a3058f855d1a21d4',
+                         hashlib.sha256(sync_path.read_bytes()).hexdigest(),
+                         'reviewed f9ad21ad successor fixture')
+        sync_successor = json.loads(sync_path.read_text())
+        sync_predecessors = {}
+        self.assertEqual({'scripts/perf/board_perf.py', 'scripts/perf/baselines.json'},
+                         {entry['path'] for entry in sync_successor['source_transitions']})
+        for entry in sync_successor['source_transitions']:
+            path = entry['path']
+            restored = (root/path).read_text()
+            self.assertEqual(entry['successor_sha256'], hashlib.sha256(restored.encode()).hexdigest(), path)
+            for replacement in entry['replacements']:
+                self.assertEqual(restored.count(replacement['after']), 1, path)
+                restored = restored.replace(replacement['after'], replacement['before'], 1)
+            self.assertEqual(entry['predecessor_sha256'], hashlib.sha256(restored.encode()).hexdigest(), path)
+            sync_predecessors[path] = restored
         latest_predecessors = {}
         for entry in latest_successor['source_transitions']:
             path = entry['path']
-            current_source = (root/path).read_text()
+            current_source = sync_predecessors[path]
             if path == 'scripts/perf/board_perf.py':
                 # PR292 changes only the early-retirement error label. Admit
                 # that exact successor, then prove every immutable predecessor
@@ -581,7 +600,8 @@ class DiagnosticsControls(unittest.TestCase):
                  'scripts/ci/fixtures/cortex_m_perf_preservation_393b5310.json',
                  'scripts/ci/fixtures/cortex_m_perf_successor_10284b00.json',
                  'scripts/ci/fixtures/cortex_m_perf_successor_a4b097c0.json',
-                 'scripts/ci/fixtures/cortex_m_perf_successor_7afe07eb.json')
+                 'scripts/ci/fixtures/cortex_m_perf_successor_7afe07eb.json',
+                 'scripts/ci/fixtures/cortex_m_perf_successor_f9ad21ad.json')
         for path in paths:
             target = cold / path
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -704,6 +724,42 @@ class DiagnosticsControls(unittest.TestCase):
                 self.assertEqual({k: new_waivers[k] for k in old_waivers}, old_waivers)
                 self.assertEqual(set(new_waivers) - set(old_waivers), set(record['imported_upstream_waivers']))
         self.assert_preservation(ROOT)
+
+    def test_full_sync_successor_preserves_all_existing_metrics_and_helpers(self):
+        record = json.loads((ROOT / 'scripts/ci/fixtures/cortex_m_perf_successor_f9ad21ad.json').read_text())
+        self.assertEqual(record['imported_upstream_waivers'], ['esp32c2', 'esp32s2-arduino', 'mspm0g3507'])
+        self.assertEqual(record['imported_upstream_baselines'], {'stm32h533re': {'batch': 1.2, 'step': 809.2}})
+        for entry in record['source_transitions']:
+            current = (ROOT / entry['path']).read_text()
+            previous = current
+            for replacement in entry['replacements']:
+                previous = previous.replace(replacement['after'], replacement['before'], 1)
+            if entry['path'].endswith('baselines.json'):
+                old, new = json.loads(previous), json.loads(current)
+                self.assertEqual({k: new[k] for k in old}, old)
+                self.assertEqual({k: v for k, v in new.items() if k not in old}, record['imported_upstream_baselines'])
+            else:
+                def parts(source):
+                    tree = ast.parse(source)
+                    flags = {'show_empty': True} if sys.version_info >= (3, 13) else {}
+                    functions = {n.name: ast.dump(n, include_attributes=False, **flags) for n in tree.body if isinstance(n, ast.FunctionDef)}
+                    waived = next(n.value for n in tree.body if isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) and n.target.id == 'WAIVED')
+                    return functions, ast.literal_eval(waived)
+                old_functions, old_waivers = parts(previous)
+                new_functions, new_waivers = parts(current)
+                self.assertEqual(new_functions, old_functions)
+                self.assertEqual({k: new_waivers[k] for k in old_waivers}, old_waivers)
+                self.assertEqual(set(new_waivers) - set(old_waivers), set(record['imported_upstream_waivers']))
+        self.assert_preservation(ROOT)
+
+    def test_full_sync_successor_rejects_relabelled_provenance(self):
+        cold = self.preservation_copy()
+        path = cold / 'scripts/ci/fixtures/cortex_m_perf_successor_f9ad21ad.json'
+        record = json.loads(path.read_text())
+        record['kind'] = 'new measured performance'
+        path.write_text(json.dumps(record))
+        with self.assertRaisesRegex(AssertionError, 'reviewed f9ad21ad successor fixture'):
+            self.assert_preservation(cold)
 
     def test_preservation_rejects_relabelled_historical_collector_fixture(self):
         cold = self.preservation_copy()

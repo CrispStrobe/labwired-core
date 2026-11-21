@@ -56,6 +56,19 @@ fn c5_devkitc_gpio11_tx_uses_enable_0x34_not_the_c3_map() {
     assert_eq!(bus.read_u32(base + 0x20).unwrap(), 0);
     assert_eq!(bus.read_u32(base + 0x3C).unwrap(), 0);
     poke_output(&mut bus, base, 0x04, 0x08, 0x38, 0x64, 1 << 11);
+    // Byte-split and unaligned accesses must normalize each original C5
+    // address once, including the high byte that owns GPIO11.
+    for width in [1, 2, 4] {
+        bus.write_u32(base + 0x3C, 1 << 11).unwrap();
+        assert_eq!(bus.read_u32(base + 0x64).unwrap() & (1 << 11), 0);
+        match width {
+            1 => bus.write_u8(base + 0x35, 1 << 3).unwrap(),
+            2 => bus.write_u16(base + 0x35, 1 << 3).unwrap(),
+            _ => bus.write_u32(base + 0x35, 1 << 3).unwrap(),
+        }
+        assert_eq!(bus.read_u32(base + 0x64).unwrap() & (1 << 11), 1 << 11);
+        assert_eq!(bus.read_u32(base + 0x20).unwrap(), 0);
+    }
 }
 
 #[test]

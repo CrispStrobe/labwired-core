@@ -473,6 +473,24 @@ fn adc_sequence_mode_moves_every_conversion_through_dma_channel1() {
     w(&mut m, 0x4001242c, 2 << 20); // OSQ1: OCLEN = 3 conversions
     w(&mut m, 0x40012434, 1 | (3 << 5) | (5 << 10)); // OSQ3: IN1, IN3, IN5
     let ctrl2 = 1 | (1 << 8) | (7 << 17); // ADCEN, OCDMAEN, OCTESEL = software
+                                          // Observe group-end OCCE before anything reads ODT. The manufacturer's
+                                          // ADC_CCE_FLAG documentation specifies that an ODT read acknowledges it:
+                                          // https://github.com/ArteryTek/AT32F421_Firmware_Library/blob/master/libraries/drivers/src/at32f421_adc.c
+    let without_dma = ctrl2 & !(1 << 8);
+    w(&mut m, 0x40012408, without_dma);
+    w(&mut m, 0x40012408, without_dma | (1 << 22));
+    m.advance(AdvanceRequest::run(Some(500))).unwrap();
+    assert_ne!(
+        m.bus.read_u32(0x40012400).unwrap() & (1 << 1),
+        0,
+        "OCCE at group end before ODT is read"
+    );
+    assert_eq!(m.bus.read_u16(0x4001244c).unwrap(), 744);
+    assert_eq!(
+        m.bus.read_u32(0x40012400).unwrap() & (1 << 1),
+        0,
+        "CPU ODT read acknowledges OCCE"
+    );
     w(&mut m, 0x40012408, ctrl2);
     w(&mut m, 0x40012408, ctrl2 | (1 << 22)); // OCSWTRG
     m.advance(AdvanceRequest::run(Some(500))).unwrap();
@@ -495,10 +513,10 @@ fn adc_sequence_mode_moves_every_conversion_through_dma_channel1() {
         0,
         "ch1 FDTF"
     );
-    assert_ne!(
+    assert_eq!(
         m.bus.read_u32(0x40012400).unwrap() & (1 << 1),
         0,
-        "OCCE at group end"
+        "the final DMA ODT read acknowledges group-end OCCE"
     );
     // A second trigger converts the sequence again from OSN1.
     assert!(m.bus.set_analog_pad_mv("PA1", 3300));

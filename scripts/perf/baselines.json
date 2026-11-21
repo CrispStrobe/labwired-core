@@ -448,5 +448,9 @@
   "samd51-no-asf-simulation": {
     "batch": 1.9,
     "step": 1339.0
+  },
+  "stm32h533re": {
+    "batch": 1.2,
+    "step": 809.2
   }
 }

@@ -18,6 +18,8 @@
 #[path = "../common/mod.rs"]
 mod common;
 
+mod at32_am32_bidir;
+mod at32_am32_protocol;
 mod at32f421_contract;
 mod cc2538_rom;
 mod cc2538_sleep_timer_irq;
@@ -38,8 +40,10 @@ mod efr32mg26_instances;
 mod efr32mg26_pwm_pad;
 mod efr32mg26_timer_compare_level;
 mod ek_rx261_zephyr;
+mod esp32c2_compiled_firmware;
 mod kw41z_clock_boot;
 mod modulshop_49213;
+mod msp430_gdb_sim_lockstep;
 mod ra6m5_adc12_icu;
 mod ra6m5_agt_icu;
 mod ra6m5_gpt_pwm;

@@ -187,6 +187,7 @@ pub(crate) fn run_firmware_riscv(
     // Minimal system manifest: no external devices, no extra peripherals.
     // All peripherals come from the chip descriptor.
     let manifest = labwired_config::SystemManifest {
+        max_peripheral_tick_interval: None,
         parts: Vec::new(),
         schema_version: "1.0".to_string(),
         name: chip.name.clone(),
@@ -595,8 +596,7 @@ fn run_firmware_riscv_batched(
     // interval-1 while giving the JIT a batch window wide enough to retire whole
     // basic blocks between peripheral ticks (see the differential gate). Set on
     // BOTH machine.config and machine.bus.config, exactly as the gate does.
-    machine.config.peripheral_tick_interval = RECOMMENDED_TICK_INTERVAL;
-    machine.bus.config.peripheral_tick_interval = RECOMMENDED_TICK_INTERVAL;
+    machine.set_peripheral_tick_interval(RECOMMENDED_TICK_INTERVAL);
     machine.config.riscv_jit_enabled = jit_on;
     machine.bus.config.riscv_jit_enabled = jit_on;
 
@@ -787,8 +787,7 @@ fn run_firmware_xtensa_batched(
     use labwired_core::{AdvanceRequest, AdvanceStop};
 
     let interval = machine.bus.max_safe_tick_interval();
-    machine.config.peripheral_tick_interval = interval;
-    machine.bus.config.peripheral_tick_interval = interval;
+    machine.set_peripheral_tick_interval(interval);
 
     let mut ran = 0u64;
     while ran < limit {
@@ -1513,8 +1512,7 @@ fn run_xtensa_batched_loop(
     let mut faulted = false;
 
     let interval = machine.bus.max_safe_tick_interval();
-    machine.config.peripheral_tick_interval = interval;
-    machine.bus.config.peripheral_tick_interval = interval;
+    machine.set_peripheral_tick_interval(interval);
 
     // Chunk so an absent `--max-steps` (limit == u64::MAX) still bounds the
     // fuel handed to any single `advance` call, mirroring the ARM/RISC-V
@@ -1601,8 +1599,7 @@ fn run_firmware_avr(
     crate::log_ts::set_hz(machine.bus.cpu_hz);
     if args.batched {
         let interval = machine.bus.max_safe_tick_interval();
-        machine.config.peripheral_tick_interval = interval;
-        machine.bus.config.peripheral_tick_interval = interval;
+        machine.set_peripheral_tick_interval(interval);
         let result = machine.advance(AdvanceRequest::run(Some(limit)));
         crate::log_ts::refresh_cycles(machine.total_cycles);
         let report = match result {
@@ -1692,8 +1689,7 @@ fn run_firmware_pic24(
     let mut machine = Machine::new(cpu, bus);
     if args.batched {
         let interval = machine.bus.max_safe_tick_interval();
-        machine.config.peripheral_tick_interval = interval;
-        machine.bus.config.peripheral_tick_interval = interval;
+        machine.set_peripheral_tick_interval(interval);
         let report = match machine.advance(AdvanceRequest::run(Some(limit))) {
             Ok(report) => report,
             Err(e) => {
@@ -1810,6 +1806,8 @@ pub(crate) fn run_interactive(
     let mut chip_name = String::new();
     // A `core: rv64…` chip runs the 64-bit hart, built from its descriptor.
     let mut rv64_chip: Option<labwired_config::ChipDescriptor> = None;
+    // An MSP430 chip selects the 16-bit CPU or the CPUX.
+    let mut msp430_chip: Option<labwired_config::ChipDescriptor> = None;
     let cpu_arch = if let Some(sys_path) = &system_path {
         match labwired_config::SystemManifest::from_file(sys_path) {
             Ok(manifest) => {
@@ -1842,6 +1840,9 @@ pub(crate) fn run_interactive(
                             chip_name = c.name.clone();
                             if labwired_core::cpu::riscv64::is_rv64_chip(&c) {
                                 rv64_chip = Some(c.clone());
+                            }
+                            if c.arch == labwired_config::Arch::Msp430 {
+                                msp430_chip = Some(c.clone());
                             }
                             c.arch
                         }
@@ -1894,6 +1895,7 @@ pub(crate) fn run_interactive(
             labwired_core::Arch::Aarch64 => labwired_config::Arch::Aarch64,
             labwired_core::Arch::Rx => labwired_config::Arch::Rx,
             labwired_core::Arch::Mips => labwired_config::Arch::Mips,
+            labwired_core::Arch::Msp430 => labwired_config::Arch::Msp430,
             _ => labwired_config::Arch::Unknown,
         };
 
@@ -1925,6 +1927,9 @@ pub(crate) fn run_interactive(
         }
         labwired_config::Arch::Rx => run_interactive_rx(cli, bus, program, metrics),
         labwired_config::Arch::Mips => run_interactive_mips(cli, bus, program, metrics),
+        labwired_config::Arch::Msp430 => {
+            run_interactive_msp430(cli, bus, program, metrics, msp430_chip.as_ref())
+        }
         _ => {
             emit_error(
                 cli.json,
@@ -1970,7 +1975,11 @@ pub(crate) fn run_firmware_arm(
     match labwired_core::system::arch_policy::machine_family(&chip) {
         Ok(labwired_core::system::arch_policy::MachineFamily::CortexM) => {}
         Ok(_) => {
-            eprintln!("error: this --chip driver runs Cortex-M; Cortex-A7 uses run --firmware <ELF> --system <manifest> with native --features qemu-arm");
+            let core = match labwired_core::system::arch_policy::cortex_a_core(&chip) {
+                Ok(core) => core.name().to_string(),
+                Err(_) => chip.core.clone().unwrap_or_else(|| chip.name.clone()),
+            };
+            eprintln!("error: this --chip driver runs Cortex-M; {core} uses run --firmware <ELF> --system <manifest> on the native ARM engine");
             return ExitCode::from(EXIT_CONFIG_ERROR);
         }
         Err(error) => {
@@ -2168,11 +2177,11 @@ fn run_arm_step_loop(
         if dbg_trace != 0 && i % dbg_trace == 0 {
             crate::log_ts::eventln!("[arm-trace] step {i} pc={:#010x}", machine.cpu.get_pc());
         }
-        // `advance` rather than `step`: `step` discards the AdvanceReport, and
-        // a firmware-authored verdict appears nowhere else.
-        match machine.advance(labwired_core::AdvanceRequest::single()) {
-            Ok(report) => {
-                if let labwired_core::AdvanceStop::FirmwareExit { code } = report.stop {
+        // Keep the firmware-authored verdict from the authoritative kernel.
+        // This loop consumes its stop reason; live accounting stays on Machine.
+        match machine.advance_single_stop() {
+            Ok(stop) => {
+                if let labwired_core::AdvanceStop::FirmwareExit { code } = stop {
                     crate::log_ts::eventln!(
                         "[firmware] {} (step {i})",
                         crate::firmware_exit_message(code)
@@ -2340,8 +2349,7 @@ fn run_arm_batched_loop(
     let mut faulted = false;
 
     let interval = machine.bus.max_safe_tick_interval();
-    machine.config.peripheral_tick_interval = interval;
-    machine.bus.config.peripheral_tick_interval = interval;
+    machine.set_peripheral_tick_interval(interval);
     // Default-on for batched ARM, matching RISC-V `labwired run`. Escape
     // hatch: LABWIRED_CORTEX_M_JIT=0 forces the interpreter.
     let jit_on = std::env::var("LABWIRED_CORTEX_M_JIT").as_deref() != Ok("0");
@@ -2972,6 +2980,70 @@ pub(crate) fn run_interactive_mips(
 
     if cli.gdb.is_some() {
         error!("GDB server is not available for the MIPS core yet");
+        return ExitCode::from(EXIT_CONFIG_ERROR);
+    }
+
+    let result = run_simulation_loop(&cli, &mut machine, &metrics);
+
+    if let Some(path) = &cli.snapshot {
+        let firmware_path = cli.firmware.as_ref().expect("Firmware path required");
+        let system_path = cli.system.as_ref();
+
+        write_interactive_snapshot(
+            path,
+            &metrics,
+            &machine,
+            InteractiveSnapshotInputs {
+                firmware_path,
+                system_path,
+                max_steps: cli.max_steps,
+                steps_executed: result.steps_executed,
+                stop_reason: result.stop_reason,
+                message: result.stop_message,
+            },
+        );
+    }
+
+    crate::report::report_metrics(cli.json, &machine.cpu, &metrics);
+    ExitCode::from(EXIT_PASS)
+}
+
+pub(crate) fn run_interactive_msp430(
+    cli: Cli,
+    mut bus: labwired_core::bus::SystemBus,
+    program: labwired_core::memory::ProgramImage,
+    metrics: Arc<labwired_core::metrics::PerformanceMetrics>,
+    chip: Option<&labwired_config::ChipDescriptor>,
+) -> ExitCode {
+    use labwired_core::Cpu as _;
+    attach_interactive_rtt(&cli, &mut bus);
+    note_itm_echo_suppressed(&cli);
+    let cpu = labwired_core::system::msp430::cpu_for(&mut bus, chip);
+    let mut machine = labwired_core::Machine::new(cpu, bus);
+    machine.add_observer(metrics.clone());
+
+    if let Some(vcd_path) = &cli.vcd {
+        let file = std::fs::File::create(vcd_path).expect("Failed to create VCD file");
+        let observer = std::sync::Arc::new(vcd_trace::VcdObserver::new(file));
+        machine.add_observer(observer);
+    }
+
+    if let Err(e) = machine.load_firmware(&program) {
+        tracing::error!("Failed to load firmware into memory: {}", e);
+        return ExitCode::from(EXIT_RUNTIME_ERROR);
+    }
+    // The core starts at the address in the reset vector (0xFFFE), as the
+    // silicon does.
+    if let Err(e) = machine.cpu.reset(&mut machine.bus) {
+        tracing::error!("MSP430 reset vector: {e:#}");
+        return ExitCode::from(EXIT_RUNTIME_ERROR);
+    }
+
+    info!("Starting Simulation (MSP430)...");
+    info!("Initial PC: {:#x}", machine.cpu.get_pc());
+
+    if cli.gdb.is_some() {
+        error!("GDB server is not available for the MSP430 core yet");
         return ExitCode::from(EXIT_CONFIG_ERROR);
     }
 

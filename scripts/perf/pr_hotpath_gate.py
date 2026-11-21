@@ -70,16 +70,31 @@ def changed_paths(tested, base, head):
     headers = git("cat-file", "commit", tested).split(b"\n\n", 1)[0].splitlines()
     parents = [line[7:].decode() for line in headers if line.startswith(b"parent ")]
     if len(parents) != 2 or parents[1] != head:
-        raise ValueError("tested merge must have two parents and the exact PR head second")
-    # GitHub may advance the base before synthesizing github.sha, after the
-    # event payload captured base.sha. Scope the tree actually tested against
-    # its actual first parent; the event base is metadata, not that parent.
-    tested_base = parents[0]
-    for sha in (tested_base, head):
+        raise ValueError("tested merge must have exactly two parents and the exact PR head second")
+    first_parent = parents[0]
+    for sha in (first_parent, head):
         git("cat-file", "-e", sha + "^{commit}")
-    # The first-parent diff excludes unrelated main changes on an older branch.
+    # Event metadata may name a stale base outside a shallow checkout. Query
+    # object presence without turning an operational Git error into a skip.
+    base_record = subprocess.check_output(
+        ["git", "cat-file", "--batch-check"], input=(base + "\n").encode()
+    )
+    if base_record == (base + " missing\n").encode():
+        if git("rev-parse", "--is-shallow-repository").strip() != b"true":
+            raise ValueError("event base commit missing from a complete checkout")
+    else:
+        fields = base_record.split()
+        if len(fields) != 3 or fields[0] != base.encode() or fields[1] != b"commit" or not fields[2].isdigit():
+            raise ValueError("event base must identify a commit")
+        try:
+            git("merge-base", "--is-ancestor", base, first_parent)
+        except subprocess.CalledProcessError as exc:
+            if exc.returncode == 1:
+                raise ValueError("tested merge first parent is not a descendant of the event base") from exc
+            raise
+    # Diff from the actual first parent to exclude unrelated later main changes.
     # No rename detection: removing a runtime path must still select the gate.
-    raw = git("diff", "--name-only", "--no-renames", "-z", tested_base, tested)
+    raw = git("diff", "--name-only", "--no-renames", "-z", first_parent, tested)
     if raw and not raw.endswith(b"\0"):
         raise ValueError("incomplete changed-path stream")
     return [p.decode("utf-8", "surrogateescape") for p in raw.split(b"\0") if p]

@@ -116,6 +116,33 @@ impl SystemBus {
         self.reconcile_multi_irq_levels(idx, LevelSync::Both);
     }
 
+    /// Route a peripheral IRQ level to any interrupt concentrator that accepts
+    /// the source number. A claimed input suppresses direct delivery of that
+    /// source line; the concentrator reports its CPU outputs through
+    /// `irq_line_levels`.
+    #[inline]
+    pub(crate) fn route_irq_input_level(
+        &self,
+        source_idx: usize,
+        source: u32,
+        level: bool,
+    ) -> bool {
+        let mut claimed = false;
+        for &idx in &self.irq_input_receiver_indices {
+            if idx == source_idx {
+                continue;
+            }
+            let changed = self.peripherals[idx].dev.set_irq_input_level(source, level);
+            if let Some(changed) = changed {
+                claimed = true;
+                if changed {
+                    self.reconcile_multi_irq_levels(idx, LevelSync::Both);
+                }
+            }
+        }
+        claimed
+    }
+
     /// Hand interrupt EVENT numbers (from a model whose
     /// [`Peripheral::explicit_irqs_are_link_events`] is true) to the chip's
     /// event-link controller (the RA ICU, [`Peripheral::link_event`]) and
@@ -151,7 +178,9 @@ impl SystemBus {
     pub(crate) fn reconcile_irq_levels_after_write(&self, idx: usize) {
         if let Some(irq_line) = self.peripherals[idx].irq {
             if let Some(level) = self.peripherals[idx].dev.irq_line_level() {
-                reconcile_nvic_level(&self.nvic, irq_line, level);
+                if !self.route_irq_input_level(idx, irq_line, level) {
+                    reconcile_nvic_level(&self.nvic, irq_line, level);
+                }
             }
         }
         self.reconcile_multi_irq_levels(idx, LevelSync::DropOnly);
@@ -241,6 +270,19 @@ impl SystemBus {
             .peek_u32_raw(offset)
     }
 
+    /// Store `value` into a declarative peripheral's backing word at `offset`
+    /// for a hardware-side status latch (see `GenericPeripheral::poke_u32_raw`).
+    /// No-op when `idx` is not a declarative peripheral.
+    pub(crate) fn poke_cached_declarative_u32(&self, idx: usize, offset: u64, value: u32) {
+        if let Some(generic) = self.peripherals.get(idx).and_then(|p| {
+            p.dev.as_any().and_then(|a| {
+                a.downcast_ref::<crate::peripherals::declarative::GenericPeripheral>()
+            })
+        }) {
+            generic.poke_u32_raw(offset, value);
+        }
+    }
+
     /// Phase 2B.1 (issue #192): pend an NVIC IRQ on behalf of an event
     /// handler. Mirrors the per-tick `pend_nvic` path but collects
     /// non-NVIC fallthroughs into the supplied vector for the caller to
@@ -313,6 +355,13 @@ impl SystemBus {
         let line = match request_id {
             crate::DMA_SIGNAL_TX => "tx",
             crate::DMA_SIGNAL_RX => "rx",
+            crate::DMA_SIGNAL_TIMER_UPDATE => "up",
+            crate::DMA_SIGNAL_TIMER_CH1 => "ch1",
+            crate::DMA_SIGNAL_TIMER_CH2 => "ch2",
+            crate::DMA_SIGNAL_TIMER_CH3 => "ch3",
+            crate::DMA_SIGNAL_TIMER_CH4 => "ch4",
+            crate::DMA_SIGNAL_TIMER_COMMUTATION => "com",
+            crate::DMA_SIGNAL_TIMER_TRIGGER => "trig",
             _ => return,
         };
         self.route_named_dma_request(format!("{source_name}_{line}"));
@@ -984,8 +1033,11 @@ impl SystemBus {
             // held). Everything else keeps pulse semantics unchanged.
             match (self.peripherals[peripheral_index].dev.irq_line_level(), irq) {
                 (Some(level), Some(irq)) => {
-                    reconcile_nvic_level(&self.nvic, irq, level);
-                    if res.irq && self.nvic.is_none() {
+                    let routed = self.route_irq_input_level(peripheral_index, irq, level);
+                    if !routed {
+                        reconcile_nvic_level(&self.nvic, irq, level);
+                    }
+                    if res.irq && self.nvic.is_none() && !routed {
                         interrupts.push(irq);
                     }
                 }
@@ -1042,7 +1094,16 @@ impl SystemBus {
             // Forced mode walks a fixed one-shot snapshot. Refresh the normal
             // cache for future production ticks, but always advance this
             // snapshot cursor even when a dynamic entry just became inactive.
-            if force_scheduler_walk || still_active {
+            //
+            // An inactive dynamic entry normally leaves the cache, and the
+            // next one takes its slot. It stays when the walk was deleted
+            // earlier in this same pass (two dynamic models going idle
+            // together, e.g. after a system reset): step over it, or the
+            // walk would tick it forever.
+            if force_scheduler_walk
+                || still_active
+                || self.legacy_tick_indices.get(tick_pos) == Some(&peripheral_index)
+            {
                 tick_pos += 1;
             }
         }
@@ -1295,12 +1356,44 @@ impl SystemBus {
             }
         }
         let mut pending = cache.from_cpu_pending;
+        let mut status = [0u32; 2];
         while pending != 0 {
             let slot = pending.trailing_zeros();
             route_source(from_cpu_source_base + slot);
+            let src = (from_cpu_source_base + slot) as usize;
+            if let Some(word) = status.get_mut(src / 32) {
+                *word |= 1 << (src % 32);
+            }
             pending &= !(1 << slot);
         }
         self.irq_fabric.esp32c3.irq_lines = mask;
+
+        // INTR_STATUS_REG_0/1 (single-bank layout only): the raw level of
+        // every asserted source, routed or not. esp-hal reads it in the
+        // CPU-line handler to pick the source handler, and
+        // `SoftwareInterrupt::raise` polls it until the doorbell is visible.
+        if self.irq_fabric.esp32c3.intpri_idx.is_some() {
+            return;
+        }
+        let (Some(int_idx), Some(ctrl)) = (
+            self.irq_fabric.esp32c3.interrupt_core0_idx,
+            self.irq_fabric.esp32c3.intc.as_ref().map(|c| c.ctrl),
+        ) else {
+            return;
+        };
+        let fabric = &self.irq_fabric.esp32c3;
+        // Both parts number their sources below 64, so word 0 of each bitmap
+        // covers INTR_STATUS_REG_0 and _1.
+        let levels = fabric.walk_sources[0] | fabric.sched_sources[0] | pms_sources[0];
+        for (i, word) in status.iter_mut().enumerate() {
+            *word |= (levels >> (32 * i)) as u32;
+        }
+        if status != self.irq_fabric.esp32c3.intr_status {
+            self.irq_fabric.esp32c3.intr_status = status;
+            for (i, word) in status.iter().enumerate() {
+                self.poke_cached_declarative_u32(int_idx, ctrl.status0 + 4 * i as u64, *word);
+            }
+        }
     }
 
     /// Re-derive the C3 matrix sources asserted by SCHEDULER-driven peripherals
@@ -1548,6 +1641,40 @@ impl SystemBus {
             });
         }
     }
+}
+
+#[cfg(feature = "event-scheduler")]
+impl SystemBus {
+    /// Park a level-hold event chain (`EventResult::level_hold`) of
+    /// peripheral `idx` while every line in `lines` stands in the NVIC:
+    /// enabled, pending and level-marked. Returns false (the caller re-arms
+    /// as before) when any line does not, or when there is no NVIC.
+    pub(crate) fn park_level_event(&mut self, idx: usize, token: u32, lines: &[u32]) -> bool {
+        let Some(nvic) = &self.nvic else {
+            return false;
+        };
+        if lines.is_empty() {
+            return false;
+        }
+        let standing = lines.iter().all(|&irq| {
+            let word = (irq / 32) as usize;
+            let bit = 1u32 << (irq % 32);
+            word < 8
+                && nvic.iser[word].load(std::sync::atomic::Ordering::SeqCst)
+                    & nvic.ispr[word].load(std::sync::atomic::Ordering::SeqCst)
+                    & nvic.level_pended[word].load(std::sync::atomic::Ordering::SeqCst)
+                    & bit
+                    != 0
+        });
+        if !standing {
+            return false;
+        }
+        self.parked_level_events.retain(|&(p, _, _)| p != idx);
+        for &irq in lines {
+            self.parked_level_events.push((idx, token, irq));
+        }
+        true
+    }
 
     /// The ONE per-fabric choke the event path uses to deliver a scheduler-
     /// driven peripheral's level-sensitive IRQ at its exact firing cycle. Every
@@ -1562,7 +1689,6 @@ impl SystemBus {
     /// bus (Cortex-M / nRF), where the caller pends the peripheral's explicit
     /// lines through `pend_irq_for_event` instead (the classic ESP32 DPORT
     /// fabric is a documented TODO — see the PR body).
-    #[cfg(feature = "event-scheduler")]
     pub(crate) fn deliver_scheduled_irq_levels(&mut self) -> bool {
         if self.irq_fabric.esp32c3.routing {
             self.refresh_esp32c3_sched_sources();
@@ -1599,7 +1725,9 @@ impl SystemBus {
             false
         }
     }
+}
 
+impl SystemBus {
     /// Classic ESP32 DPORT interrupt-matrix routing (TRM §7).
     ///
     /// Peripherals emit matrix *source* IDs via `explicit_irqs` (e.g. UART0 =

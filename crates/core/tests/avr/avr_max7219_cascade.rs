@@ -23,6 +23,7 @@ use std::path::PathBuf;
 
 const DDRB: u16 = 0x24;
 const PORTB: u16 = 0x25;
+const PIND: u16 = 0x29;
 const DDRD: u16 = 0x2A;
 const PORTD: u16 = 0x2B;
 const SPCR: u16 = 0x4C;
@@ -251,29 +252,32 @@ fn avr_guest_software_spi_clocks_with_load_high() {
 
 #[test]
 fn avr_guest_cross_port_load_release_resets_an_incomplete_software_byte() {
-    let (mut cpu, mut bus) = rig("PD2", false);
-    let mut init = Guest::default();
-    init.write(DDRB, DIN | CLK);
-    init.write(DDRD, LOAD);
-    init.write(PORTD, LOAD);
-    init.write(PORTD, 0);
-    init.bits(&[0x0C, 1], false);
-    init.write(PORTD, LOAD);
-    init.run(&mut cpu, &mut bus);
+    for load_address in [PORTD, PIND] {
+        let (mut cpu, mut bus) = rig("PD2", false);
+        let mut init = Guest::default();
+        init.write(DDRB, DIN | CLK);
+        init.write(DDRD, LOAD);
+        init.write(PORTD, LOAD);
+        init.write(PORTD, 0);
+        init.bits(&[0x0C, 1], false);
+        init.write(PORTD, LOAD);
+        init.run(&mut cpu, &mut bus);
 
-    let mut guest = Guest::default();
-    guest.write(PORTD, 0);
-    for _ in 0..3 {
-        guest.write(PORTB, DIN);
-        guest.write(PORTB, DIN | CLK);
-        guest.write(PORTB, DIN);
+        let mut guest = Guest::default();
+        guest.write(PORTD, 0);
+        for _ in 0..3 {
+            guest.write(PORTB, DIN);
+            guest.write(PORTB, DIN | CLK);
+            guest.write(PORTB, DIN);
+        }
+        // Both a PORT write and a PIN write-one-to-toggle release LOAD.
+        guest.write(load_address, LOAD); // partial byte must not survive
+        guest.write(PORTD, 0);
+        guest.bits(&[0x01, 0xA5], false);
+        guest.write(load_address, LOAD);
+        guest.run(&mut cpu, &mut bus);
+        assert_row(&bus, "near", 0, 0xA5);
     }
-    guest.write(PORTD, LOAD); // partial byte must not survive this edge
-    guest.write(PORTD, 0);
-    guest.bits(&[0x01, 0xA5], false);
-    guest.write(PORTD, LOAD);
-    guest.run(&mut cpu, &mut bus);
-    assert_row(&bus, "near", 0, 0xA5);
 }
 
 #[test]
@@ -349,6 +353,41 @@ fn avr_guest_direction_loss_discards_partial_bits_and_reacquires_clock_level() {
         guest.write(PORTB, LOAD);
         guest.run(&mut cpu, &mut bus);
         assert_row(&bus, "near", 0, 0xA5);
+    }
+}
+
+#[test]
+fn avr_guest_selected_sd_cmd59_changes_following_bad_crc_response() {
+    for with_max in [false, true] {
+        for cpu_owned in [false, true] {
+            let (mut cpu, mut bus) = mixed_rig("microsd", "cs_pin: PB1", with_max);
+            if cpu_owned {
+                for device in bus.take_spi_devices("spi") {
+                    cpu.push_spi_device(device);
+                }
+            }
+            let mut guest = Guest::default();
+            guest.hardware_init();
+            guest.peer_transaction(&[0x40, 0, 0, 0, 0, 0x95], 19);
+            guest.peer_transaction(&[0x7A, 0, 0, 0, 0, 0, 0xFF, 0xFF], 21);
+            guest.hardware_bytes(&[0x7B, 0, 0, 0, 1, 0]); // CS-high CMD59 must not enable CRC
+            guest.peer_transaction(&[0x7A, 0, 0, 0, 0, 0, 0xFF, 0xFF], 22);
+            guest.peer_transaction(&[0x7B, 0, 0, 0, 1, 0], 19);
+            guest.peer_transaction(&[0x7A, 0, 0, 0, 0, 0, 0xFF, 0xFF], 17);
+            guest.run(&mut cpu, &mut bus);
+            assert_eq!(
+                cpu.r[21], 1,
+                "CMD58 before CS-high CMD59: MAX={with_max}, CPU-owned={cpu_owned}"
+            );
+            assert_eq!(
+                cpu.r[22], 1,
+                "CS-high CMD59 changed CRC: MAX={with_max}, CPU-owned={cpu_owned}"
+            );
+            assert_eq!(
+                cpu.r[17], 0x09,
+                "selected CMD59 must enable CRC: MAX={with_max}, CPU-owned={cpu_owned}"
+            );
+        }
     }
 }
 

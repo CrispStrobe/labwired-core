@@ -22,6 +22,9 @@ impl DeviceDescriptor {
                 meta.inputs = meta.inputs.iter().flat_map(|i| i.expand()).collect();
             }
         }
+        if let Some(power) = &desc.behavior.power {
+            power.validate()?;
+        }
         Ok(desc)
     }
 
@@ -282,6 +285,10 @@ pub static EMBEDDED_DEVICES: &[(&[&str], &str)] = &[
     (
         &["gc9a01"],
         include_str!("../../../configs/devices/gc9a01.yaml"),
+    ),
+    (
+        &["ft5x06"],
+        include_str!("../../../configs/devices/ft5x06.yaml"),
     ),
     (
         &["oled-ssd1309"],
