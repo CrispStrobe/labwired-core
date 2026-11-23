@@ -826,6 +826,14 @@
       "SPI",
       "UART"
     ],
+    "name": "stm32l031k6"
+  },
+  {
+    "buses": [
+      "I2C",
+      "SPI",
+      "UART"
+    ],
     "name": "stm32l073"
   },
   {

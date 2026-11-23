@@ -215,48 +215,48 @@ const EXCLUSIONS: &[(&str, BusKind, &str)] = &[
     ),
     // CH32L103C8T6: the bring-up has no UART drive for the WCH L103 family.
     // USART1 bytes are proven by
-    // ch32l103_compiled_firmware::ch32l103_compiled_rv32imac_firmware_prints_on_usart1.
+    // ch32_compiled_firmware::every_ch32_compiled_uart_hello_prints_on_usart1.
     (
         "ch32l103c8t6",
         BusKind::Uart,
         "no UART bring-up for the WCH L103 family in this harness yet; USART1 \
-         bytes are proven by ch32l103_compiled_firmware",
+         bytes are proven by ch32_compiled_firmware",
     ),
     // CH32V005F6P6: same pad-gated USART1 (TX=PD5) as the CH32V003. USART1
     // bytes are proven by
-    // ch32v005_compiled_firmware::ch32v005_compiled_rv32ec_zmmul_firmware_prints_on_usart1.
+    // ch32_compiled_firmware::every_ch32_compiled_uart_hello_prints_on_usart1.
     (
         "ch32v005f6p6",
         BusKind::Uart,
         "pad-gated F1-style USART1 (TX=PD5) produces no analyzer edges in this \
-         harness yet; bytes are proven by ch32v005_compiled_firmware",
+         harness yet; bytes are proven by ch32_compiled_firmware",
     ),
     // CH32X035C8T6: no UART bring-up for the WCH X035 family in this harness.
     // USART1 bytes are proven by
-    // ch32x035_compiled_firmware::ch32x035_compiled_rv32imac_firmware_prints_on_usart1.
+    // ch32_compiled_firmware::every_ch32_compiled_uart_hello_prints_on_usart1.
     (
         "ch32x035c8t6",
         BusKind::Uart,
         "no UART bring-up for the WCH X035 family in this harness yet; USART1 \
-         bytes are proven by ch32x035_compiled_firmware",
+         bytes are proven by ch32_compiled_firmware",
     ),
     // CH32V006K8U6: same pad-gated USART1 (TX=PD5) as the CH32V003. USART1
     // bytes are proven by
-    // ch32v006_compiled_firmware::ch32v006_compiled_rv32ec_zmmul_firmware_prints_on_usart1.
+    // ch32_compiled_firmware::every_ch32_compiled_uart_hello_prints_on_usart1.
     (
         "ch32v006k8u6",
         BusKind::Uart,
         "pad-gated F1-style USART1 (TX=PD5) produces no analyzer edges in this \
-         harness yet; bytes are proven by ch32v006_compiled_firmware",
+         harness yet; bytes are proven by ch32_compiled_firmware",
     ),
     // CH32V203C8T6: the bring-up has no UART drive for the WCH V20x family.
     // USART1 bytes are proven by
-    // ch32v203_compiled_firmware::ch32v203_compiled_rv32imac_firmware_prints_on_usart1.
+    // ch32_compiled_firmware::every_ch32_compiled_uart_hello_prints_on_usart1.
     (
         "ch32v203c8t6",
         BusKind::Uart,
         "no UART bring-up for the WCH V20x family in this harness yet; USART1 \
-         bytes are proven by ch32v203_compiled_firmware",
+         bytes are proven by ch32_compiled_firmware",
     ),
     // F4U6 (QFN20), A4M6 (SOP16) and J4M6 (SOP8) are package variants of the
     // F4P6 die with the same pad-gated USART1 on PD5. Bytes are proven by
@@ -816,7 +816,7 @@ fn ram_base_or(chip: &str, mapped: u64) -> u64 {
 fn ram_base(chip: &str) -> u64 {
     match chip {
         "esp32c3" => 0x3FC8_0000,
-        "esp32c5" | "esp32c6" | "esp32c6fh4" | "esp32c61" => 0x4080_0000,
+        "esp32c6" | "esp32c6fh4" => 0x4080_0000,
         "esp32"
         | "esp32s3"
         | "esp32s3-zero"
@@ -1211,13 +1211,7 @@ fn measure_kind(chip: &str, kind: BusKind) -> KindResult {
     // Prefer instances that already own a PadLines cell, then keep yaml order.
     instances.sort_by_key(|i| (!i.has_wire_cell, i.name.clone()));
 
-    // C5's and C61's I2C models share the C3 command-list engine. Their other
-    // buses retain their own classification and visibility requirements.
-    let family = if matches!(chip, "esp32c5" | "esp32c61") && kind == BusKind::I2c {
-        Family::Esp32c3
-    } else {
-        family_of(chip)
-    };
+    let family = family_of(chip);
     let mut last_fail: Option<KindResult> = None;
     for inst in &instances {
         let mut machine = machine_for(chip);
@@ -1943,32 +1937,6 @@ fn drive_i2c(
 
     enable_clock(machine, &inst.name);
     let _ = machine.bus.attach_i2c_slave(&inst.name, Box::new(I2cSink));
-
-    // Same SDA/SCL routes as the supplied BME280 systems: C5 GPIO8/GPIO9,
-    // C61 GPIO6/GPIO22. Input selectors 46 (SCL) / 47 (SDA) use bit8 and the
-    // chips' shared shifted matrix map.
-    let route = match chip {
-        "esp32c5" => Some((8u64, 9u64)),
-        "esp32c61" => Some((6, 22)),
-        _ => None,
-    };
-    if let Some((sda, scl)) = route {
-        let gpio = 0x6009_1000;
-        for (pin, signal) in [(sda, 47), (scl, 46)] {
-            machine
-                .bus
-                .write_u32(gpio + 0xAD4 + pin * 4, signal | (1 << 10))
-                .unwrap();
-            machine
-                .bus
-                .write_u32(gpio + 0x2D4 + u64::from(signal) * 4, pin as u32 | (1 << 8))
-                .unwrap();
-        }
-        machine
-            .bus
-            .write_u32(gpio + 0x38, (1 << sda) | (1 << scl))
-            .unwrap();
-    }
 
     match family {
         Family::Stm32V2 | Family::Stm32F1 | Family::Stm32H5 => {

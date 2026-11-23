@@ -59,7 +59,7 @@ same fields but never their source, chip YAML, binary or build paths.
 | nrf51822 | open | L1 | 22 | 1335.6 | 2.0 | ≥1× (CI) | — |
 | nrf52832 | open | L1 | 17 | 1330.2 | 2.0 | ≥1× (CI) | [doc](docs/boards/nrf52832.md) |
 | nrf52833 | open | L1 | 48 | 1368.6 | 2.1 | ≥1× (CI) | — |
-| nrf52840 | open | L1 | 52 | 1368.6 | 2.1 | ≥1× (CI) | [doc](docs/boards/nrf52840.md) |
+| nrf52840 | open | L1 | 53 | 1368.6 | 2.1 | ≥1× (CI) | [doc](docs/boards/nrf52840.md) |
 | nrf5340 | open | L1 | 22 | 1324.0 | 1.9 | ≥1× (CI) | [doc](docs/boards/nrf5340.md) |
 | rp2040 | open | L1 | 27 | 905.9 | 1.6 | ≥1× (CI) | [doc](docs/boards/rp2040.md) |
 | stm32f103 | open | L1 | 31 | 937.3 | 1.6 | ≥1× (CI) | [doc](docs/boards/stm32f103.md) |
@@ -88,7 +88,7 @@ same fields but never their source, chip YAML, binary or build paths.
 | stm32f401vd | open | L0 | 24 | 935.8 | 1.5 | ≥1× (CI) | — |
 | stm32f401ve | open | L0 | 24 | 935.8 | 1.5 | ≥1× (CI) | — |
 | stm32f405 | open | L1 | 22 | 936.3 | 1.5 | ≥1× (CI) | [doc](docs/boards/stm32f405.md) |
-| stm32f767 | open | L1 | 37 | 936.7 | 1.6 | ≥1× (CI) | [doc](docs/boards/stm32f767.md) |
+| stm32f767 | open | L1 | 38 | 936.7 | 1.6 | ≥1× (CI) | [doc](docs/boards/stm32f767.md) |
 | rp2350 | open | L1 | 28 | 906.1 | 1.6 | ≥1× (CI) | [doc](docs/boards/rp2350.md) |
 | stm32f407 | open | L1 | 34 | 936.8 | 1.6 | ≥1× (CI) | [doc](docs/boards/stm32f407.md) |
 | stm32f407ie | open | L0 | 34 | 935.8 | 1.6 | ≥1× (CI) | — |

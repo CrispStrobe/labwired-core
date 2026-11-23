@@ -644,11 +644,11 @@ impl Peripheral for Nrf52Pwm {
         // Re-armed under this same token by the machine.
         self.armed_target = self.wake_target();
         crate::sched::EventResult {
-            raise_own_irq: self.irq_line_level() == Some(true),
             reschedule_delay: self.armed_target.map(|t| t - now),
             // The sequence events land here, outside any MMIO write, so the
-            // event path pends the level line itself.
-            raise_own_irq: played && self.irq_line_level() == Some(true),
+            // event path pends the level line itself. A level latched earlier
+            // (e.g. INTENSET over a pending event) is re-asserted as well.
+            raise_own_irq: self.irq_line_level() == Some(true),
             ..Default::default()
         }
     }
