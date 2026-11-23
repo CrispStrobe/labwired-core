@@ -491,9 +491,14 @@ pub const MODEL_TYPES: &[&str] = &[
     // are storage with reset values (PxSEL2, calibration constants).
     "msp430_port",
     "msp430_bytes",
+    // Texas Instruments MSP430x2xx Universal Serial Interface (SPI and I2C
+    // master).
+    "msp430_usi",
     // Texas Instruments MSP430x2xx Timer_A and its TAIV register.
     "msp430_timer_a",
     "msp430_timer_a_iv",
+    // Texas Instruments MSP430x2xx ADC10 (no data transfer controller).
+    "msp430_adc10",
     // Texas Instruments MSP430x5xx: SFRIE1/SFRIFG1/SFRRPCR, USCI_A (UART
     // mode, own UCAxIE/UCAxIFG/UCAxIV), WDT_A control, 32-bit hardware
     // multiplier, unified clock system, power management module.
@@ -555,6 +560,8 @@ pub const MODEL_TYPES: &[&str] = &[
     "mpfs_i2c",
     // PolarFire SoC MSS SPI0/1 (CoreSPI-family master).
     "mpfs_spi",
+    // WCH QingKe V2 system timer (CH32V003/V005/V006 STK at 0xE000F000).
+    "qingke_stk",
     // SAM4S (the older PIO/PMC blocks; not the SAM D21 PORT/PM pair).
     "sam4s_pio",
     "sam4s_pmc",
@@ -1434,35 +1441,40 @@ pub fn try_build(
                     Some("stm32wba") => Some("stm32wba"),
                     Some("stm32u5") => Some("stm32u5"),
                     Some("stm32h5") => Some("stm32h5"),
+                    Some("stm32h7") => Some("stm32h7"),
                     Some(other) => {
                         return Err(anyhow::anyhow!(
-                            "timer '{}': unknown pad_map '{other}' (supported: at32f421, stm32g0, stm32c0, stm32g4, stm32l0, stm32l4, stm32wb, stm32wba, stm32u5, stm32h5)",
+                            "timer '{}': unknown pad_map '{other}' (supported: at32f421, stm32g0, stm32c0, stm32g4, stm32l0, stm32l4, stm32wb, stm32wba, stm32u5, stm32h5, stm32h7)",
                             p_cfg.id
                         ))
                     }
                 };
-                // `capture_compare_irq: N` — a separate CC vector (AT32F421
-                // TMR1: overflow/trigger/hall IRQ13, channel IRQ14).
-                let capture_compare_irq = p_cfg
-                    .config
-                    .get("capture_compare_irq")
-                    .map(|value| {
-                        value
-                            .as_u64()
-                            .and_then(|v| u32::try_from(v).ok())
-                            .ok_or_else(|| {
-                                anyhow::anyhow!(
-                                    "timer '{}': capture_compare_irq must be a u32",
-                                    p_cfg.id
-                                )
-                            })
-                    })
-                    .transpose()?;
+                // Separate vectors of a split timer interrupt:
+                // `capture_compare_irq: N` for CC1..4IF (AT32F421 TMR1:
+                // overflow/trigger/hall IRQ13, channel IRQ14),
+                // `trigger_com_irq: N` for TIF/COMIF and `break_irq: N` for
+                // BIF (STM32F1/F4 TIM1_TRG_COM / TIM1_BRK).
+                let split_irq = |key: &str| {
+                    p_cfg
+                        .config
+                        .get(key)
+                        .map(|value| {
+                            value
+                                .as_u64()
+                                .and_then(|v| u32::try_from(v).ok())
+                                .ok_or_else(|| {
+                                    anyhow::anyhow!("timer '{}': {key} must be a u32", p_cfg.id)
+                                })
+                        })
+                        .transpose()
+                };
                 Box::new(
                     crate::peripherals::timer::Timer::new_with_layout(width, advanced)
                         .basic(basic)
                         .ccer_np(ccer_np)
-                        .capture_compare_irq(capture_compare_irq)
+                        .capture_compare_irq(split_irq("capture_compare_irq")?)
+                        .trigger_com_irq(split_irq("trigger_com_irq")?)
+                        .break_irq(split_irq("break_irq")?)
                         .pad_map(pad_map),
                 )
             }
@@ -1880,7 +1892,18 @@ pub fn try_build(
                 // Absent/anything else: the RP2040 map.
                 _ => crate::peripherals::rp2040::sio::SioLayout::Rp2040,
             };
-            Box::new(crate::peripherals::rp2040::sio::Rp2040Sio::new().with_layout(layout))
+            let mut sio = crate::peripherals::rp2040::sio::Rp2040Sio::new().with_layout(layout);
+            // The PADS_BANK0 block holding the pads' PUE/PDE pulls.
+            if let Some(block) = p_cfg.config.get("pad_control") {
+                let block = block.as_str().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "SIO peripheral '{}': `pad_control` must name a peripheral id",
+                        p_cfg.id
+                    )
+                })?;
+                sio = sio.with_pad_control(block);
+            }
+            Box::new(sio)
         }
         "rp2040_spi" => Box::new(crate::peripherals::rp2040::spi::Rp2040Spi::new()),
         "rp2040_i2c" => Box::new(crate::peripherals::rp2040::i2c::Rp2040I2c::new()),
@@ -1913,7 +1936,18 @@ pub fn try_build(
                 .unwrap_or(32);
             Box::new(crate::peripherals::crc::Crc::new().with_idr_width(idr_width))
         }
-        "crs" => Box::new(crate::peripherals::crs::Crs::new()),
+        "crs" => match p_cfg.config.get("trim_bits").and_then(|v| v.as_u64()) {
+            Some(bits) if (6..=7).contains(&bits) => {
+                Box::new(crate::peripherals::crs::Crs::with_trim_bits(bits as u32))
+            }
+            Some(bits) => {
+                return Err(anyhow::anyhow!(
+                    "crs `{}`: trim_bits must be 6 or 7, got {bits}",
+                    p_cfg.id
+                ))
+            }
+            None => Box::new(crate::peripherals::crs::Crs::new()),
+        },
         "rtc" => Box::new(crate::peripherals::rtc::Rtc::new()),
         "rtc_f1" => {
             let rtc = crate::peripherals::rtc_f1::RtcF1::new();
@@ -2267,8 +2301,35 @@ pub fn try_build(
             // SQRx families, so it is its own model.
             use crate::peripherals::stm32f0_adc::{Stm32F0Adc, Stm32F0AdcFamily};
             match p_cfg.config.get("profile").and_then(|v| v.as_str()) {
-                Some("stm32f0") => Box::new(Stm32F0Adc::new(Stm32F0AdcFamily::F0)),
-                Some("stm32l0") => Box::new(Stm32F0Adc::new(Stm32F0AdcFamily::L0)),
+                Some(profile @ ("stm32f0" | "stm32l0")) => {
+                    let family = if profile == "stm32f0" {
+                        Stm32F0AdcFamily::F0
+                    } else {
+                        Stm32F0AdcFamily::L0
+                    };
+                    let mut adc = Stm32F0Adc::new(family);
+                    // Same board-level `input_mv: { <ch>: <mV> }` as the SQRx
+                    // families below; a system that holds a pad (the Arduino
+                    // matrix L5 potentiometer) must reach this model too.
+                    if let Some(map) = p_cfg.config.get("input_mv").and_then(|v| v.as_mapping()) {
+                        for (k, v) in map {
+                            match (k.as_u64(), v.as_u64()) {
+                                (Some(ch), Some(mv))
+                                    if ch < 256
+                                        && u16::try_from(mv).is_ok()
+                                        && Peripheral::set_adc_channel_input(
+                                            &mut adc, ch as u8, mv as u16,
+                                        ) => {}
+                                _ => anyhow::bail!(
+                                    "adc '{}': input_mv wants {{ <channel 0..{}>: <mV> }}",
+                                    p_cfg.id,
+                                    Peripheral::adc_channel_count(&adc).unwrap_or(1) - 1
+                                ),
+                            }
+                        }
+                    }
+                    Box::new(adc)
+                }
                 _ => {
                     let layout: crate::peripherals::adc::AdcRegisterLayout =
                         SystemBus::parse_profile_or_default(p_cfg, "ADC")?;
@@ -2628,6 +2689,51 @@ pub fn try_build(
                 })?;
             Box::new(crate::peripherals::msp430_port::Msp430Bytes::new(reset))
         }
+        // `irq_sources`: USIIFG, then USISTTIFG; `irq_line`: the USI vector;
+        // `aclk_hz` (default 32768) and `cpu_hz` clock ACLK.
+        "msp430_usi" => {
+            use crate::peripherals::msp430_usi::{Msp430Usi, UsiConfig, UsiRequest};
+            msp430_keys(p_cfg, &["irq_sources", "irq_line", "aclk_hz", "cpu_hz"])?;
+            let number = |key: &str| -> anyhow::Result<Option<u64>> {
+                match p_cfg.config.get(key) {
+                    None => Ok(None),
+                    Some(v) => v.as_u64().map(Some).ok_or_else(|| {
+                        anyhow::anyhow!("msp430_usi '{}': `{key}` is not a number", p_cfg.id)
+                    }),
+                }
+            };
+            let request = match (p_cfg.config.get("irq_sources"), number("irq_line")?) {
+                (None, None) => None,
+                (Some(_), Some(line)) if line < 64 => {
+                    let sources = u32_list(p_cfg, "irq_sources", 2)
+                        .filter(|v| v.iter().all(|s| *s < crate::peripherals::msp430::SOURCES))
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "msp430_usi '{}': `irq_sources` is USIIFG, then USISTTIFG \
+                                 (two sources below {})",
+                                p_cfg.id,
+                                crate::peripherals::msp430::SOURCES
+                            )
+                        })?;
+                    Some(UsiRequest {
+                        counter_source: sources[0],
+                        start_source: sources[1],
+                        line: line as u32,
+                    })
+                }
+                _ => anyhow::bail!(
+                    "msp430_usi '{}': `irq_sources` and `irq_line` (below 64) come together",
+                    p_cfg.id
+                ),
+            };
+            Box::new(Msp430Usi::new(
+                request,
+                UsiConfig {
+                    aclk_hz: number("aclk_hz")?.unwrap_or(32_768),
+                    cpu_hz: number("cpu_hz")?.unwrap_or(0),
+                },
+            ))
+        }
         // `blocks`: capture/compare blocks (default 3); `irq_sources`:
         // CCIFG0 ... CCIFGn-1, then TAIFG; `irq_lines`: the TACCR0 line, then
         // the TAIV line; `aclk_hz` (default 32768) and `cpu_hz` clock ACLK.
@@ -2706,6 +2812,71 @@ pub fn try_build(
                 })?;
             Box::new(crate::peripherals::msp430_timer_a::Msp430TimerAIv::new(
                 sources,
+            ))
+        }
+        // `inputs`: bonded external inputs A0 .. A(n-1); `vcc_mv`: supply.
+        "msp430_adc10" => {
+            use crate::peripherals::msp430_adc10::{
+                Adc10Config, Adc10Request, Msp430Adc10, EXTERNAL_INPUTS,
+            };
+            msp430_keys(
+                p_cfg,
+                &[
+                    "inputs",
+                    "vcc_mv",
+                    "adc10osc_hz",
+                    "aclk_hz",
+                    "cpu_hz",
+                    "irq_source",
+                    "irq_line",
+                ],
+            )?;
+            let number = |key: &str| -> anyhow::Result<Option<u64>> {
+                match p_cfg.config.get(key) {
+                    None => Ok(None),
+                    Some(v) => v.as_u64().map(Some).ok_or_else(|| {
+                        anyhow::anyhow!("msp430_adc10 '{}': `{key}` is not a number", p_cfg.id)
+                    }),
+                }
+            };
+            let inputs = number("inputs")?.unwrap_or(u64::from(EXTERNAL_INPUTS));
+            if inputs > u64::from(EXTERNAL_INPUTS) {
+                anyhow::bail!(
+                    "msp430_adc10 '{}': `inputs` is 0 to {EXTERNAL_INPUTS}",
+                    p_cfg.id
+                );
+            }
+            let vcc_mv = number("vcc_mv")?.unwrap_or(3000);
+            if !(1..=u64::from(u16::MAX)).contains(&vcc_mv) {
+                anyhow::bail!("msp430_adc10 '{}': `vcc_mv` is 1 to 65535", p_cfg.id);
+            }
+            let request = match (number("irq_source")?, number("irq_line")?) {
+                (None, None) => None,
+                (Some(source), Some(line))
+                    if source < u64::from(crate::peripherals::msp430::SOURCES) && line < 64 =>
+                {
+                    Some(Adc10Request {
+                        source: source as u32,
+                        line: line as u32,
+                    })
+                }
+                _ => anyhow::bail!(
+                    "msp430_adc10 '{}': `irq_source` (below {}) and `irq_line` (below 64) come \
+                     together",
+                    p_cfg.id,
+                    crate::peripherals::msp430::SOURCES
+                ),
+            };
+            Box::new(Msp430Adc10::new(
+                request,
+                Adc10Config {
+                    inputs: inputs as u8,
+                    vcc_mv: vcc_mv as u32,
+                    // ADC10OSC typical (3.7 to 6.3 MHz in the x2xx data sheets).
+                    adc10osc_hz: number("adc10osc_hz")?.unwrap_or(5_000_000),
+                    aclk_hz: number("aclk_hz")?.unwrap_or(32_768),
+                    cpu_hz: number("cpu_hz")?.unwrap_or(0),
+                },
             ))
         }
         // `lines`: the interrupt line behind each bit (0 to 7) of
@@ -3189,6 +3360,7 @@ pub fn try_build(
         // PolarFire SoC MSS SPI0/1: master mode; devices attach through
         // `external_devices:` and follow SLAVE_SELECT.
         "mpfs_spi" => Box::new(crate::peripherals::mpfs_spi::MpfsSpi::new()),
+        "qingke_stk" => Box::new(crate::peripherals::qingke_stk::QingKeStk::new()),
         "sam4s_pio" => Box::new(crate::peripherals::sam4s::Sam4sPio::new()),
         "sam4s_pmc" => Box::new(crate::peripherals::sam4s::Sam4sPmc::new()),
         "sam4s_wdt" => Box::new(crate::peripherals::sam::sysc4s::Sam4sWdt::new()),

@@ -32,8 +32,16 @@
 //!           repeated START, reset TEMP 0x1900, ANACK on an empty address
 //!   PWM0    one-step EasyDMA sequence on P0.15, 25% duty sampled at the pad
 //!           through GPIO IN; TASKS_STOP returns the pad to the GPIO latch
-//! A summary word goes to RAM at 0x2003FF00 (one bit per block passed). The
-//! radio is not exercised.
+//!   GPIO P1 at its silicon block base 0x50000300: P1.1 drive readback, P1.2
+//!           pull-up, GPIOTE PORT=1 toggles on P1.3; P0 OUT and PIN_CNF[31]
+//!           unchanged
+//!   PWM1/2  INTEN.SEQEND0 pends NVIC line 33 / 34 (and no other line in
+//!           28..35); clearing EVENTS_SEQEND0 drops it
+//!   SPIM3   hardware chip select (PSEL.CSN) on P0.20 selects a MAX31855
+//!           fixture: two 4-byte reads return its power-on frame, the GPIO
+//!           latch on P0.20 stays high, INTEN.END pends NVIC line 47
+//! A summary word goes to RAM at 0x2003FF00: 0x5280_0000 | one bit per block
+//! passed (17 blocks, all pass = 0x5281FFFF). The radio is not exercised.
 
 use cortex_m_rt::entry;
 use panic_halt as _;
@@ -64,12 +72,15 @@ fn main() -> ! {
         .s(b"/1f40 rises=")
         .hex(pwm_rises, 4)
         .send();
+    summary |= u32::from(check_gpio_p1(&mut l)) << 14;
+    summary |= u32::from(check_pwm_irq_lines(&mut l)) << 15;
+    summary |= u32::from(check_spim3_hw_csn(&mut l)) << 16;
 
-    wr(RESULT, 0x5284_0000 | summary);
-    if summary == 0x3FFF {
+    wr(RESULT, 0x5280_0000 | summary);
+    if summary == 0x1_FFFF {
         l.s(b"NRF52840 PASS").send();
     } else {
-        l.s(b"NRF52840 FAIL summary=").hex(summary, 4).send();
+        l.s(b"NRF52840 FAIL summary=").hex(summary, 5).send();
     }
 
     // Heartbeat on P0.13 for the gpio_edges check.

@@ -798,6 +798,8 @@
   },
   {
     "buses": [
+      "I2C",
+      "SPI",
       "UART"
     ],
     "name": "stm32h723zg"
@@ -809,6 +811,14 @@
       "UART"
     ],
     "name": "stm32h735"
+  },
+  {
+    "buses": [
+      "I2C",
+      "SPI",
+      "UART"
+    ],
+    "name": "stm32h753zi"
   },
   {
     "buses": [

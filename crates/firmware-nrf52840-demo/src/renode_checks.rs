@@ -509,17 +509,21 @@ pub fn check_twim0_tmp102(l: &mut Line) -> bool {
     let (t_stop, _, t_rx, temp) = twim_xfer(TMP102_ADDR, &[0x00], 2);
     let clean = rd(TWIM_ERRORSRC) == 0;
 
-    // Absent address: no SHORTS, so firmware ends the transfer on ERROR as
-    // nrfx does.
+    // Absent address with LASTTX_STOP armed: no data byte starts, so silicon
+    // fires no LASTTX, runs no shortcut and holds the bus until the firmware
+    // triggers STOP itself, as nrfx does on ERROR.
     for ev in [TWIM_EVENTS_STOPPED, TWIM_EVENTS_ERROR, TWIM_EVENTS_LASTTX] {
         wr(ev, 0);
     }
-    wr(TWIM_SHORTS, 0);
+    wr(TWIM_SHORTS, TWIM_SHORT_LASTTX_STOP);
     wr(TWIM_ADDRESS, ABSENT_ADDR);
     wr(TWIM_TXD_MAXCNT, 1);
     wr(TWIM_TASKS_STARTTX, 1);
     let error = wait_set(TWIM_EVENTS_ERROR);
     let anack = rd(TWIM_ERRORSRC) & TWIM_ERRORSRC_ANACK != 0;
+    let held =
+        rd(TWIM_EVENTS_LASTTX) == 0 && rd(TWIM_TXD_AMOUNT) == 0 && rd(TWIM_EVENTS_STOPPED) == 0;
+    wr(TWIM_SHORTS, 0);
     wr(TWIM_TASKS_STOP, 1);
     let n_stop = wait_set(TWIM_EVENTS_STOPPED);
     wr(TWIM_ERRORSRC, TWIM_ERRORSRC_ANACK);
@@ -538,6 +542,7 @@ pub fn check_twim0_tmp102(l: &mut Line) -> bool {
         && clean
         && error
         && anack
+        && held
         && n_stop
         && cleared;
     l.s(b"twim0 tmp102 cfg=")
@@ -546,6 +551,8 @@ pub fn check_twim0_tmp102(l: &mut Line) -> bool {
         .hex(temp, 4)
         .s(b" anack=")
         .hex((error && anack) as u32, 1)
+        .s(b" held=")
+        .hex(held as u32, 1)
         .s(b" w1c=")
         .hex(cleared as u32, 1)
         .ok(pass)
@@ -640,6 +647,67 @@ pub fn check_pwm0_duty(l: &mut Line) -> (bool, u32, u32) {
         .ok(pass)
         .send();
     (pass, high, rises)
+}
+
+const NVIC_ISPR0: u32 = 0xE000_E200;
+const NVIC_ISPR1: u32 = 0xE000_E204;
+const NVIC_ICPR0: u32 = 0xE000_E280;
+const NVIC_ICPR1: u32 = 0xE000_E284;
+/// NVIC lines 28..35: PWM0, PDM, 30 and 31 (no IRQ), MWU, PWM1, PWM2, SPIM2.
+const PWM_IRQ_WINDOW: u32 = 0xFF;
+
+/// NVIC pending bits for lines 28..35, bit 0 = line 28.
+fn pwm_window_pending() -> u32 {
+    ((rd(NVIC_ISPR0) >> 28) | (rd(NVIC_ISPR1) << 4)) & PWM_IRQ_WINDOW
+}
+
+/// PWM1 and PWM2 (PS v1.7 §6.17.5 INTEN) raise their own NVIC lines, 33 and
+/// 34 (instantiation table, ch. 4.3; nrf52840.svd). The lines stay disabled
+/// in NVIC, so only ISPR shows the routing. With INTEN.SEQEND0 set, a
+/// one-step sequence must pend exactly the instance's line within 28..35,
+/// and clearing EVENTS_SEQEND0 must drop it (level line). Returns pass; the
+/// line prints both pending windows (expected 20 and 40).
+pub fn check_pwm_irq_lines(l: &mut Line) -> bool {
+    let seq = core::ptr::addr_of_mut!(PWM_SEQ) as *mut u16;
+    unsafe { write_volatile(seq, 0x8000 | 100) };
+    let mut pass = true;
+    let mut windows = [0u32; 2];
+    for (n, (base, irq)) in [(0x4002_1000u32, 33u32), (0x4002_2000, 34)]
+        .into_iter()
+        .enumerate()
+    {
+        wr(NVIC_ICPR0, 0xF000_0000);
+        wr(NVIC_ICPR1, 0xF);
+        wr(base + 0x500, 1); // ENABLE
+        wr(base + 0x508, 400); // COUNTERTOP
+        wr(base + 0x520, seq as u32); // SEQ[0].PTR
+        wr(base + 0x524, 1); // SEQ[0].CNT
+        wr(base + 0x110, 0); // EVENTS_SEQEND0
+        wr(base + 0x304, 1 << 4); // INTENSET.SEQEND0
+        wr(base + 0x008, 1); // TASKS_SEQSTART0
+        let seqend = wait_set(base + 0x110);
+        windows[n] = pwm_window_pending();
+        wr(base + 0x110, 0);
+        settle();
+        let dropped = pwm_window_pending() & (1 << (irq - 28)) == 0;
+        wr(base + 0x308, 0xFFFF_FFFF); // INTENCLR
+        wr(base + 0x004, 1); // TASKS_STOP
+        let stopped = wait_set(base + 0x104);
+        for ev in (0x104..=0x11C).step_by(4) {
+            wr(base + ev, 0);
+        }
+        wr(base + 0x500, 0);
+        wr(NVIC_ICPR0, 0xF000_0000);
+        wr(NVIC_ICPR1, 0xF);
+        pass &= seqend && windows[n] == 1 << (irq - 28) && dropped && stopped;
+    }
+    l.s(b"pwm irq lines 28..35 pwm1=")
+        .hex(windows[0], 2)
+        .s(b" pwm2=")
+        .hex(windows[1], 2)
+        .ok(pass)
+        .send();
+    pass
 }
 
 /// Convert the held 1.65 V input on AIN3 into one 12-bit EasyDMA sample.
@@ -883,4 +951,175 @@ unsafe extern "C" fn nrf_pendsv_tailchain_handler() {
         record = const TAILCHAIN_RECORD,
         icsr = const SCB_ICSR,
     );
+}
+
+/// Nordic's P1 block base (PS v1.7 §6.9.2). Its registers start at 0x804 —
+/// inside P0's 4 KB page, after P0's PIN_CNF[31] at 0x5000077C.
+pub const GPIO1: u32 = 0x5000_0300;
+pub const P1_OUT: u32 = GPIO1 + 0x504;
+pub const P1_OUTSET: u32 = GPIO1 + 0x508;
+pub const P1_OUTCLR: u32 = GPIO1 + 0x50C;
+pub const P1_IN: u32 = GPIO1 + 0x510;
+pub const P1_PIN_CNF: u32 = GPIO1 + 0x700;
+/// P1.1 driven output, P1.2 pulled-up input, P1.3 GPIOTE task pin.
+pub const P1_OUT_PIN: u32 = 1;
+pub const P1_PULL_PIN: u32 = 2;
+pub const P1_GPIOTE_PIN: u32 = 3;
+
+/// GPIO P1 at its silicon addresses (0x50000300 block): OUTSET/OUTCLR on P1.1
+/// read back through OUT and IN, PIN_CNF PULL=Up on input P1.2 reads IN = 1,
+/// and GPIOTE CONFIG[0] PORT=1 toggles P1.3 at the pad. P0's OUT and
+/// PIN_CNF[31] (0x5000077C, the last P0 word before P1) must not change.
+/// Returns pass; the line prints P1 IN while high and P0 OUT.
+pub fn check_gpio_p1(l: &mut Line) -> bool {
+    let p0_cnf31 = GPIO_PIN_CNF + 31 * 4;
+    wr(p0_cnf31, 2);
+    let p0_out_before = rd(GPIO_OUT);
+
+    let out_bit = 1 << P1_OUT_PIN;
+    wr(P1_PIN_CNF + P1_OUT_PIN * 4, 1);
+    wr(P1_OUTSET, out_bit);
+    let out_hi = rd(P1_OUT) & out_bit;
+    let in_hi = rd(P1_IN);
+    wr(P1_OUTCLR, out_bit);
+    let out_lo = rd(P1_OUT) & out_bit;
+    let in_lo = rd(P1_IN) & out_bit;
+    let drive_ok = out_hi != 0 && in_hi & out_bit != 0 && out_lo == 0 && in_lo == 0;
+
+    // DIR=0, INPUT=connect, PULL=Up (3 << 2).
+    let pull_bit = 1 << P1_PULL_PIN;
+    wr(P1_PIN_CNF + P1_PULL_PIN * 4, 3 << 2);
+    settle();
+    let pull_ok = rd(P1_IN) & pull_bit != 0;
+
+    // GPIOTE task mode (3), PSEL=3, PORT=1 (bit 13), POLARITY=Toggle.
+    let te_bit = 1 << P1_GPIOTE_PIN;
+    wr(P1_PIN_CNF + P1_GPIOTE_PIN * 4, 1);
+    wr(
+        GPIOTE_CONFIG0,
+        3 | (P1_GPIOTE_PIN << 8) | (1 << 13) | (3 << 16),
+    );
+    wr(GPIOTE_TASKS_OUT0, 1);
+    settle();
+    let t1 = rd(P1_IN) & te_bit;
+    wr(GPIOTE_TASKS_OUT0, 1);
+    settle();
+    let t2 = rd(P1_IN) & te_bit;
+    wr(GPIOTE_CONFIG0, 0);
+    let gpiote_ok = t1 != 0 && t2 == 0;
+
+    let p0_out = rd(GPIO_OUT);
+    let p0_ok = p0_out == p0_out_before && rd(p0_cnf31) == 2;
+    let pass = drive_ok && pull_ok && gpiote_ok && p0_ok;
+    l.s(b"gpio p1 in=")
+        .hex(in_hi & (out_bit | pull_bit), 2)
+        .s(b" drive=")
+        .hex(drive_ok as u32, 1)
+        .s(b" pull=")
+        .hex(pull_ok as u32, 1)
+        .s(b" gpiote=")
+        .hex(gpiote_ok as u32, 1)
+        .s(b" p0=")
+        .hex(p0_ok as u32, 1)
+        .ok(pass)
+        .send();
+    pass
+}
+
+pub const SPIM3: u32 = 0x4002_F000;
+const SPIM3_IRQ: u32 = 47;
+/// SPIM3 pads on the bare chip row; no other block uses them. P0.20 is the
+/// MAX31855 fixture's chip select (`configs/systems/onboarding/nrf52840.yaml`).
+const SPIM3_SCK: u32 = 19;
+const SPIM3_CSN: u32 = 20;
+const SPIM3_MOSI: u32 = 22;
+const SPIM3_MISO: u32 = 23;
+/// MAX31855 power-on frame: 25 degC hot junction (100 << 18) and 22 degC
+/// internal (352 << 4), no fault bits.
+const MAX31855_FRAME: u32 = 0x0190_1600;
+
+#[repr(C, align(4))]
+struct SpimRx([u8; 4]);
+static mut SPIM3_RX: SpimRx = SpimRx([0; 4]);
+
+/// One 4-byte RX-only SPIM3 transfer; returns (END seen, RXD.AMOUNT, frame).
+fn spim3_read_frame() -> (bool, u32, u32) {
+    let rx = core::ptr::addr_of_mut!(SPIM3_RX) as *mut u8;
+    for i in 0..4 {
+        unsafe { write_volatile(rx.add(i), 0) };
+    }
+    wr(SPIM3 + 0x118, 0); // EVENTS_END
+    wr(SPIM3 + 0x534, rx as u32); // RXD.PTR
+    wr(SPIM3 + 0x538, 4); // RXD.MAXCNT
+    wr(SPIM3 + 0x548, 0); // TXD.MAXCNT: MOSI carries ORC
+    wr(SPIM3 + 0x010, 1); // TASKS_START
+    let end = wait_set(SPIM3 + 0x118);
+    let b = |i| u32::from(unsafe { read_volatile(rx.add(i)) });
+    (
+        end,
+        rd(SPIM3 + 0x53C),
+        b(0) << 24 | b(1) << 16 | b(2) << 8 | b(3),
+    )
+}
+
+/// SPIM3 (PS v1.x §6.25) at 0x4002F000 with the hardware chip select on
+/// P0.20 (PSEL.CSN, CSNPOL active low). P0.20 is also a GPIO output held
+/// high, as nrfx sets the idle level, so only SPIM3's own CSN can select the
+/// MAX31855 there. Two reads must each return the full power-on frame (CSN
+/// rises between them, so the second one is reframed), the GPIO OUT latch
+/// must stay high, and INTEN.END must pend NVIC line 47. Before, the bare
+/// chip row had no SPIM3, and the model honoured PSEL.CSN on nRF54L only.
+pub fn check_spim3_hw_csn(l: &mut Line) -> bool {
+    wr(GPIO_PIN_CNF + 4 * SPIM3_CSN, 3); // output, input buffer connected
+    wr(GPIO_OUTSET, 1 << SPIM3_CSN);
+    wr(SPIM3 + 0x508, SPIM3_SCK);
+    wr(SPIM3 + 0x50C, SPIM3_MOSI);
+    wr(SPIM3 + 0x510, SPIM3_MISO);
+    wr(SPIM3 + 0x514, SPIM3_CSN); // PSEL.CSN
+    wr(SPIM3 + 0x568, 0); // CSNPOL active low
+    wr(SPIM3 + 0x524, 0x8000_0000); // FREQUENCY M8
+    wr(SPIM3 + 0x554, 0); // CONFIG mode 0, MSB first
+    wr(SPIM3 + 0x500, 7); // ENABLE = SPIM
+    let csn_ok = rd(SPIM3 + 0x514) == SPIM3_CSN;
+
+    let (end1, amount1, frame1) = spim3_read_frame();
+    wr(NVIC_ICPR1, 1 << (SPIM3_IRQ - 32));
+    wr(SPIM3 + 0x304, 1 << 6); // INTENSET.END
+    let (end2, amount2, frame2) = spim3_read_frame();
+    settle();
+    let irq = rd(NVIC_ISPR1) & (1 << (SPIM3_IRQ - 32)) != 0;
+    wr(SPIM3 + 0x308, 0xFFFF_FFFF); // INTENCLR
+    let gpio_high = rd(GPIO_OUT) & (1 << SPIM3_CSN) != 0;
+
+    for ev in [0x104, 0x110, 0x118, 0x120] {
+        wr(SPIM3 + ev, 0);
+    }
+    wr(SPIM3 + 0x500, 0);
+    for psel in [0x508, 0x50C, 0x510, 0x514] {
+        wr(SPIM3 + psel, 0xFFFF_FFFF);
+    }
+    wr(NVIC_ICPR1, 1 << (SPIM3_IRQ - 32));
+
+    let pass = csn_ok
+        && end1
+        && end2
+        && amount1 == 4
+        && amount2 == 4
+        && frame1 == MAX31855_FRAME
+        && frame2 == MAX31855_FRAME
+        && gpio_high
+        && irq;
+    l.s(b"spim3 csn max31855=")
+        .hex(frame1, 8)
+        .s(b"/")
+        .hex(frame2, 8)
+        .s(b" n=")
+        .hex(amount1 + amount2, 1)
+        .s(b" gpio=")
+        .hex(gpio_high as u32, 1)
+        .s(b" irq47=")
+        .hex(irq as u32, 1)
+        .ok(pass)
+        .send();
+    pass
 }

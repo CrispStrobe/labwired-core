@@ -942,6 +942,15 @@ const CHIPS: &[ChipConf] = &[
         behavior_gate: None,
     },
     ChipConf {
+        // NUCLEO-L031K6: the raw-register USART2 / LD3 smoke
+        // (examples/nucleo-l031k6) runs in the PR board lane, but no PR-run
+        // Rust survival gate or reset oracle exists for this exact part.
+        name: "stm32l031k6",
+        yaml: "configs/chips/stm32l031k6.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
         name: "stm32l476",
         yaml: "configs/chips/stm32l476.yaml",
         reset_oracle: None,
@@ -1434,6 +1443,15 @@ const CHIPS: &[ChipConf] = &[
     ChipConf {
         name: "stm32h723zg",
         yaml: "configs/chips/stm32h723zg.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    // NUCLEO-H753ZI (RM0433). SIM-DERIVED: no silicon capture. Its stock
+    // stm32duino row runs in core-arduino-matrix-smoke, not as a Rust test,
+    // so no behavior_gate resolves.
+    ChipConf {
+        name: "stm32h753zi",
+        yaml: "configs/chips/stm32h753zi.yaml",
         reset_oracle: None,
         behavior_gate: None,
     },
