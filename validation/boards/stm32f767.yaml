@@ -11,6 +11,7 @@ models:
   - crates/core/src/cpu/cortex_m.rs
   - crates/core/src/decoder/arm.rs
   - configs/chips/stm32f767.yaml
+  - crates/core/src/peripherals/bxcan.rs
   # 2026-09-22, model_paths_drift_gate: models this board REGISTERS that
   # its list omitted, so they were invisible to the drift digest. This
   # board records no silicon capture, so there is no "silicon-verified"

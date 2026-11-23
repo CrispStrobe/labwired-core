@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "kind": "reviewed-source-successor-not-new-performance-measurement",
+  "fork_predecessor": "e6900f2805ed52b3fbdf1fb0b0c97fa04b171c9b",
+  "upstream_source": "b2c3e1976d83c354a462676d8ae60ff9d57ef690",
+  "scope": [
+    "Add only the upstream STM32H753ZI and STM32L031K6 references. Every existing fork baseline, measurement function, tolerance, noise floor and the Pico retirement floor remain unchanged; board_perf.py is unchanged. No new performance qualification is claimed by this fixture."
+  ],
+  "imported_upstream_waivers": [],
+  "imported_upstream_baselines": {
+    "stm32h753zi": {
+      "batch": 1.3,
+      "step": 860.6
+    },
+    "stm32l031k6": {
+      "batch": 1.3,
+      "step": 863.2
+    }
+  },
+  "source_transitions": [
+    {
+      "path": "scripts/perf/baselines.json",
+      "predecessor_sha256": "3ca2db360de44fb60ad42e62b06439b9cef1d4f0f452c8549b4987919d10900e",
+      "successor_sha256": "b17d02992ada1fc5f3b7efcb62a112e46532785cfceb436cd707417aaa152be8",
+      "replacements": [
+        {
+          "before": "",
+          "after": "  \"stm32h753zi\": {\n    \"batch\": 1.3,\n    \"step\": 860.6\n  },\n"
+        },
+        {
+          "before": "",
+          "after": "  \"stm32l031k6\": {\n    \"batch\": 1.3,\n    \"step\": 863.2\n  },\n"
+        }
+      ]
+    }
+  ]
+}

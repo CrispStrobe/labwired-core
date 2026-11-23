@@ -34,13 +34,17 @@ fn run(console: Option<&str>) -> Run {
         ),
     )
     .expect("write system");
+    // On the counter-metrics path a step is a machine cycle, retired or
+    // skipped (032ba38d45). The blink sketch needs about 50M device cycles for
+    // two GPIO4 edges; 100M (~0.4 s of ESP32 time) keeps both edges inside the
+    // bound that the old instruction-counted 2M budget used to cover.
     let script = dir.join("script.yaml");
     std::fs::write(
         &script,
         format!(
             "schema_version: \"1.2\"\n\
              inputs:\n  profile: arduino-esp32\n  firmware: {:?}\n  system: {system:?}\n\
-             limits:\n  max_steps: 2000000\n\
+             limits:\n  max_steps: 100000000\n\
              assertions:\n  - uart_contains: idf5-boot\n  - gpio_edges:\n      pin: gpio:4\n      min_edges: 2\n  - expected_stop_reason: max_steps\n",
             root.join("crates/cli/tests/fixtures/esp32_arduino_idf5_serial/firmware.elf"),
         ),
