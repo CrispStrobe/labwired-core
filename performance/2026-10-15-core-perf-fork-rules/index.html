@@ -5104,6 +5104,25 @@ patch:</p>
    instead of re-baselined here. That is the only permanent answer, and the
    probe table above gives such a PR a credible story.</li>
 </ol>
+<h2 id="2026-11-24-re-lock-of-stale-baselines-after-the-0d5c1ec8-sync">2026-11-24: re-lock of stale baselines after the 0d5c1ec8 sync</h2>
+<p>The upstream sync merged in #304 made most Cortex-M, RISC-V and AVR step loops
+cheaper. The full Core Perf run on the #304 head (tree identical to main
+<code>e3fa50bb</code>) flagged <strong>115 rows on 111 boards</strong> as
+<code>STALE BASELINE</code>: 111 step rows, 10.3–51.5 % below baseline (median
+25.8 %), and 4 batch rows (efr32mg26, nrf52832, nrf54l05, nrf54l10).
+Re-locked from <a href="https://github.com/CrispStrobe/labwired-core/actions/runs/45352138603">run 45352138603</a>,
+job <code>board-throughput</code>, never a local run.</p>
+<p>Only flagged rows moved, each down to its CI measurement rounded as
+<code>board_perf.py --update</code> rounds it. No row rose, and <code>board_perf.py</code>, its
+tolerances and noise floor are unchanged. Every row with its old and new value
+is in <code>scripts/ci/fixtures/cortex_m_perf_relock_e3fa50bb.json</code>. The receipt
+guard (<code>test_cortex_m_perf_diagnostics.py</code>) pins that file's hash and reverses
+it before the older successor checks. It refuses any raised, added, removed or
+unflagged row.</p>
+<p>This replaces the earlier Pico-only ratchet (#303). Its rp2040 numbers came
+from the run before this sync, and ratcheting two rows out of 115 stale ones
+would have been an arbitrary subset. rp2040 step is now 679.6 (was 905.9), and
+rp2040-feather is 679.5 (was 906.8).</p>
 
 
 
