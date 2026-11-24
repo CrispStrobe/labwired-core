@@ -36,15 +36,69 @@ def annotation(total=10):
 
 
 
-def reverse_b2c3e197_successor(root):
-    """Reverse the reviewed b2c3e197 sync insertions; return predecessor texts."""
+RELOCK_E3FA50BB = 'scripts/ci/fixtures/cortex_m_perf_relock_e3fa50bb.json'
+
+
+def reverse_relock_e3fa50bb(root):
+    """Reverse the reviewed e3fa50bb stale-baseline re-lock; return predecessor texts.
+
+    The re-lock may only LOWER rows that board_perf.py flagged stale in the
+    recorded CI run, each to its recorded CI measurement. Anything else in the
+    restored delta (a raised, added or removed row, another key) is refused.
+    """
+    path = root / RELOCK_E3FA50BB
+    if hashlib.sha256(path.read_bytes()).hexdigest() != '596f5c5abd08fa6ff2b9dd02467ca43d583229325281e0a851d21da166af917d':
+        raise AssertionError('reviewed e3fa50bb re-lock fixture')
+    record = json.loads(path.read_text())
+    if record['kind'] != 'reviewed-ci-relock-of-stale-baselines':
+        raise AssertionError('reviewed e3fa50bb re-lock fixture')
+    if [entry['path'] for entry in record['source_transitions']] != ['scripts/perf/baselines.json']:
+        raise AssertionError('reviewed e3fa50bb re-lock fixture')
+    out = {}
+    for entry in record['source_transitions']:
+        current = (root / entry['path']).read_text()
+        if hashlib.sha256(current.encode()).hexdigest() != entry['successor_sha256']:
+            raise AssertionError(entry['path'])
+        source = current
+        for replacement in entry['replacements']:
+            if source.count(replacement['after']) != 1:
+                raise AssertionError(entry['path'])
+            source = source.replace(replacement['after'], replacement['before'], 1)
+        if hashlib.sha256(source.encode()).hexdigest() != entry['predecessor_sha256']:
+            raise AssertionError(entry['path'])
+        old, new = json.loads(source), json.loads(current)
+        if set(old) != set(new):
+            raise AssertionError('re-lock added or removed a board')
+        changed = {}
+        for board in old:
+            if set(old[board]) != set(new[board]):
+                raise AssertionError('re-lock changed the modes of ' + board)
+            for mode, value in new[board].items():
+                if value != old[board][mode]:
+                    changed.setdefault(board, {})[mode] = {'baseline': old[board][mode], 'measured': value}
+        if changed != record['relocked']:
+            raise AssertionError('re-lock delta differs from the recorded CI measurements')
+        for board, modes in changed.items():
+            for mode, pair in modes.items():
+                if not pair['measured'] < pair['baseline'] * (1 - 0.10):
+                    raise AssertionError('re-lock row was not stale: %s %s' % (board, mode))
+        out[entry['path']] = source
+    return out
+
+
+def reverse_b2c3e197_successor(root, sources=None):
+    """Reverse the reviewed b2c3e197 sync insertions; return predecessor texts.
+
+    `sources` carries texts already restored by a newer reviewed layer.
+    """
+    sources = reverse_relock_e3fa50bb(root) if sources is None else sources
     path = root / 'scripts/ci/fixtures/cortex_m_perf_successor_b2c3e197.json'
     if hashlib.sha256(path.read_bytes()).hexdigest() != '3df6f9a136bda1e3639800f36d1ada05fa058b0312c211bdf8e1d7e897642555':
         raise AssertionError('reviewed b2c3e197 successor fixture')
     record = json.loads(path.read_text())
     out = {}
     for entry in record['source_transitions']:
-        source = (root / entry['path']).read_text()
+        source = sources.get(entry['path'], (root / entry['path']).read_text())
         if hashlib.sha256(source.encode()).hexdigest() != entry['successor_sha256']:
             raise AssertionError(entry['path'])
         for replacement in entry['replacements']:
@@ -627,7 +681,8 @@ class DiagnosticsControls(unittest.TestCase):
                  'scripts/ci/fixtures/cortex_m_perf_successor_a4b097c0.json',
                  'scripts/ci/fixtures/cortex_m_perf_successor_7afe07eb.json',
                  'scripts/ci/fixtures/cortex_m_perf_successor_f9ad21ad.json',
-                 'scripts/ci/fixtures/cortex_m_perf_successor_b2c3e197.json')
+                 'scripts/ci/fixtures/cortex_m_perf_successor_b2c3e197.json',
+                 RELOCK_E3FA50BB)
         for path in paths:
             target = cold / path
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -728,8 +783,10 @@ class DiagnosticsControls(unittest.TestCase):
         record = json.loads(receipt.read_text())
         self.assertEqual(record['imported_upstream_waivers'], ['ch32l103c8t6', 'ch32x035c8t6'])
         self.assertEqual(set(record['imported_upstream_baselines']), {'at32f421g8u7'})
+        # The e3fa50bb re-lock later lowered this reference; reverse it first.
+        relock_inputs = reverse_relock_e3fa50bb(ROOT)
         for entry in record['source_transitions']:
-            current = (ROOT / entry['path']).read_text()
+            current = relock_inputs.get(entry['path'], (ROOT / entry['path']).read_text())
             before = current
             for replacement in entry['replacements']:
                 before = before.replace(replacement['after'], replacement['before'], 1)
@@ -795,7 +852,7 @@ class DiagnosticsControls(unittest.TestCase):
                          {'stm32h753zi': {'batch': 1.3, 'step': 860.6},
                           'stm32l031k6': {'batch': 1.3, 'step': 863.2}})
         self.assertEqual(['scripts/perf/baselines.json'], [e['path'] for e in record['source_transitions']])
-        current = (ROOT / 'scripts/perf/baselines.json').read_text()
+        current = reverse_relock_e3fa50bb(ROOT)['scripts/perf/baselines.json']
         previous = reverse_b2c3e197_successor(ROOT)['scripts/perf/baselines.json']
         old, new = json.loads(previous), json.loads(current)
         self.assertEqual({k: new[k] for k in old}, old)
@@ -815,10 +872,53 @@ class DiagnosticsControls(unittest.TestCase):
         cold = self.preservation_copy()
         path = cold / 'scripts/perf/baselines.json'
         text = path.read_text()
-        self.assertEqual(text.count('"step": 905.9'), 1)
-        path.write_text(text.replace('"step": 905.9', '"step": 999.9', 1))
+        self.assertEqual(text.count('"step": 679.6'), 1)
+        path.write_text(text.replace('"step": 679.6', '"step": 999.9', 1))
         with self.assertRaises(AssertionError):
             self.assert_preservation(cold)
+
+    def test_e3fa50bb_relock_only_lowers_rows_ci_flagged_stale(self):
+        record = json.loads((ROOT / RELOCK_E3FA50BB).read_text())
+        self.assertEqual(record['measurement']['measured_commit'], 'ca2f9acc20dcf1f915e59b5af6c670f3164277f1')
+        self.assertEqual(record['measurement']['measured_tree'], '8d8283390f2eeebe06d5cd8873f1d4f822fc4532')
+        rows = [(b, m) for b, modes in record['relocked'].items() for m in modes]
+        self.assertEqual(len(rows), 115)
+        self.assertEqual(record['relocked']['rp2040']['step'], {'baseline': 905.9, 'measured': 679.6})
+        previous = json.loads(reverse_relock_e3fa50bb(ROOT)['scripts/perf/baselines.json'])
+        current = json.loads((ROOT / 'scripts/perf/baselines.json').read_text())
+        for board, modes in current.items():
+            for mode, value in modes.items():
+                if (board, mode) in rows:
+                    self.assertLess(value, previous[board][mode])
+                else:
+                    self.assertEqual(value, previous[board][mode])
+        self.assert_preservation(ROOT)
+
+    def test_e3fa50bb_relock_rejects_relabelled_provenance(self):
+        cold = self.preservation_copy()
+        path = cold / RELOCK_E3FA50BB
+        record = json.loads(path.read_text())
+        record['kind'] = 'new measured performance'
+        path.write_text(json.dumps(record))
+        with self.assertRaisesRegex(AssertionError, 'reviewed e3fa50bb re-lock fixture'):
+            self.assert_preservation(cold)
+
+    def test_e3fa50bb_relock_rejects_a_raised_or_unflagged_row(self):
+        relocked = json.loads((ROOT / RELOCK_E3FA50BB).read_text())['relocked']
+        def raise_pico(data):
+            data['rp2040']['step'] = 905.9
+        def lower_unflagged(data):
+            board, mode = next((b, m) for b, modes in data.items() for m in modes
+                               if m not in relocked.get(b, {}))
+            data[board][mode] = round(data[board][mode] * 0.5, 1)
+        for tamper in (raise_pico, lower_unflagged):
+            cold = self.preservation_copy()
+            path = cold / 'scripts/perf/baselines.json'
+            data = json.loads(path.read_text())
+            tamper(data)
+            path.write_text(json.dumps(data, indent=2) + '\n')
+            with self.assertRaises(AssertionError):
+                self.assert_preservation(cold)
 
     def test_preservation_rejects_relabelled_historical_collector_fixture(self):
         cold = self.preservation_copy()
