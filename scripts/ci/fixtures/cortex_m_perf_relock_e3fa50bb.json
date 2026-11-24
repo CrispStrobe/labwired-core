@@ -1,0 +1,1153 @@
+{
+  "schema": 1,
+  "kind": "reviewed-ci-relock-of-stale-baselines",
+  "fork_predecessor": "e3fa50bbdc48be00881ab0465e7292b7a0ab12ce",
+  "measurement": {
+    "workflow_run": 45352138603,
+    "job": 138309792646,
+    "job_name": "board-throughput",
+    "measured_commit": "ca2f9acc20dcf1f915e59b5af6c670f3164277f1",
+    "measured_tree": "8d8283390f2eeebe06d5cd8873f1d4f822fc4532",
+    "note": "Measured on the PR #304 head, whose tree is identical to fork main e3fa50bb (the merge of that head)."
+  },
+  "scope": [
+    "Lower exactly the rows board_perf.py flagged STALE BASELINE (measured more than STALE_TOLERANCE below baseline) in that CI run, each to its CI-measured value rounded as board_perf.py --update rounds it. No row rises, no row is added or removed, and board_perf.py, its tolerances, noise floor and measurement functions are unchanged."
+  ],
+  "relocked": {
+    "amap42kp": {
+      "step": {
+        "baseline": 892.0,
+        "measured": 668.0
+      }
+    },
+    "at32f421g8u7": {
+      "step": {
+        "baseline": 982.3,
+        "measured": 724.0
+      }
+    },
+    "atmega328p": {
+      "step": {
+        "baseline": 1044.8,
+        "measured": 869.6
+      }
+    },
+    "atmega328pb": {
+      "step": {
+        "baseline": 1026.4,
+        "measured": 869.6
+      }
+    },
+    "atmega32u4": {
+      "step": {
+        "baseline": 1020.0,
+        "measured": 869.6
+      }
+    },
+    "atsamd21": {
+      "step": {
+        "baseline": 895.0,
+        "measured": 668.0
+      }
+    },
+    "atsamd21e15a": {
+      "step": {
+        "baseline": 893.0,
+        "measured": 668.0
+      }
+    },
+    "atsamd21e16a": {
+      "step": {
+        "baseline": 893.0,
+        "measured": 668.0
+      }
+    },
+    "atsamd21e17a": {
+      "step": {
+        "baseline": 893.0,
+        "measured": 668.0
+      }
+    },
+    "atsamd21e18a": {
+      "step": {
+        "baseline": 893.0,
+        "measured": 668.0
+      }
+    },
+    "atsamd21g15a": {
+      "step": {
+        "baseline": 893.0,
+        "measured": 668.0
+      }
+    },
+    "atsamd21g16a": {
+      "step": {
+        "baseline": 893.0,
+        "measured": 668.0
+      }
+    },
+    "atsamd21g17a": {
+      "step": {
+        "baseline": 893.0,
+        "measured": 668.0
+      }
+    },
+    "atsamd21g18a": {
+      "step": {
+        "baseline": 895.0,
+        "measured": 680.8
+      }
+    },
+    "atsamd21j15a": {
+      "step": {
+        "baseline": 893.0,
+        "measured": 668.0
+      }
+    },
+    "atsamd21j16a": {
+      "step": {
+        "baseline": 893.0,
+        "measured": 668.0
+      }
+    },
+    "atsamd21j17a": {
+      "step": {
+        "baseline": 893.0,
+        "measured": 668.0
+      }
+    },
+    "atsamd21j18a": {
+      "step": {
+        "baseline": 893.0,
+        "measured": 668.0
+      }
+    },
+    "atsamd51": {
+      "step": {
+        "baseline": 1240.0,
+        "measured": 742.0
+      }
+    },
+    "atsamd51-pybadge": {
+      "step": {
+        "baseline": 1251.8,
+        "measured": 753.1
+      }
+    },
+    "cc2538sf53": {
+      "step": {
+        "baseline": 892.0,
+        "measured": 682.2
+      }
+    },
+    "efr32mg26": {
+      "step": {
+        "baseline": 1513.7,
+        "measured": 951.2
+      },
+      "batch": {
+        "baseline": 2.2,
+        "measured": 1.6
+      }
+    },
+    "esp32": {
+      "step": {
+        "baseline": 955.5,
+        "measured": 801.5
+      }
+    },
+    "esp32-devkitc-32e-gpio-smoke": {
+      "step": {
+        "baseline": 977.8,
+        "measured": 801.5
+      }
+    },
+    "esp32-devkitc-32e-uart1": {
+      "step": {
+        "baseline": 977.8,
+        "measured": 801.5
+      }
+    },
+    "esp32s3": {
+      "step": {
+        "baseline": 991.9,
+        "measured": 890.2
+      }
+    },
+    "esp32s3-devkitc-1-n16r8-adc": {
+      "step": {
+        "baseline": 991.9,
+        "measured": 890.2
+      }
+    },
+    "esp32s3-zero": {
+      "step": {
+        "baseline": 991.9,
+        "measured": 890.2
+      }
+    },
+    "imxrt1064": {
+      "step": {
+        "baseline": 895.0,
+        "measured": 668.0
+      }
+    },
+    "mimxrt595s": {
+      "step": {
+        "baseline": 892.0,
+        "measured": 676.2
+      }
+    },
+    "mk64f12": {
+      "step": {
+        "baseline": 892.0,
+        "measured": 668.0
+      }
+    },
+    "mkw41z4": {
+      "step": {
+        "baseline": 906.2,
+        "measured": 680.0
+      }
+    },
+    "nrf51822": {
+      "step": {
+        "baseline": 1335.6,
+        "measured": 816.5
+      }
+    },
+    "nrf52832": {
+      "step": {
+        "baseline": 1330.2,
+        "measured": 694.0
+      },
+      "batch": {
+        "baseline": 2.0,
+        "measured": 1.5
+      }
+    },
+    "nrf52833": {
+      "step": {
+        "baseline": 1368.6,
+        "measured": 850.3
+      }
+    },
+    "nrf52840": {
+      "step": {
+        "baseline": 1368.6,
+        "measured": 850.3
+      }
+    },
+    "nrf5340": {
+      "step": {
+        "baseline": 1324.0,
+        "measured": 679.1
+      }
+    },
+    "nrf54l05": {
+      "step": {
+        "baseline": 1377.5,
+        "measured": 668.0
+      },
+      "batch": {
+        "baseline": 1.9,
+        "measured": 1.3
+      }
+    },
+    "nrf54l10": {
+      "step": {
+        "baseline": 1377.5,
+        "measured": 668.0
+      },
+      "batch": {
+        "baseline": 1.9,
+        "measured": 1.3
+      }
+    },
+    "nrf54l15": {
+      "step": {
+        "baseline": 1364.0,
+        "measured": 869.0
+      }
+    },
+    "nrf54lm20a": {
+      "step": {
+        "baseline": 1412.4,
+        "measured": 921.7
+      }
+    },
+    "r7fa6m5bh": {
+      "step": {
+        "baseline": 937.4,
+        "measured": 690.9
+      }
+    },
+    "r7fa8m1ah": {
+      "step": {
+        "baseline": 934.8,
+        "measured": 689.0
+      }
+    },
+    "ra4m1": {
+      "step": {
+        "baseline": 895.0,
+        "measured": 680.5
+      }
+    },
+    "rp2040": {
+      "step": {
+        "baseline": 905.9,
+        "measured": 679.6
+      }
+    },
+    "rp2040-feather": {
+      "step": {
+        "baseline": 906.8,
+        "measured": 679.5
+      }
+    },
+    "rp2350": {
+      "step": {
+        "baseline": 906.1,
+        "measured": 679.4
+      }
+    },
+    "rp2350-feather": {
+      "step": {
+        "baseline": 906.8,
+        "measured": 679.4
+      }
+    },
+    "s32k388": {
+      "step": {
+        "baseline": 907.8,
+        "measured": 668.0
+      }
+    },
+    "samd51-no-asf-simulation": {
+      "step": {
+        "baseline": 1339.0,
+        "measured": 992.3
+      }
+    },
+    "same70q21b": {
+      "step": {
+        "baseline": 892.0,
+        "measured": 668.0
+      }
+    },
+    "stm32c031c6": {
+      "step": {
+        "baseline": 937.4,
+        "measured": 695.0
+      }
+    },
+    "stm32f072": {
+      "step": {
+        "baseline": 937.9,
+        "measured": 695.7
+      }
+    },
+    "stm32f103": {
+      "step": {
+        "baseline": 937.3,
+        "measured": 694.8
+      }
+    },
+    "stm32f103c4": {
+      "step": {
+        "baseline": 936.4,
+        "measured": 694.8
+      }
+    },
+    "stm32f103c6": {
+      "step": {
+        "baseline": 936.4,
+        "measured": 694.3
+      }
+    },
+    "stm32f103r4": {
+      "step": {
+        "baseline": 936.4,
+        "measured": 694.8
+      }
+    },
+    "stm32f103r4h": {
+      "step": {
+        "baseline": 936.4,
+        "measured": 694.8
+      }
+    },
+    "stm32f103r6": {
+      "step": {
+        "baseline": 936.4,
+        "measured": 694.3
+      }
+    },
+    "stm32f103r6h": {
+      "step": {
+        "baseline": 936.4,
+        "measured": 694.8
+      }
+    },
+    "stm32f103r8": {
+      "step": {
+        "baseline": 932.9,
+        "measured": 694.8
+      }
+    },
+    "stm32f103rb": {
+      "step": {
+        "baseline": 935.4,
+        "measured": 694.8
+      }
+    },
+    "stm32f103rb-nucleo-bme280-smoke": {
+      "step": {
+        "baseline": 921.9,
+        "measured": 687.9
+      }
+    },
+    "stm32f103t4": {
+      "step": {
+        "baseline": 936.4,
+        "measured": 694.8
+      }
+    },
+    "stm32f103t6": {
+      "step": {
+        "baseline": 936.4,
+        "measured": 694.8
+      }
+    },
+    "stm32f401": {
+      "step": {
+        "baseline": 936.7,
+        "measured": 694.1
+      }
+    },
+    "stm32f401cb": {
+      "step": {
+        "baseline": 935.8,
+        "measured": 694.1
+      }
+    },
+    "stm32f401cc": {
+      "step": {
+        "baseline": 935.8,
+        "measured": 694.1
+      }
+    },
+    "stm32f401cd": {
+      "step": {
+        "baseline": 935.8,
+        "measured": 694.1
+      }
+    },
+    "stm32f401cdu6": {
+      "step": {
+        "baseline": 937.7,
+        "measured": 695.2
+      }
+    },
+    "stm32f401ce": {
+      "step": {
+        "baseline": 935.8,
+        "measured": 694.1
+      }
+    },
+    "stm32f401rb": {
+      "step": {
+        "baseline": 935.8,
+        "measured": 694.1
+      }
+    },
+    "stm32f401rc": {
+      "step": {
+        "baseline": 935.8,
+        "measured": 694.1
+      }
+    },
+    "stm32f401rd": {
+      "step": {
+        "baseline": 935.8,
+        "measured": 694.1
+      }
+    },
+    "stm32f401re": {
+      "step": {
+        "baseline": 935.8,
+        "measured": 694.1
+      }
+    },
+    "stm32f401vb": {
+      "step": {
+        "baseline": 935.8,
+        "measured": 694.1
+      }
+    },
+    "stm32f401vc": {
+      "step": {
+        "baseline": 935.8,
+        "measured": 694.1
+      }
+    },
+    "stm32f401vd": {
+      "step": {
+        "baseline": 935.8,
+        "measured": 694.1
+      }
+    },
+    "stm32f401ve": {
+      "step": {
+        "baseline": 935.8,
+        "measured": 694.1
+      }
+    },
+    "stm32f405": {
+      "step": {
+        "baseline": 936.3,
+        "measured": 693.6
+      }
+    },
+    "stm32f407": {
+      "step": {
+        "baseline": 936.8,
+        "measured": 694.0
+      }
+    },
+    "stm32f407ie": {
+      "step": {
+        "baseline": 935.8,
+        "measured": 694.0
+      }
+    },
+    "stm32f407ig": {
+      "step": {
+        "baseline": 935.8,
+        "measured": 694.0
+      }
+    },
+    "stm32f407ve": {
+      "step": {
+        "baseline": 935.8,
+        "measured": 694.0
+      }
+    },
+    "stm32f407vg": {
+      "step": {
+        "baseline": 935.8,
+        "measured": 694.0
+      }
+    },
+    "stm32f407ze": {
+      "step": {
+        "baseline": 935.8,
+        "measured": 694.0
+      }
+    },
+    "stm32f407zg": {
+      "step": {
+        "baseline": 935.8,
+        "measured": 694.0
+      }
+    },
+    "stm32f411ceu6": {
+      "step": {
+        "baseline": 937.6,
+        "measured": 695.0
+      }
+    },
+    "stm32f411re": {
+      "step": {
+        "baseline": 937.4,
+        "measured": 695.0
+      }
+    },
+    "stm32f446re": {
+      "step": {
+        "baseline": 935.5,
+        "measured": 693.9
+      }
+    },
+    "stm32f746": {
+      "step": {
+        "baseline": 895.0,
+        "measured": 668.0
+      }
+    },
+    "stm32f767": {
+      "step": {
+        "baseline": 936.7,
+        "measured": 693.9
+      }
+    },
+    "stm32g071": {
+      "step": {
+        "baseline": 937.4,
+        "measured": 695.0
+      }
+    },
+    "stm32g0b1re": {
+      "step": {
+        "baseline": 937.9,
+        "measured": 701.6
+      }
+    },
+    "stm32g431rb": {
+      "step": {
+        "baseline": 931.9,
+        "measured": 696.3
+      }
+    },
+    "stm32g474re": {
+      "step": {
+        "baseline": 936.3,
+        "measured": 696.3
+      }
+    },
+    "stm32h533re": {
+      "step": {
+        "baseline": 809.2,
+        "measured": 678.3
+      }
+    },
+    "stm32h563": {
+      "step": {
+        "baseline": 986.5,
+        "measured": 696.6
+      }
+    },
+    "stm32h723zg": {
+      "step": {
+        "baseline": 900.5,
+        "measured": 693.3
+      }
+    },
+    "stm32h735": {
+      "step": {
+        "baseline": 936.2,
+        "measured": 693.3
+      }
+    },
+    "stm32h753zi": {
+      "step": {
+        "baseline": 860.6,
+        "measured": 693.4
+      }
+    },
+    "stm32l031k6": {
+      "step": {
+        "baseline": 863.2,
+        "measured": 695.9
+      }
+    },
+    "stm32l073": {
+      "step": {
+        "baseline": 939.5,
+        "measured": 697.7
+      }
+    },
+    "stm32l432kc": {
+      "step": {
+        "baseline": 937.1,
+        "measured": 694.6
+      }
+    },
+    "stm32l476": {
+      "step": {
+        "baseline": 937.6,
+        "measured": 695.1
+      }
+    },
+    "stm32l552": {
+      "step": {
+        "baseline": 937.8,
+        "measured": 690.1
+      }
+    },
+    "stm32u545": {
+      "step": {
+        "baseline": 986.8,
+        "measured": 697.1
+      }
+    },
+    "stm32u575": {
+      "step": {
+        "baseline": 986.8,
+        "measured": 697.1
+      }
+    },
+    "stm32u5a5zj": {
+      "step": {
+        "baseline": 984.9,
+        "measured": 697.1
+      }
+    },
+    "stm32wb55": {
+      "step": {
+        "baseline": 936.9,
+        "measured": 694.5
+      }
+    },
+    "stm32wba52": {
+      "step": {
+        "baseline": 936.6,
+        "measured": 693.9
+      }
+    }
+  },
+  "source_transitions": [
+    {
+      "path": "scripts/perf/baselines.json",
+      "predecessor_sha256": "b17d02992ada1fc5f3b7efcb62a112e46532785cfceb436cd707417aaa152be8",
+      "successor_sha256": "60942192dff453fd332be62764dd71958a01ecc31446fe4fd80788fed3e68912",
+      "replacements": [
+        {
+          "before": "  \"amap42kp\": {\n    \"batch\": 1.4,\n    \"step\": 892.0\n  }",
+          "after": "  \"amap42kp\": {\n    \"batch\": 1.4,\n    \"step\": 668.0\n  }"
+        },
+        {
+          "before": "  \"at32f421g8u7\": {\n    \"batch\": 1.5,\n    \"step\": 982.3\n  }",
+          "after": "  \"at32f421g8u7\": {\n    \"batch\": 1.5,\n    \"step\": 724.0\n  }"
+        },
+        {
+          "before": "  \"atmega328p\": {\n    \"batch\": 7.6,\n    \"step\": 1044.8\n  }",
+          "after": "  \"atmega328p\": {\n    \"batch\": 7.6,\n    \"step\": 869.6\n  }"
+        },
+        {
+          "before": "  \"atmega328pb\": {\n    \"batch\": 7.6,\n    \"step\": 1026.4\n  }",
+          "after": "  \"atmega328pb\": {\n    \"batch\": 7.6,\n    \"step\": 869.6\n  }"
+        },
+        {
+          "before": "  \"atmega32u4\": {\n    \"batch\": 7.7,\n    \"step\": 1020.0\n  }",
+          "after": "  \"atmega32u4\": {\n    \"batch\": 7.7,\n    \"step\": 869.6\n  }"
+        },
+        {
+          "before": "  \"atsamd21\": {\n    \"batch\": 1.4,\n    \"step\": 895.0\n  }",
+          "after": "  \"atsamd21\": {\n    \"batch\": 1.4,\n    \"step\": 668.0\n  }"
+        },
+        {
+          "before": "  \"atsamd21e15a\": {\n    \"batch\": 1.4,\n    \"step\": 893.0\n  }",
+          "after": "  \"atsamd21e15a\": {\n    \"batch\": 1.4,\n    \"step\": 668.0\n  }"
+        },
+        {
+          "before": "  \"atsamd21e16a\": {\n    \"batch\": 1.4,\n    \"step\": 893.0\n  }",
+          "after": "  \"atsamd21e16a\": {\n    \"batch\": 1.4,\n    \"step\": 668.0\n  }"
+        },
+        {
+          "before": "  \"atsamd21e17a\": {\n    \"batch\": 1.4,\n    \"step\": 893.0\n  }",
+          "after": "  \"atsamd21e17a\": {\n    \"batch\": 1.4,\n    \"step\": 668.0\n  }"
+        },
+        {
+          "before": "  \"atsamd21e18a\": {\n    \"batch\": 1.4,\n    \"step\": 893.0\n  }",
+          "after": "  \"atsamd21e18a\": {\n    \"batch\": 1.4,\n    \"step\": 668.0\n  }"
+        },
+        {
+          "before": "  \"atsamd21g15a\": {\n    \"batch\": 1.4,\n    \"step\": 893.0\n  }",
+          "after": "  \"atsamd21g15a\": {\n    \"batch\": 1.4,\n    \"step\": 668.0\n  }"
+        },
+        {
+          "before": "  \"atsamd21g16a\": {\n    \"batch\": 1.4,\n    \"step\": 893.0\n  }",
+          "after": "  \"atsamd21g16a\": {\n    \"batch\": 1.4,\n    \"step\": 668.0\n  }"
+        },
+        {
+          "before": "  \"atsamd21g17a\": {\n    \"batch\": 1.4,\n    \"step\": 893.0\n  }",
+          "after": "  \"atsamd21g17a\": {\n    \"batch\": 1.4,\n    \"step\": 668.0\n  }"
+        },
+        {
+          "before": "  \"atsamd21g18a\": {\n    \"batch\": 1.4,\n    \"step\": 895.0\n  }",
+          "after": "  \"atsamd21g18a\": {\n    \"batch\": 1.4,\n    \"step\": 680.8\n  }"
+        },
+        {
+          "before": "  \"atsamd21j15a\": {\n    \"batch\": 1.4,\n    \"step\": 893.0\n  }",
+          "after": "  \"atsamd21j15a\": {\n    \"batch\": 1.4,\n    \"step\": 668.0\n  }"
+        },
+        {
+          "before": "  \"atsamd21j16a\": {\n    \"batch\": 1.4,\n    \"step\": 893.0\n  }",
+          "after": "  \"atsamd21j16a\": {\n    \"batch\": 1.4,\n    \"step\": 668.0\n  }"
+        },
+        {
+          "before": "  \"atsamd21j17a\": {\n    \"batch\": 1.4,\n    \"step\": 893.0\n  }",
+          "after": "  \"atsamd21j17a\": {\n    \"batch\": 1.4,\n    \"step\": 668.0\n  }"
+        },
+        {
+          "before": "  \"atsamd21j18a\": {\n    \"batch\": 1.4,\n    \"step\": 893.0\n  }",
+          "after": "  \"atsamd21j18a\": {\n    \"batch\": 1.4,\n    \"step\": 668.0\n  }"
+        },
+        {
+          "before": "  \"atsamd51\": {\n    \"batch\": 1.4,\n    \"step\": 1240.0\n  }",
+          "after": "  \"atsamd51\": {\n    \"batch\": 1.4,\n    \"step\": 742.0\n  }"
+        },
+        {
+          "before": "  \"atsamd51-pybadge\": {\n    \"batch\": 1.5,\n    \"step\": 1251.8\n  }",
+          "after": "  \"atsamd51-pybadge\": {\n    \"batch\": 1.5,\n    \"step\": 753.1\n  }"
+        },
+        {
+          "before": "  \"cc2538sf53\": {\n    \"batch\": 1.4,\n    \"step\": 892.0\n  }",
+          "after": "  \"cc2538sf53\": {\n    \"batch\": 1.4,\n    \"step\": 682.2\n  }"
+        },
+        {
+          "before": "  \"efr32mg26\": {\n    \"batch\": 2.2,\n    \"step\": 1513.7\n  }",
+          "after": "  \"efr32mg26\": {\n    \"batch\": 1.6,\n    \"step\": 951.2\n  }"
+        },
+        {
+          "before": "  \"esp32\": {\n    \"batch\": 1.4,\n    \"step\": 955.5\n  }",
+          "after": "  \"esp32\": {\n    \"batch\": 1.4,\n    \"step\": 801.5\n  }"
+        },
+        {
+          "before": "  \"esp32-devkitc-32e-gpio-smoke\": {\n    \"batch\": 1.4,\n    \"step\": 977.8\n  }",
+          "after": "  \"esp32-devkitc-32e-gpio-smoke\": {\n    \"batch\": 1.4,\n    \"step\": 801.5\n  }"
+        },
+        {
+          "before": "  \"esp32-devkitc-32e-uart1\": {\n    \"batch\": 1.4,\n    \"step\": 977.8\n  }",
+          "after": "  \"esp32-devkitc-32e-uart1\": {\n    \"batch\": 1.4,\n    \"step\": 801.5\n  }"
+        },
+        {
+          "before": "  \"esp32s3\": {\n    \"batch\": 2.4,\n    \"step\": 991.9\n  }",
+          "after": "  \"esp32s3\": {\n    \"batch\": 2.4,\n    \"step\": 890.2\n  }"
+        },
+        {
+          "before": "  \"esp32s3-devkitc-1-n16r8-adc\": {\n    \"batch\": 2.4,\n    \"step\": 991.9\n  }",
+          "after": "  \"esp32s3-devkitc-1-n16r8-adc\": {\n    \"batch\": 2.4,\n    \"step\": 890.2\n  }"
+        },
+        {
+          "before": "  \"esp32s3-zero\": {\n    \"batch\": 2.4,\n    \"step\": 991.9\n  }",
+          "after": "  \"esp32s3-zero\": {\n    \"batch\": 2.4,\n    \"step\": 890.2\n  }"
+        },
+        {
+          "before": "  \"imxrt1064\": {\n    \"batch\": 1.4,\n    \"step\": 895.0\n  }",
+          "after": "  \"imxrt1064\": {\n    \"batch\": 1.4,\n    \"step\": 668.0\n  }"
+        },
+        {
+          "before": "  \"mimxrt595s\": {\n    \"batch\": 1.4,\n    \"step\": 892.0\n  }",
+          "after": "  \"mimxrt595s\": {\n    \"batch\": 1.4,\n    \"step\": 676.2\n  }"
+        },
+        {
+          "before": "  \"mk64f12\": {\n    \"batch\": 1.4,\n    \"step\": 892.0\n  }",
+          "after": "  \"mk64f12\": {\n    \"batch\": 1.4,\n    \"step\": 668.0\n  }"
+        },
+        {
+          "before": "  \"mkw41z4\": {\n    \"batch\": 1.5,\n    \"step\": 906.2\n  }",
+          "after": "  \"mkw41z4\": {\n    \"batch\": 1.5,\n    \"step\": 680.0\n  }"
+        },
+        {
+          "before": "  \"nrf51822\": {\n    \"batch\": 2.0,\n    \"step\": 1335.6\n  }",
+          "after": "  \"nrf51822\": {\n    \"batch\": 2.0,\n    \"step\": 816.5\n  }"
+        },
+        {
+          "before": "  \"nrf52832\": {\n    \"batch\": 2.0,\n    \"step\": 1330.2\n  }",
+          "after": "  \"nrf52832\": {\n    \"batch\": 1.5,\n    \"step\": 694.0\n  }"
+        },
+        {
+          "before": "  \"nrf52833\": {\n    \"batch\": 2.1,\n    \"step\": 1368.6\n  }",
+          "after": "  \"nrf52833\": {\n    \"batch\": 2.1,\n    \"step\": 850.3\n  }"
+        },
+        {
+          "before": "  \"nrf52840\": {\n    \"batch\": 2.1,\n    \"step\": 1368.6\n  }",
+          "after": "  \"nrf52840\": {\n    \"batch\": 2.1,\n    \"step\": 850.3\n  }"
+        },
+        {
+          "before": "  \"nrf5340\": {\n    \"batch\": 1.9,\n    \"step\": 1324.0\n  }",
+          "after": "  \"nrf5340\": {\n    \"batch\": 1.9,\n    \"step\": 679.1\n  }"
+        },
+        {
+          "before": "  \"nrf54l05\": {\n    \"batch\": 1.9,\n    \"step\": 1377.5\n  }",
+          "after": "  \"nrf54l05\": {\n    \"batch\": 1.3,\n    \"step\": 668.0\n  }"
+        },
+        {
+          "before": "  \"nrf54l10\": {\n    \"batch\": 1.9,\n    \"step\": 1377.5\n  }",
+          "after": "  \"nrf54l10\": {\n    \"batch\": 1.3,\n    \"step\": 668.0\n  }"
+        },
+        {
+          "before": "  \"nrf54l15\": {\n    \"batch\": 1.9,\n    \"step\": 1364.0\n  }",
+          "after": "  \"nrf54l15\": {\n    \"batch\": 1.9,\n    \"step\": 869.0\n  }"
+        },
+        {
+          "before": "  \"nrf54lm20a\": {\n    \"batch\": 2.0,\n    \"step\": 1412.4\n  }",
+          "after": "  \"nrf54lm20a\": {\n    \"batch\": 2.0,\n    \"step\": 921.7\n  }"
+        },
+        {
+          "before": "  \"r7fa6m5bh\": {\n    \"batch\": 1.4,\n    \"step\": 937.4\n  }",
+          "after": "  \"r7fa6m5bh\": {\n    \"batch\": 1.4,\n    \"step\": 690.9\n  }"
+        },
+        {
+          "before": "  \"r7fa8m1ah\": {\n    \"batch\": 1.4,\n    \"step\": 934.8\n  }",
+          "after": "  \"r7fa8m1ah\": {\n    \"batch\": 1.4,\n    \"step\": 689.0\n  }"
+        },
+        {
+          "before": "  \"ra4m1\": {\n    \"batch\": 1.4,\n    \"step\": 895.0\n  }",
+          "after": "  \"ra4m1\": {\n    \"batch\": 1.4,\n    \"step\": 680.5\n  }"
+        },
+        {
+          "before": "  \"rp2040\": {\n    \"batch\": 1.6,\n    \"step\": 905.9\n  }",
+          "after": "  \"rp2040\": {\n    \"batch\": 1.6,\n    \"step\": 679.6\n  }"
+        },
+        {
+          "before": "  \"rp2040-feather\": {\n    \"batch\": 1.6,\n    \"step\": 906.8\n  }",
+          "after": "  \"rp2040-feather\": {\n    \"batch\": 1.6,\n    \"step\": 679.5\n  }"
+        },
+        {
+          "before": "  \"rp2350\": {\n    \"batch\": 1.6,\n    \"step\": 906.1\n  }",
+          "after": "  \"rp2350\": {\n    \"batch\": 1.6,\n    \"step\": 679.4\n  }"
+        },
+        {
+          "before": "  \"rp2350-feather\": {\n    \"batch\": 1.7,\n    \"step\": 906.8\n  }",
+          "after": "  \"rp2350-feather\": {\n    \"batch\": 1.7,\n    \"step\": 679.4\n  }"
+        },
+        {
+          "before": "  \"s32k388\": {\n    \"batch\": 1.4,\n    \"step\": 907.8\n  }",
+          "after": "  \"s32k388\": {\n    \"batch\": 1.4,\n    \"step\": 668.0\n  }"
+        },
+        {
+          "before": "  \"samd51-no-asf-simulation\": {\n    \"batch\": 1.9,\n    \"step\": 1339.0\n  }",
+          "after": "  \"samd51-no-asf-simulation\": {\n    \"batch\": 1.9,\n    \"step\": 992.3\n  }"
+        },
+        {
+          "before": "  \"same70q21b\": {\n    \"batch\": 1.4,\n    \"step\": 892.0\n  }",
+          "after": "  \"same70q21b\": {\n    \"batch\": 1.4,\n    \"step\": 668.0\n  }"
+        },
+        {
+          "before": "  \"stm32c031c6\": {\n    \"batch\": 1.6,\n    \"step\": 937.4\n  }",
+          "after": "  \"stm32c031c6\": {\n    \"batch\": 1.6,\n    \"step\": 695.0\n  }"
+        },
+        {
+          "before": "  \"stm32f072\": {\n    \"batch\": 1.6,\n    \"step\": 937.9\n  }",
+          "after": "  \"stm32f072\": {\n    \"batch\": 1.6,\n    \"step\": 695.7\n  }"
+        },
+        {
+          "before": "  \"stm32f103\": {\n    \"batch\": 1.6,\n    \"step\": 937.3\n  }",
+          "after": "  \"stm32f103\": {\n    \"batch\": 1.6,\n    \"step\": 694.8\n  }"
+        },
+        {
+          "before": "  \"stm32f103c4\": {\n    \"batch\": 1.6,\n    \"step\": 936.4\n  }",
+          "after": "  \"stm32f103c4\": {\n    \"batch\": 1.6,\n    \"step\": 694.8\n  }"
+        },
+        {
+          "before": "  \"stm32f103c6\": {\n    \"batch\": 1.6,\n    \"step\": 936.4\n  }",
+          "after": "  \"stm32f103c6\": {\n    \"batch\": 1.6,\n    \"step\": 694.3\n  }"
+        },
+        {
+          "before": "  \"stm32f103r4\": {\n    \"batch\": 1.6,\n    \"step\": 936.4\n  }",
+          "after": "  \"stm32f103r4\": {\n    \"batch\": 1.6,\n    \"step\": 694.8\n  }"
+        },
+        {
+          "before": "  \"stm32f103r4h\": {\n    \"batch\": 1.6,\n    \"step\": 936.4\n  }",
+          "after": "  \"stm32f103r4h\": {\n    \"batch\": 1.6,\n    \"step\": 694.8\n  }"
+        },
+        {
+          "before": "  \"stm32f103r6\": {\n    \"batch\": 1.6,\n    \"step\": 936.4\n  }",
+          "after": "  \"stm32f103r6\": {\n    \"batch\": 1.6,\n    \"step\": 694.3\n  }"
+        },
+        {
+          "before": "  \"stm32f103r6h\": {\n    \"batch\": 1.6,\n    \"step\": 936.4\n  }",
+          "after": "  \"stm32f103r6h\": {\n    \"batch\": 1.6,\n    \"step\": 694.8\n  }"
+        },
+        {
+          "before": "  \"stm32f103r8\": {\n    \"batch\": 1.6,\n    \"step\": 932.9\n  }",
+          "after": "  \"stm32f103r8\": {\n    \"batch\": 1.6,\n    \"step\": 694.8\n  }"
+        },
+        {
+          "before": "  \"stm32f103rb\": {\n    \"batch\": 1.6,\n    \"step\": 935.4\n  }",
+          "after": "  \"stm32f103rb\": {\n    \"batch\": 1.6,\n    \"step\": 694.8\n  }"
+        },
+        {
+          "before": "  \"stm32f103rb-nucleo-bme280-smoke\": {\n    \"batch\": 1.5,\n    \"step\": 921.9\n  }",
+          "after": "  \"stm32f103rb-nucleo-bme280-smoke\": {\n    \"batch\": 1.5,\n    \"step\": 687.9\n  }"
+        },
+        {
+          "before": "  \"stm32f103t4\": {\n    \"batch\": 1.6,\n    \"step\": 936.4\n  }",
+          "after": "  \"stm32f103t4\": {\n    \"batch\": 1.6,\n    \"step\": 694.8\n  }"
+        },
+        {
+          "before": "  \"stm32f103t6\": {\n    \"batch\": 1.6,\n    \"step\": 936.4\n  }",
+          "after": "  \"stm32f103t6\": {\n    \"batch\": 1.6,\n    \"step\": 694.8\n  }"
+        },
+        {
+          "before": "  \"stm32f401\": {\n    \"batch\": 1.5,\n    \"step\": 936.7\n  }",
+          "after": "  \"stm32f401\": {\n    \"batch\": 1.5,\n    \"step\": 694.1\n  }"
+        },
+        {
+          "before": "  \"stm32f401cb\": {\n    \"batch\": 1.5,\n    \"step\": 935.8\n  }",
+          "after": "  \"stm32f401cb\": {\n    \"batch\": 1.5,\n    \"step\": 694.1\n  }"
+        },
+        {
+          "before": "  \"stm32f401cc\": {\n    \"batch\": 1.5,\n    \"step\": 935.8\n  }",
+          "after": "  \"stm32f401cc\": {\n    \"batch\": 1.5,\n    \"step\": 694.1\n  }"
+        },
+        {
+          "before": "  \"stm32f401cd\": {\n    \"batch\": 1.5,\n    \"step\": 935.8\n  }",
+          "after": "  \"stm32f401cd\": {\n    \"batch\": 1.5,\n    \"step\": 694.1\n  }"
+        },
+        {
+          "before": "  \"stm32f401cdu6\": {\n    \"batch\": 1.6,\n    \"step\": 937.7\n  }",
+          "after": "  \"stm32f401cdu6\": {\n    \"batch\": 1.6,\n    \"step\": 695.2\n  }"
+        },
+        {
+          "before": "  \"stm32f401ce\": {\n    \"batch\": 1.5,\n    \"step\": 935.8\n  }",
+          "after": "  \"stm32f401ce\": {\n    \"batch\": 1.5,\n    \"step\": 694.1\n  }"
+        },
+        {
+          "before": "  \"stm32f401rb\": {\n    \"batch\": 1.5,\n    \"step\": 935.8\n  }",
+          "after": "  \"stm32f401rb\": {\n    \"batch\": 1.5,\n    \"step\": 694.1\n  }"
+        },
+        {
+          "before": "  \"stm32f401rc\": {\n    \"batch\": 1.5,\n    \"step\": 935.8\n  }",
+          "after": "  \"stm32f401rc\": {\n    \"batch\": 1.5,\n    \"step\": 694.1\n  }"
+        },
+        {
+          "before": "  \"stm32f401rd\": {\n    \"batch\": 1.5,\n    \"step\": 935.8\n  }",
+          "after": "  \"stm32f401rd\": {\n    \"batch\": 1.5,\n    \"step\": 694.1\n  }"
+        },
+        {
+          "before": "  \"stm32f401re\": {\n    \"batch\": 1.5,\n    \"step\": 935.8\n  }",
+          "after": "  \"stm32f401re\": {\n    \"batch\": 1.5,\n    \"step\": 694.1\n  }"
+        },
+        {
+          "before": "  \"stm32f401vb\": {\n    \"batch\": 1.5,\n    \"step\": 935.8\n  }",
+          "after": "  \"stm32f401vb\": {\n    \"batch\": 1.5,\n    \"step\": 694.1\n  }"
+        },
+        {
+          "before": "  \"stm32f401vc\": {\n    \"batch\": 1.5,\n    \"step\": 935.8\n  }",
+          "after": "  \"stm32f401vc\": {\n    \"batch\": 1.5,\n    \"step\": 694.1\n  }"
+        },
+        {
+          "before": "  \"stm32f401vd\": {\n    \"batch\": 1.5,\n    \"step\": 935.8\n  }",
+          "after": "  \"stm32f401vd\": {\n    \"batch\": 1.5,\n    \"step\": 694.1\n  }"
+        },
+        {
+          "before": "  \"stm32f401ve\": {\n    \"batch\": 1.5,\n    \"step\": 935.8\n  }",
+          "after": "  \"stm32f401ve\": {\n    \"batch\": 1.5,\n    \"step\": 694.1\n  }"
+        },
+        {
+          "before": "  \"stm32f405\": {\n    \"batch\": 1.5,\n    \"step\": 936.3\n  }",
+          "after": "  \"stm32f405\": {\n    \"batch\": 1.5,\n    \"step\": 693.6\n  }"
+        },
+        {
+          "before": "  \"stm32f407\": {\n    \"batch\": 1.6,\n    \"step\": 936.8\n  }",
+          "after": "  \"stm32f407\": {\n    \"batch\": 1.6,\n    \"step\": 694.0\n  }"
+        },
+        {
+          "before": "  \"stm32f407ie\": {\n    \"batch\": 1.6,\n    \"step\": 935.8\n  }",
+          "after": "  \"stm32f407ie\": {\n    \"batch\": 1.6,\n    \"step\": 694.0\n  }"
+        },
+        {
+          "before": "  \"stm32f407ig\": {\n    \"batch\": 1.6,\n    \"step\": 935.8\n  }",
+          "after": "  \"stm32f407ig\": {\n    \"batch\": 1.6,\n    \"step\": 694.0\n  }"
+        },
+        {
+          "before": "  \"stm32f407ve\": {\n    \"batch\": 1.6,\n    \"step\": 935.8\n  }",
+          "after": "  \"stm32f407ve\": {\n    \"batch\": 1.6,\n    \"step\": 694.0\n  }"
+        },
+        {
+          "before": "  \"stm32f407vg\": {\n    \"batch\": 1.6,\n    \"step\": 935.8\n  }",
+          "after": "  \"stm32f407vg\": {\n    \"batch\": 1.6,\n    \"step\": 694.0\n  }"
+        },
+        {
+          "before": "  \"stm32f407ze\": {\n    \"batch\": 1.6,\n    \"step\": 935.8\n  }",
+          "after": "  \"stm32f407ze\": {\n    \"batch\": 1.6,\n    \"step\": 694.0\n  }"
+        },
+        {
+          "before": "  \"stm32f407zg\": {\n    \"batch\": 1.6,\n    \"step\": 935.8\n  }",
+          "after": "  \"stm32f407zg\": {\n    \"batch\": 1.6,\n    \"step\": 694.0\n  }"
+        },
+        {
+          "before": "  \"stm32f411ceu6\": {\n    \"batch\": 1.6,\n    \"step\": 937.6\n  }",
+          "after": "  \"stm32f411ceu6\": {\n    \"batch\": 1.6,\n    \"step\": 695.0\n  }"
+        },
+        {
+          "before": "  \"stm32f411re\": {\n    \"batch\": 1.7,\n    \"step\": 937.4\n  }",
+          "after": "  \"stm32f411re\": {\n    \"batch\": 1.7,\n    \"step\": 695.0\n  }"
+        },
+        {
+          "before": "  \"stm32f446re\": {\n    \"batch\": 1.5,\n    \"step\": 935.5\n  }",
+          "after": "  \"stm32f446re\": {\n    \"batch\": 1.5,\n    \"step\": 693.9\n  }"
+        },
+        {
+          "before": "  \"stm32f746\": {\n    \"batch\": 1.4,\n    \"step\": 895.0\n  }",
+          "after": "  \"stm32f746\": {\n    \"batch\": 1.4,\n    \"step\": 668.0\n  }"
+        },
+        {
+          "before": "  \"stm32f767\": {\n    \"batch\": 1.6,\n    \"step\": 936.7\n  }",
+          "after": "  \"stm32f767\": {\n    \"batch\": 1.6,\n    \"step\": 693.9\n  }"
+        },
+        {
+          "before": "  \"stm32g071\": {\n    \"batch\": 1.6,\n    \"step\": 937.4\n  }",
+          "after": "  \"stm32g071\": {\n    \"batch\": 1.6,\n    \"step\": 695.0\n  }"
+        },
+        {
+          "before": "  \"stm32g0b1re\": {\n    \"batch\": 1.5,\n    \"step\": 937.9\n  }",
+          "after": "  \"stm32g0b1re\": {\n    \"batch\": 1.5,\n    \"step\": 701.6\n  }"
+        },
+        {
+          "before": "  \"stm32g431rb\": {\n    \"batch\": 1.6,\n    \"step\": 931.9\n  }",
+          "after": "  \"stm32g431rb\": {\n    \"batch\": 1.6,\n    \"step\": 696.3\n  }"
+        },
+        {
+          "before": "  \"stm32g474re\": {\n    \"batch\": 1.5,\n    \"step\": 936.3\n  }",
+          "after": "  \"stm32g474re\": {\n    \"batch\": 1.5,\n    \"step\": 696.3\n  }"
+        },
+        {
+          "before": "  \"stm32h533re\": {\n    \"batch\": 1.2,\n    \"step\": 809.2\n  }",
+          "after": "  \"stm32h533re\": {\n    \"batch\": 1.2,\n    \"step\": 678.3\n  }"
+        },
+        {
+          "before": "  \"stm32h563\": {\n    \"batch\": 1.8,\n    \"step\": 986.5\n  }",
+          "after": "  \"stm32h563\": {\n    \"batch\": 1.8,\n    \"step\": 696.6\n  }"
+        },
+        {
+          "before": "  \"stm32h723zg\": {\n    \"batch\": 1.5,\n    \"step\": 900.5\n  }",
+          "after": "  \"stm32h723zg\": {\n    \"batch\": 1.5,\n    \"step\": 693.3\n  }"
+        },
+        {
+          "before": "  \"stm32h735\": {\n    \"batch\": 1.6,\n    \"step\": 936.2\n  }",
+          "after": "  \"stm32h735\": {\n    \"batch\": 1.6,\n    \"step\": 693.3\n  }"
+        },
+        {
+          "before": "  \"stm32h753zi\": {\n    \"batch\": 1.3,\n    \"step\": 860.6\n  }",
+          "after": "  \"stm32h753zi\": {\n    \"batch\": 1.3,\n    \"step\": 693.4\n  }"
+        },
+        {
+          "before": "  \"stm32l031k6\": {\n    \"batch\": 1.3,\n    \"step\": 863.2\n  }",
+          "after": "  \"stm32l031k6\": {\n    \"batch\": 1.3,\n    \"step\": 695.9\n  }"
+        },
+        {
+          "before": "  \"stm32l073\": {\n    \"batch\": 1.6,\n    \"step\": 939.5\n  }",
+          "after": "  \"stm32l073\": {\n    \"batch\": 1.6,\n    \"step\": 697.7\n  }"
+        },
+        {
+          "before": "  \"stm32l432kc\": {\n    \"batch\": 1.6,\n    \"step\": 937.1\n  }",
+          "after": "  \"stm32l432kc\": {\n    \"batch\": 1.6,\n    \"step\": 694.6\n  }"
+        },
+        {
+          "before": "  \"stm32l476\": {\n    \"batch\": 1.6,\n    \"step\": 937.6\n  }",
+          "after": "  \"stm32l476\": {\n    \"batch\": 1.6,\n    \"step\": 695.1\n  }"
+        },
+        {
+          "before": "  \"stm32l552\": {\n    \"batch\": 1.6,\n    \"step\": 937.8\n  }",
+          "after": "  \"stm32l552\": {\n    \"batch\": 1.6,\n    \"step\": 690.1\n  }"
+        },
+        {
+          "before": "  \"stm32u545\": {\n    \"batch\": 1.8,\n    \"step\": 986.8\n  }",
+          "after": "  \"stm32u545\": {\n    \"batch\": 1.8,\n    \"step\": 697.1\n  }"
+        },
+        {
+          "before": "  \"stm32u575\": {\n    \"batch\": 1.8,\n    \"step\": 986.8\n  }",
+          "after": "  \"stm32u575\": {\n    \"batch\": 1.8,\n    \"step\": 697.1\n  }"
+        },
+        {
+          "before": "  \"stm32u5a5zj\": {\n    \"batch\": 1.8,\n    \"step\": 984.9\n  }",
+          "after": "  \"stm32u5a5zj\": {\n    \"batch\": 1.8,\n    \"step\": 697.1\n  }"
+        },
+        {
+          "before": "  \"stm32wb55\": {\n    \"batch\": 1.5,\n    \"step\": 936.9\n  }",
+          "after": "  \"stm32wb55\": {\n    \"batch\": 1.5,\n    \"step\": 694.5\n  }"
+        },
+        {
+          "before": "  \"stm32wba52\": {\n    \"batch\": 1.5,\n    \"step\": 936.6\n  }",
+          "after": "  \"stm32wba52\": {\n    \"batch\": 1.5,\n    \"step\": 693.9\n  }"
+        }
+      ]
+    }
+  ]
+}

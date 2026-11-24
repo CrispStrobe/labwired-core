@@ -107,3 +107,26 @@ patch:
 2. Upstream the SAMD profile, so the cost is reviewed and accepted upstream
    instead of re-baselined here. That is the only permanent answer, and the
    probe table above gives such a PR a credible story.
+
+## 2026-11-24: re-lock of stale baselines after the 0d5c1ec8 sync
+
+The upstream sync merged in #304 made most Cortex-M, RISC-V and AVR step loops
+cheaper. The full Core Perf run on the #304 head (tree identical to main
+`e3fa50bb`) flagged **115 rows on 111 boards** as
+`STALE BASELINE`: 111 step rows, 10.3–51.5 % below baseline (median
+25.8 %), and 4 batch rows (efr32mg26, nrf52832, nrf54l05, nrf54l10).
+Re-locked from [run 45352138603](https://github.com/CrispStrobe/labwired-core/actions/runs/45352138603),
+job `board-throughput`, never a local run.
+
+Only flagged rows moved, each down to its CI measurement rounded as
+`board_perf.py --update` rounds it. No row rose, and `board_perf.py`, its
+tolerances and noise floor are unchanged. Every row with its old and new value
+is in `scripts/ci/fixtures/cortex_m_perf_relock_e3fa50bb.json`. The receipt
+guard (`test_cortex_m_perf_diagnostics.py`) pins that file's hash and reverses
+it before the older successor checks. It refuses any raised, added, removed or
+unflagged row.
+
+This replaces the earlier Pico-only ratchet (#303). Its rp2040 numbers came
+from the run before this sync, and ratcheting two rows out of 115 stale ones
+would have been an arbitrary subset. rp2040 step is now 679.6 (was 905.9), and
+rp2040-feather is 679.5 (was 906.8).
