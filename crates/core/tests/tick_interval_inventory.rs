@@ -392,7 +392,7 @@ fn esp32_classic_is_walk_free_and_reaches_recommended_interval() {
 /// while USB is running (`legacy_tick_active`), so at reset the walk is still
 /// derived away. Pinned rather than exempted: any other forcer, or USBD
 /// active before firmware enables it, fails here.
-#[cfg(feature = "event-scheduler")]
+#[allow(dead_code)] // read only under event-scheduler
 const NRF52840_EXPECTED_FORCERS: &[&str] = &["usbd"];
 
 #[test]
