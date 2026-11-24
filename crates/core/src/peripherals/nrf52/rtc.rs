@@ -195,6 +195,18 @@ impl Nrf52Rtc {
         }
     }
 
+    /// Longest single wake. A due event further away (COUNTER overflow is
+    /// ~1e12 CPU cycles out) is reached through intermediate wakes, each of
+    /// which re-evaluates and re-arms. Without the cap, every START/CLEAR
+    /// restarts the prescaler, shifts that far deadline a few cycles earlier,
+    /// and queues another far wake the scheduler can never cancel; capped,
+    /// an already-queued horizon wake always arrives by the new one.
+    const WAKE_HORIZON: u64 = 1 << 30;
+
+    fn capped_delay(d: u64) -> u64 {
+        d.min(Self::WAKE_HORIZON)
+    }
+
     /// A queued wake arrives in `[now, deadline]`.
     fn wake_arrives_by(&self, now: u64, deadline: u64) -> bool {
         self.live_wakes
@@ -584,7 +596,7 @@ impl Peripheral for Nrf52Rtc {
             0
         } else {
             match self.cycles_until_next_event() {
-                Some(d) => d.saturating_sub(1),
+                Some(d) => Self::capped_delay(d.saturating_sub(1)),
                 None => return Vec::new(),
             }
         };
@@ -617,7 +629,7 @@ impl Peripheral for Nrf52Rtc {
         let fired_mask = self.pending_fired.replace(0);
         let next = self
             .cycles_until_next_event()
-            .map(|d| d.saturating_sub(1))
+            .map(|d| Self::capped_delay(d.saturating_sub(1)))
             .filter(|&d| !self.wake_arrives_by(now, now + d));
         if let Some(d) = next {
             self.live_wakes.push(now + d);
@@ -947,6 +959,26 @@ mod tests {
     #[cfg(feature = "event-scheduler")]
     mod scheduler_mode {
         use super::*;
+
+        #[test]
+        fn far_deadlines_moving_earlier_stay_bounded() {
+            // Each CC0 write pulls a far-future compare a little earlier, as a
+            // prescaler restart does to the OVRFLW deadline. Uncapped, every
+            // one queues a new uncancellable wake (nine trips the scheduler's
+            // live-event ceiling); capped, the first horizon wake covers all.
+            let clock = CycleClock::default();
+            let mut r = Nrf52Rtc::new_fast();
+            r.attach_cycle_clock(clock.clone());
+            r.write_u32(OFF_PRESCALER, 0xFFF).unwrap();
+            r.write_u32(OFF_INTENSET, 1 << EN_COMPARE_SHIFT).unwrap();
+            r.write_u32(OFF_TASKS_START, 1).unwrap();
+            let mut queued = 0;
+            for i in 0..16u32 {
+                r.write_u32(OFF_CC0, 0x00FF_FFF0 - i).unwrap();
+                queued += r.take_scheduled_events().len();
+            }
+            assert_eq!(queued, 1, "far compare wakes must not accumulate");
+        }
 
         #[test]
         fn tasks_restart_prescaler_on_scheduler_path() {
