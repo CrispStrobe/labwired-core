@@ -4942,7 +4942,7 @@
 <li><strong>cc2538sf53</strong></li>
 <li>UART: no UART0 bring-up in this harness; bytes are proven by the cc2538dk survival smoke</li>
 <li><strong>ch32l103c8t6</strong></li>
-<li>UART: no UART bring-up for the WCH L103 family in this harness yet; USART1 bytes are proven by ch32l103_compiled_firmware</li>
+<li>UART: no UART bring-up for the WCH L103 family in this harness yet; USART1 bytes are proven by ch32_compiled_firmware</li>
 <li><strong>ch32v003a4m6</strong></li>
 <li>UART: F4P6-die package variant: same pad-gated USART1 (TX=PD5) gap; bytes are proven by ch32v003_compiled_firmware</li>
 <li><strong>ch32v003f4p6</strong></li>
@@ -4952,13 +4952,13 @@
 <li><strong>ch32v003j4m6</strong></li>
 <li>UART: F4P6-die package variant: same pad-gated USART1 (TX=PD5) gap; bytes are proven by ch32v003_compiled_firmware</li>
 <li><strong>ch32v005f6p6</strong></li>
-<li>UART: pad-gated F1-style USART1 (TX=PD5) produces no analyzer edges in this harness yet; bytes are proven by ch32v005_compiled_firmware</li>
+<li>UART: pad-gated F1-style USART1 (TX=PD5) produces no analyzer edges in this harness yet; bytes are proven by ch32_compiled_firmware</li>
 <li><strong>ch32v006k8u6</strong></li>
-<li>UART: pad-gated F1-style USART1 (TX=PD5) produces no analyzer edges in this harness yet; bytes are proven by ch32v006_compiled_firmware</li>
+<li>UART: pad-gated F1-style USART1 (TX=PD5) produces no analyzer edges in this harness yet; bytes are proven by ch32_compiled_firmware</li>
 <li><strong>ch32v203c8t6</strong></li>
-<li>UART: no UART bring-up for the WCH V20x family in this harness yet; USART1 bytes are proven by ch32v203_compiled_firmware</li>
+<li>UART: no UART bring-up for the WCH V20x family in this harness yet; USART1 bytes are proven by ch32_compiled_firmware</li>
 <li><strong>ch32x035c8t6</strong></li>
-<li>UART: no UART bring-up for the WCH X035 family in this harness yet; USART1 bytes are proven by ch32x035_compiled_firmware</li>
+<li>UART: no UART bring-up for the WCH X035 family in this harness yet; USART1 bytes are proven by ch32_compiled_firmware</li>
 <li><strong>efr32mg26</strong></li>
 <li>UART: the Efr32s2 layout models the console TX/RX byte path but captures no baud divisor (CLKDIV), so bit_time_cycles() is None and no wire waveform is narrated — there are no edges to decode</li>
 <li><strong>esp32</strong></li>
@@ -4973,7 +4973,7 @@
 <li>UART: no ESP32-H2 UART bring-up in this harness; bytes are proven by the esp32h2-devkitm-1-n4s board smoke</li>
 <li><strong>esp32p4</strong></li>
 <li>UART: esp32p4 UART0 is a TX FIFO/console model with no PadLines wire cell; bytes are proven by the esp32p4x-c5-function-ev-board smoke</li>
-<li>I2C: esp32p4 I2C0 is the classic ESP32 command-list engine with no PadLines wire cell; the BME280 transaction is proven by the esp32p4x-c5-function-ev-board io-smoke</li>
+<li>I2C: esp32p4_i2c publishes line names but no PadLines wire cell; the I2C transaction is proven by the esp32p4x-c5-function-ev-board BME280 smoke</li>
 <li><strong>esp32s2</strong></li>
 <li>UART: no ESP32-S2 UART bring-up in this harness; bytes are proven by the esp32s2-devkitc-1-n8r2 board smoke</li>
 <li><strong>esp32s2-arduino</strong></li>
@@ -5924,12 +5924,24 @@
 </tr>
 <tr>
 <td>stm32h723zg</td>
-<td>—</td>
-<td>—</td>
+<td>✓</td>
+<td>✓</td>
 <td>✓</td>
 </tr>
 <tr>
 <td>stm32h735</td>
+<td>✓</td>
+<td>✓</td>
+<td>✓</td>
+</tr>
+<tr>
+<td>stm32h753zi</td>
+<td>✓</td>
+<td>✓</td>
+<td>✓</td>
+</tr>
+<tr>
+<td>stm32l031k6</td>
 <td>✓</td>
 <td>✓</td>
 <td>✓</td>

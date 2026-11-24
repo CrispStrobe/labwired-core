@@ -117,7 +117,7 @@
     "waiting_for_event": false,
     "event_register": false
   },
-  "firmware_hash": "24b9a5cfe31cb369bb54207f10630036e9093b7ae4521aabc8e34507188804da",
+  "firmware_hash": "a529d75f45537368ad172386b530acc51e28b3bfb54eae3b21f10ef81d38dbc1",
   "config": {
     "firmware": "examples/renode-onboarding/../../target/thumbv7em-none-eabi/release/firmware-nrf52840dk-smoke",
     "system": "examples/renode-onboarding/../../configs/systems/onboarding/nrf52840dk_nrf52840.yaml",
@@ -212,7 +212,7 @@
       {
         "name": "gpio1",
         "kind": "native",
-        "base": 1342181376,
+        "base": 1342179328,
         "registers": [],
         "artifacts": []
       },
@@ -463,6 +463,13 @@
       },
       {
         "name": "acl",
+        "kind": "native",
+        "base": 1073930240,
+        "registers": [],
+        "artifacts": []
+      },
+      {
+        "name": "spi3",
         "kind": "native",
         "base": 1073934336,
         "registers": [],

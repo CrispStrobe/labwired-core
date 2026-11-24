@@ -1600,6 +1600,9 @@
          <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/efr32mg26/2026-11-15-timers-without-cpu-hz/onboarding-summary/</loc>
     </url>
     <url>
+         <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/efr32mg26/2026-11-21-negative-control-timer-irq-old-descriptor/</loc>
+    </url>
+    <url>
          <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/egis_et171/2026-11-08-before-uart0-smoke/onboarding-summary/</loc>
     </url>
     <url>
@@ -1898,6 +1901,12 @@
     </url>
     <url>
          <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/imxrt1064/2026-11-17-adc-result-padding/onboarding-summary/</loc>
+    </url>
+    <url>
+         <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/imxrt1064/2026-11-20-negative-control-lpuart6-irq21/</loc>
+    </url>
+    <url>
+         <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/imxrt1064/2026-11-20-negative-control-lpuart6-no-irq/</loc>
     </url>
     <url>
          <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/imxrt500/attempt-01/onboarding-summary/</loc>
@@ -2218,7 +2227,22 @@
          <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/nrf52840/2026-11-20-negative-control-ecb-removed/</loc>
     </url>
     <url>
+         <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/nrf52840/2026-11-20-negative-control-p1-parked-0x50001000/</loc>
+    </url>
+    <url>
          <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/nrf52840/2026-11-20-negative-control-pwm-1hz-core-clock/</loc>
+    </url>
+    <url>
+         <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/nrf52840/2026-11-20-negative-control-pwm-irq-old-descriptor/</loc>
+    </url>
+    <url>
+         <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/nrf52840/2026-11-20-negative-control-spim3-no-hw-csn/</loc>
+    </url>
+    <url>
+         <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/nrf52840/2026-11-20-negative-control-spim3-old-descriptor/</loc>
+    </url>
+    <url>
+         <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/nrf52840/2026-11-20-negative-control-twim-anack-old-model/</loc>
     </url>
     <url>
          <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/nrf52840/2026-11-20-negative-control-twim-tmp102-removed/</loc>
@@ -2467,6 +2491,9 @@
          <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/sam4s16c/2026-11-09-negative-control-old-descriptor/NOTE/</loc>
     </url>
     <url>
+         <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/sam4s16c/2026-11-20-negative-control-uart-irq-old-descriptor/</loc>
+    </url>
+    <url>
          <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/sam4s8b/2026-11-09-before-usart0-txrdy-irq/</loc>
     </url>
     <url>
@@ -2651,6 +2678,12 @@
     </url>
     <url>
          <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/stm32f072/2026-11-13-before-stm32v2-irq-level/metrics/onboarding-summary/</loc>
+    </url>
+    <url>
+         <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/stm32f072/2026-11-21-tim1-brk-trg-com-lines/NOTE/</loc>
+    </url>
+    <url>
+         <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/stm32f072/2026-11-21-tim1-cc-line-and-shared-line-level/NOTE/</loc>
     </url>
     <url>
          <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/stm32f072b_discovery/2026-11-09-before-renode-surface/NOTE/</loc>
@@ -3115,6 +3148,9 @@
          <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/stm32f103/2026-11-19-usart2-tx-dma-rearm-no-second-request/onboarding-summary/</loc>
     </url>
     <url>
+         <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/stm32f103/2026-11-20-negative-control-i2c1-irq-old-descriptor/</loc>
+    </url>
+    <url>
          <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/stm32f4/2026-11-09-negative-control-sizeless-windows/NOTE/</loc>
     </url>
     <url>
@@ -3263,6 +3299,9 @@
     </url>
     <url>
          <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/stm32f401cdu6-blackpill/2026-11-12-vfp4-attribute-unstable/onboarding-summary/</loc>
+    </url>
+    <url>
+         <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/stm32f401cdu6-blackpill/2026-11-21-negative-control-tim1-9-10-11-irq-old-descriptor/</loc>
     </url>
     <url>
          <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/stm32f412/2026-11-13-stale-profile-current-firmware/</loc>
@@ -3691,7 +3730,13 @@
          <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/stm32w108/2026-11-08-sc1-negative-control/</loc>
     </url>
     <url>
+         <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/stm32w108/2026-11-23-psc-exponent-negative-control/</loc>
+    </url>
+    <url>
          <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/stm32w108/attempt-01/onboarding-summary/</loc>
+    </url>
+    <url>
+         <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/stm32wba52/2026-11-21-negative-control-usart1-irq-old-descriptor/</loc>
     </url>
     <url>
          <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/tock_veer_el2_sim/2026-11-08-before-htif-smoke/</loc>

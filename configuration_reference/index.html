@@ -5921,8 +5921,8 @@ rather than guessed.</p>
 </tr>
 <tr>
 <td><code>memory_overrides</code></td>
-<td>Parsed but <strong>not consulted by the engine today</strong> — region sizes come from the chip descriptor. The field exists so manifests may carry it; do not rely on it.</td>
-<td><code>memory_overrides: {flash: "512KB"}</code></td>
+<td>One key is read: <code>reset_vector_offset</code>, the offset from the flash base of the vector table that reset enters. It replaces the chip descriptor's value, for a board whose resident bootloader hands over to an application image (0x10000 on the Arduino Nano 33 BLE). A value that is not a number fails the load. Every other key is ignored with a warning — region sizes come from the chip descriptor.</td>
+<td><code>memory_overrides: {reset_vector_offset: "0x10000"}</code></td>
 </tr>
 <tr>
 <td><code>peripherals</code></td>
@@ -6208,6 +6208,11 @@ canonical <code>type:</code>; the table below is rendered from that file by
 <td><code>gt911</code></td>
 <td>I²C</td>
 <td>480x480 single-contact GT911 register and ready/ack model</td>
+</tr>
+<tr>
+<td><code>hd44780_pcf8574</code></td>
+<td>I²C</td>
+<td>16x2 character LCD: HD44780 controller in 4-bit mode behind a PCF8574 I2C backpack</td>
 </tr>
 <tr>
 <td><code>ht16k33</code></td>
@@ -6665,6 +6670,11 @@ canonical <code>type:</code>; the table below is rendered from that file by
 <td>One-wire temperature + humidity sensor</td>
 </tr>
 <tr>
+<td><code>ds18b20</code></td>
+<td>GPIO</td>
+<td>Maxim DS18B20 digital thermometer on a 1-Wire bus (9-12 bit, -55 to +125 °C)</td>
+</tr>
+<tr>
 <td><code>hc-sr04</code></td>
 <td>GPIO</td>
 <td>Ultrasonic distance sensor (trigger / echo)</td>
@@ -6760,6 +6770,11 @@ canonical <code>type:</code>; the table below is rendered from that file by
 <td>S040 16-bit RGB frame receiver and 9-bit GPIO control</td>
 </tr>
 <tr>
+<td><code>tcs3200</code></td>
+<td>GPIO</td>
+<td>Programmable RGB light-to-frequency converter (S0/S1 scale, S2/S3 filter, OE)</td>
+</tr>
+<tr>
 <td><code>tm1637-7seg</code></td>
 <td>GPIO</td>
 <td>4-digit 7-segment LED display with the TM1637 2-wire (CLK/DIO) driver</td>
@@ -6803,6 +6818,16 @@ canonical <code>type:</code>; the table below is rendered from that file by
 <td><code>lipo_charger</code></td>
 <td>Analog</td>
 <td>Single-cell LiPo pack + TP4056-class analog charger on an ADC channel</td>
+</tr>
+<tr>
+<td><code>mcp9700</code></td>
+<td>Analog</td>
+<td>Analog temperature sensor, 10 mV/°C with 500 mV at 0 °C</td>
+</tr>
+<tr>
+<td><code>mcp9701</code></td>
+<td>Analog</td>
+<td>Analog temperature sensor, 19.5 mV/°C with 400 mV at 0 °C</td>
 </tr>
 <tr>
 <td><code>mq-6</code></td>
@@ -7210,6 +7235,10 @@ button a user can press, an ADC input. Entries are <code>BoardIoBinding</code>:<
 <tr>
 <td><code>channel</code></td>
 <td>Stimulus channel this contact exposes when it is not a plain <code>pressed</code> button (<code>obstacle</code>, <code>field</code>, <code>vibration</code>, …); absent means <code>pressed</code>.</td>
+</tr>
+<tr>
+<td><code>emission</code></td>
+<td>Optional visible light this output gives off: <code>{ color: "#rrggbb" }</code>. Any output binding may declare it. The engine then reports <code>emission</code> with the binding's state: the declared colour while the output is asserted, <code>#000000</code> while it is not. Only the on/off level is modelled; PWM brightness is not.</td>
 </tr>
 </tbody>
 </table>
