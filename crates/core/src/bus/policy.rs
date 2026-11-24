@@ -237,6 +237,10 @@ impl SystemBus {
             // exactly the shape of bug `no_gpio_device_needs_service` exists
             // for, arriving through the other door.
             && self.device_pin_pads.is_empty()
+            // The same per-tick pass delivers device-to-device output links
+            // (`device-output://`, e.g. an expander driving an H-bridge), which
+            // allocate no MCU pad and so are absent from `device_pin_pads`.
+            && self.device_output_observers.is_empty()
     }
 
     /// Whether the hosted CLI may widen its instruction window.

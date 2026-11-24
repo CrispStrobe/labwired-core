@@ -284,7 +284,7 @@ peripherals:
     base_address: 0x403E8000
     size: "16KB"
   # CoreDebug: Teensyduino's ResetHandler2 writes DEMCR.TRCENA before enabling
-  # DWT CYCCNT for micros(). `configure_cortex_m` now maps the real DEMCR
+  # DWT CYCCNT for micros(). `configure_cortex_m` maps the real DEMCR
   # (0xE000EDFC, inactive debug state) on every Cortex-M machine and replaces
   # any `scs_debug` window by name, so this descriptor declares none; an SWD
   # attachment (`attach_swd_dp`) still maps the full block.

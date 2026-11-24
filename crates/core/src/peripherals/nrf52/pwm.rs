@@ -47,6 +47,12 @@
 //! * Edges are published with their exact cycle (`PadLines::set_line_at`),
 //!   and a scheduler wake lands on each one so live pad reads follow too.
 //!
+//! # Interrupt
+//!
+//! The instance's NVIC line is a level: high while any event is set and its
+//! INTEN bit is on (bit = (event offset - 0x100) / 4, PS §6.17.5 INTEN), low
+//! once firmware clears the event or the INTEN bit.
+//!
 //! Not modelled: multi-step playback timing (REFRESH/ENDDELAY/LOOP; the events
 //! still fire at once, as before), SHORTS, and NEXTSTEP stepping. Interrupts
 //! reflect the latched events; this does not add sequence/event timing fidelity.
@@ -412,6 +418,12 @@ impl Nrf52Pwm {
 }
 
 impl Peripheral for Nrf52Pwm {
+    /// `PSEL.OUT[n]` names the pad; `TASKS_SEQSTART`/`TASKS_STOP` take and
+    /// release it.
+    fn claims_pads(&self) -> bool {
+        true
+    }
+
     /// Dual-path EasyDMA: scheduler delay-0 (`on_event`) under Machine +
     /// walk-free + batched tick interval, and `tick_with_bus` for bare-bus
     /// unit tests. No time-driven walk work — SEQSTART completes on the next
@@ -624,15 +636,19 @@ impl Peripheral for Nrf52Pwm {
             return crate::sched::EventResult::default();
         }
         let now = sched.now().max(self.anchor);
-        if self.pending != PENDING_NONE {
+        let played = self.pending != PENDING_NONE;
+        if played {
             self.do_easydma_seq(bus, now);
         }
         self.advance_to(now);
         // Re-armed under this same token by the machine.
         self.armed_target = self.wake_target();
         crate::sched::EventResult {
-            raise_own_irq: self.irq_line_level() == Some(true),
             reschedule_delay: self.armed_target.map(|t| t - now),
+            // The sequence events land here, outside any MMIO write, so the
+            // event path pends the level line itself. A level latched earlier
+            // (e.g. INTENSET over a pending event) is re-asserted as well.
+            raise_own_irq: self.irq_line_level() == Some(true),
             ..Default::default()
         }
     }
@@ -977,6 +993,31 @@ mod tests {
         );
         assert_eq!(p.pending, PENDING_NONE, "pending cleared");
         assert!(p.wave.is_some(), "the last step keeps playing");
+    }
+
+    #[test]
+    fn irq_line_follows_enabled_events() {
+        let mut p = Nrf52Pwm::new();
+        let mut bus = FlatRam::new();
+        let base: u64 = 0x2000_0000;
+        bus.write_slice(base, &[0x10, 0x80]);
+        p.write_u32(OFF_ENABLE, 1).unwrap();
+        p.write_u32(OFF_SEQ_FIRST, base as u32).unwrap();
+        p.write_u32(OFF_SEQ_FIRST + 4, 1).unwrap();
+        p.write_u32(OFF_TASKS_SEQSTART0, 1).unwrap();
+        p.tick_with_bus(&mut bus);
+        assert_eq!(p.irq_line_level(), Some(false), "events set, INTEN off");
+
+        p.write_u32(OFF_INTENSET, 1 << 4).unwrap(); // SEQEND0
+        assert_eq!(p.irq_line_level(), Some(true), "SEQEND0 enabled");
+        p.write_u32(OFF_EVENTS_SEQEND0, 0).unwrap();
+        assert_eq!(p.irq_line_level(), Some(false), "SEQEND0 cleared");
+
+        p.write_u32(OFF_INTENSET, 1 << 1).unwrap(); // STOPPED
+        p.write_u32(OFF_TASKS_STOP, 1).unwrap();
+        assert_eq!(p.irq_line_level(), Some(true), "STOPPED enabled");
+        p.write_u32(OFF_INTENCLR, 1 << 1).unwrap();
+        assert_eq!(p.irq_line_level(), Some(false), "STOPPED masked");
     }
 
     #[test]

@@ -35,6 +35,27 @@ def annotation(total=10):
             "-------------------\n7  src/a.rs:start [cli]\n3  src/b.rs:spin [cli]\n")
 
 
+
+def reverse_b2c3e197_successor(root):
+    """Reverse the reviewed b2c3e197 sync insertions; return predecessor texts."""
+    path = root / 'scripts/ci/fixtures/cortex_m_perf_successor_b2c3e197.json'
+    if hashlib.sha256(path.read_bytes()).hexdigest() != '3df6f9a136bda1e3639800f36d1ada05fa058b0312c211bdf8e1d7e897642555':
+        raise AssertionError('reviewed b2c3e197 successor fixture')
+    record = json.loads(path.read_text())
+    out = {}
+    for entry in record['source_transitions']:
+        source = (root / entry['path']).read_text()
+        if hashlib.sha256(source.encode()).hexdigest() != entry['successor_sha256']:
+            raise AssertionError(entry['path'])
+        for replacement in entry['replacements']:
+            if source.count(replacement['after']) != 1:
+                raise AssertionError(entry['path'])
+            source = source.replace(replacement['after'], replacement['before'], 1)
+        if hashlib.sha256(source.encode()).hexdigest() != entry['predecessor_sha256']:
+            raise AssertionError(entry['path'])
+        out[entry['path']] = source
+    return out
+
 class DiagnosticsControls(unittest.TestCase):
     def setUp(self):
         spec = importlib.util.spec_from_file_location("diagnostics", PATH)
@@ -479,6 +500,10 @@ class DiagnosticsControls(unittest.TestCase):
         latest_successor = json.loads(latest_path.read_text())
         self.assertEqual({'scripts/perf/board_perf.py', 'scripts/perf/baselines.json'},
                          {entry['path'] for entry in latest_successor['source_transitions']})
+        # The b2c3e197 sync adds only two upstream baseline references. Reverse
+        # its exact insertions first; the f9ad21ad chain below then proves the
+        # unchanged qualified state exactly as before.
+        sync_inputs = reverse_b2c3e197_successor(root)
         # Full upstream sync adds policy only for newly introduced profiles and
         # one reference; reverse it before proving every qualified fork pin.
         sync_path = root / 'scripts/ci/fixtures/cortex_m_perf_successor_f9ad21ad.json'
@@ -491,7 +516,7 @@ class DiagnosticsControls(unittest.TestCase):
                          {entry['path'] for entry in sync_successor['source_transitions']})
         for entry in sync_successor['source_transitions']:
             path = entry['path']
-            restored = (root/path).read_text()
+            restored = sync_inputs.get(path, (root/path).read_text())
             self.assertEqual(entry['successor_sha256'], hashlib.sha256(restored.encode()).hexdigest(), path)
             for replacement in entry['replacements']:
                 self.assertEqual(restored.count(replacement['after']), 1, path)
@@ -601,7 +626,8 @@ class DiagnosticsControls(unittest.TestCase):
                  'scripts/ci/fixtures/cortex_m_perf_successor_10284b00.json',
                  'scripts/ci/fixtures/cortex_m_perf_successor_a4b097c0.json',
                  'scripts/ci/fixtures/cortex_m_perf_successor_7afe07eb.json',
-                 'scripts/ci/fixtures/cortex_m_perf_successor_f9ad21ad.json')
+                 'scripts/ci/fixtures/cortex_m_perf_successor_f9ad21ad.json',
+                 'scripts/ci/fixtures/cortex_m_perf_successor_b2c3e197.json')
         for path in paths:
             target = cold / path
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -729,8 +755,9 @@ class DiagnosticsControls(unittest.TestCase):
         record = json.loads((ROOT / 'scripts/ci/fixtures/cortex_m_perf_successor_f9ad21ad.json').read_text())
         self.assertEqual(record['imported_upstream_waivers'], ['esp32c2', 'esp32s2-arduino', 'mspm0g3507'])
         self.assertEqual(record['imported_upstream_baselines'], {'stm32h533re': {'batch': 1.2, 'step': 809.2}})
+        sync_inputs = reverse_b2c3e197_successor(ROOT)
         for entry in record['source_transitions']:
-            current = (ROOT / entry['path']).read_text()
+            current = sync_inputs.get(entry['path'], (ROOT / entry['path']).read_text())
             previous = current
             for replacement in entry['replacements']:
                 previous = previous.replace(replacement['after'], replacement['before'], 1)
@@ -759,6 +786,38 @@ class DiagnosticsControls(unittest.TestCase):
         record['kind'] = 'new measured performance'
         path.write_text(json.dumps(record))
         with self.assertRaisesRegex(AssertionError, 'reviewed f9ad21ad successor fixture'):
+            self.assert_preservation(cold)
+
+    def test_b2c3e197_sync_successor_adds_only_two_upstream_references(self):
+        record = json.loads((ROOT / 'scripts/ci/fixtures/cortex_m_perf_successor_b2c3e197.json').read_text())
+        self.assertEqual(record['imported_upstream_waivers'], [])
+        self.assertEqual(record['imported_upstream_baselines'],
+                         {'stm32h753zi': {'batch': 1.3, 'step': 860.6},
+                          'stm32l031k6': {'batch': 1.3, 'step': 863.2}})
+        self.assertEqual(['scripts/perf/baselines.json'], [e['path'] for e in record['source_transitions']])
+        current = (ROOT / 'scripts/perf/baselines.json').read_text()
+        previous = reverse_b2c3e197_successor(ROOT)['scripts/perf/baselines.json']
+        old, new = json.loads(previous), json.loads(current)
+        self.assertEqual({k: new[k] for k in old}, old)
+        self.assertEqual({k: v for k, v in new.items() if k not in old}, record['imported_upstream_baselines'])
+        self.assert_preservation(ROOT)
+
+    def test_b2c3e197_sync_successor_rejects_relabelled_provenance(self):
+        cold = self.preservation_copy()
+        path = cold / 'scripts/ci/fixtures/cortex_m_perf_successor_b2c3e197.json'
+        record = json.loads(path.read_text())
+        record['kind'] = 'new measured performance'
+        path.write_text(json.dumps(record))
+        with self.assertRaisesRegex(AssertionError, 'reviewed b2c3e197 successor fixture'):
+            self.assert_preservation(cold)
+
+    def test_b2c3e197_sync_successor_rejects_a_changed_existing_baseline(self):
+        cold = self.preservation_copy()
+        path = cold / 'scripts/perf/baselines.json'
+        text = path.read_text()
+        self.assertEqual(text.count('"step": 905.9'), 1)
+        path.write_text(text.replace('"step": 905.9', '"step": 999.9', 1))
+        with self.assertRaises(AssertionError):
             self.assert_preservation(cold)
 
     def test_preservation_rejects_relabelled_historical_collector_fixture(self):

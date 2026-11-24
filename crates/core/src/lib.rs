@@ -20,6 +20,15 @@ pub mod decoder;
 pub mod fault_verdict;
 pub mod fidelity;
 pub mod flex;
+pub mod flex_console;
+pub mod flex_i2c;
+pub mod flex_parts;
+#[cfg(test)]
+mod flex_parts_tests;
+#[cfg(feature = "flex-script")]
+pub mod flex_script;
+pub mod flex_sinks;
+pub mod flex_spi;
 pub mod hashers;
 pub mod host_time;
 pub mod inspect;
@@ -42,6 +51,7 @@ pub mod power;
 pub mod profile;
 pub mod reset_input;
 pub mod runtime_snapshot;
+pub mod s140_disabled;
 pub mod sched;
 pub mod sd_hle;
 pub mod session;
@@ -598,6 +608,9 @@ pub struct Machine<C: Cpu> {
     /// image is an application built for one. `None` on every other board:
     /// the advance boundary then pays one `Option` test.
     pub sd_hle: Option<Box<sd_hle::SdHleSlot>>,
+    /// nRF52840 application linked at the S140 base, with the SoftDevice
+    /// present in the link but never enabled. `None` on every other image.
+    pub s140_disabled: Option<Box<s140_disabled::S140DisabledSlot>>,
     /// SCB.VTOR as `load_firmware` left it (0, or the flash base / relocated
     /// table it retargets to). A SYSRESETREQ restores this value: VTOR is
     /// reset by a system reset, so a table the firmware moved to SRAM must not
@@ -899,6 +912,13 @@ impl<C: Cpu> Machine<C> {
                 }
             }
         }
+
+        // A port re-registers its watched pads with peripheral lines only
+        // inside a bracketed write. Where the PERIPHERAL names the pad (nRF
+        // `PSEL`, EFR32 route registers) the write that moves a pad lands on
+        // the peripheral, so the bus must bracket it while any pad is watched.
+        self.bus.pad_watch_live = !per_peripheral.is_empty();
+        self.bus.rebuild_pad_claim_links();
 
         // ── The WIRE half ───────────────────────────────────────────────────
         // AFTER the pad pass, never before. A GPIO port with no watched pin
@@ -1400,6 +1420,7 @@ impl<C: Cpu> Machine<C> {
             nvmc_index,
             reset_request_indices,
             sd_hle: None,
+            s140_disabled: None,
             boot_vtor: None,
             scheduler_bootstrapped: false,
             tick_irq_scratch: Vec::new(),
@@ -2798,6 +2819,12 @@ impl<C: Cpu> Machine<C> {
             // `on_event` without holding two simultaneous mutable borrows.
             // Same dance the bus uses for `tick_with_bus`, but the stub stand-in
             // is reused from `event_placeholder` instead of allocated per event.
+            // A pad-naming peripheral can take or release a pad inside its
+            // event (nRF PWM loads its first step, and so claims its pad, in
+            // the EasyDMA completion after `TASKS_SEQSTART`): bracket it like
+            // a register write so a watched pad follows the claim.
+            let pad_claim_capture =
+                !self.bus.pad_claim_links.owners.is_empty() && self.bus.begin_pad_claim_write(idx);
             let stub = self
                 .event_placeholder
                 .take()
@@ -2813,6 +2840,7 @@ impl<C: Cpu> Machine<C> {
             // Put the real peripheral back and reclaim the stub for reuse.
             let stub_back = std::mem::replace(&mut self.bus.peripherals[idx].dev, dev);
             self.event_placeholder = Some(stub_back);
+            self.bus.finish_pad_claim_write(pad_claim_capture);
             // Phase 2B.3b: a level-triggered peripheral re-arms its own event
             // (same token) while it has active work. We own the idx the
             // scheduler needs, so we do it here.
@@ -2871,7 +2899,7 @@ impl<C: Cpu> Machine<C> {
                     .irq_line_level()
                     .is_some()
                 {
-                    crate::bus::reconcile_nvic_level(&self.bus.nvic, irq, true);
+                    crate::bus::tick::reconcile_nvic_level(&self.bus.nvic, irq, true);
                 }
             }
         }

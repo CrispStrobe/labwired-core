@@ -120,15 +120,14 @@ const EXCLUSIONS: &[(&str, BusKind, &str)] = &[
         "esp32p4 UART0 is a TX FIFO/console model with no PadLines wire cell; \
          bytes are proven by the esp32p4x-c5-function-ev-board smoke",
     ),
-    // ESP32-P4 I2C0 uses the classic ESP32 command-list engine, which owns
-    // no PadLines wire cell. The BME280 ID/raw-temperature transaction is
-    // proven by examples/esp32p4x-c5-function-ev-board/io-smoke.yaml.
+    // ESP32-P4: the esp32p4_i2c wrapper publishes SCL/SDA names but no
+    // PadLines cell, so there is no wire to probe. The I2C transaction is
+    // proven by the esp32p4x-c5-function-ev-board BME280 smoke.
     (
         "esp32p4",
         BusKind::I2c,
-        "esp32p4 I2C0 is the classic ESP32 command-list engine with no PadLines \
-         wire cell; the BME280 transaction is proven by the \
-         esp32p4x-c5-function-ev-board io-smoke",
+        "esp32p4_i2c publishes line names but no PadLines wire cell; the I2C \
+         transaction is proven by the esp32p4x-c5-function-ev-board BME280 smoke",
     ),
     // ESP32-S2: UART0 has no bring-up arm for the S2 family in this harness.
     // Bytes are proven by the esp32s2-devkitc-1-n8r2 board smoke (uart_contains).
@@ -216,48 +215,48 @@ const EXCLUSIONS: &[(&str, BusKind, &str)] = &[
     ),
     // CH32L103C8T6: the bring-up has no UART drive for the WCH L103 family.
     // USART1 bytes are proven by
-    // ch32l103_compiled_firmware::ch32l103_compiled_rv32imac_firmware_prints_on_usart1.
+    // ch32_compiled_firmware::every_ch32_compiled_uart_hello_prints_on_usart1.
     (
         "ch32l103c8t6",
         BusKind::Uart,
         "no UART bring-up for the WCH L103 family in this harness yet; USART1 \
-         bytes are proven by ch32l103_compiled_firmware",
+         bytes are proven by ch32_compiled_firmware",
     ),
     // CH32V005F6P6: same pad-gated USART1 (TX=PD5) as the CH32V003. USART1
     // bytes are proven by
-    // ch32v005_compiled_firmware::ch32v005_compiled_rv32ec_zmmul_firmware_prints_on_usart1.
+    // ch32_compiled_firmware::every_ch32_compiled_uart_hello_prints_on_usart1.
     (
         "ch32v005f6p6",
         BusKind::Uart,
         "pad-gated F1-style USART1 (TX=PD5) produces no analyzer edges in this \
-         harness yet; bytes are proven by ch32v005_compiled_firmware",
+         harness yet; bytes are proven by ch32_compiled_firmware",
     ),
     // CH32X035C8T6: no UART bring-up for the WCH X035 family in this harness.
     // USART1 bytes are proven by
-    // ch32x035_compiled_firmware::ch32x035_compiled_rv32imac_firmware_prints_on_usart1.
+    // ch32_compiled_firmware::every_ch32_compiled_uart_hello_prints_on_usart1.
     (
         "ch32x035c8t6",
         BusKind::Uart,
         "no UART bring-up for the WCH X035 family in this harness yet; USART1 \
-         bytes are proven by ch32x035_compiled_firmware",
+         bytes are proven by ch32_compiled_firmware",
     ),
     // CH32V006K8U6: same pad-gated USART1 (TX=PD5) as the CH32V003. USART1
     // bytes are proven by
-    // ch32v006_compiled_firmware::ch32v006_compiled_rv32ec_zmmul_firmware_prints_on_usart1.
+    // ch32_compiled_firmware::every_ch32_compiled_uart_hello_prints_on_usart1.
     (
         "ch32v006k8u6",
         BusKind::Uart,
         "pad-gated F1-style USART1 (TX=PD5) produces no analyzer edges in this \
-         harness yet; bytes are proven by ch32v006_compiled_firmware",
+         harness yet; bytes are proven by ch32_compiled_firmware",
     ),
     // CH32V203C8T6: the bring-up has no UART drive for the WCH V20x family.
     // USART1 bytes are proven by
-    // ch32v203_compiled_firmware::ch32v203_compiled_rv32imac_firmware_prints_on_usart1.
+    // ch32_compiled_firmware::every_ch32_compiled_uart_hello_prints_on_usart1.
     (
         "ch32v203c8t6",
         BusKind::Uart,
         "no UART bring-up for the WCH V20x family in this harness yet; USART1 \
-         bytes are proven by ch32v203_compiled_firmware",
+         bytes are proven by ch32_compiled_firmware",
     ),
     // F4U6 (QFN20), A4M6 (SOP16) and J4M6 (SOP8) are package variants of the
     // F4P6 die with the same pad-gated USART1 on PD5. Bytes are proven by
@@ -796,10 +795,28 @@ fn fleet() -> Vec<String> {
     chips
 }
 
+/// Where the idle loop goes. The explicit rows predate reading it from the
+/// bus; every other chip uses the RAM its own descriptor maps, so a chip whose
+/// SRAM is not at 0x2000_0000 (ESP32-C5/C61/P4) still steps and the wire runs.
+fn ram_base_or(chip: &str, mapped: u64) -> u64 {
+    match chip {
+        "esp32c3"
+        | "esp32c6"
+        | "esp32c6fh4"
+        | "esp32"
+        | "esp32s3"
+        | "esp32s3-zero"
+        | "esp32-devkitc-32e-gpio-smoke"
+        | "esp32-devkitc-32e-uart1"
+        | "nrf52840" => ram_base(chip),
+        _ => mapped,
+    }
+}
+
 fn ram_base(chip: &str) -> u64 {
     match chip {
         "esp32c3" => 0x3FC8_0000,
-        "esp32c5" | "esp32c6" | "esp32c6fh4" | "esp32c61" => 0x4080_0000,
+        "esp32c6" | "esp32c6fh4" => 0x4080_0000,
         "esp32"
         | "esp32s3"
         | "esp32s3-zero"
@@ -823,7 +840,7 @@ fn machine_for(chip_name: &str) -> Machine<CortexM> {
     // `b .` (0xE7FE): Thumb branch to itself so the logic tap's provisional
     // clock advances. Nothing about firmware matters — every peripheral below
     // is driven through MMIO.
-    let ram = ram_base(chip_name);
+    let ram = ram_base_or(chip_name, machine.bus.ram.base_addr);
     // Best-effort: some chips map RAM differently; if the write fails the
     // driver still advances via `machine.step` on whatever PC holds.
     let _ = machine.bus.write_u8(ram + 0x1000, 0xFE);
@@ -1106,6 +1123,11 @@ enum Family {
     /// CLKDIV semantics), so only its own divisor constant is new — the C6's
     /// GPIO matrix exists but no SPI/I2C window is declared on this L1 target.
     Esp32c6,
+    /// ESP32-C5 and C61 HP cores. Each I²C0 is the C3-family command-list
+    /// engine (`esp32c5_i2c` / `esp32c61_i2c`, see their chip yamls), so they
+    /// take the C3/C6 I²C drive. Their UARTs carry EXCLUSIONS
+    /// rows; no UART or SPI drive is claimed for them.
+    EspC3I2cOnly,
     Esp32,
     /// Silicon Labs EFR32 Series 2. ⚠️ "SPI" here is a USART with `CTRL.SYNC` —
     /// the part has no separate SPI peripheral — so both kinds land in the same
@@ -1133,6 +1155,8 @@ fn family_of(chip: &str) -> Family {
         Family::Esp32c3
     } else if chip == "esp32c6" || chip == "esp32c6fh4" {
         Family::Esp32c6
+    } else if chip == "esp32c5" || chip == "esp32c61" {
+        Family::EspC3I2cOnly
     } else if chip == "esp32"
         || chip == "esp32-devkitc-32e-gpio-smoke"
         || chip == "esp32-devkitc-32e-uart1"
@@ -1187,13 +1211,7 @@ fn measure_kind(chip: &str, kind: BusKind) -> KindResult {
     // Prefer instances that already own a PadLines cell, then keep yaml order.
     instances.sort_by_key(|i| (!i.has_wire_cell, i.name.clone()));
 
-    // C5's and C61's I2C models share the C3 command-list engine. Their other
-    // buses retain their own classification and visibility requirements.
-    let family = if matches!(chip, "esp32c5" | "esp32c61") && kind == BusKind::I2c {
-        Family::Esp32c3
-    } else {
-        family_of(chip)
-    };
+    let family = family_of(chip);
     let mut last_fail: Option<KindResult> = None;
     for inst in &instances {
         let mut machine = machine_for(chip);
@@ -1336,7 +1354,7 @@ fn drive_uart(
         Family::Unknown if chip == "at32f421g8u7" => {
             return drive_uart_stm32(machine, inst, Stm32UartMap::F1);
         }
-        Family::Unknown => {
+        Family::EspC3I2cOnly | Family::Unknown => {
             return KindResult::Unsupported {
                 instance: inst.name.clone(),
                 reason: format!("no UART bring-up for family of chip '{chip}'"),
@@ -1518,7 +1536,7 @@ fn transmit_uart(family: Family, machine: &mut Machine<CortexM>, inst: &BusInsta
             }
             true
         }
-        Family::Unknown => false,
+        Family::EspC3I2cOnly | Family::Unknown => false,
     }
 }
 
@@ -1700,7 +1718,7 @@ fn drive_spi(
             let _ = machine.bus.write_u32(inst.base + 0x14, (1 << 4) | (1 << 2));
             // CMD
         }
-        Family::Unknown => {
+        Family::EspC3I2cOnly | Family::Unknown => {
             return KindResult::Unsupported {
                 instance: inst.name.clone(),
                 reason: format!("no SPI bring-up for family of chip '{chip}'"),
@@ -1848,7 +1866,7 @@ fn transmit_spi(family: Family, machine: &mut Machine<CortexM>, inst: &BusInstan
             run(machine, PAYLOAD.len() as u64 * 10 * 160 + 256);
             true
         }
-        Family::Unknown => false,
+        Family::EspC3I2cOnly | Family::Unknown => false,
     }
 }
 
@@ -1920,32 +1938,6 @@ fn drive_i2c(
     enable_clock(machine, &inst.name);
     let _ = machine.bus.attach_i2c_slave(&inst.name, Box::new(I2cSink));
 
-    // Same SDA/SCL routes as the supplied BME280 systems: C5 GPIO8/GPIO9,
-    // C61 GPIO6/GPIO22. Input selectors 46 (SCL) / 47 (SDA) use bit8 and the
-    // chips' shared shifted matrix map.
-    let route = match chip {
-        "esp32c5" => Some((8u64, 9u64)),
-        "esp32c61" => Some((6, 22)),
-        _ => None,
-    };
-    if let Some((sda, scl)) = route {
-        let gpio = 0x6009_1000;
-        for (pin, signal) in [(sda, 47), (scl, 46)] {
-            machine
-                .bus
-                .write_u32(gpio + 0xAD4 + pin * 4, signal | (1 << 10))
-                .unwrap();
-            machine
-                .bus
-                .write_u32(gpio + 0x2D4 + u64::from(signal) * 4, pin as u32 | (1 << 8))
-                .unwrap();
-        }
-        machine
-            .bus
-            .write_u32(gpio + 0x38, (1 << sda) | (1 << scl))
-            .unwrap();
-    }
-
     match family {
         Family::Stm32V2 | Family::Stm32F1 | Family::Stm32H5 => {
             // Program BOTH L4 and legacy F1 maps. F401/F4 parts default to the
@@ -1971,7 +1963,7 @@ fn drive_i2c(
                 .bus
                 .write_u32(inst.base + 0x588, u32::from(I2C_ADDR));
         }
-        Family::Esp32c6 => {
+        Family::Esp32c6 | Family::EspC3I2cOnly => {
             // I²C0 (0x6000_4000) is the same esp32c3_i2c engine, so the C3
             // bring-up drives it verbatim. The C6's differing matrix signal
             // indices affect pad routing, not the controller's wire channels.
@@ -2159,7 +2151,7 @@ fn transmit_i2c(family: Family, machine: &mut Machine<CortexM>, inst: &BusInstan
             let _ = machine.bus.write_u32(reg_ctr, 1 << 5); // TRANS_START
             true
         }
-        Family::Esp32c6 => {
+        Family::Esp32c6 | Family::EspC3I2cOnly => {
             // Same esp32c3_i2c command-list engine as the C3 arm.
             let cmd = |opcode: u32, byte_num: u32| (opcode << 11) | byte_num;
             let reg_cmd0 = inst.base + 0x58;

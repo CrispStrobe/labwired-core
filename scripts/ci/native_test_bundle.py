@@ -216,7 +216,9 @@ def select_libraries(selected, libraries):
 
 
 def pack(mode, output, available=False):
-    expected = {"default"} | ({"event-scheduler", "jit-framework"} if mode == "workspace" else set())
+    # Workspace unification: labwired-wasm adds event-scheduler/jit-framework,
+    # and labwired-cli (and wasm) add flex-script.
+    expected = {"default"} | ({"event-scheduler", "flex-script", "jit-framework"} if mode == "workspace" else set())
     source = source_identity()
     selected = {}
     libraries = []

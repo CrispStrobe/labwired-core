@@ -54,14 +54,15 @@ mod routing;
 mod samd51_storage;
 pub mod sim_inputs;
 mod spi_cs;
-mod tick;
+pub(crate) mod tick;
 mod timed_can;
 mod timer_kernel_clock;
-pub(crate) use tick::reconcile_nvic_level;
 
 pub use can_devices::*;
 pub use observed_device::ObservedDevice;
-pub use resident_device::{BusResidentDevice, DevicePinPad, DevicePins};
+pub use resident_device::{
+    BusResidentDevice, DeviceOutputObserverBinding, DevicePinPad, DevicePins,
+};
 
 pub use bus_trace::{new_log, BusPayload, BusTraceEvent, BusTraceLog, I2cSym};
 pub(crate) use ina219_circuit::CircuitIna219Lookup;
@@ -506,6 +507,9 @@ pub struct SystemBus {
     pub riscv_clint: Option<crate::cpu::riscv::Rv32Clint>,
     /// PLIC geometry of an RV32 chip whose core complex carries one.
     pub riscv_plic: Option<crate::cpu::riscv64_plic::PlicParams>,
+    /// True when the chip's RV32 core complex carries a WCH QingKe V2 PFIC
+    /// ([`crate::cpu::qingke_pfic::QingKePfic::for_chip`]).
+    pub riscv_pfic: bool,
     /// Stable allocation-unique identity for native instruction translators
     /// that execute directly against this bus without an ARMv7 fabric.
     pub(crate) native_code_identity: u64,
@@ -840,6 +844,11 @@ pub struct SystemBus {
     ///
     /// [`service_device_pin_drives`]: Self::service_device_pin_drives
     pub(crate) device_pin_pads: Vec<DevicePinPad>,
+    /// Direct external-device output links. These are used when one off-chip
+    /// part drives another without traversing an MCU pad (for example PCF8574
+    /// P0 -> TB6612 AIN1). Empty by default; serviced by the same queued-output
+    /// pass as [`device_pin_pads`](Self::device_pin_pads).
+    pub(crate) device_output_observers: Vec<DeviceOutputObserverBinding>,
     /// Explicitly opted-in pulled-up device-output nets.
     pub(crate) device_open_drain_nets: open_drain::OpenDrainNets,
     /// Off-chip models the bus holds ONLY so something can read them back — the
@@ -943,6 +952,11 @@ pub struct SystemBus {
     /// from then on the post-write and external-input hooks hand outside pad
     /// levels to the peripheral lines they are routed to. False elsewhere.
     pub(crate) wire_inputs_live: bool,
+    /// Set while the logic analyzer watches at least one pad
+    /// ([`crate::Machine::logic_watch`]). A pad-claim write must then be
+    /// bracketed even without a `gpio_net`, or a port never re-registers a
+    /// watched pad with the peripheral line that just claimed it.
+    pub(crate) pad_watch_live: bool,
     /// Test/diagnostic override: force conservative resident execution
     /// even under the `event-scheduler` feature. Deadline semantics remain
     /// identical; only CPU batching changes for differential tests.
@@ -1128,6 +1142,10 @@ pub struct ExternalDeviceDecl {
     pub address: Option<u8>,
     /// `config.cs_pin`, when declared.
     pub cs_pin: Option<String>,
+    /// `(source device id, output role)` for every `device-output://` link
+    /// this device's config names. The SOURCE device reads these when it
+    /// attaches, so a role wired only to another device is still delivered.
+    pub device_output_links: Vec<(String, String)>,
 }
 
 impl ExternalDeviceDecl {
@@ -1152,6 +1170,12 @@ impl ExternalDeviceDecl {
             channel: ext.channel,
             address: addr,
             cs_pin: cs,
+            device_output_links: ext
+                .config
+                .values()
+                .filter_map(|v| v.as_str())
+                .filter_map(crate::peripherals::components::h_bridge_motor::parse_device_output_ref)
+                .collect(),
         }
     }
 }

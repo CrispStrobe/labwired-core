@@ -40,6 +40,13 @@ const PARSE_FALLBACK_CHIPS: &[&str] = &[
     // (PB7 = portb bit 7, PK0 = portk bit 0); its config declares no `pins:`.
     "atmega2560",
     "atmega328p",
+    // STM32G474RE: upstream #2161 dropped the PA8-only `pins:` map because it
+    // refused every other GPIO output. Until a full LQFP64 map is transcribed
+    // from DS12288, the STM32 P<port><bit> label parse is the pad source.
+    "stm32g474re",
+    // STM32L031K6 (UFQFPN32): new upstream profile with no `pins:` map yet;
+    // its labels ride the same STM32 P<port><bit> parse.
+    "stm32l031k6",
     // ATmega328PB currently has no package-pad map; its smoke is CPU/MMIO
     // level and makes no physical pad-routing claim.
     "atmega328pb",

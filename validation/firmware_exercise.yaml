@@ -134,8 +134,12 @@ chips:
         fw: zephyr-bme280-ztest
         ev: "external west build (not in core cargo test)"
         gate: ignored
+      - what: "Stock ArduinoCore-mbed sketch on the Arduino Nano 33 BLE Rev2: the scripted USB host enumerates the native port (nrf52840_usbd) and opens its CDC serial port; the Adafruit BME280 library reads the sensor over Wire (TWI0 master, byte registers) and prints 25.00 C, 1013.25 hPa, 50.00 %RH on Serial (USB CDC)"
+        fw: arduino-nano-33-ble-bme280
+        ev: "crates/core/tests/nrf/arduino_nano_33_ble_bme280.rs (tests/fixtures/nrf52/arduino-nano-33-ble-bme280.elf)"
+        gate: pr
     advanced_unit_only: [TWIS, SPIS, CCM, RNG, TEMP, ECB, GPIOTE, PPI, NVMC, FICR,
-                         UICR, NFCT, PDM, EGU, QSPI, USBD]
+                         UICR, NFCT, PDM, EGU, QSPI]
     advanced_dead: [QDEC, AAR, ACL, COMP, CRYPTOCELL, I2S, LPCOMP, MWU]
     shim:
       - {p: USBREGULATOR, ev: "nrf52/usbregulator.rs (70 lines, 0 tests)", note: "thin VBUS-ready register stub"}
@@ -194,7 +198,7 @@ chips:
 
   - id: ch32v003f4p6
     arch: riscv32ec
-    headline: "No tier-1 fixture or hosted model-verification gate. The WCH-CH32V003EVT board profile maps its P4 LED1 through a configured jumper to PC0; committed RV32E/ILP32E bare-metal C firmware executes from flash and the PR-gated board smoke requires two GPIO edges. A second RV32EC (compressed) fixture clocks USART1 and prints a line through polled TX on PD5; the board smoke asserts the exact string. A negative control asserts silence when the USART1 clock gate is not set. This local simulator evidence does not cover WCH-Link, PFIC, ADC, I2C, SPI, timers, or USB, and is not hosted model_verified or hardware confirmation."
+    headline: "No tier-1 fixture or hosted model-verification gate. The WCH-CH32V003EVT board profile maps its P4 LED1 through a configured jumper to PC0; committed RV32E/ILP32E bare-metal C firmware executes from flash and the PR-gated board smoke requires two GPIO edges. A second RV32EC (compressed) fixture clocks USART1 and prints a line through polled TX on PD5; the board smoke asserts the exact string. A negative control asserts silence when the USART1 clock gate is not set. A third, stock WCH noneos-sdk ELF (PlatformIO ch32v, -march=rv32ecxw, unmodified) runs the vendor startup and SystemInit to 48 MHz, polls the STK SysTick through four Delay_Ms(10) calls and prints exact printf lines on USART1; a negative control without the STK block stops after the boot line. This local simulator evidence does not cover WCH-Link, PFIC, ADC, I2C, SPI, timers, or USB, and is not hosted model_verified or hardware confirmation."
     functional: []
     advanced_unit_only: []
     advanced_dead: []
@@ -412,7 +416,15 @@ chips:
 
   - id: stm32h723zg
     arch: cortex-m7
-    headline: "No beyond-rubric H723 peripheral is exercised: the NUCLEO-H723ZG smoke drives RCC enables, GPIOB (LD1 on PB0), GPIOD AF7 and USART3 TX only. This narrow board slice declares RCC, SysTick, GPIO B/C/D/E and USART3; it does not model PWR, the cache/MPU, FMC/OCTOSPI, Ethernet, USB OTG, FDCAN, ADC, timers, DMA, I2C, SPI or the other H723 peripherals."
+    headline: "Two firmware paths drive this die. The NUCLEO-H723ZG Rust smoke (core-onboarding-smoke) drives RCC enables, GPIOB (LD1 on PB0), GPIOD AF7 and USART3 TX. The stock stm32duino NUCLEO_H723ZG row in the Arduino matrix (core-arduino-matrix-smoke, nightly + push to main; evidence validation/arduino-matrix/evidence/nucleo-h723zg) drives PWR supply/VOS bring-up, the PLL clock tree, CRS (HAL_RCCEx_CRSConfig), USART3, GPIO, I2C1 (INA219 exact registers), SPI1 (MAX31855 exact frame), ADC1 plus the ADC12 common CCR (analogRead of A0 = PA3 held at 1651 mV reads exactly 512), TIM2 PWM on PA0 (1.000 kHz, 50.2 % duty on the pad) and SysTick (micros). FDCAN1/2, CRC, RNG, IWDG, WWDG, DBGMCU, USART1/2/6, UART4, LPUART1, I2C2/3, SPI2/3, TIM1/3/4/8 and ADC2 are declared with the H735 instance list but no H723 firmware drives them; the FDCAN message RAM is not mapped, so the L8 CAN cell is a declared skip."
+    functional: []
+    advanced_unit_only: []
+    advanced_dead: []
+    shim: []
+
+  - id: stm32h753zi
+    arch: cortex-m7
+    headline: "The stock stm32duino NUCLEO_H753ZI row in the Arduino matrix (core-arduino-matrix-smoke, nightly + push to main; evidence validation/arduino-matrix/evidence/nucleo-h753zi) drives PWR LDO supply and VOS0 bring-up, the PLL clock tree (480 MHz), CRS (HAL_RCCEx_CRSConfig), USART3, GPIO, I2C1 (INA219 exact registers), SPI1 (MAX31855 exact frame), ADC1 plus the ADC12 common CCR (analogRead of A0 = PA3 held at 1651 mV reads exactly 512), TIM2 PWM on PA0 (1.000 kHz, 50.2 % duty on the pad) and SysTick (micros). FDCAN1/2, CRC, RNG, IWDG, WWDG, DBGMCU, USART1/2/6, UART4, LPUART1, I2C2/3, SPI2/3, TIM1/3/4/8 and ADC2 are declared but no H753 firmware drives them. CRYP, HASH, Ethernet, USB OTG, QUADSPI, FMC, ADC3 and DMA are not modelled; the FDCAN message RAM is not mapped, so the L8 CAN cell is a declared skip."
     functional: []
     advanced_unit_only: []
     advanced_dead: []
@@ -802,7 +814,7 @@ chips:
 
   - id: stm32f767
     arch: cortex-m7
-    headline: "Not a tier-1 target (absent from TIER1_TARGETS and tier1-matrix.json), so this entry carries the whole story: its committed part-specific fixture runs PR-gated as `firmware_survival::test_stm32f767_tier1_survival` and in the nightly coverage-matrix cell examples/nucleo-f767zi/tier1-smoke.yaml, driving clock/gpio/timer/i2c/spi/adc/wdt/rtc over USART2 and leaving dma/irq/pwm unclaimed — the fixture never attempts them even though the descriptor now wires `stm32f4_dma` and `nvic` (the fixture's header comment still says no DMA/NVIC id is declared). That leaves PWR (real stm32f4-profile model) and both DMA stream controllers unit-only, and DBGMCU (real model, IDCODE 0x10006451 per RM0410) exercised by nothing at all."
+    headline: "Not a tier-1 target (absent from TIER1_TARGETS and tier1-matrix.json), so this entry carries the whole story: its committed part-specific fixture runs PR-gated as `firmware_survival::test_stm32f767_tier1_survival` and in the nightly coverage-matrix cell examples/nucleo-f767zi/tier1-smoke.yaml, driving clock/gpio/timer/i2c/spi/adc/wdt/rtc over USART2 and leaving dma/irq/pwm unclaimed — the fixture never attempts them even though the descriptor now wires `stm32f4_dma` and `nvic` (the fixture's header comment still says no DMA/NVIC id is declared). That leaves PWR (real stm32f4-profile model) and both DMA stream controllers unit-only, and DBGMCU (real model, IDCODE 0x10006451 per RM0410) exercised by nothing at all. Stock stm32duino NUCLEO_F767ZI also runs the Arduino matrix row L0-L8 (core-arduino-matrix-smoke, nightly + push to main; evidence validation/arduino-matrix/evidence/nucleo-f767zi): PWR over-drive and the 216 MHz PLL, USART3 VCP, LD1 GPIO, INA219 over I2C1 at the exact tier, MAX31855 over SPI1, ADC1_IN3 (A0 = PA3) at a board-held 1650 mV read at 10 bits = 511, TIM2_CH1 PWM edges on PA0, SysTick micros() and the bxCAN1 register-level loopback (L8). That lane does not run on PRs, so nothing is recorded as functional here. No physical silicon run exists."
     functional: []
     advanced_unit_only: [PWR, DMA1, DMA2]
     advanced_dead: [DBGMCU]
@@ -866,6 +878,14 @@ chips:
     shim:
       - {p: "SYSCFG", ev: "configs/chips/stm32h735.yaml:450 (type: syscfg; crates/core/src/peripherals/generic_factory.rs:739; docs/coverage/silent-path-census.md:404)", note: "CLOSABLE: hardcoded StubPeripheral with one canned value — CCCSR (0x20) reads READY=1 so the H7 HAL's rcc.freeze() compensation-cell poll exits (examples/stm32h735-hal-demo/src/main.rs:43); writes are dropped, so the enable never latches and EXTI source-select is not modelled. The census records it as the telematics lab's only live stub."}
       - {p: "WWDG", ev: "configs/chips/stm32h735.yaml:487 (type: wwdg; crates/core/src/peripherals/wwdg.rs:63)", note: "CLOSABLE: inert register bank — tick() is the trait-default no-op, so an armed watchdog never fires; no behavioural test and no gated firmware drives it."}
+
+  - id: stm32l031k6
+    arch: cortex-m0plus
+    headline: "NUCLEO-L031K6. PR-gated raw-register smoke (examples/nucleo-l031k6/io-smoke.yaml): reset/stack, RCC IOPENR/APB1ENR, GPIOA/GPIOB, USART2 banner STM32L031K6_OK and PB3 LED edges. No Arduino matrix row and no physical silicon run exist, so nothing is recorded as functional here. USB, LCD, DAC and LPTIM are absent on this die and are not declared. SYSCFG is the real STM32L0 model; PWR, FLASH, ADC, DMA, SPI and I2C are also modelled. This smoke does not drive those blocks."
+    functional: []
+    advanced_unit_only: []
+    advanced_dead: []
+    shim: []
 
   - id: stm32l073
     arch: cortex-m0plus
