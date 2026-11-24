@@ -387,7 +387,7 @@ fn esp32_classic_is_walk_free_and_reaches_recommended_interval() {
 /// When migration is partial this test still fails with the remaining forcer
 /// list — pin that set as EXPECTED only if the campaign cannot finish empty
 /// in one PR (see docs/performance inventory).
-/// The USBD (w1ne d98a280eec) is a dynamic legacy-walk model: it serves the
+/// The USBD (d98a280eec) is a dynamic legacy-walk model: it serves the
 /// scripted USB host and POWER supply timing from the walk, but holds it only
 /// while USB is running (`legacy_tick_active`), so at reset the walk is still
 /// derived away. Pinned rather than exempted: any other forcer, or USBD

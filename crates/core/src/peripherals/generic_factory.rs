@@ -1385,9 +1385,13 @@ pub fn try_build(
                     .and_then(|v| v.as_u64())
                     .map(|n| n as usize)
                     .unwrap_or(4);
-                Box::new(crate::peripherals::nrf52::timer::Nrf52Timer::new_with_cc(
-                    num_cc,
-                ))
+                let mut timer = crate::peripherals::nrf52::timer::Nrf52Timer::new_with_cc(num_cc);
+                // ⚠️ The TIMER base clock is 16 MHz on nRF52, not `cpu_hz`
+                // (64 MHz). Absent key = CPU clock; see the model's header.
+                if let Some(hz) = p_cfg.config.get("peripheral_hz").and_then(|v| v.as_u64()) {
+                    timer.set_peripheral_hz(hz);
+                }
+                Box::new(timer)
             } else {
                 // Width selector for 32-bit TIM2/TIM5 (STM32L4 etc).
                 // YAML: `config: { width: 32 }`. Defaults to 16 for
@@ -2113,7 +2117,16 @@ pub fn try_build(
             }
             Box::new(exti)
         }
-        "afio" => Box::new(crate::peripherals::afio::Afio::new()),
+        "afio" => match p_cfg.config.get("profile").and_then(|v| v.as_str()) {
+            None | Some("stm32f1") => Box::new(crate::peripherals::afio::Afio::new()),
+            Some("wch_v00x") => Box::new(crate::peripherals::afio::Afio::new_with_layout(
+                crate::peripherals::afio::AfioLayout::WchV00x,
+            )),
+            Some(other) => anyhow::bail!(
+                "afio `{}`: unsupported profile '{other}'; supported: stm32f1, wch_v00x",
+                p_cfg.id
+            ),
+        },
         // Channel-based DMA (F1/L0/L4/G0). `config: { channel_irqs: [11, ...,
         // 17] }` gives each channel its own NVIC line (F1/L1); `requests: {
         // spi1_tx: 3, spi1_rx: [2, 1] } }` hard-wires a peripheral request to a channel
@@ -2344,10 +2357,22 @@ pub fn try_build(
                     }
                     Box::new(adc)
                 }
-                _ => {
-                    let layout: crate::peripherals::adc::AdcRegisterLayout =
-                        SystemBus::parse_profile_or_default(p_cfg, "ADC")?;
+                profile => {
+                    // WCH CH32V00x (ch32v00x.h ADC_TypeDef): the STM32F1
+                    // register file (STATR..RDATAR at the F1 offsets,
+                    // CTLR2.SWSTART bit 22) with a 10-bit SAR, so RDATAR full
+                    // scale is 1023.
+                    let wch_v00x = profile == Some("wch_v00x");
+                    let layout: crate::peripherals::adc::AdcRegisterLayout = if wch_v00x {
+                        crate::peripherals::adc::AdcRegisterLayout::Stm32F1
+                    } else {
+                        SystemBus::parse_profile_or_default(p_cfg, "ADC")?
+                    };
                     let mut adc = crate::peripherals::adc::Adc::new_with_layout(layout);
+                    if wch_v00x {
+                        adc.set_f1_resolution_bits(10);
+                        adc.set_f1_internal_channels(false);
+                    }
                     // Board-level static channel voltages: `input_mv: { <ch>: <mV> }`.
                     if let Some(map) = p_cfg.config.get("input_mv").and_then(|v| v.as_mapping()) {
                         for (k, v) in map {
