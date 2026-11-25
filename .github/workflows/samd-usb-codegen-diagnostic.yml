@@ -48,4 +48,4 @@ jobs:
           name: samd-usb-codegen-attribution
           path: codegen-originals/**
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 3

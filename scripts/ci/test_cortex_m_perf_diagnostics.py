@@ -36,10 +36,13 @@ def annotation(total=10):
 
 
 
-RETENTION_LINE = '          retention-days: 7\n'
+RETENTION_LINE = '          retention-days: 3\n'
 UPSTREAM_RETENTION_UPLOADS = ('          name: cortex-m-oracle-evidence\n',
                               '          name: identity-${{ matrix.side }}\n',
                               '          name: identity-report\n')
+# Upstream 11993d5236 tightened the fork's perf-evidence upload from 7 to 3 days.
+PERF_EVIDENCE_RETENTION = ('          name: cortex-m-perf-evidence\n          retention-days: 3\n',
+                           '          name: cortex-m-perf-evidence\n          retention-days: 7\n')
 RELOCK_E3FA50BB = 'scripts/ci/fixtures/cortex_m_perf_relock_e3fa50bb.json'
 
 
@@ -659,8 +662,10 @@ class DiagnosticsControls(unittest.TestCase):
             self.assertEqual(workflow.count(addition),1)
             workflow=workflow.replace(addition,'',1)
         # Upstream 6652bec971 (w1ne#2180, merged in the 0c4eaf14b6 sync) bounds
-        # artifact retention: exactly one `retention-days: 7` before each of the
-        # three named uploads, nothing else.
+        # artifact retention: exactly one retention line before each of the
+        # three named uploads, nothing else; 11993d5236 lowered it to 3 days.
+        self.assertEqual(workflow.count(PERF_EVIDENCE_RETENTION[0]),1)
+        workflow=workflow.replace(*PERF_EVIDENCE_RETENTION,1)
         for name in UPSTREAM_RETENTION_UPLOADS:
             self.assertEqual(workflow.count(RETENTION_LINE+name),1,name)
             workflow=workflow.replace(RETENTION_LINE+name,name,1)
@@ -935,7 +940,7 @@ class DiagnosticsControls(unittest.TestCase):
         target = cold / '.github/workflows/core-identity.yml'
         original = target.read_text()
         name = UPSTREAM_RETENTION_UPLOADS[0]
-        for tampered in (original.replace(RETENTION_LINE + name, RETENTION_LINE.replace('7', '30') + name, 1),
+        for tampered in (original.replace(RETENTION_LINE + name, RETENTION_LINE.replace('3', '30') + name, 1),
                          original.replace(RETENTION_LINE + name, RETENTION_LINE + RETENTION_LINE + name, 1)):
             with self.subTest(tampered=tampered != original):
                 self.assertNotEqual(tampered, original)

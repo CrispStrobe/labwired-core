@@ -32,3 +32,4 @@ models:
 - crates/core/roms/rp2350
 - crates/core/src/cpu/cortex_m/rp2350_dcp.rs
 - crates/core/src/cpu/cortex_m/exec/misc.rs
+- crates/core/src/peripherals/scs_debug.rs

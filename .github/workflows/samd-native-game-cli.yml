@@ -80,4 +80,4 @@ jobs:
           name: source-built-samd-native-game-cli
           path: out/samd-native-game/
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 3

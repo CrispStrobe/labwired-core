@@ -126,10 +126,19 @@ This replaces an in-deck clamp such as `max(V(lux), 0.01)`: the clamp still
 keeps the solver finite, but the run now stops instead of reporting a plausible
 voltage for an input the model was not fitted to. It is what lets a circuit that
 the in-core engine modelled as a bounded element (a `photoresistors` or
-`thermistors` entry) run as a behavioural deck with the same explicit stop. The
-differential test
-`cosim_ngspice::a_photoresistor_deck_matches_the_in_core_curve_within_its_range`
-compares both engines at 1, 10 and 100 lx and asserts both refuse 150 lx.
+`thermistors` entry) run as a behavioural deck with the same explicit stop. Two
+differential tests compare both engines and assert both refuse a value outside
+the declared range:
+
+- `cosim_ngspice::a_photoresistor_deck_matches_the_in_core_curve_within_its_range`
+  compares a GL5528 power law at 1, 10 and 100 lx and refuses 150 lx;
+- `cosim_ngspice::a_thermistor_deck_matches_the_in_core_curve_within_its_range`
+  compares an NCP18XH103F03RB beta curve at 10, 25 and 60 °C and refuses
+  61 °C.
+
+The committed decks are
+[`examples/cosim-ngspice-ldr`](../examples/cosim-ngspice-ldr/README.md) and
+[`examples/cosim-ngspice-ntc`](../examples/cosim-ngspice-ntc/README.md).
 
 ### Pinning the circuit a Flex run solved
 
@@ -711,11 +720,16 @@ nodes count against the 128-unknown ceiling and can be probed.
   unchanged, down to the floating-point operation order.
   `crates/core/tests/analog/analog_linear_golden.rs` pins that against bit patterns
   captured from the engine before any of this existed.
-- Agreement with ngspice on nonlinear decks is measured, not asserted:
-  `crates/cli/tests/analog_vs_ngspice_differential.rs` hands the same SPICE
-  text to both engines for a half-wave rectifier, a common-emitter amplifier
-  and an NMOS inverter, and compares every sample. Measured worst
-  disagreement: 2.5e-3 %, 2.6e-5 % and 1.0e-6 % of full scale.
+- Agreement with ngspice on nonlinear and reactive decks is measured, not
+  asserted: `crates/cli/tests/analog_vs_ngspice_differential.rs` hands the same
+  SPICE text to both engines for a half-wave rectifier, a common-emitter
+  amplifier, an NMOS inverter, an RL low-pass at its corner, a JFET source
+  follower, and two pulsed-sag decks in the shape the regulator fixture
+  records, and compares every sample. Measured worst disagreement: 2.5e-3 %,
+  4.0e-5 %, 1.0e-6 %, 1.1e-3 %, 6.1e-5 %, 1.2e-3 % and 7.3e-3 % of full scale.
+  The pulsed-sag pair is what holds the trapezoidal restart rule: restarting
+  backward Euler wherever a source value changes measured 6.5e-2 % and 9.8e-2 %
+  on the same decks, over the 0.05 % tolerance.
 - Deterministic: `f64` only, `Vec` indices in the hot path, `BTreeMap` for
   names, no threads and no wall clock.
 
