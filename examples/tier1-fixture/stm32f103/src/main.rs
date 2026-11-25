@@ -346,13 +346,28 @@ fn check_wdt() -> Result<(), &'static [u8]> {
 /// domain, clock-enabled via RCC_BDCR.RTCEN (not an APB/AHB enable bit this
 /// model expresses), so it carries no `clock:` field. CRL.RTOFF (bit 5) stays
 /// asserted while idle, and the 32-bit counter round-trips through its
-/// CNTH/CNTL half-registers (RM0008 §18).
+/// CNTH/CNTL half-registers (RM0008 §18). CNT is writable only in
+/// configuration mode (RM0008 §18.3.4): wait RTOFF, set CRL.CNF, write,
+/// clear CNF, wait RTOFF. A write outside configuration mode is ignored.
 fn check_rtc() -> Result<(), &'static [u8]> {
     if rd32(RTC_BASE + 0x04) & 0x20 == 0 {
         return Err(b"rtc-rtoff"); // CRL @ 0x04
     }
+    wr32(RTC_BASE + 0x18, 0xBEEF); // CNTH @ 0x18, CNF clear: ignored
+    if rd32(RTC_BASE + 0x18) & 0xFFFF == 0xBEEF {
+        return Err(b"rtc-cnt-unlocked");
+    }
+    wr32(RTC_BASE + 0x04, 0x10); // CRL.CNF: enter configuration mode
     wr32(RTC_BASE + 0x18, 0xBEEF); // CNTH @ 0x18
     wr32(RTC_BASE + 0x1C, 0x1234); // CNTL @ 0x1C
+    wr32(RTC_BASE + 0x04, 0); // leave configuration mode; the write starts
+    let mut spins = 0u32;
+    while rd32(RTC_BASE + 0x04) & 0x20 == 0 {
+        spins += 1;
+        if spins > 1_000_000 {
+            return Err(b"rtc-rtoff-timeout");
+        }
+    }
     if rd32(RTC_BASE + 0x18) & 0xFFFF != 0xBEEF {
         return Err(b"rtc-cnth");
     }

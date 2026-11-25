@@ -467,16 +467,17 @@ fn check_i2c() -> Result<(), &'static str> {
     reg_write(TWI1_TXD_MAXCNT, 4);
     reg_write(TWI1_TASKS_STARTTX, 1);
 
-    // EasyDMA completes on the next bus tick; LASTTX fires either way.
-    if !poll_event(TWI1_EVENTS_LASTTX) {
-        return Err("i2c-no-lasttx");
+    // No device at ADDRESS → address NACK: EVENTS_ERROR with ERRORSRC.ANACK
+    // and AMOUNT 0. No data byte was sent, so LASTTX never fires (nRF52 PS,
+    // TWIM master write sequence / error handling).
+    if !poll_event(TWI1_EVENTS_ERROR) {
+        return Err("i2c-no-error-event");
     }
-    // No device at ADDRESS → engine reports an address NACK and AMOUNT 0.
     if reg_read(TWI1_ERRORSRC) & ERRORSRC_ANACK == 0 {
         return Err("i2c-no-anack");
     }
-    if reg_read(TWI1_EVENTS_ERROR) == 0 {
-        return Err("i2c-no-error-event");
+    if reg_read(TWI1_EVENTS_LASTTX) != 0 {
+        return Err("i2c-lasttx-on-anack");
     }
     if reg_read(TWI1_TXD_AMOUNT) != 0 {
         return Err("i2c-amount");
