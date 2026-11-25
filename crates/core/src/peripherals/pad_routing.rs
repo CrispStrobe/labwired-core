@@ -73,24 +73,27 @@ struct Route {
 
 /// The one rule for which route owns a pad, shared by [`PadRoutes`] and
 /// [`PinRoute::select`] so a listener and a pad read can never disagree.
-/// `view` answers, per route: `(on this pad, selector, conditional, drives)`.
+/// `view` answers `(on this pad, selector, conditional)`. Read the wire
+/// drive state only for a matching conditional route: ordinary routes and
+/// routes on other pads do not need that observation.
 /// A conditional route wins while its line drives the pad; otherwise the
 /// first ordinary route matching the pad's current selector does.
 #[inline]
 fn select_route<T>(
     routes: &[T],
     current: u32,
-    view: impl Fn(&T) -> (bool, Option<u32>, bool, bool),
+    view: impl Fn(&T) -> (bool, Option<u32>, bool),
+    drives: impl Fn(&T) -> bool,
 ) -> Option<&T> {
     let conditional = routes.iter().find(|r| {
-        let (on_pin, selector, when_driving, drives) = view(r);
-        on_pin && when_driving && selector.is_none_or(|want| want == current) && drives
+        let (on_pin, selector, when_driving) = view(r);
+        on_pin && when_driving && selector.is_none_or(|want| want == current) && drives(r)
     });
     if conditional.is_some() {
         return conditional;
     }
     routes.iter().find(|r| {
-        let (on_pin, selector, when_driving, _) = view(r);
+        let (on_pin, selector, when_driving) = view(r);
         on_pin && !when_driving && selector.is_none_or(|want| want == current)
     })
 }
@@ -111,9 +114,12 @@ impl PinRoute {
     /// (`None`: the pad is plain GPIO), by the same rule as a pad read.
     pub fn select(routes: &[PinRoute], current: Option<u32>) -> Option<usize> {
         let current = current?;
-        let hit = select_route(routes, current, |r| {
-            (true, r.selector, r.when_driving, r.cell.drives(r.line))
-        })?;
+        let hit = select_route(
+            routes,
+            current,
+            |r| (true, r.selector, r.when_driving),
+            |r| r.cell.drives(r.line),
+        )?;
         routes.iter().position(|r| std::ptr::eq(r, hit))
     }
 }
@@ -127,6 +133,8 @@ pub struct PadRoutes {
     /// Deduplicated wires, so several pads of one controller share an entry.
     cells: Vec<Arc<PadLines>>,
     routes: Vec<Route>,
+    /// Append-only route indices for each pad. Reads never scan other pads.
+    by_pin: Vec<Vec<usize>>,
     /// Per cell, per line: the watch channels last registered with that wire.
     /// Cached so an unrelated register write costs no mutex traffic.
     registered: Vec<Vec<Vec<u32>>>,
@@ -183,7 +191,7 @@ impl PadRoutes {
         func: &'static str,
     ) {
         let cell_idx = self.cell_index(cell);
-        self.routes.push(Route {
+        self.push_route(Route {
             pin,
             selector,
             line,
@@ -216,7 +224,7 @@ impl PadRoutes {
         func: &'static str,
     ) {
         let cell_idx = self.cell_index(cell);
-        self.routes.push(Route {
+        self.push_route(Route {
             pin,
             selector,
             line,
@@ -247,7 +255,7 @@ impl PadRoutes {
             return;
         }
         let cell_idx = self.cell_index(cell);
-        self.routes.push(Route {
+        self.push_route(Route {
             pin,
             selector: Some(first_selector),
             line: first_line,
@@ -256,6 +264,15 @@ impl PadRoutes {
             cell: cell_idx,
             when_driving: false,
         });
+    }
+
+    fn push_route(&mut self, route: Route) {
+        let pin = usize::from(route.pin);
+        if self.by_pin.len() <= pin {
+            self.by_pin.resize_with(pin + 1, Vec::new);
+        }
+        self.by_pin[pin].push(self.routes.len());
+        self.routes.push(route);
     }
 
     /// Index of `cell` in [`Self::cells`], registering it on first use.
@@ -283,31 +300,37 @@ impl PadRoutes {
     where
         F: Fn(u8) -> Option<u32>,
     {
-        if self.routes.is_empty() {
+        let candidates = self.by_pin.get(usize::from(pin))?;
+        if candidates.is_empty() {
             return None;
         }
         let current = selector_of(pin)?;
-        let route = select_route(&self.routes, current, |r| {
-            let selector = if r.span_funcs.is_empty() {
-                r.selector
-            } else {
-                // The family selector chooses a different line within this span.
-                r.selector
-                    .filter(|start| {
-                        current
-                            .checked_sub(*start)
-                            .is_some_and(|k| (k as usize) < r.span_funcs.len())
-                    })
-                    .map(|_| current)
-            };
-            let in_span = r.span_funcs.is_empty() || selector.is_some();
-            (
-                r.pin == pin && in_span,
-                selector,
-                r.when_driving,
-                self.cells[r.cell].drives(r.line),
-            )
-        })?;
+        let index = select_route(
+            candidates,
+            current,
+            |&i| {
+                let r = &self.routes[i];
+                let selector = if r.span_funcs.is_empty() {
+                    r.selector
+                } else {
+                    // The family selector chooses a different line within this span.
+                    r.selector
+                        .filter(|start| {
+                            current
+                                .checked_sub(*start)
+                                .is_some_and(|k| (k as usize) < r.span_funcs.len())
+                        })
+                        .map(|_| current)
+                };
+                let in_span = r.span_funcs.is_empty() || selector.is_some();
+                (in_span, selector, r.when_driving)
+            },
+            |&i| {
+                let r = &self.routes[i];
+                self.cells[r.cell].drives(r.line)
+            },
+        )?;
+        let route = &self.routes[*index];
         let offset = if route.span_funcs.is_empty() {
             0
         } else {
@@ -673,5 +696,54 @@ mod tests {
         assert!(routes.is_empty());
         assert_eq!(routes.level(0, |_| Some(1)), None);
         assert_eq!(routes.func(0, |_| Some(1)), None);
+    }
+
+    #[test]
+    fn route_selection_samples_only_a_matching_conditional_wire() {
+        let routes = [
+            (false, Some(4), true),
+            (true, Some(7), true),
+            (true, Some(4), false),
+            (true, Some(4), true),
+        ];
+        let reads = std::cell::Cell::new(0);
+        let hit = select_route(
+            &routes,
+            4,
+            |r| *r,
+            |_| {
+                reads.set(reads.get() + 1);
+                true
+            },
+        );
+        assert!(std::ptr::eq(hit.unwrap(), &routes[3]));
+        assert_eq!(reads.get(), 1, "irrelevant routes must not sample a wire");
+        let hit = select_route(&routes, 4, |r| *r, |_| false);
+        assert!(std::ptr::eq(hit.unwrap(), &routes[2]));
+    }
+
+    #[test]
+    fn indexed_routes_keep_conditional_priority_and_live_wire_changes() {
+        use crate::peripherals::pad_lines::LineDrive;
+        let ordinary = wire();
+        let conditional = wire();
+        let mut routes = PadRoutes::new();
+        for pin in (0..40).rev() {
+            routes.bind(&ordinary, pin, Some(4), SCL, "ordinary");
+        }
+        routes.bind_when_driving(&conditional, 27, Some(4), SDA, "conditional");
+        ordinary.set(&[false, true]);
+        conditional.drive_line(SDA, LineDrive::PushPull, true);
+        assert_eq!(routes.level(27, |_| Some(4)), Some(true));
+        assert_eq!(routes.level(26, |_| Some(4)), Some(false));
+        assert_eq!(routes.level(27, |_| Some(7)), None);
+        conditional.drive_line(SDA, LineDrive::Input, true);
+        assert_eq!(routes.level(27, |_| Some(4)), Some(false));
+        let owned = routes.pin_routes(27);
+        assert_eq!(PinRoute::select(&owned, Some(4)), Some(0));
+        conditional.drive_line(SDA, LineDrive::PushPull, true);
+        assert_eq!(PinRoute::select(&owned, Some(4)), Some(1));
+        assert_eq!(routes.func(27, |_| Some(4)), Some("conditional"));
+        assert_eq!(routes.level(255, |_| Some(4)), None);
     }
 }
