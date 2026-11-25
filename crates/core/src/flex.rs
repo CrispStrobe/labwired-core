@@ -121,6 +121,11 @@ pub struct FlexModelSummary {
     /// The validated data-driven model configuration, so project surfaces
     /// can show the exact behavior behind a run without reinterpreting YAML.
     pub config: BTreeMap<String, serde_yaml::Value>,
+    /// The exact source bytes an adapter loaded, when it loaded any. An
+    /// external netlist is outside the manifest hash, so this is what pins the
+    /// circuit a run solved. Absent for models with no external source.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<crate::cosim::CosimSourcePin>,
 }
 
 /// Explicitly separate a portable behavior run from target-firmware evidence.
@@ -183,7 +188,10 @@ fn signal_bindings(bindings: &HashMap<String, String>) -> Vec<FlexSignalBinding>
     result
 }
 
-fn model_summary(model: &CosimModelConfig) -> FlexModelSummary {
+fn model_summary(
+    model: &CosimModelConfig,
+    source: Option<&crate::cosim::CosimSourcePin>,
+) -> FlexModelSummary {
     FlexModelSummary {
         id: model.id.clone(),
         adapter: model.adapter,
@@ -200,6 +208,7 @@ fn model_summary(model: &CosimModelConfig) -> FlexModelSummary {
             .iter()
             .map(|(name, value)| (name.clone(), value.clone()))
             .collect(),
+        source: source.cloned(),
     }
 }
 
@@ -333,6 +342,8 @@ impl DigitalCapture {
 pub struct FlexRuntime {
     manifest: FlexManifest,
     manifest_sha256: String,
+    /// Model id -> the exact external source its adapter loaded.
+    source_pins: BTreeMap<String, crate::cosim::CosimSourcePin>,
     ports: BTreeMap<String, u32>,
     runner: CosimRunner,
     signals: CosimSignals,
@@ -358,19 +369,46 @@ fn model_device_type(model: &CosimModelConfig) -> Option<&str> {
 
 impl FlexRuntime {
     pub fn from_yaml(yaml: &str) -> SimResult<Self> {
+        Self::from_yaml_with_base(yaml, std::path::Path::new("."))
+    }
+
+    /// [`Self::from_yaml`] with each relative `model:` resolved from
+    /// `base_dir`, the manifest's directory.
+    pub fn from_yaml_with_base(yaml: &str, base_dir: &std::path::Path) -> SimResult<Self> {
+        Self::from_yaml_with_factory(yaml, |config| {
+            crate::cosim::build_cosim_adapter_with_base(config, base_dir)
+        })
+    }
+
+    /// [`Self::from_yaml`] with adapters supplied by the host, as
+    /// `CosimSession::new_with_factory` does for a machine: the browser
+    /// passes its ngspice callback here. Part-pack models are still built from
+    /// their pack. Priming, scheduling and checks are unchanged.
+    pub fn from_yaml_with_factory<F>(yaml: &str, mut factory: F) -> SimResult<Self>
+    where
+        F: FnMut(
+            &labwired_config::CosimModelConfig,
+        ) -> SimResult<Box<dyn crate::cosim::CosimAdapter>>,
+    {
         let manifest =
             FlexManifest::from_yaml(yaml).map_err(|err| error(format!("Flex model: {err:#}")))?;
         crate::flex_parts::validate(&manifest.parts)?;
         // A model whose `config.device_type` names a part pack is built from
-        // the pack; every other model is built as the detailed path builds it.
+        // the pack; every other model is built by the host-supplied factory.
         let mut models = Vec::with_capacity(manifest.cosim_models.len());
+        let mut source_pins = BTreeMap::new();
         for config in &manifest.cosim_models {
             let pack = model_device_type(config)
                 .and_then(|device_type| crate::flex_parts::pack(&manifest.parts, device_type));
             let adapter = match pack {
                 Some(pack) => crate::cosim::build_part_adapter(config, pack)?,
-                None => crate::cosim::build_cosim_adapter(config)?,
+                None => factory(config)?,
             };
+            // Ask before the adapter moves into the runner: a netlist file is
+            // outside the manifest hash, and this is its identity.
+            if let Some(pin) = adapter.source_pin() {
+                source_pins.insert(config.id.clone(), pin);
+            }
             models.push(crate::cosim::CosimRunnerModel::new(config.clone(), adapter));
         }
         let mut runner = CosimRunner::new(models);
@@ -454,6 +492,7 @@ impl FlexRuntime {
         let runtime = Self {
             manifest,
             manifest_sha256: format!("{:x}", Sha256::digest(yaml.as_bytes())),
+            source_pins,
             ports,
             runner,
             signals,
@@ -498,7 +537,11 @@ impl FlexRuntime {
             assumptions: manifest.assumptions.clone(),
             unsupported_checks: manifest.unsupported_checks.clone(),
             ports: manifest.ports.clone(),
-            models: manifest.cosim_models.iter().map(model_summary).collect(),
+            models: manifest
+                .cosim_models
+                .iter()
+                .map(|model| model_summary(model, self.source_pins.get(&model.id)))
+                .collect(),
             i2c_buses: self.i2c.summaries().to_vec(),
             spi_buses: self.spi.summaries().to_vec(),
             console: self.console.as_ref().map(Console::summary),
@@ -1156,6 +1199,104 @@ cosim_models:
         let whole_edges = edges(&mut whole);
         assert_ne!(whole_edges, "[]");
         assert_eq!(whole_edges, edges(&mut small));
+    }
+
+    /// An external source is outside the manifest hash. The run report must
+    /// carry the adapter's own pin, and that pin must move when the source
+    /// moves while the manifest stays byte-identical.
+    #[test]
+    fn an_external_source_is_pinned_in_the_run_report() {
+        use crate::cosim::{CosimAdapter, CosimSourcePin, CosimStep, CosimStepResult};
+
+        struct PinnedStub(&'static str);
+        impl CosimAdapter for PinnedStub {
+            fn step(&mut self, _step: CosimStep) -> SimResult<CosimStepResult> {
+                let mut outputs = crate::cosim::CosimSignals::new();
+                outputs.insert("out".into(), crate::cosim::CosimSignalValue::Bool(false));
+                Ok(CosimStepResult { outputs })
+            }
+            fn source_pin(&self) -> Option<CosimSourcePin> {
+                Some(CosimSourcePin::spice_netlist_file("./board.cir", self.0))
+            }
+        }
+
+        let yaml = r#"
+schema_version: 1
+name: pinned source
+ports:
+  - {name: flag, signal: m.out, access: read, kind: bool}
+cosim_models:
+  - id: m
+    adapter: behavior
+    step_ns: 1000
+    outputs: { out: m.out }
+"#;
+        let build = |netlist| {
+            FlexRuntime::from_yaml_with_factory(yaml, |_model| Ok(Box::new(PinnedStub(netlist))))
+        };
+        let report = build("R1 1 0 1k\n").unwrap().run_report();
+        let pin = report.models[0]
+            .source
+            .as_ref()
+            .expect("an external source is pinned");
+        assert_eq!(pin.kind, "spice_netlist");
+        assert_eq!(pin.origin, "file");
+        assert_eq!(pin.path.as_deref(), Some("./board.cir"));
+        assert_eq!(
+            pin.sha256,
+            format!("{:x}", sha2::Sha256::digest(b"R1 1 0 1k\n"))
+        );
+
+        // Change only the source: the manifest digest stays, the source pin
+        // does not. Without this field the two runs would look identical.
+        let edited = build("R1 1 0 2k\n").unwrap().run_report();
+        let edited_pin = edited.models[0].source.as_ref().unwrap();
+        assert_eq!(edited.manifest_sha256, report.manifest_sha256);
+        assert_ne!(edited_pin.sha256, pin.sha256);
+    }
+
+    /// An inline netlist is hashable too, and says so instead of naming a
+    /// path it does not have.
+    #[test]
+    fn an_inline_netlist_is_pinned_without_a_path() {
+        let yaml = r#"
+schema_version: 1
+name: inline rc
+ports:
+  - {name: volts, signal: rc.out, access: read, kind: number, unit: V}
+cosim_models:
+  - id: rc
+    adapter: analog
+    step_ns: 1000
+    outputs: { out: rc.out }
+    config:
+      input_sampling: previous_boundary
+      vdd: 3.3
+      netlist_text: |
+        Vsrc in 0 dc 0
+        R1 in out 1k
+        C1 out 0 1u
+      probes: { out: 'v(out)' }
+"#;
+        let report = FlexRuntime::from_yaml(yaml).unwrap().run_report();
+        let pin = report.models[0]
+            .source
+            .as_ref()
+            .expect("an inline netlist is pinned");
+        assert_eq!(pin.kind, "spice_netlist");
+        assert_eq!(pin.origin, "inline");
+        assert_eq!(pin.path, None);
+        assert_eq!(
+            pin.bytes,
+            "Vsrc in 0 dc 0\nR1 in out 1k\nC1 out 0 1u\n".len()
+        );
+        assert_eq!(
+            pin.sha256,
+            format!(
+                "{:x}",
+                sha2::Sha256::digest(b"Vsrc in 0 dc 0\nR1 in out 1k\nC1 out 0 1u\n")
+            )
+        );
     }
 
     #[test]

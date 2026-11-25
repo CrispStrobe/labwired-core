@@ -573,6 +573,22 @@ pub struct Adc {
     /// not serialized (keeps snapshot shapes identical).
     #[serde(skip)]
     ambient_temp_c: f64,
+    /// Width of a regular conversion on the F1 layout. 12 on the STM32F1;
+    /// the WCH CH32V00x ADC has the same register file but a 10-bit SAR
+    /// (RDATAR 0..1023). Set by [`Self::set_f1_resolution_bits`]; not a
+    /// register, so not serialized. No `Deserialize` impl exists; if one is
+    /// added, this needs `default = 12`, or a 10-bit part restores as 0 bits.
+    #[serde(skip)]
+    f1_bits: u32,
+    /// Does the F1 layout's IN16/IN17 read ST silicon? `true` on the STM32F1
+    /// and the AT32F421; `false` on the WCH CH32V00x, whose ADC has IN0..IN9
+    /// only and no IN16 temperature sensor or IN17 V_REFINT (its V_REFINT is
+    /// IN8, which the model does not build). Set by
+    /// [`Self::set_f1_internal_channels`]; not a register, so not serialized.
+    /// No `Deserialize` impl exists; if one is added, this needs
+    /// `default = true`, or a CH32V003 restores with IN16/IN17 present.
+    #[serde(skip)]
+    f1_internal_channels: bool,
 }
 
 impl Adc {
@@ -654,7 +670,27 @@ impl Adc {
             f1_rstcal_live: false,
             f1_cal_live: false,
             ambient_temp_c: DEFAULT_AMBIENT_TEMPERATURE_C,
+            f1_bits: 12,
+            f1_internal_channels: true,
         }
+    }
+
+    /// Set the F1-layout conversion width (1..=12). The WCH CH32V00x ADC is
+    /// the F1 register file with a 10-bit result. Other values are refused.
+    pub fn set_f1_resolution_bits(&mut self, bits: u32) -> bool {
+        if !(1..=12).contains(&bits) {
+            return false;
+        }
+        self.f1_bits = bits;
+        true
+    }
+
+    /// Say whether the F1 layout's IN16/IN17 are ST internal sources. The WCH
+    /// CH32V00x ADC has neither: it converts IN0..IN9 and IN10..IN18 do not
+    /// exist. Call with `false` for that vendor so a conversion of IN16 answers
+    /// nothing instead of the STM32F1 temperature sensor.
+    pub fn set_f1_internal_channels(&mut self, present: bool) {
+        self.f1_internal_channels = present;
     }
 
     /// Set the temperature the F1 internal temperature sensor reports, in °C.
@@ -683,7 +719,10 @@ impl Adc {
     /// reference are disconnected from the converter (RM0008 §11.10, "The
     /// TSVREFE bit must be set to enable both internal channels").
     fn f1_internal_channel_mv(&self, ch: usize, cr2: u32) -> Option<f64> {
-        if !matches!(self.regs, AdcRegs::Stm32F1(_)) || !(16..=17).contains(&ch) {
+        if !matches!(self.regs, AdcRegs::Stm32F1(_))
+            || !self.f1_internal_channels
+            || !(16..=17).contains(&ch)
+        {
             return None;
         }
         if cr2 & F1_CR2_TSVREFE == 0 {
@@ -697,6 +736,13 @@ impl Adc {
     }
 
     /// 12-bit code for `mv` against the reference latched at acquisition.
+    ///
+    /// The code is computed at 12 bits and then scaled to the layout's width
+    /// ([`scaled_input_code`]), so a 10-bit part reports
+    /// `floor(floor(mv · 4095 / Vref) / 4)`. That is `floor(mv · 1023.75 / Vref)`:
+    /// within 1 LSB of both usual conventions (`·1023` and `·1024`), and it
+    /// never decreases as the input rises. It is not a claim about which code the
+    /// WCH SAR returns at the top of the range.
     fn code_for_mv(mv: f64, reference_millivolts: f64) -> u32 {
         ((mv * 4095.0 / reference_millivolts).floor()).clamp(0.0, 4095.0) as u32
     }
@@ -804,10 +850,10 @@ impl Adc {
                     let count12 = Self::code_for_mv(sample.millivolts, sample.reference_millivolts);
                     self.dr = match &self.regs {
                         AdcRegs::Stm32F4(_) => scaled_input_code(count12, f4_resolution_bits(cr1)),
-                        _ => count12,
+                        _ => scaled_input_code(count12, self.f1_bits),
                     };
                 } else {
-                    self.dr = (self.dr + 1) & 0xFFF;
+                    self.dr = (self.dr + 1) & ((1 << self.f1_bits) - 1);
                 }
                 // CR2.DMA: every DR update requests a transfer (RM0008
                 // §11.12.3; RM_AT32F421 §18.4.4.2).
@@ -871,6 +917,10 @@ impl Adc {
     /// * U5 — 0..=19, the `PCSEL` bitmap's width.
     pub fn channel_count(&self) -> u8 {
         match &self.regs {
+            // CH32V00x is the F1 register file without IN16/IN17, and it has 10
+            // channels (DS0 Table 3-2): IN0..IN9, where IN8 V_REFINT and IN9
+            // V_cal are not built. The flag is only meaningful on this layout.
+            AdcRegs::Stm32F1(_) if !self.f1_internal_channels => 10,
             AdcRegs::Stm32F1(_)
             | AdcRegs::Stm32F4(_)
             | AdcRegs::Stm32L4(_)
@@ -2230,6 +2280,49 @@ mod tests {
         assert!(!adc.converting);
         assert_eq!(adc.dr, 1);
         assert!((adc.sr & (1 << 1)) != 0); // EOC
+    }
+
+    /// WCH CH32V00x: the ADC is the F1 register file with a 10-bit SAR and no
+    /// IN16/IN17 (DS0 Table 3-2: A0-A7 = IN0-IN7, plus IN8 V_REFINT and IN9
+    /// V_cal, none of which are ST internal sensors). A conversion of IN16 must
+    /// not answer with the STM32F1 temperature sensor.
+    #[test]
+    fn wch_v00x_adc_has_no_f1_internal_channels() {
+        let mut adc = Adc::new();
+        adc.set_f1_resolution_bits(10);
+        adc.set_f1_internal_channels(false);
+        assert_eq!(adc.channel_count(), 10, "IN0..IN9 only");
+
+        // The same select-and-convert sequence as the F1 test above, on IN16.
+        adc.write_u32(0x08, F1_CR2_ADON | F1_CR2_EXTSEL | F1_CR2_TSVREFE)
+            .unwrap();
+        adc.write_u32(0x34, 16).unwrap();
+        assert_eq!(
+            adc.f1_internal_channel_mv(16, F1_CR2_TSVREFE),
+            None,
+            "no ST temperature sensor on the WCH part"
+        );
+        let before = adc.dr;
+        f1_software_start_with(&mut adc, F1_CR2_TSVREFE);
+        for _ in 0..15 {
+            adc.tick();
+        }
+        assert_eq!(
+            adc.dr,
+            (before + 1) & 0x3FF,
+            "an unbuilt channel keeps the no-source fallback, masked to 10 bits"
+        );
+
+        // The STM32F1 still answers IN16 with its temperature sensor.
+        let mut f1 = Adc::new();
+        f1.write_u32(0x08, F1_CR2_ADON | F1_CR2_EXTSEL | F1_CR2_TSVREFE)
+            .unwrap();
+        assert_eq!(
+            f1.f1_internal_channel_mv(16, F1_CR2_TSVREFE),
+            Some(F1_TS_V25_MV),
+            "STM32F1 IN16 is the temperature sensor"
+        );
+        assert_eq!(f1.channel_count(), 19);
     }
 
     /// RM0008 §11.12.14: the regular channel comes from SQR3 SQ1[4:0], not from

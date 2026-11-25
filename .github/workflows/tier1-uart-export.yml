@@ -32,6 +32,7 @@ jobs:
       - name: Export only the two hash-matched public authored guest fixtures
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
+          retention-days: 7
           name: tier1-uart-hash-matched-fixtures
           path: fixture-export/*.elf
           if-no-files-found: error

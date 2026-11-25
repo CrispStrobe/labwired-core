@@ -32,6 +32,7 @@
 
 mod ctx;
 pub mod declarative;
+pub mod manifest;
 mod pad_label;
 pub mod registry;
 

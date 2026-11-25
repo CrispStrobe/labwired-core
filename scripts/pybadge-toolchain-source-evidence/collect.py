@@ -5,6 +5,7 @@ import json
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
+import urllib.error
 import urllib.request
 import zipfile
 
@@ -15,6 +16,39 @@ PRIOR_SHA = "e3ca50c8750a0832d1b5c012d9a42a336ea44953400f866f71b7c53e3b191506"
 EXPECTED = {"gcc-arm-none-eabi": "15:13.2.rel1-2",
             "libstdc++-arm-none-eabi-dev": "15:13.2.rel1-2+26",
             "libnewlib-dev": "4.4.0.20231231-2"}
+
+
+CANONICAL_ARCHIVE = "https://archive.ubuntu.com/ubuntu/"
+# archive.ubuntu.com intermittently refuses GitHub-hosted runners (HTTP 403).
+# The fallbacks serve the same pool paths; every download stays bound to its
+# pinned size and sha256, and the mirror that served it is recorded.
+ARCHIVE_MIRRORS = (CANONICAL_ARCHIVE,
+                   "https://azure.archive.ubuntu.com/ubuntu/",
+                   "https://mirrors.edge.kernel.org/ubuntu/")
+
+
+def open_pool(url, timeout, exact=True):
+    """Open a canonical archive.ubuntu.com pool URL, trying each mirror in turn.
+
+    Returns (response, served_url). Only HTTP/network errors move on to the
+    next mirror; a redirect is refused, never followed to another host.
+    """
+    if not url.startswith(CANONICAL_ARCHIVE + "pool/"):
+        raise ValueError("not a canonical Ubuntu pool URL")
+    errors = []
+    for base in ARCHIVE_MIRRORS:
+        candidate = base + url[len(CANONICAL_ARCHIVE):]
+        try:
+            response = urllib.request.urlopen(candidate, timeout=timeout)
+        except (urllib.error.URLError, OSError) as error:
+            errors.append(f"{candidate}: {error}")
+            continue
+        served = response.geturl()
+        if (served != candidate) if exact else not served.startswith(base + "pool/"):
+            response.close()
+            raise ValueError("unexpected archive redirect")
+        return response, candidate
+    raise ValueError("every Ubuntu archive mirror failed: " + "; ".join(errors))
 
 
 def sha(raw):
@@ -170,12 +204,11 @@ def main():
             raise ValueError("missing/ambiguous/oversized source descriptor")
         name = descriptors[0]
         url = descriptor_url(source_control["Directory"], name)
-        with urllib.request.urlopen(url, timeout=60) as response:
-            if not response.geturl().startswith("https://archive.ubuntu.com/ubuntu/pool/"):
-                raise ValueError("unexpected descriptor redirect")
+        response, served = open_pool(url, 60, exact=False)
+        with response:
             raw = response.read(1024 * 1024 + 1)
         members = verify_descriptor(raw, source, source_version, listed, name)
-        result["sources"][key] = {"source": source, "version": source_version, "url": url,
+        result["sources"][key] = {"source": source, "version": source_version, "url": url, "servedFrom": served,
                                   "sourceControl": capture(source + ".source-control", source_raw),
                                   "descriptor": capture(name, raw), "archiveMembersNotFetched": members}
     result["boundary"] = ("Exact-version APT binary/source records and checksum-bound descriptors only. "

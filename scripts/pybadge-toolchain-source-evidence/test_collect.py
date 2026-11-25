@@ -1,6 +1,8 @@
 import hashlib
 import unittest
+from unittest import mock
 
+import collect
 from collect import checksum_files, descriptor_url, exact_record, paragraphs, source_identity, verify_descriptor
 
 
@@ -81,6 +83,50 @@ class MetadataAdmission(unittest.TestCase):
     def test_malformed_signed_descriptor_rejected(self):
         with self.assertRaises(ValueError):
             paragraphs(b"-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA256\n\nSource: sample\n")
+
+
+class MirrorFallback(unittest.TestCase):
+    URL = "https://archive.ubuntu.com/ubuntu/pool/universe/g/gcc-arm-none-eabi/x.dsc"
+
+    def fake(self, outcomes):
+        import urllib.error
+        tried = []
+
+        class Response:
+            def __init__(self, url, served):
+                self.url, self.served = url, served
+            def geturl(self):
+                return self.served
+            def close(self):
+                pass
+
+        def urlopen(url, timeout):
+            tried.append(url)
+            outcome = outcomes[len(tried) - 1]
+            if outcome == 403:
+                raise urllib.error.HTTPError(url, 403, "Forbidden", {}, None)
+            return Response(url, outcome or url)
+        return tried, mock.patch.object(collect.urllib.request, "urlopen", urlopen)
+
+    def test_403_falls_through_to_next_mirror_and_reports_it(self):
+        tried, patch = self.fake([403, None])
+        with patch:
+            _, served = collect.open_pool(self.URL, 5)
+        self.assertEqual(tried[0], self.URL)
+        self.assertEqual(served, "https://azure.archive.ubuntu.com/ubuntu/pool/universe/g/gcc-arm-none-eabi/x.dsc")
+
+    def test_redirect_to_another_host_is_refused_not_retried(self):
+        tried, patch = self.fake(["https://evil.example/x.dsc", None])
+        with patch, self.assertRaisesRegex(ValueError, "redirect"):
+            collect.open_pool(self.URL, 5)
+        self.assertEqual(len(tried), 1)
+
+    def test_every_mirror_failing_fails_and_non_pool_url_is_refused(self):
+        _, patch = self.fake([403, 403, 403])
+        with patch, self.assertRaisesRegex(ValueError, "every Ubuntu archive mirror failed"):
+            collect.open_pool(self.URL, 5)
+        with self.assertRaisesRegex(ValueError, "canonical"):
+            collect.open_pool("https://mirrors.edge.kernel.org/ubuntu/pool/x.dsc", 5)
 
 
 if __name__ == "__main__":

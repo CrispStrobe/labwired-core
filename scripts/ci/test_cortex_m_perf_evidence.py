@@ -279,6 +279,13 @@ class PerformanceControls(unittest.TestCase):
 
     def test_original_jobs_and_five_input_defaults_are_preserved(self):
         workflow = (ROOT / ".github/workflows/core-identity.yml").read_text()
+        # Upstream 6652bec971 (w1ne#2180) added one `retention-days: 7` before
+        # each of three named uploads; reverse exactly those before hashing.
+        retention = "          retention-days: 7\n"
+        for name in ("cortex-m-oracle-evidence", "identity-${{ matrix.side }}", "identity-report"):
+            line = "          name: " + name + "\n"
+            self.assertEqual(workflow.count(retention + line), 1, name)
+            workflow = workflow.replace(retention + line, line, 1)
         hashes = {
             "cortex-m-oracles": "104bdba78449c9a4db0fcd964b1a68986e054a145abbf786383478aef3975cf7",
             "run": "734d2297b5d540d5f1fd155d657112c28688de4a382f1d42ae2b330e9e2f74f8",

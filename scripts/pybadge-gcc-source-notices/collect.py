@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path, PurePosixPath
 import tarfile
+import urllib.error
 import urllib.request
 import zipfile
 
@@ -18,6 +19,39 @@ SOURCE_BYTES = 104971782
 SOURCE_SHA = "2db06abe865ce68eced25e449aecb45cdb6c151c3551c739620cfc3730214c91"
 URL = "https://archive.ubuntu.com/ubuntu/pool/universe/g/gcc-arm-none-eabi/" + FILENAME
 NOTICE_NAMES = {"COPYING", "COPYING3", "COPYING3.LIB", "COPYING.RUNTIME"}
+
+
+CANONICAL_ARCHIVE = "https://archive.ubuntu.com/ubuntu/"
+# archive.ubuntu.com intermittently refuses GitHub-hosted runners (HTTP 403).
+# The fallbacks serve the same pool paths; every download stays bound to its
+# pinned size and sha256, and the mirror that served it is recorded.
+ARCHIVE_MIRRORS = (CANONICAL_ARCHIVE,
+                   "https://azure.archive.ubuntu.com/ubuntu/",
+                   "https://mirrors.edge.kernel.org/ubuntu/")
+
+
+def open_pool(url, timeout, exact=True):
+    """Open a canonical archive.ubuntu.com pool URL, trying each mirror in turn.
+
+    Returns (response, served_url). Only HTTP/network errors move on to the
+    next mirror; a redirect is refused, never followed to another host.
+    """
+    if not url.startswith(CANONICAL_ARCHIVE + "pool/"):
+        raise ValueError("not a canonical Ubuntu pool URL")
+    errors = []
+    for base in ARCHIVE_MIRRORS:
+        candidate = base + url[len(CANONICAL_ARCHIVE):]
+        try:
+            response = urllib.request.urlopen(candidate, timeout=timeout)
+        except (urllib.error.URLError, OSError) as error:
+            errors.append(f"{candidate}: {error}")
+            continue
+        served = response.geturl()
+        if (served != candidate) if exact else not served.startswith(base + "pool/"):
+            response.close()
+            raise ValueError("unexpected archive redirect")
+        return response, candidate
+    raise ValueError("every Ubuntu archive mirror failed: " + "; ".join(errors))
 
 
 def sha(raw):
@@ -140,9 +174,9 @@ def main():
               "completeNoticeChain": False}
     downloaded, actual = 0, hashlib.sha256()
     archive_path = args.work / FILENAME
-    with urllib.request.urlopen(URL, timeout=120) as response, archive_path.open("xb") as destination:
-        if response.geturl() != URL:
-            raise ValueError("unexpected GCC source redirect")
+    response, served = open_pool(URL, 120)
+    result["sourceArchive"]["servedFrom"] = served
+    with response, archive_path.open("xb") as destination:
         while chunk := response.read(1024 * 1024):
             downloaded += len(chunk)
             if downloaded > SOURCE_BYTES:
