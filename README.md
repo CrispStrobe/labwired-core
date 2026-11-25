@@ -319,6 +319,29 @@ GPIO is checked at the pin, not in the banner, by
 The verdict goes to stderr. The exit code is the gate: `0` passes, anything else fails.
 UART output and `--json` stay on stdout, so pipes keep working.
 
+## GitHub Action (`uses: w1ne/labwired-core@v1`)
+
+Run LabWired hardware & firmware verification on every pull request in public repositories at zero cost — no API keys or secrets required:
+
+```yaml
+name: LabWired Verify
+on: [pull_request, push]
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: w1ne/labwired-core@v1
+```
+
+Auto-detects unmodified Wokwi `diagram.json` projects, KiCad `.kicad_pcb`/`.kicad_sch` boards, and LabWired test scripts (`tests/labwired.yml`), runs ERC + PCB DRC + deterministic firmware assertions, and posts a PR check summary (`ERC 0/0 · DRC 0/0 · X/X firmware assertions passed`) with a shareable replay link and `Verified by LabWired` badge. See [`action/README.md`](action/README.md) and the drop-in samples in [`examples/ci-wokwi-dropin`](examples/ci-wokwi-dropin) and [`examples/ci-kicad-dropin`](examples/ci-kicad-dropin).
+
 ## Installation
 
 The install script covers Linux, macOS, and Windows via WSL2.
@@ -419,15 +442,33 @@ The same YAML scripts are the merge gate, with no HIL bench to maintain:
 See [CI integration](docs/ci_integration.md) and
 [labwired.com/ci](https://labwired.com/ci.html).
 
-### From an AI coding agent (MCP)
+### From an AI coding agent (MCP + Agent Skills)
 
-LabWired speaks MCP. An agent can assemble a board, run firmware, and read the result back.
-You never touch the toolchain.
+LabWired speaks MCP and ships official Agent Skills + a Claude Code plugin directly inside this repository (`w1ne/labwired-core`). An agent can assemble a board, compile and simulate firmware, verify behavior, price a BOM, route a KiCad PCB, and read the evidence back — without touching a local toolchain.
+
+For 1-click setup across Claude Code, Codex, Cursor, ChatGPT, VS Code Copilot, and Gemini CLI, visit **[app.labwired.com/tools/mcp](https://app.labwired.com/tools/mcp)** — or run directly:
 
 ```sh
-claude mcp add labwired --transport http https://api.labwired.com/mcp
-codex   mcp add labwired --url https://api.labwired.com/mcp
+# 1. Connect hosted MCP (OAuth 2.1, free daily tier)
+claude mcp add --transport http labwired https://api.labwired.com/mcp
+codex  mcp add labwired --url https://api.labwired.com/mcp
+
+# 2. Install the official Claude Code plugin + Agent Skills from w1ne/labwired-core
+claude plugin marketplace add w1ne/labwired-core
+claude plugin install labwired@labwired
+
+# Or install the Agent Skills into any agent via the universal CLI
+npx skills add w1ne/labwired-core
 ```
+
+Bundled skills in [`plugins/labwired/`](plugins/labwired/README.md) (with live proof in [`plugins/labwired/proof/`](plugins/labwired/proof/README.md)):
+
+- [`electronics-lab`](plugins/labwired/skills/electronics-lab/SKILL.md) — default turnkey circuit, firmware, and PCB workflow
+- [`build-and-verify-hardware`](plugins/labwired/skills/build-and-verify-hardware/SKILL.md) — prompt to verified circuit, firmware, BOM pricing, PCB, and 3D enclosure
+- [`debug-firmware-in-sim`](plugins/labwired/skills/debug-firmware-in-sim/SKILL.md) — deterministic firmware debugging via UART, GPIO, bus traces, and interactive stepping
+- [`verify-ci-regression`](plugins/labwired/skills/verify-ci-regression/SKILL.md) — deterministic pass/fail hardware verification oracles for GitHub Actions CI
+- [`export-kicad-and-bom`](plugins/labwired/skills/export-kicad-and-bom/SKILL.md) — KiCad schematics/PCBs, Gerbers/CPL, priced BOMs, and STEP enclosures
+- [`audit-erc-drc-and-safety`](plugins/labwired/skills/audit-erc-drc-and-safety/SKILL.md) — pre-fab ERC/DRC, signal integrity, thermal/pin-limit, and fault-injection audits
 
 Your client opens a browser to sign in on first use. Other MCP clients take the standard
 block:
@@ -520,7 +561,7 @@ This repository is the engine. Everything below runs on it, and all of it is pub
 | Project | What it gives you |
 | --- | --- |
 | [agent](https://github.com/LabWired/agent) | The LabWired Firmware Agent — writes firmware and checks it on a virtual board. |
-| [skills](https://github.com/LabWired/skills) | Agent Skills for firmware work against the simulator as a hardware oracle. |
+| [LabWired Agent Skills & Plugin](plugins/labwired/README.md) | Official Claude Code plugin and 6 Agent Skills (`npx skills add w1ne/labwired-core`) bundled right in this repository. |
 | [`docs/agents.md`](docs/agents.md) | The MCP surface and the rules an agent working in this repo should follow. |
 
 **See it doing real work**
