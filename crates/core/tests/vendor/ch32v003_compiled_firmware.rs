@@ -238,7 +238,7 @@ fn ch32v003_package_variants_print_on_usart1_pd5() {
             "Hello from CH32V003\r\n",
             "{name} USART1 TX stream"
         );
-        assert_eq!(mcause, 0, "{name}: compiled firmware must not trap");
+        assert_no_fault(mcause);
     }
 }
 
@@ -262,7 +262,7 @@ fn ch32v003_package_variants_toggle_a_bonded_gpioc_pin() {
         );
         let (edges, mcause) = gpioc_edges(&load_chip(name), fixture, bit);
         assert!(edges >= 2, "{name}: only {edges} PC{bit} edges");
-        assert_eq!(mcause, 0, "{name}: compiled firmware must not trap");
+        assert_no_fault(mcause);
     }
 }
 
@@ -745,5 +745,614 @@ fn ch32v003_analog_read_overflows_10_bits_with_the_stm32f1_adc() {
         "CH32V003_ADC_BOOT\r\npa2=2047\r\npd4=3722\r\n\
          CH32V003_ADC_FAIL\r\nCH32V003_ADC_DONE\r\n",
         "USART1 TX stream"
+    );
+}
+
+const PWM_FIXTURE: &str = "ch32v003f4p6-arduino-openwch-pwm.elf";
+
+/// Step the openwch `analogWrite` fixture until setup finishes, then record
+/// `cycles` of steady-state pad edges on each `(port, pin)`. Returns the USART1
+/// text, one edge list per pad (watch-set order), the pad's routed function
+/// name after the sketch ran, and the trap cause.
+fn run_pwm_fixture(
+    chip: &ChipDescriptor,
+    pads: &[(&str, u8)],
+    cycles: u64,
+) -> (
+    String,
+    Vec<Vec<labwired_core::logic_capture::LogicEdge>>,
+    Vec<Option<String>>,
+    u32,
+) {
+    use labwired_core::logic_capture::LogicSource;
+
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut bus = SystemBus::from_config(chip, &SystemManifest::default())
+        .expect("CH32V003 peripherals and clock gates");
+    let sink = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    bus.attach_uart_tx_sink(sink.clone(), false);
+    let image = labwired_loader::load_elf(&root.join("tests/fixtures").join(PWM_FIXTURE))
+        .expect("openwch analogWrite ELF");
+
+    let cpu = configure_riscv(&mut bus);
+    let mut machine = Machine::new(cpu, bus);
+    machine
+        .load_firmware(&image)
+        .expect("load CH32V003 PWM ELF");
+
+    let mut sources = Vec::new();
+    let mut routed = Vec::new();
+    for (name, pin) in pads {
+        let idx = machine
+            .bus
+            .find_peripheral_index_by_name(name)
+            .unwrap_or_else(|| panic!("{name} registered from descriptor"));
+        sources.push(Some(LogicSource::pad(idx, *pin)));
+        routed.push((idx, *pin));
+    }
+    machine.logic_watch(&sources);
+
+    let done = b"CH32V003_PWM_DONE";
+    let reached_done = |out: &[u8]| out.windows(done.len()).any(|w| w == done);
+    let mut elapsed = 0u32;
+    while elapsed < 400_000 {
+        machine.step().expect("Arduino PWM firmware instruction");
+        elapsed += 1;
+        if reached_done(&sink.lock().unwrap()) {
+            break;
+        }
+    }
+    // The setup turn-on transient is not a period: acknowledge every edge so
+    // far, then measure only the steady-state window.
+    let cursor = machine.logic_read_edges(0).cursor;
+    let target = machine.total_cycles + cycles;
+    while machine.total_cycles < target {
+        machine.step().expect("PWM steady-state instruction");
+    }
+    let batch = machine.logic_read_edges(cursor);
+    let mut per_pad = vec![Vec::new(); pads.len()];
+    for edge in batch.edges {
+        per_pad[edge.ch as usize].push(edge);
+    }
+
+    // Read USART1 after the steady-state window: the newline that follows
+    // PWM_DONE is one more transmitted byte, not part of setup.
+    let out = String::from_utf8_lossy(&sink.lock().unwrap()).to_string();
+    assert!(
+        reached_done(out.as_bytes()),
+        "sketch stopped before PWM_DONE: {out:?}"
+    );
+
+    let funcs = routed
+        .iter()
+        .map(|&(idx, pin)| {
+            machine.bus.peripherals[idx]
+                .dev
+                .gpio_routing(pin)
+                .and_then(|r| r.func)
+        })
+        .collect();
+    (out, per_pad, funcs, machine.cpu.mcause)
+}
+
+/// The pad waveform as (period, high time) in engine cycles, decoded from the
+/// recorded edges alone. Requires at least two whole periods and checks every
+/// one of them, so one lucky period cannot pass.
+fn period_and_high(edges: &[labwired_core::logic_capture::LogicEdge]) -> (u64, u64) {
+    let mut last: Option<bool> = None;
+    let edges: Vec<labwired_core::logic_capture::LogicEdge> = edges
+        .iter()
+        .filter(|e| {
+            let keep = last != Some(e.value);
+            last = Some(e.value);
+            keep
+        })
+        .copied()
+        .collect();
+    let rises: Vec<u64> = edges.iter().filter(|e| e.value).map(|e| e.cycle).collect();
+    let falls: Vec<u64> = edges.iter().filter(|e| !e.value).map(|e| e.cycle).collect();
+    assert!(
+        rises.len() >= 3,
+        "need at least three rising edges to measure two periods, got {edges:?}"
+    );
+    let period = rises[1] - rises[0];
+    for pair in rises.windows(2) {
+        assert_eq!(pair[1] - pair[0], period, "periods differ: {rises:?}");
+    }
+    let mut highs = Vec::new();
+    for &r in &rises[..rises.len() - 1] {
+        let f = falls
+            .iter()
+            .copied()
+            .find(|&f| f > r)
+            .unwrap_or_else(|| panic!("no falling edge after {r}: {edges:?}"));
+        highs.push(f - r);
+    }
+    assert!(
+        highs.iter().all(|&h| h == highs[0]),
+        "high times differ: {highs:?}"
+    );
+    (period, highs[0])
+}
+
+/// The openwch Arduino core enables the 1 kHz STK for `millis()`, so a taken
+/// SysTick leaves `mcause` at `0x8000_000C` (the same value
+/// `ch32v003_stock_sdk_systick_interrupt_runs_through_the_pfic` asserts). That
+/// code is a tick, not a fault; anything else is.
+fn assert_no_fault(mcause: u32) {
+    assert!(
+        mcause == 0 || mcause == 0x8000_000C,
+        "unexpected trap mcause {mcause:#010x}"
+    );
+}
+
+/// The stock openwch `analogWrite` path on two different timers. `pwm_start`
+/// asks for `PWM_FREQUENCY` 1000 Hz at `PWM_RESOLUTION` 12 bits, so at the
+/// 48 MHz HCLK the model must produce a 48 000-cycle period; 2048/4095 of the
+/// range is `floor(48000*2048/4095) = 24 005` high cycles on PD4
+/// (TIM2_CH1), and 1024/4095 is `12 002` on PD2 (TIM1_CH1).
+#[test]
+fn ch32v003_openwch_analog_write_pwms_tim2_ch1_and_tim1_ch1() {
+    let chip = load_chip("ch32v003f4p6");
+    let (out, edges, funcs, mcause) =
+        run_pwm_fixture(&chip, &[("gpiod", 4), ("gpiod", 2)], 250_000);
+    assert_eq!(
+        out, "CH32V003_PWM_BOOT\r\nCH32V003_PWM_SET\r\nCH32V003_PWM_DONE\r\n",
+        "USART1 TX stream"
+    );
+    assert_no_fault(mcause);
+    assert_eq!(
+        funcs,
+        vec![Some("TIM2_CH1".to_string()), Some("TIM1_CH1".to_string())],
+        "pinmap_pinout must hand each pad to the timer channel it names"
+    );
+    assert_eq!(
+        period_and_high(&edges[0]),
+        (48_000, 24_005),
+        "PD4 TIM2_CH1: 1 kHz, 12-bit 2048 = 50.01 %"
+    );
+    assert_eq!(
+        period_and_high(&edges[1]),
+        (48_000, 12_002),
+        "PD2 TIM1_CH1: 1 kHz, 12-bit 1024 = 25.00 %"
+    );
+}
+
+/// Negative control: move TIM2's gate to an APB1PCENR bit the firmware never
+/// sets. `analogWrite(PD4, …)` then writes an unclocked register file, so the
+/// channel never starts and PD4 stays flat, while TIM1 on APB2 keeps its PWM.
+/// This proves the pad edges come from a clocked timer, not from the GPIO
+/// pinmap write or from the sketch's own pins.
+#[test]
+fn ch32v003_analog_write_needs_the_tim2_apb1_clock() {
+    let mut yaml = chip_yaml("ch32v003f4p6");
+    let tim2 = yaml["peripherals"]
+        .as_sequence_mut()
+        .expect("peripherals list")
+        .iter_mut()
+        .find(|p| p["id"].as_str() == Some("tim2"))
+        .expect("tim2 block");
+    assert_eq!(
+        tim2["clock"]["reg"].as_str(),
+        Some("apb1pcenr"),
+        "TIM2 gate register"
+    );
+    assert_eq!(tim2["clock"]["bit"].as_u64(), Some(0), "TIM2EN bit");
+    tim2["clock"]["bit"] = 5.into();
+    let chip: ChipDescriptor =
+        serde_yaml::from_value(yaml).expect("descriptor with an unclocked TIM2");
+
+    let (out, edges, _, mcause) = run_pwm_fixture(&chip, &[("gpiod", 4), ("gpiod", 2)], 150_000);
+    assert!(out.contains("CH32V003_PWM_DONE"), "USART1 stream: {out:?}");
+    assert_no_fault(mcause);
+    assert!(
+        edges[0].is_empty(),
+        "an unclocked TIM2 must leave PD4 undriven, got {:?}",
+        edges[0]
+    );
+    assert_eq!(
+        period_and_high(&edges[1]),
+        (48_000, 12_002),
+        "TIM1 on APB2 must keep its 25 % PWM"
+    );
+}
+
+/// Every package variant carries the same die, so PD4 (TIM2_CH1) must pulse on
+/// all four. PD2 is not bonded on the SOP-16/SOP-8, so the sketch's second
+/// `analogWrite` has no package pin there; only PD4 is checked.
+#[test]
+fn ch32v003_package_variants_pwm_tim2_ch1_on_the_bonded_pd4() {
+    for (name, _, _, bonded) in PACKAGE_VARIANTS {
+        assert!(bonded.contains(&"PD4"), "{name} bonds PD4 (TIM2_CH1)");
+        let (out, edges, funcs, mcause) =
+            run_pwm_fixture(&load_chip(name), &[("gpiod", 4)], 150_000);
+        assert!(out.contains("CH32V003_PWM_DONE"), "{name}: {out:?}");
+        assert_no_fault(mcause);
+        assert_eq!(
+            funcs,
+            vec![Some("TIM2_CH1".to_string())],
+            "{name}: PD4 must be routed to TIM2_CH1"
+        );
+        assert_eq!(
+            period_and_high(&edges[0]),
+            (48_000, 24_005),
+            "{name}: PD4 TIM2_CH1"
+        );
+    }
+}
+
+const TONE_FIXTURE: &str = "ch32v003f4p6-arduino-openwch-tone.elf";
+
+/// Step the openwch `tone()` fixture until setup finishes, then record
+/// `cycles` of steady-state pad edges. Returns the USART1 text, the PD4 edge
+/// list, and the trap cause. The sketch never touches PD4 after `tone()`
+/// returns, so every edge in the window is the TIM2 update ISR toggling it.
+fn run_tone_fixture(
+    chip: &ChipDescriptor,
+    cycles: u64,
+) -> (String, Vec<labwired_core::logic_capture::LogicEdge>, u32) {
+    use labwired_core::logic_capture::LogicSource;
+
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut bus = SystemBus::from_config(chip, &SystemManifest::default())
+        .expect("CH32V003 peripherals and clock gates");
+    let sink = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    bus.attach_uart_tx_sink(sink.clone(), false);
+    let image = labwired_loader::load_elf(&root.join("tests/fixtures").join(TONE_FIXTURE))
+        .expect("openwch tone ELF");
+
+    let cpu = configure_riscv(&mut bus);
+    let mut machine = Machine::new(cpu, bus);
+    machine
+        .load_firmware(&image)
+        .expect("load CH32V003 tone ELF");
+
+    let pd4 = machine
+        .bus
+        .find_peripheral_index_by_name("gpiod")
+        .expect("GPIOD registered from descriptor");
+    machine.logic_watch(&[Some(LogicSource::pad(pd4, 4))]);
+
+    let done = b"CH32V003_TONE_DONE";
+    let reached_done = |out: &[u8]| out.windows(done.len()).any(|w| w == done);
+    let mut elapsed = 0u32;
+    while elapsed < 400_000 {
+        machine.step().expect("Arduino tone firmware instruction");
+        elapsed += 1;
+        if reached_done(&sink.lock().unwrap()) {
+            break;
+        }
+    }
+    // The turn-on transient is not a period: acknowledge every edge so far,
+    // then measure only the steady-state window.
+    let cursor = machine.logic_read_edges(0).cursor;
+    let target = machine.total_cycles + cycles;
+    while machine.total_cycles < target {
+        machine.step().expect("tone steady-state instruction");
+    }
+    let batch = machine.logic_read_edges(cursor);
+    let out = String::from_utf8_lossy(&sink.lock().unwrap()).to_string();
+    assert!(
+        reached_done(out.as_bytes()),
+        "sketch stopped before TONE_DONE: {out:?}"
+    );
+    (out, batch.edges, machine.cpu.mcause)
+}
+
+/// The steady toggle spacing of the pad waveform: consecutive edges alternate
+/// high/low, so `steps` is the half period the TIM2 update ISR must produce.
+/// Every step must be equal; one lucky edge cannot pass.
+fn toggle_interval(edges: &[labwired_core::logic_capture::LogicEdge]) -> u64 {
+    let mut last: Option<bool> = None;
+    let edges: Vec<_> = edges
+        .iter()
+        .filter(|e| {
+            let keep = last != Some(e.value);
+            last = Some(e.value);
+            keep
+        })
+        .copied()
+        .collect();
+    assert!(
+        edges.len() >= 6,
+        "need at least six edges to measure five toggles, got {edges:?}"
+    );
+    let step = edges[1].cycle - edges[0].cycle;
+    for pair in edges.windows(2) {
+        assert_eq!(
+            pair[1].cycle - pair[0].cycle,
+            step,
+            "toggle spacing differs: {edges:?}"
+        );
+    }
+    step
+}
+
+/// The stock openwch `tone(PD4, 1000)` path. `Tone.cpp` selects
+/// `TIMER_TONE = TIM2`, sets the overflow to `2 * frequency` (2000 Hz), and
+/// attaches a callback that toggles PD4 on every update interrupt, so the pad
+/// must alternate once per update. `HardwareTimer` computes ARR from the timer
+/// clock: 48 MHz / 2000 = 24 000 counts.
+///
+/// The timer model freezes the counter while an enabled status flag is
+/// latched (documented pinned limitation, `peripherals::timer` type docs), so
+/// each half period is 24 000 cycles **plus** the ISR latency that clears
+/// UIF. The test therefore asserts a constant spacing in a narrow band above
+/// 24 000 rather than an exact 24 000, and the exact latency is recorded in
+/// the round report.
+#[test]
+fn ch32v003_openwch_tone_toggles_pd4_from_the_tim2_update_isr() {
+    let chip = load_chip("ch32v003f4p6");
+    let (out, edges, mcause) = run_tone_fixture(&chip, 200_000);
+    assert_eq!(
+        out, "CH32V003_TONE_BOOT\r\nCH32V003_TONE_SET\r\nCH32V003_TONE_DONE\r\n",
+        "USART1 TX stream"
+    );
+    // mcause keeps the last trap cause after mret, so a returned timer
+    // interrupt (38, TIM2) and the SysTick interrupt (12) are not faults. Any
+    // exception (mcause without the interrupt bit) still fails.
+    assert!(
+        mcause == 0 || mcause == 0x8000_000C || mcause == 0x8000_0026,
+        "unexpected exception mcause {mcause:#010x}"
+    );
+    let step = toggle_interval(&edges);
+    assert!(
+        (24_000..24_200).contains(&step),
+        "TIM2 update toggle spacing {step} cycles, expected 24 000 + ISR latency"
+    );
+}
+
+/// Negative control: drop TIM2's `irq` line from the descriptor. The timer
+/// still counts and still latches UIF, but no PFIC interrupt is delivered, so
+/// the Tone callback never runs and PD4 stays flat after `tone()` configures
+/// it as a plain output. This proves the edges above come from the interrupt,
+/// not from the timer's counter or the pin write.
+#[test]
+fn ch32v003_tone_needs_the_tim2_irq_line() {
+    let mut yaml = chip_yaml("ch32v003f4p6");
+    let tim2 = yaml["peripherals"]
+        .as_sequence_mut()
+        .expect("peripherals list")
+        .iter_mut()
+        .find(|p| p["id"].as_str() == Some("tim2"))
+        .expect("tim2 block");
+    assert_eq!(tim2["irq"].as_u64(), Some(38), "TIM2_IRQn");
+    tim2.as_mapping_mut().expect("tim2 mapping").remove("irq");
+    let chip: ChipDescriptor =
+        serde_yaml::from_value(yaml).expect("descriptor without a TIM2 irq line");
+
+    let (out, edges, mcause) = run_tone_fixture(&chip, 100_000);
+    assert!(out.contains("CH32V003_TONE_DONE"), "USART1 stream: {out:?}");
+    assert_no_fault(mcause);
+    assert!(
+        edges.is_empty(),
+        "a TIM2 without an irq line must leave PD4 undriven, got {edges:?}"
+    );
+}
+
+const PULSE_FIXTURE: &str = "ch32v003f4p6-arduino-openwch-pulse.elf";
+
+/// High widths, in HCLK cycles at 48 MHz, of the pulses the harness puts on
+/// the pad: 100 us and 250 us.
+const PULSE_WIDTHS_CYCLES: [u64; 2] = [4_800, 12_000];
+
+/// Run the pulse-width fixture and drive `pad` from the harness only. The
+/// sketch never drives an output: it waits for PD3 to rise, reads the STK
+/// counter, and waits for PD3 to fall.
+///
+/// Each pulse is placed on exact cycle boundaries. The pad is held high for
+/// `PULSE_WIDTHS_CYCLES[i]`, then released; the sketch prints one `WIDTH`
+/// line per pulse and the test compares the reported microseconds with the
+/// cycles the harness actually drove.
+fn run_pulse_fixture(chip: &ChipDescriptor, pad: u8) -> String {
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut bus = SystemBus::from_config(chip, &SystemManifest::default())
+        .expect("CH32V003 peripherals and clock gates");
+    let sink = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    bus.attach_uart_tx_sink(sink.clone(), false);
+    let image = labwired_loader::load_elf(&root.join("tests/fixtures").join(PULSE_FIXTURE))
+        .expect("openwch pulse ELF");
+    let cpu = configure_riscv(&mut bus);
+    let mut machine = Machine::new(cpu, bus);
+    machine
+        .load_firmware(&image)
+        .expect("load CH32V003 pulse ELF");
+    let gpiod = machine
+        .bus
+        .find_peripheral_index_by_name("gpiod")
+        .expect("GPIOD registered from descriptor");
+
+    let text = |sink: &std::sync::Mutex<Vec<u8>>| {
+        String::from_utf8_lossy(&sink.lock().unwrap()).into_owned()
+    };
+    let width_lines = |out: &str| out.lines().filter(|l| l.starts_with("WIDTH ")).count();
+
+    // Setup prints BOOT, then calls pinMode and enters the PD3 wait loop. A
+    // 0.4 ms settle after the line arrives is ample for those instructions.
+    let mut guard = 0u32;
+    while guard < 2_000_000 && !text(&sink).contains("CH32V003_PULSE_BOOT") {
+        if machine.step().is_err() {
+            break;
+        }
+        guard += 1;
+    }
+    let settle = machine.total_cycles + 20_000;
+    while machine.total_cycles < settle {
+        if machine.step().is_err() {
+            break;
+        }
+    }
+
+    for (index, width) in PULSE_WIDTHS_CYCLES.iter().enumerate() {
+        machine.bus.set_peripheral_gpio_input(gpiod, pad, true);
+        let fall = machine.total_cycles + width;
+        while machine.total_cycles < fall {
+            if machine.step().is_err() {
+                break;
+            }
+        }
+        machine.bus.set_peripheral_gpio_input(gpiod, pad, false);
+        // Let the sketch report this pulse and return to its wait loop before
+        // the next one starts; otherwise the rising edge would arrive while
+        // the previous line is still in the UART FIFO.
+        let mut guard = 0u32;
+        while guard < 2_000_000 && width_lines(&text(&sink)) <= index {
+            if machine.step().is_err() {
+                break;
+            }
+            guard += 1;
+        }
+        let settle = machine.total_cycles + 20_000;
+        while machine.total_cycles < settle {
+            if machine.step().is_err() {
+                break;
+            }
+        }
+    }
+
+    // pulseIn() needs a pulse of its own. The sketch prints PULSEIN_WAIT and
+    // calls pulseIn() immediately after the line. Measured, the call returns
+    // on its own timeout after 28 us, before this settle ends and before the
+    // edge is driven, so a missed edge cannot explain the result.
+    let mut guard = 0u32;
+    while guard < 2_000_000 && !text(&sink).contains("PULSEIN_WAIT") {
+        if machine.step().is_err() {
+            break;
+        }
+        guard += 1;
+    }
+    let settle = machine.total_cycles + 20_000;
+    while machine.total_cycles < settle {
+        if machine.step().is_err() {
+            break;
+        }
+    }
+    machine.bus.set_peripheral_gpio_input(gpiod, pad, true);
+    let fall = machine.total_cycles + PULSE_WIDTHS_CYCLES[0];
+    while machine.total_cycles < fall {
+        if machine.step().is_err() {
+            break;
+        }
+    }
+    machine.bus.set_peripheral_gpio_input(gpiod, pad, false);
+
+    let mut guard = 0u32;
+    while guard < 2_000_000 && !text(&sink).contains("CH32V003_PULSE_DONE") {
+        if machine.step().is_err() {
+            break;
+        }
+        guard += 1;
+    }
+    text(&sink)
+}
+
+fn printed_numbers(out: &str, prefix: &str) -> Vec<u32> {
+    let mut values = Vec::new();
+    for line in out.lines() {
+        if let Some(rest) = line.strip_prefix(prefix) {
+            values.extend(
+                rest.split_whitespace()
+                    .filter_map(|n| n.parse::<u32>().ok()),
+            );
+        }
+    }
+    values
+}
+
+/// The QingKe V2 STK is an up-counter that reloads from 0 at `CMP`
+/// (`SysTick->CMP = 48 000 - 1`, `CTLR = 0xF` from the core's `hw_config.c`),
+/// so elapsed microseconds are `CNT * 1000 / (CMP + 1)`. Polling the pad and
+/// reading `CNT` must recover the width the harness drove, to the polling
+/// granularity.
+#[test]
+fn ch32v003_pad_pulse_width_reads_microseconds_from_the_stk_counter() {
+    let chip = load_chip("ch32v003f4p6");
+    let out = run_pulse_fixture(&chip, 3);
+    assert!(
+        out.contains("CH32V003_PULSE_DONE"),
+        "sketch stopped before PULSE_DONE: {out:?}"
+    );
+
+    let widths = printed_numbers(&out, "WIDTH ");
+    assert_eq!(widths.len(), 2, "one WIDTH line per pulse: {out:?}");
+    let expected = [100u32, 250];
+    for (measured, want) in widths.iter().zip(expected) {
+        assert!(
+            measured.abs_diff(want) <= 2,
+            "pulse of {want} us measured as {measured} us: {widths:?}"
+        );
+    }
+    let span = widths[1] - widths[0];
+    assert!(
+        span.abs_diff(150) <= 2,
+        "100 us and 250 us pulses differ by {span} us, not 150: {widths:?}"
+    );
+}
+
+/// Negative control: drive PD2 instead of PD3. The sketch polls PD3 only, so
+/// no `WIDTH` line can appear. This shows the printed widths come from the
+/// pad the harness drives, not from the sketch's own instruction timing.
+#[test]
+fn ch32v003_pulse_width_needs_the_pad_the_sketch_polls() {
+    let chip = load_chip("ch32v003f4p6");
+    let out = run_pulse_fixture(&chip, 2);
+    // The sketch printed its banner, then blocked in `while (!pd3())` for the
+    // whole run: no width, no micros() samples, no pulseIn() call.
+    assert_eq!(
+        out, "CH32V003_PULSE_BOOT\r\n",
+        "PD2 pulses must not reach a sketch that polls PD3: {out:?}"
+    );
+}
+
+/// Characterization test for the stock core's `micros()` on this part.
+/// `getCurrentMicros()` (ch32/clock.c, the CH32V00x branch) computes
+/// `(CMP + 1 - CNT) * 1000 / (CMP + 1)`. That is the remaining time in the
+/// millisecond when `CNT` counts up, so three consecutive samples are not
+/// increasing. `pulseIn()` (cores/arduino/wiring_pulse.cpp) compares
+/// `micros()` differences against its timeout on every pass, so the call
+/// returns 0 in tens of microseconds, before the 100 us pulse the harness
+/// drives after PULSEIN_WAIT could end. The sketch times the call with the
+/// STK counter and prints both the result and the duration.
+///
+/// The model and the core disagree on the counter direction. This test does
+/// not settle which is right against silicon. It records that the model
+/// follows WCH's own noneos-sdk `Delay_Us` (per this project's reading of
+/// `Debug/ch32v00x/debug.c`, which writes `CNT = 0` and waits for
+/// `SR.CNTIF` at `CMP`, a sequence that needs an up-counter), and that the
+/// model's direction explains the stock core's output.
+///
+/// This test asserts the current, defective behaviour. If the vendor core is
+/// fixed (or a patched core is added), invert it: `micros()` must increase
+/// and `pulseIn()` must report the driven width.
+#[test]
+fn ch32v003_shipped_micros_runs_backwards_and_pulse_in_cannot_measure() {
+    let chip = load_chip("ch32v003f4p6");
+    let out = run_pulse_fixture(&chip, 3);
+    assert!(
+        out.contains("CH32V003_PULSE_DONE"),
+        "sketch stopped before PULSE_DONE: {out:?}"
+    );
+
+    let samples = printed_numbers(&out, "MICROS ");
+    assert_eq!(samples.len(), 3, "three micros() samples: {out:?}");
+    assert!(
+        samples[1] < samples[0] || samples[2] < samples[1],
+        "micros() must not increase across consecutive calls: {samples:?}"
+    );
+
+    let pulse_in = printed_numbers(&out, "PULSEIN ");
+    assert_eq!(pulse_in.len(), 2, "PULSEIN <width> <call us>: {out:?}");
+    assert_eq!(
+        pulse_in[0], 0,
+        "pulseIn() must return 0 on this core: {out:?}"
+    );
+    // The harness holds the pad high for 4 800 cycles (100 us) after the
+    // sketch prints PULSEIN_WAIT. A call that ended inside that window bailed
+    // out on its own timeout before the pulse could finish; a call that
+    // waited for the pulse would last at least the pulse width.
+    assert!(
+        pulse_in[1] < 100,
+        "pulseIn() took {} us, which is not shorter than the 100 us pulse: {out:?}",
+        pulse_in[1]
     );
 }
