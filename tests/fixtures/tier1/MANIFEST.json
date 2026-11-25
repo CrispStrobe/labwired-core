@@ -24,24 +24,24 @@
     "source_rev": "2a7e14fb217da6d7849dea0de03f60cf4d6b175b"
   },
   "nrf52832.elf": {
-    "sha256": "d6ab4ddfd6803f5dcfbb27ba7a22b45294e6db37d8994bf3150ecc2ff9790284",
-    "source_rev": "aa18dc39b59c397ce822560d92448399c1640c7f"
+    "sha256": "45cbb3ffc31ddf59a526faf1ceb73edfc0ca62c80bc6d8405df54e1ace0c347a",
+    "source_rev": "74d858f70b3f92b03547f6539918148403527ebb"
   },
   "nrf52833.elf": {
-    "sha256": "9ec3e9893948c80c97bd7eac13912c467c6884be0c1cc3415a9a1db0cf271606",
-    "source_rev": "39e3518a9aa912f2dfe324fa1acd96be6b409e1d"
+    "sha256": "027dea0f569d09f73372da2bf20ea1b8fe7c382224118c617cd1aa9d34f8fa98",
+    "source_rev": "74d858f70b3f92b03547f6539918148403527ebb"
   },
   "nrf52840.elf": {
-    "sha256": "3ad78c82c230875efd48fcf2a0aff0778087c1a5fc5bcbb2ec6b2952043d6191",
-    "source_rev": "39e3518a9aa912f2dfe324fa1acd96be6b409e1d"
+    "sha256": "db6305d14171f1ba94fe1d9b5392f23601a6b2adabb1295918b6f6b9e763f485",
+    "source_rev": "74d858f70b3f92b03547f6539918148403527ebb"
   },
   "rp2040.elf": {
     "sha256": "a30a7c5a9341cbd9082d443a4c461301db7bce5bb4c35a44cead853c0aa40168",
     "source_rev": "2a7e14fb217da6d7849dea0de03f60cf4d6b175b"
   },
   "stm32f103.elf": {
-    "sha256": "a18c737d735bae3964320c8eee85ac65baeb050e468adacf48e3e2de20b6b31f",
-    "source_rev": "aa18dc39b59c397ce822560d92448399c1640c7f"
+    "sha256": "d7e8d7efa682766b6f57658cfd22335290bf3445ab4f0b0553874041ad676800",
+    "source_rev": "74d858f70b3f92b03547f6539918148403527ebb"
   },
   "stm32f401.elf": {
     "sha256": "d5d62206e129fe69e330a5ff409f373103315d6c48b66bd81c386b3161594359",
