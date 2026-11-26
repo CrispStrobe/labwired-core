@@ -309,39 +309,37 @@ const EXCLUSIONS: &[(&str, BusKind, &str)] = &[
         "F4P6-die package variant: the I2C bring-up machines in this gate are \
          Cortex-M only; master traffic is proven by ch32v003_compiled_firmware",
     ),
-    // CH32V003 SPI1 (upstream 625e473682): one SPI1 per die, so every package
-    // carries the controller. This gate has no SPI bring-up for the RISC-V
-    // CH32 family; master traffic is proven by the openwch MAX31855 read in
-    // ch32v003_compiled_firmware.
+    // CH32V003 SPI1: the SPI bring-up machines in this gate build a
+    // `Machine<CortexM>`, while the CH32V003 is RISC-V. Master traffic over
+    // SPI1 is proven by
+    // ch32v003_compiled_firmware::ch32v003_openwch_spi_reads_a_max31855_frame_over_spi1.
     (
         "ch32v003f4p6",
         BusKind::Spi,
-        "no SPI bring-up for the RISC-V CH32 family in this gate (the SPI \
-         arms build Cortex-M machines); SPI1 master traffic is proven by \
-         ch32v003_compiled_firmware",
+        "the SPI bring-up machines in this gate are Cortex-M only; the CH32V003 \
+         is RISC-V. Master traffic is proven by \
+         ch32v003_compiled_firmware::ch32v003_openwch_spi_reads_a_max31855_frame_over_spi1",
     ),
     (
         "ch32v003f4u6",
         BusKind::Spi,
-        "F4P6-die package variant: no SPI bring-up for the RISC-V CH32 family \
-         in this gate (the SPI arms build Cortex-M machines); SPI1 master \
-         traffic is proven by ch32v003_compiled_firmware",
+        "F4P6-die package variant: the SPI bring-up machines in this gate are \
+         Cortex-M only; the CH32V003 is RISC-V. Master traffic is proven by \
+         ch32v003_compiled_firmware::ch32v003_openwch_spi_reads_a_max31855_frame_over_spi1",
     ),
     (
         "ch32v003a4m6",
         BusKind::Spi,
-        "F4P6-die package variant without an SCK pad: no SPI bring-up for the \
-         RISC-V CH32 family in this gate (the SPI arms build Cortex-M \
-         machines); SPI1 master traffic is proven by \
-         ch32v003_compiled_firmware",
+        "F4P6-die package variant: this gate is Cortex-M only and SOP16 has no \
+         bonded 3-wire SPI pads; proven by \
+         ch32v003_compiled_firmware::ch32v003_spi1_is_on_every_package_but_the_pads_only_where_bonded",
     ),
     (
         "ch32v003j4m6",
         BusKind::Spi,
-        "F4P6-die package variant that bonds no SPI pad: no SPI bring-up for \
-         the RISC-V CH32 family in this gate (the SPI arms build Cortex-M \
-         machines); SPI1 master traffic is proven by \
-         ch32v003_compiled_firmware",
+        "F4P6-die package variant: this gate is Cortex-M only and SOP8 has no \
+         bonded 3-wire SPI pads; proven by \
+         ch32v003_compiled_firmware::ch32v003_spi1_is_on_every_package_but_the_pads_only_where_bonded",
     ),
     // nRF51822: the bring-up drives the nRF52 EasyDMA personalities (UARTE
     // ENABLE=8, TWIM), which the nRF51 does not have; its UART0 is the legacy
@@ -779,13 +777,6 @@ const EXCLUSIONS: &[(&str, BusKind, &str)] = &[
         BusKind::Uart,
         "PyBadge variant of the atsamd51 twin: generic type:uart (sercom \
          layout); no UART bring-up for this chip family in the edge gate yet",
-    ),
-    (
-        "samd51-no-asf-simulation",
-        BusKind::Uart,
-        "Software assembly retains unselected generic SERCOM3 without gate bring-up; \
-         selected SAMD USART publishes bytes but no PadLines wire. Native byte \
-         acceptance is separate; no UART edge coverage is claimed",
     ),
     (
         "ra4m1",
@@ -1411,12 +1402,6 @@ fn drive_uart(
                          captured, so there is no bit time to decode against"
                     .into(),
             };
-        }
-        // The authored AT32F421 USART profile is the classic STS/DT/BAUDR/
-        // CTRL map. Reuse the real transmit sequence and independent decoder;
-        // this does not classify its unrelated GPIO/SPI/I2C layouts as STM32F1.
-        Family::Unknown if chip == "at32f421g8u7" => {
-            return drive_uart_stm32(machine, inst, Stm32UartMap::F1);
         }
         Family::EspC3I2cOnly | Family::Unknown => {
             return KindResult::Unsupported {
