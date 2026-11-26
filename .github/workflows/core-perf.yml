@@ -504,4 +504,4 @@ jobs:
           name: samd-native-profile-source-and-measurements
           path: samd-profile-evidence/
           if-no-files-found: error
-          retention-days: 3
+          retention-days: 2

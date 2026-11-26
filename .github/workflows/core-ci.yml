@@ -2033,7 +2033,7 @@ jobs:
           name: xiao-source-guest
           path: xiao-guest-evidence/
           if-no-files-found: error
-          retention-days: 3
+          retention-days: 2
 
   xtensa-flash-boot:
     name: xtensa-flash-boot

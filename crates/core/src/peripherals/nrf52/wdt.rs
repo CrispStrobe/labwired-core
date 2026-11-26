@@ -341,7 +341,7 @@ mod tests {
 
     #[test]
     fn reset_rr0_feed_reloads_then_missing_feed_times_out() {
-        let mut w = Nrf52Wdt::new();
+        let mut w = Nrf52Wdt::new_fast();
         w.write_u32(OFF_CRV, 16).unwrap();
         w.write_u32(OFF_INTENSET, 1).unwrap();
         w.write_u32(OFF_TASKS_START, 1).unwrap();
@@ -363,7 +363,7 @@ mod tests {
 
     #[test]
     fn reset_rr0_ignores_disabled_rr1_feed() {
-        let mut w = Nrf52Wdt::new();
+        let mut w = Nrf52Wdt::new_fast();
         w.write_u32(OFF_CRV, 16).unwrap();
         w.write_u32(OFF_TASKS_START, 1).unwrap();
         for _ in 0..12 {
@@ -379,7 +379,7 @@ mod tests {
 
     #[test]
     fn explicit_configuration_overrides_defaults_and_locks_on_start() {
-        let mut w = Nrf52Wdt::new();
+        let mut w = Nrf52Wdt::new_fast();
         w.write_u32(OFF_RREN, 0b10).unwrap();
         w.write_u32(OFF_CONFIG, 0b1000).unwrap();
         w.write_u32(OFF_CRV, 16).unwrap();

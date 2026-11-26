@@ -101,4 +101,4 @@ jobs:
             owned-zflash-samd/zflash-compile/**
             !**/*.o
           if-no-files-found: warn
-          retention-days: 3
+          retention-days: 2
