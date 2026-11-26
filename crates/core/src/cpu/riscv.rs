@@ -3078,7 +3078,13 @@ impl Cpu for RiscV {
         // view. Once the loop head is reached the fast path consumes the rest
         // of the batch; non-poll code pays only three cold decode probes.
         let mut masked_poll_probes = 3u8;
-        let block_cache_ok = config.decode_cache_enabled && observers.is_empty() && tap.is_none();
+        // Cached blocks retire without `step()`, which is where idle
+        // fast-forward recognizes a busy-poll loop; with idle FF on, every
+        // instruction must stay visible to that detector.
+        let block_cache_ok = config.decode_cache_enabled
+            && !config.idle_fast_forward_enabled
+            && observers.is_empty()
+            && tap.is_none();
         while i < limit {
             if i != 0 && masked_poll_probes != 0 && limit - i >= 4 {
                 masked_poll_probes -= 1;
