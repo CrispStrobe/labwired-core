@@ -309,16 +309,38 @@ const EXCLUSIONS: &[(&str, BusKind, &str)] = &[
         "F4P6-die package variant: the I2C bring-up machines in this gate are \
          Cortex-M only; master traffic is proven by ch32v003_compiled_firmware",
     ),
-    // CH32V003 SPI1 (upstream 625e473682): the A4M6 (SOP16) bonds MOSI=PC6 and
-    // MISO=PC7 but has no PC5 SCK pad, and this gate has no SPI bring-up for
-    // the RISC-V CH32 family (the same Cortex-M-only gap as the rows above).
-    // Master traffic is proven by the openwch SPI MAX31855 read in
+    // CH32V003 SPI1 (upstream 625e473682): one SPI1 per die, so every package
+    // carries the controller. This gate has no SPI bring-up for the RISC-V
+    // CH32 family; master traffic is proven by the openwch MAX31855 read in
     // ch32v003_compiled_firmware.
+    (
+        "ch32v003f4p6",
+        BusKind::Spi,
+        "no SPI bring-up for the RISC-V CH32 family in this gate (the SPI \
+         arms build Cortex-M machines); SPI1 master traffic is proven by \
+         ch32v003_compiled_firmware",
+    ),
+    (
+        "ch32v003f4u6",
+        BusKind::Spi,
+        "F4P6-die package variant: no SPI bring-up for the RISC-V CH32 family \
+         in this gate (the SPI arms build Cortex-M machines); SPI1 master \
+         traffic is proven by ch32v003_compiled_firmware",
+    ),
     (
         "ch32v003a4m6",
         BusKind::Spi,
-        "no SPI bring-up for the RISC-V CH32 family in this gate, and the A4M6 \
-         package has no SCK pad; SPI1 master traffic is proven by \
+        "F4P6-die package variant without an SCK pad: no SPI bring-up for the \
+         RISC-V CH32 family in this gate (the SPI arms build Cortex-M \
+         machines); SPI1 master traffic is proven by \
+         ch32v003_compiled_firmware",
+    ),
+    (
+        "ch32v003j4m6",
+        BusKind::Spi,
+        "F4P6-die package variant that bonds no SPI pad: no SPI bring-up for \
+         the RISC-V CH32 family in this gate (the SPI arms build Cortex-M \
+         machines); SPI1 master traffic is proven by \
          ch32v003_compiled_firmware",
     ),
     // nRF51822: the bring-up drives the nRF52 EasyDMA personalities (UARTE
