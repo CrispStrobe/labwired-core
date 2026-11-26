@@ -62,6 +62,9 @@ pub(crate) enum Op {
     StepSingle,
     StepBatch(u32),
     StepEsp32Aids(u32),
+    StepExternalMechanical(u64, u32),
+    ObserveExternalMechanical,
+    ApplyExternalMechanical(labwired_core::bus::ExternalMechanicalFrame),
     FeedUart(Vec<u8>),
     FeedUartNamed(String, Vec<u8>),
     FeedRtt(Vec<u8>),
@@ -104,7 +107,11 @@ impl Op {
     fn is_step(&self) -> bool {
         matches!(
             self,
-            Op::Step(_) | Op::StepSingle | Op::StepBatch(_) | Op::StepEsp32Aids(_)
+            Op::Step(_)
+                | Op::StepSingle
+                | Op::StepBatch(_)
+                | Op::StepEsp32Aids(_)
+                | Op::StepExternalMechanical(_, _)
         )
     }
 }
@@ -231,6 +238,13 @@ impl WasmSimulator {
             Op::StepSingle => self.step_single(),
             Op::StepBatch(n) => self.step_batch(*n).map(|_| ()),
             Op::StepEsp32Aids(n) => self.step_with_esp32_aids(*n),
+            Op::StepExternalMechanical(target, fuel) => self
+                .step_external_mechanical_to(*target as f64, *fuel)
+                .map(|_| ()),
+            Op::ObserveExternalMechanical => self.get_external_mechanical_interval().map(|_| ()),
+            Op::ApplyExternalMechanical(frame) => self
+                .apply_external_mechanical_frame_s(frame)
+                .map_err(|error| JsValue::from_str(&error)),
             Op::FeedUart(b) => {
                 self.feed_uart_input(b);
                 Ok(())

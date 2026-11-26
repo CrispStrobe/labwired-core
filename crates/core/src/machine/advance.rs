@@ -231,6 +231,16 @@ impl<C: Cpu> Machine<C> {
 }
 
 impl<C: Cpu> Machine<C> {
+    fn require_external_mechanical_priming(&self) -> SimResult<()> {
+        if self.bus.has_external_mechanical_shafts() && !self.bus.external_mechanical_is_primed() {
+            return Err(crate::SimulationError::Other(
+                "externally owned shafts require a complete mechanical priming frame at cycle 0"
+                    .to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Advances the machine through its authoritative execution path.
     ///
     /// Normal stop conditions are checked before the next unit of work, in
@@ -279,6 +289,7 @@ impl<C: Cpu> Machine<C> {
     // every instruction even though all of its policies are compile-time fixed.
     #[inline(always)]
     fn advance_output<O: AdvanceOutput>(&mut self, request: AdvanceRequest) -> SimResult<O> {
+        self.require_external_mechanical_priming()?;
         self.enforce_peripheral_tick_cap();
         if let Some(report) = self.supply_gate(&request)? {
             return Ok(O::from_report(report));
@@ -361,6 +372,7 @@ impl<C: Cpu> Machine<C> {
             u32,
         ) -> SimResult<u32>,
     {
+        self.require_external_mechanical_priming()?;
         self.enforce_peripheral_tick_cap();
         if let Some(report) = self.supply_gate(&request)? {
             return Ok(report);

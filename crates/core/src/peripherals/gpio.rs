@@ -4067,6 +4067,10 @@ impl crate::Peripheral for GpioPort {
         matches!(&self.family, GpioFamily::SamPort(_))
     }
 
+    fn has_zero_tick_cycle_cost(&self) -> bool {
+        true
+    }
+
     fn is_stm32_gpio_port(&self) -> bool {
         matches!(
             &self.family,
