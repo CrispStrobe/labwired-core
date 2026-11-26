@@ -2317,6 +2317,10 @@ jobs:
     # Fork: 70, not 45. On the fork's own runners the job takes 43-46 min on
     # push runs and is repeatedly cancelled a minute short of finishing; the
     # work is the same as upstream's, so the ceiling moves, not the gate.
+    # Fork: the release / scheduler / hardware-oracle gates moved to
+    # `integrity-engine` below. Together the job reached 69m58s on ab2ccd64
+    # (54-70 min on recent pushes); split, each half runs about 30-40 min
+    # under the same 70-minute ceiling, and the gates run in parallel.
     timeout-minutes: 70
     steps:
       - uses: actions/checkout@v4
@@ -2444,6 +2448,56 @@ jobs:
       # sat on main for months, so it runs on every push.
       - name: SVD conformance (config addresses + IRQs vs silicon)
         run: 'cargo test -p labwired-core --test gates -- --nocapture svd_conformance::'
+
+  # Fork: split out of `core-integrity` so neither half runs into the
+  # 70-minute ceiling. Same trigger, same steps, same commands; only the job
+  # boundary moved. `if: !cancelled()` stays on each step so one red gate
+  # still reports alongside the others.
+  integrity-engine:
+    name: core-integrity-engine
+    if: >
+      github.event_name == 'push' ||
+      (github.event_name == 'schedule' && github.repository == 'w1ne/labwired-core') ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: rustfmt, clippy
+
+      # `cache-on-failure` matters more here than anywhere else in this file:
+      # this is the job that WRITES the `core-ci` cache every pull request then
+      # reads. rust-cache defaults to discarding the cache when the job fails,
+      # and a red `core-integrity` is a TEST failure — the compilation that
+      # produced the target dir succeeded, and that target dir is exactly what a
+      # PR needs. Throwing it away means main is red AND every PR is slow, with
+      # the second consequence invisible.
+      #
+      # That was the live state: no `v0-rust-core-ci-*` cache existed on
+      # refs/heads/main at all, so `pr-workspace-tests` logged
+      # "... Restoring cache ... No cache found." and cold-built the workspace in
+      # 8m00s — three times per PR, once per shard.
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: core-integrity-engine
+          cache-on-failure: true
+          workspaces: |
+            . -> target
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ARM target for firmware builds under test
+        run: rustup target add thumbv7em-none-eabi
 
       # RELEASE-ONLY CODE — the lane that did not exist.
       #
