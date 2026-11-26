@@ -40,6 +40,7 @@ fn mapped_empty_bus(pins: &[(&str, &str, u8)]) -> SystemBus {
             PinLoc {
                 gpio: gpio.into(),
                 bit,
+                functions: Vec::new(),
             },
         );
     }

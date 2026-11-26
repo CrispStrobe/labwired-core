@@ -155,6 +155,37 @@ host; `labwired_test_runs_the_heypcb_ntc_deck_on_ngspice` runs them on both
 engines and also requires the `source.sha256` netlist pin and the 61 °C stop on
 both.
 
+The HeyPCB ESP32-S3 LDR sensor-network fixture repeats the pattern with
+`ldr.cir` and two `ngspice-*.yaml` scripts. Measured on 2026-11-25: the ADC count of both
+scripts and both instrument counts are identical, the bright 3.95 ms sample
+agrees within 4·10⁻⁷ V, and the bright 350 µs transient differs by 3.6·10⁻³ V
+for the same backward-Euler reason. 0, 0.5 and 100000 lx stop both engines.
+`labwired_test_runs_the_heypcb_ldr_network_deck_on_ngspice` requires that,
+plus the `source.sha256` pin; the in-core manifest keeps the committed browser
+receipt because the receipt has no solver host.
+
+The same replacement is verified for the deck shape most board examples share.
+`examples/nucleo-f401re/analog-ntc-diode-ngspice.yaml` solves the generic Beta
+NTC divider and Shockley diode load line of `analog-ntc-diode-system.yaml` with
+`adapter: ngspice`, `ntc-beta.cir` and `diode-load-line.cir`; names, routes,
+nets and model parameters are unchanged. `labwired cosim-step` drives both
+manifests through the STM32F401 ADC pad routes. Measured on 2026-11-25 with
+ngspice-42 at 0, 25 and 60 °C: the NTC route agrees to 4.4·10⁻¹⁶ V and the diode
+route to 2.1·10⁻⁷ V. The diode deck must pin `.options temp=26.85 tnom=26.85`
+because the in-core engine solves at 300.00 K; ngspice's 27 °C default alone
+moves the forward voltage by 0.3 mV, 1,500 times the agreement measured here.
+`ngspice_solves_the_generic_ntc_and_diode_decks_the_in_core_engine_solves`
+checks both routes and requires the NTC output to move with temperature, so
+agreement on a flat wrong value cannot pass. The same pair, with the same
+netlists and only the published pads moved, runs on
+`examples/wch-ch32v003evt/analog-ntc-diode-ngspice.yaml` through the WCH
+CH32V003 10-bit ADC map. Measured on 2026-11-26 at −20, 25 and 85 °C: the NTC
+route agrees to 4.4·10⁻¹⁶ V and the diode route to 2.1·10⁻⁷ V;
+`ngspice_solves_the_wch_ch32v003_generic_decks_the_in_core_engine_solves`
+checks it. This covers one deck shape and its manifest routing on two register
+families — the STM32F401 12-bit map and the CH32V003 10-bit map — not every
+board that shares it.
+
 ### Pinning the circuit a Flex run solved
 
 A Flex manifest's `manifest_sha256` covers the manifest bytes. It cannot cover

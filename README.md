@@ -226,8 +226,7 @@ boards; only the owner may acknowledge that (dated `drift_ack`, then
 Shortened from the [upstream README](https://github.com/w1ne/labwired-core#readme),
 which is the current and complete version.
 
-Run your firmware on a virtual instance of a real chip, from your terminal, your CI, or your
-AI coding agent. No board on your desk.
+Run unmodified ARM, RISC-V, and Xtensa firmware against modeled silicon, circuits, and boards — in your browser, terminal, CI, or AI coding agent.
 
 LabWired Core loads a firmware ELF and executes it against modeled silicon: CPU, buses,
 peripherals, sensors, displays, and protocol devices. You get UART output, GPIO and bus
@@ -238,55 +237,37 @@ Supported cores: ARM Cortex-M0+, M3, M4, M7, M33; RISC-V; Xtensa LX6 and LX7 (se
 ESP32 paths). The hosted browser [Playground](https://app.labwired.com/) and the MCP
 connector run the same models.
 
-Supported cores:
+Two design choices separate it from a bare CPU emulator:
 
-* ARM Cortex-M0+, Cortex-M3, Cortex-M4, Cortex-M7, Cortex-M33
-* RISC-V
-* Xtensa LX6 and LX7 (selected ESP32 paths)
+1. **The board is modeled, not only the chip.** Sensors, displays, analog RC networks, and bus devices live in declarative YAML manifests (`configs/chips/`, `configs/systems/`). You assert on I²C traffic, SPI transfers, GPIO pin state, or framebuffer output.
+2. **Thin spots are published.** Every target sits in a named validation tier (`Modeled`, `Smoke-tested`, `Hardware-compared`). Shortcuts are documented in [`FIDELITY.md`](FIDELITY.md).
 
-This repository is the engine behind [labwired.com](https://labwired.com/). The hosted
-browser [Playground](https://app.labwired.com/) and the hosted MCP connector run the same
-models. To look before installing anything, open a lab:
-[SSD1306 hello](https://app.labwired.com/?lab=ssd1306-hello-lab),
-[U575 Star Catcher](https://app.labwired.com/?lab=nucleo-u575-star-catcher&run=1),
-[BME280 weather](https://app.labwired.com/?lab=bme280-weather-lab), or
-[IO-Link DI/DO](https://app.labwired.com/?lab=iolink-dido).
+For analog circuits and KiCad boards, see the [online circuit simulator guide](https://labwired.com/circuit-simulator/) (browser linear RLC + native `ngspice` co-simulation) and the [KiCad PCB import guide](https://labwired.com/kicad-pcb-simulation/).
 
-For firmware connected to circuits, use the
-[online circuit simulator guide](https://labwired.com/circuit-simulator/).
-It links to a browser RC/touch demo with GPIO and oscilloscope signals.
-The browser analog adapter models linear R/L/C, sources, and switches.
-Native ngspice co-simulation is a separate path for supported nonlinear
-or vendor models.
+## Performance Benchmarks
 
-For original designs, the
-[KiCad PCB import and simulation guide](https://labwired.com/kicad-pcb-simulation/)
-shows pinned source-board acceptance and model gaps. Importing a PCB is not
-proof that its full electrical system runs. Both guides distinguish model
-behavior from physical hardware acceptance.
+Measured on Linux x86_64 with `cargo test -p labwired-core --release --features "jit-framework,jit"` (see [`docs/esp32sim-audit.md`](docs/esp32sim-audit.md) for methodology, differential tests, and MIT attribution to [`mikroverk/esp32sim`](https://github.com/mikroverk/esp32sim)):
 
-## Why use LabWired Core?
+| Workload | Baseline interpreter | `Rv32BlockCache` (native & browser WASM32) | `RiscvWasmJit` (shared `Store`+`Memory`) |
+| --- | ---: | ---: | ---: |
+| ESP32 512 KiB SRAM ALU + mem + branch (2M instrs) | 35.8 Minsn/s (55.9 ms) | **193.8 Minsn/s** (10.3 ms, **5.42×**) | **85.8 Minsn/s** (23.3 ms, **2.40×**) |
+| RV32IM pure ALU self-loop (2M instrs) | 69.8 Minsn/s (28.6 ms) | **402.9 Minsn/s** (5.0 ms, **5.77×**) | 59.8 Minsn/s (33.5 ms, 0.86×) |
+| Short 256 B SRAM `step_unit` vs `Machine::step` (1M instrs) | 5.32 Minsn/s (187.8 ms) | — | **153.6 Minsn/s** (6.5 ms, **28.85×**) |
 
-Testing firmware on real boards is slow. You wait for hardware, you flash it, and when
-something breaks you get a dark LED and no trace. Do that for every board in a product line
-and a hardware CI bench stops being worth the upkeep.
+Reproduce locally:
 
-LabWired runs the same binary you would flash. You assert on what the firmware made the
-hardware do.
+```sh
+cargo test -p labwired-core --release --features "jit-framework,jit" \
+  --test riscv_block_cache_and_shared_jit_bench -- --include-ignored --nocapture
+```
 
-Two things separate it from a CPU emulator.
+## Quickstart (CLI)
 
-**The board is modeled, not only the chip.** Sensors, displays, and bus devices live in the
-system manifest. You can assert on I2C traffic, SPI framing, or what a panel was told to
-draw.
+<img alt="labwired test booting an nRF54L15 and gating on the result" src="docs/assets/labwired-demo.gif" width="100%">
 
-**We publish where the model is thin.** Every capability sits in a named tier. Anywhere the
-simulator short-circuits real hardware, we write it down in the
-[Fidelity Ledger](FIDELITY.md). You cannot gate on a simulator you cannot audit.
+<sub>Recorded from [`docs/assets/demo.tape`](docs/assets/demo.tape) against a real binary. The second half breaks an assertion on purpose so you can see the CI gate fail.</sub>
 
-## Quickstart
-
-Clone the repository, install the CLI, run a firmware. No cross-toolchain needed.
+Clone the repository, install the CLI, and run a committed bare-metal ELF — no cross-toolchain needed:
 
 ```sh
 git clone https://github.com/w1ne/labwired-core && cd labwired-core
