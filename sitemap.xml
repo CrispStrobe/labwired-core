@@ -82,6 +82,12 @@
          <loc>https://docs.labwired.com/esp32s3_gdma_peri_sel/</loc>
     </url>
     <url>
+         <loc>https://docs.labwired.com/esp32sim-audit/</loc>
+    </url>
+    <url>
+         <loc>https://docs.labwired.com/external-mechanical-coupling/</loc>
+    </url>
+    <url>
          <loc>https://docs.labwired.com/fidelity/</loc>
     </url>
     <url>
@@ -2267,6 +2273,9 @@
     </url>
     <url>
          <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/nrf54l15/2026-11-24-missing-timers-negative-control/</loc>
+    </url>
+    <url>
+         <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/nrf54l15/2026-11-25-grtc-core-clock-negative-control/</loc>
     </url>
     <url>
          <loc>https://docs.labwired.com/coverage/renode-onboarding/attempt-history/nucleo_f767zi/2026-11-09-negative-control-b1-polarity/NOTE/</loc>
@@ -5006,6 +5015,12 @@
     </url>
     <url>
          <loc>https://docs.labwired.com/receipts/2026-11-09-esp32-preferences-nvs/</loc>
+    </url>
+    <url>
+         <loc>https://docs.labwired.com/receipts/2026-11-25-ch32v003-spi1/</loc>
+    </url>
+    <url>
+         <loc>https://docs.labwired.com/receipts/2026-11-25-stm32f103-bluepill-pwm/</loc>
     </url>
     <url>
          <loc>https://docs.labwired.com/releases/v0.26.0/</loc>
