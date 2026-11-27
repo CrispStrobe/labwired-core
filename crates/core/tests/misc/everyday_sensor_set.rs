@@ -1116,7 +1116,11 @@ fn ens160_gates_on_standard_mode_and_tracks_stimulus() {
     wr(&mut d, 0x10, &[0x01]);
     run_i2c(&mut d, &[Step::Input("eco2", 900.0)]);
     assert_eq!(rd(&mut d, 0x20, 1)[0] & 0x80, 0);
-    assert_eq!(le16(&rd(&mut d, 0x24, 2)), 1_235, "IDLE holds the last eCO2");
+    assert_eq!(
+        le16(&rd(&mut d, 0x24, 2)),
+        1_235,
+        "IDLE holds the last eCO2"
+    );
     // TEMP_IN (Kelvin × 64, LSB first) is what DATA_T reports. 30 °C → 0x4BCA.
     wr(&mut d, 0x13, &[0xCA, 0x4B]);
     assert_eq!(rd(&mut d, 0x13, 2), vec![0xCA, 0x4B]);
