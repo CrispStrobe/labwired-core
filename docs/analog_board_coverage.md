@@ -14,8 +14,8 @@ list fixture paths, and helper tests do not count: they prove the model,
 not the board.
 
 - Profiles in `configs/systems/`: **441**
-- Covered end to end: **99**
-- Not covered: **342**
+- Covered end to end: **121**
+- Not covered: **320**
 - Not covered but with an ADC pad map: **0** (these are the
   boards the generic NTC and diode decks can reach next; the rest need an
   `analog_pins:` block or `adc` pin functions, an ADC model, or a digital
@@ -35,7 +35,6 @@ None.
 
 | Profile | Chip | Analog pad map |
 | --- | --- | ---: |
-| `adafruit-feather-esp32-v2-bme280` | `esp32` | 0 |
 | `apollo4p-evb` | `amap42kp` | 0 |
 | `arduino-nano-esp32-bme280` | `esp32s3` | 0 |
 | `arduino-nano-esp32` | `esp32s3` | 0 |
@@ -50,26 +49,10 @@ None.
 | `curiosity-pic32mz-ef` | `pic32mz2048efm144` | 0 |
 | `dspic33fj32mc202-demo` | `dspic33fj32mc202` | 0 |
 | `dspic33fj32mc204-demo` | `dspic33fj32mc204` | 0 |
-| `ek-ra6m5` | `r7fa6m5bh` | 0 |
-| `ek-ra8m1` | `r7fa8m1ah` | 0 |
 | `ek-rx261` | `r5f52618bgfp` | 0 |
 | `esp32-devkitc-32e-gpio-smoke` | `esp32-devkitc-32e-gpio-smoke` | 0 |
 | `esp32-devkitc-32e-uart1` | `esp32-devkitc-32e-uart1` | 0 |
-| `esp32-devkitm-1-bme280` | `esp32` | 0 |
-| `esp32-devkitm-1` | `esp32` | 0 |
 | `esp32-s3-devkitc-1-n16r8-adc` | `esp32s3-devkitc-1-n16r8-adc` | 0 |
-| `esp32-wroom-32` | `esp32` | 0 |
-| `esp32-wroom-epaper` | `esp32` | 0 |
-| `esp32c3-ble-pong` | `esp32c3` | 0 |
-| `esp32c3-devkit` | `esp32c3` | 0 |
-| `esp32c3-devkitm-1-n4x` | `esp32c3` | 0 |
-| `esp32c3-epaper-workshop` | `esp32c3` | 0 |
-| `esp32c3-jtag-watch` | `esp32c3` | 0 |
-| `esp32c3-mlx90640-thermal` | `esp32c3` | 0 |
-| `esp32c3-nokia5110-workshop` | `esp32c3` | 0 |
-| `esp32c3-oled-128x32-workshop` | `esp32c3` | 0 |
-| `esp32c3-oled-demo` | `esp32c3` | 0 |
-| `esp32c3-tm1637-clock-workshop` | `esp32c3` | 0 |
 | `esp32c5-devkitc-1-n8r8-bme280` | `esp32c5` | 0 |
 | `esp32c5-devkitc-1-n8r8` | `esp32c5` | 0 |
 | `esp32c6-devkitc-1-n8-bme280` | `esp32c6` | 0 |
@@ -92,8 +75,6 @@ None.
 | `frdm-k64f` | `mk64f12` | 0 |
 | `frdm-kw41z-lcd` | `mkw41z4` | 0 |
 | `frdm-kw41z` | `mkw41z4` | 0 |
-| `iolink-multiport-demo` | `stm32l476` | 0 |
-| `iolinki-g0-startup` | `stm32g0b1re` | 0 |
 | `kv260-r5` | `xck26-rpu` | 0 |
 | `litex-vexriscv` | `litex-vexriscv` | 0 |
 | `lp-mspm0g3507` | `mspm0g3507` | 0 |
@@ -114,7 +95,6 @@ None.
 | `nucleo-c031c6` | `stm32c031c6` | 0 |
 | `nucleo-f103rb-bme280` | `stm32f103rb-nucleo-bme280-smoke` | 0 |
 | `nucleo-g071rb` | `stm32g071` | 0 |
-| `nucleo-g0b1re` | `stm32g0b1re` | 0 |
 | `nucleo-g431rb` | `stm32g431rb` | 0 |
 | `nucleo-h533re-bme280` | `stm32h533re` | 0 |
 | `nucleo-h533re` | `stm32h533re` | 0 |
@@ -123,7 +103,6 @@ None.
 | `nucleo-h753zi` | `stm32h753zi` | 0 |
 | `nucleo-l031k6` | `stm32l031k6` | 0 |
 | `nucleo-l073rz` | `stm32l073` | 0 |
-| `nucleo-l476rg` | `stm32l476` | 0 |
 | `nucleo-l552ze-q` | `stm32l552` | 0 |
 | `nucleo-u545re` | `stm32u545` | 0 |
 | `nucleo_g474re` | `stm32g474re` | 0 |
@@ -365,7 +344,6 @@ None.
 | `s32k388-evb` | `s32k388` | 0 |
 | `sam-e70-xplained` | `same70q21b` | 0 |
 | `sam4s-xplained` | `sam4s16c` | 0 |
-| `seeed-xiao-esp32c3-bme280` | `esp32c3` | 0 |
 | `seeed-xiao-esp32c6` | `esp32c6fh4` | 0 |
 | `seeed-xiao-esp32s3` | `esp32s3` | 0 |
 | `simctl-selftest` | `ci-fixture-cortex-m3-uart1` | 0 |
@@ -382,6 +360,7 @@ None.
 
 | Profile | Chip | Evidence |
 | --- | --- | --- |
+| `adafruit-feather-esp32-v2-bme280` | `esp32` | `crates/core/tests/analog/cosim_esp32_classic_boards_analog.rs` |
 | `adafruit-feather-esp32-v2` | `esp32` | `crates/core/tests/analog/cosim_esp32_analog_diode.rs` |
 | `adafruit-feather-rp2040-bme280` | `rp2040-feather` | `crates/core/tests/analog/cosim_rp2040_family_analog.rs` |
 | `adafruit-feather-rp2040` | `rp2040-feather` | `crates/core/tests/analog/cosim_rp2040_family_analog.rs` |
@@ -404,7 +383,25 @@ None.
 | `atmega1281` | `atmega1281` | `crates/core/tests/analog/cosim_avr_atmega_mega_analog.rs` |
 | `atmega2561` | `atmega2561` | `crates/core/tests/analog/cosim_avr_atmega_mega_analog.rs` |
 | `controllino-mini` | `atmega328p` | `crates/core/tests/analog/cosim_avr_atmega328p_analog.rs` |
+| `ek-ra6m5` | `r7fa6m5bh` | `crates/core/tests/analog/cosim_ek_ra_adc_pad_analog.rs` |
+| `ek-ra8m1` | `r7fa8m1ah` | `crates/core/tests/analog/cosim_ek_ra_adc_pad_analog.rs` |
+| `esp32-devkitm-1-bme280` | `esp32` | `crates/core/tests/analog/cosim_esp32_classic_boards_analog.rs` |
+| `esp32-devkitm-1` | `esp32` | `crates/core/tests/analog/cosim_esp32_classic_boards_analog.rs` |
+| `esp32-wroom-32` | `esp32` | `crates/core/tests/analog/cosim_esp32_classic_boards_analog.rs` |
+| `esp32-wroom-epaper` | `esp32` | `crates/core/tests/analog/cosim_esp32_classic_boards_analog.rs` |
+| `esp32c3-ble-pong` | `esp32c3` | `crates/core/tests/analog/cosim_esp32c3_boards_analog.rs` |
+| `esp32c3-devkit` | `esp32c3` | `crates/core/tests/analog/cosim_esp32c3_boards_analog.rs` |
+| `esp32c3-devkitm-1-n4x` | `esp32c3` | `crates/core/tests/analog/cosim_esp32c3_boards_analog.rs` |
+| `esp32c3-epaper-workshop` | `esp32c3` | `crates/core/tests/analog/cosim_esp32c3_boards_analog.rs` |
+| `esp32c3-jtag-watch` | `esp32c3` | `crates/core/tests/analog/cosim_esp32c3_boards_analog.rs` |
+| `esp32c3-mlx90640-thermal` | `esp32c3` | `crates/core/tests/analog/cosim_esp32c3_boards_analog.rs` |
+| `esp32c3-nokia5110-workshop` | `esp32c3` | `crates/core/tests/analog/cosim_esp32c3_boards_analog.rs` |
+| `esp32c3-oled-128x32-workshop` | `esp32c3` | `crates/core/tests/analog/cosim_esp32c3_boards_analog.rs` |
+| `esp32c3-oled-demo` | `esp32c3` | `crates/core/tests/analog/cosim_esp32c3_boards_analog.rs` |
+| `esp32c3-tm1637-clock-workshop` | `esp32c3` | `crates/core/tests/analog/cosim_esp32c3_boards_analog.rs` |
 | `feather-f405` | `stm32f405` | `crates/core/tests/analog/cosim_stm32f4_family_analog.rs` |
+| `iolink-multiport-demo` | `stm32l476` | `crates/core/tests/analog/cosim_stm32l476_analog.rs` |
+| `iolinki-g0-startup` | `stm32g0b1re` | `crates/core/tests/analog/cosim_stm32g0b1_analog.rs` |
 | `labwired-demo-board` | `stm32f103` | `crates/core/tests/analog/cosim_stm32f1f4_catalog_analog.rs` |
 | `microbit-v2` | `nrf52833` | `crates/core/tests/analog/cosim_microbit_v2_analog.rs` |
 | `nrf52840-dk` | `nrf52840` | `crates/core/tests/analog/cosim_nrf52840_family_analog.rs` |
@@ -415,7 +412,9 @@ None.
 | `nucleo-f411re` | `stm32f411re` | `crates/core/tests/analog/cosim_stm32f4_family_analog.rs` |
 | `nucleo-f446re` | `stm32f446re` | `crates/core/tests/analog/cosim_stm32f4_family_analog.rs` |
 | `nucleo-f767zi` | `stm32f767` | `crates/core/tests/analog/cosim_nucleo_f767zi_analog.rs` |
+| `nucleo-g0b1re` | `stm32g0b1re` | `crates/core/tests/analog/cosim_stm32g0b1_analog.rs` |
 | `nucleo-l432kc` | `stm32l432kc` | `crates/core/tests/analog/cosim_stm32l4u5_pin_functions_analog.rs` |
+| `nucleo-l476rg` | `stm32l476` | `crates/core/tests/analog/cosim_stm32l476_analog.rs` |
 | `nucleo-u575zi` | `stm32u575` | `crates/core/tests/analog/cosim_stm32l4u5_pin_functions_analog.rs` |
 | `nucleo-u5a5zj` | `stm32u5a5zj` | `crates/core/tests/analog/cosim_stm32l4u5_pin_functions_analog.rs` |
 | `nucleo_f767zi` | `nucleo_f767zi` | `crates/core/tests/analog/cosim_stm32f1f4_catalog_analog.rs` |
@@ -443,6 +442,7 @@ None.
 | `rp2350-zero` | `rp2350` | `crates/core/tests/analog/cosim_rp2040_family_analog.rs` |
 | `rpi-pico-2-w-bme280` | `rp2350` | `crates/core/tests/analog/cosim_rp2040_family_analog.rs` |
 | `rpi-pico-2-w` | `rp2350` | `crates/core/tests/analog/cosim_rp2040_family_analog.rs` |
+| `seeed-xiao-esp32c3-bme280` | `esp32c3` | `crates/core/tests/analog/cosim_esp32c3_boards_analog.rs` |
 | `seeed-xiao-nrf52840-sense` | `nrf52840` | `crates/core/tests/analog/cosim_nrf52840_family_analog.rs` |
 | `stm32f103c4-smoke` | `stm32f103c4` | `crates/core/tests/analog/cosim_stm32f1f4_catalog_analog.rs` |
 | `stm32f103c6-smoke` | `stm32f103c6` | `crates/core/tests/analog/cosim_stm32f1f4_catalog_analog.rs` |
