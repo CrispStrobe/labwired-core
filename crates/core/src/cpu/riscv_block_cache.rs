@@ -390,3 +390,56 @@ fn classify(inst: &Instruction) -> StepKind {
         | Instruction::Unknown(_) => StepKind::Unsupported,
     }
 }
+
+/// `true` when `steps` ends in `jal x0, -12`: the back-edge where the
+/// interpreter's idle fast-forward recognizes a four-instruction SYSTIMER
+/// busy-poll. Such a block must run through `step()` while idle fast-forward
+/// is enabled, or the poll is never coalesced.
+pub fn ends_in_poll_back_edge(steps: &[DecodedStep]) -> bool {
+    matches!(
+        steps.last(),
+        Some(DecodedStep {
+            inst: Instruction::Jal { rd: 0, imm: -12 },
+            ..
+        })
+    )
+}
+
+#[cfg(test)]
+mod poll_back_edge_tests {
+    use super::*;
+
+    fn step(inst: Instruction) -> DecodedStep {
+        DecodedStep {
+            inst,
+            pc: 0,
+            next_pc: 4,
+        }
+    }
+
+    #[test]
+    fn only_a_jal_x0_minus_12_terminator_is_a_poll_back_edge() {
+        let add = step(Instruction::Addi {
+            rd: 1,
+            rs1: 1,
+            imm: 1,
+        });
+        assert!(ends_in_poll_back_edge(&[
+            add,
+            step(Instruction::Jal { rd: 0, imm: -12 })
+        ]));
+        assert!(!ends_in_poll_back_edge(&[
+            add,
+            step(Instruction::Jal { rd: 1, imm: -12 })
+        ]));
+        assert!(!ends_in_poll_back_edge(&[
+            add,
+            step(Instruction::Jal { rd: 0, imm: -8 })
+        ]));
+        assert!(!ends_in_poll_back_edge(&[
+            step(Instruction::Jal { rd: 0, imm: -12 }),
+            add
+        ]));
+        assert!(!ends_in_poll_back_edge(&[]));
+    }
+}
