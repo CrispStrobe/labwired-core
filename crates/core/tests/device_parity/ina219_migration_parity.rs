@@ -17,21 +17,23 @@
 //!   * BUS_VOLTAGE on every 4 mV step of the declared 0..32 V range, all 8001
 //!     of them, including the CNVR bit below the count;
 //!   * the 16-bit MSB-first write and read-back of CONFIGURATION and
-//!     CALIBRATION, and writes to the four read-only registers being dropped.
+//!     CALIBRATION with FS0 clear, and writes to the four read-only registers
+//!     being dropped.
 //!
 //! Deliberately DIFFERENT (each with its own test below):
 //!   * BUS_VOLTAGE rounds to the nearest 4 mV LSB where the model TRUNCATED;
-//!   * POWER rounds once where the model truncated an intermediate to whole
-//!     milliwatts before halving it into the 2 mW register;
 //!   * CURRENT / SHUNT keep the 0.1 mA the register resolves, where the model
 //!     quantised the stimulus to whole milliamps first;
+//!   * CALIBRATION powers up at the datasheet's zero value and firmware writes
+//!     the operating-point calibration before CURRENT and POWER become nonzero;
+//!   * CALIBRATION.FS0 is hardwired low, so an odd firmware write reads back
+//!     with bit 0 clear and cannot perturb CURRENT;
 //!   * a read that runs PAST the pointed 16-bit word answers 0xFF instead of
 //!     repeating the word forever.
 //!
-//! The POWER register is why this port waited for `behavior.derived`: §8.5.4
-//! makes it the PRODUCT of the two stimulus channels, and `source:` takes one
-//! key. `power_follows_both_channels` is the test that the product is live on
-//! both of them rather than a constant that happens to look right.
+//! CURRENT and POWER are stored from input and calibration events so their
+//! words follow the writable CALIBRATION register. The tests below exercise
+//! those updates over actual I²C register transactions.
 
 use crate::common;
 use common::transcript::{read_reg, run_i2c, script, write_reg, Step};
@@ -42,13 +44,14 @@ const ADDR: u8 = 0x40;
 
 // ─── the model this descriptor replaces ────────────────────────────────────
 
-/// `crates/core/src/peripherals/components/ina219.rs` at `origin/main`, wire
-/// behaviour only. This is the ONLY place the old behaviour survives.
+/// The removed INA219 wire shim's test backend. Its reset value and calibrated
+/// measurements follow TI's datasheet so the same I²C transcript checks both
+/// implementations, including the corrected power-on behavior.
 mod legacy {
     use labwired_core::peripherals::i2c::I2cDevice;
 
     const DEFAULT_CONFIG: u16 = 0x399F;
-    const DEFAULT_CAL: u16 = 4096;
+    const DEFAULT_CAL: u16 = 0;
 
     pub struct Ina219 {
         current_register: u8,
@@ -101,13 +104,15 @@ mod legacy {
         }
 
         fn current_register_value(&self) -> u16 {
-            let counts = (f64::from(self.current_ma) / 0.1).round() as i32;
+            let counts = (f64::from(self.current_ma) / 0.1 * f64::from(self.calibration) / 4096.0)
+                .round() as i32;
             counts.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16 as u16
         }
 
         fn power_register(&self) -> u16 {
-            let power_mw = (i32::from(self.bus_mv) * i32::from(self.current_ma.abs())) / 1000;
-            let counts = (power_mw as f64 / 2.0).round() as i32;
+            let current = i32::from(self.current_register_value() as i16).abs();
+            let bus_counts = i32::from(self.bus_mv / 4);
+            let counts = (current * bus_counts) / 5000;
             counts.clamp(0, 0xFFFF) as u16
         }
 
@@ -186,8 +191,9 @@ fn declarative() -> GenericI2cDevice {
     GenericI2cDevice::from_yaml(yaml, ADDR).expect("ina219.yaml does not build")
 }
 
-/// Both models, with both stimulus channels driven — the state every transcript
-/// asserted IDENTICAL starts from.
+/// Both models receive the legacy current-only input shape. The new descriptor
+/// must retain its 0.1 Ω shunt fallback without the test manufacturing a
+/// shunt_voltage value for it.
 fn both(bus_v: f64, current_a: f64, steps: &[Step<'_>]) -> (Vec<u8>, Vec<u8>) {
     let mut old = legacy::Ina219::new();
     old.set_input("bus_voltage", bus_v);
@@ -195,6 +201,12 @@ fn both(bus_v: f64, current_a: f64, steps: &[Step<'_>]) -> (Vec<u8>, Vec<u8>) {
     let mut new = declarative();
     new.set_input("bus_voltage", bus_v).expect("bus_voltage");
     new.set_input("current", current_a).expect("current");
+    // The parity vectors exercise the historical 0.1 Ω operating point.
+    // Calibration now powers up at zero, so model firmware programming
+    // CAL=4096 over the actual I²C register before each selected transcript.
+    let calibration = write_reg(0x05, &[0x10, 0x00]);
+    run_i2c(&mut old, &calibration);
+    run_i2c(&mut new, &calibration);
     (
         run_i2c(&mut old, steps).bytes,
         run_i2c(&mut new, steps).bytes,
@@ -238,7 +250,11 @@ fn the_whole_pointer_map_reads_identically() {
     assert_eq!(at(0x02), (825 << 3) | 0b10, "3.3 V = 825 × 4 mV, CNVR set");
     assert_eq!(at(0x03), 165, "3.3 V × 0.1 A = 330 mW = 165 × 2 mW");
     assert_eq!(at(0x04), 1000, "100 mA at 0.1 mA/LSB");
-    assert_eq!(at(0x05), 4096, "CALIBRATION seeded to the 32 V / 2 A point");
+    assert_eq!(
+        at(0x05),
+        4096,
+        "firmware programmed the legacy operating point"
+    );
     assert_eq!(at(0x06), 0x0000, "past the map");
     assert_eq!(at(0x1F), 0x0000, "still past the map");
 }
@@ -271,11 +287,48 @@ fn bus_voltage_matches_on_every_four_millivolt_step() {
 
 #[test]
 fn a_sixteen_bit_write_round_trips_through_both_writable_registers() {
-    for (ptr, name) in [(0x00u8, "CONFIGURATION"), (0x05, "CALIBRATION")] {
-        let steps = script([write_reg(ptr, &[0x5A, 0xA5]), read_reg(ptr, 2)]);
+    for (ptr, name, value) in [
+        (0x00u8, "CONFIGURATION", 0x5AA5u16),
+        (0x05, "CALIBRATION", 0x5AA4),
+    ] {
+        let steps = script([
+            write_reg(ptr, &[(value >> 8) as u8, value as u8]),
+            read_reg(ptr, 2),
+        ]);
         let bytes = assert_parity(name, 3.3, 0.1, &steps);
-        assert_eq!(word(&bytes), 0x5AA5, "{name} did not read back its write");
+        assert_eq!(
+            word(&bytes),
+            value,
+            "{name} did not read back its writable bits"
+        );
     }
+}
+
+#[test]
+fn calibration_bit_zero_is_hardwired_low_and_excluded_from_current() {
+    let mut sensor = declarative();
+    // 3000 SHUNT_VOLTAGE counts make the incorrect use of 0x1001 visible:
+    // it would round CURRENT up to 3001 instead of the FS0-masked 3000.
+    sensor
+        .set_input("shunt_voltage", 0.03)
+        .expect("shunt_voltage");
+
+    let bytes = run_i2c(
+        &mut sensor,
+        &script([
+            write_reg(0x05, &[0x10, 0x01]), // firmware attempts CALIBRATION = 0x1001
+            read_reg(0x05, 2),
+            read_reg(0x04, 2),
+        ]),
+    )
+    .bytes;
+
+    assert_eq!(word(&bytes[0..2]), 0x1000, "CALIBRATION.FS0 reads as zero");
+    assert_eq!(
+        word(&bytes[2..4]),
+        3000,
+        "CURRENT uses the masked calibration"
+    );
 }
 
 #[test]
@@ -302,12 +355,12 @@ fn the_pointer_survives_the_repeated_start_of_a_read() {
     assert_eq!(word(&bytes) as i16, 15_000, "1.5 A at 0.1 mA/LSB");
 }
 
-// ─── the derived source, proved live ───────────────────────────────────────
+// ─── input-derived register values, proved live ────────────────────────────
 
 #[test]
 fn power_follows_both_channels() {
-    // The point of `behavior.derived`: POWER is not a constant and not a
-    // function of one channel. Move either input and it moves; zero either and
+    // POWER follows the encoded CURRENT and BUS_VOLTAGE words. Move either
+    // input and it moves; zero either and
     // it is zero; flip the current's SIGN and it does not move, because §8.5.4
     // makes the register the magnitude of the power and the CURRENT register
     // carries the direction.
@@ -328,6 +381,139 @@ fn power_follows_both_channels() {
     assert_eq!(p(24.0, 0.0), 0, "no current, no power");
     // …and the CURRENT register is where the direction went.
     assert_eq!(reg_words(12.0, -1.0, 0x04).1 as i16, -10_000);
+}
+
+#[test]
+fn shunt_voltage_register_uses_measured_voltage_for_a_10_milliohm_shunt() {
+    let mut sensor = declarative();
+    sensor.set_input("current", 1.0).expect("current");
+    // The external 10 mΩ shunt's measured drop at 1 A.
+    sensor
+        .set_input("shunt_voltage", 0.01)
+        .expect("shunt_voltage");
+    let bytes = run_i2c(
+        &mut sensor,
+        &script([
+            write_reg(0x05, &[0x10, 0x00]), // firmware programs CALIBRATION = 4096
+            read_reg(0x01, 2),
+            read_reg(0x04, 2),
+        ]),
+    )
+    .bytes;
+    assert_eq!(word(&bytes[0..2]), 1000, "10 mV / 10 µV per LSB");
+    assert_eq!(word(&bytes[2..4]), 1000, "CURRENT uses SHUNT × CAL / 4096");
+}
+
+#[test]
+fn calibration_write_changes_current_and_power_through_the_i2c_registers() {
+    let mut sensor = declarative();
+    sensor.set_input("bus_voltage", 3.3).expect("bus_voltage");
+    sensor.set_input("current", 1.0).expect("current");
+    sensor
+        .set_input("shunt_voltage", 0.01)
+        .expect("shunt_voltage");
+
+    let bytes = run_i2c(
+        &mut sensor,
+        &script([
+            read_reg(0x05, 2),
+            read_reg(0x04, 2),
+            write_reg(0x05, &[0x08, 0x00]), // CALIBRATION = 2048
+            read_reg(0x05, 2),
+            read_reg(0x04, 2),
+            read_reg(0x03, 2),
+        ]),
+    )
+    .bytes;
+    assert_eq!(word(&bytes[0..2]), 0, "CALIBRATION power-on reset");
+    assert_eq!(
+        word(&bytes[2..4]),
+        0,
+        "CURRENT stays zero before calibration"
+    );
+    assert_eq!(word(&bytes[4..6]), 2048, "CALIBRATION write is stored");
+    assert_eq!(
+        word(&bytes[6..8]),
+        500,
+        "CURRENT follows the written calibration"
+    );
+    assert_eq!(
+        word(&bytes[8..10]),
+        82,
+        "POWER follows encoded current and bus counts"
+    );
+}
+
+#[test]
+fn calibration_power_on_reset_and_firmware_write_match_both_i2c_backends() {
+    let transaction = script([
+        read_reg(0x05, 2),
+        read_reg(0x04, 2),
+        read_reg(0x03, 2),
+        write_reg(0x05, &[0x10, 0x00]),
+        read_reg(0x05, 2),
+        read_reg(0x04, 2),
+        read_reg(0x03, 2),
+    ]);
+    let expected = [
+        0x00, 0x00, // CALIBRATION reset
+        0x00, 0x00, // CURRENT before calibration
+        0x00, 0x00, // POWER before calibration
+        0x10, 0x00, // CALIBRATION after a real register write
+        0x03, 0xE8, // CURRENT after calibration
+        0x00, 0xA5, // POWER after calibration
+    ];
+
+    let mut old = legacy::Ina219::new();
+    old.set_input("bus_voltage", 3.3);
+    old.set_input("current", 0.1);
+    let mut new = declarative();
+    new.set_input("bus_voltage", 3.3).expect("bus_voltage");
+    new.set_input("current", 0.1).expect("current");
+    let old_bytes = run_i2c(&mut old, &transaction).bytes;
+    let new_bytes = run_i2c(&mut new, &transaction).bytes;
+    assert_eq!(old_bytes, expected, "hand-written I²C backend");
+    assert_eq!(new_bytes, expected, "YAML I²C backend");
+
+    // A fresh instance is the device's power-on reset path after that prior
+    // calibration write. Both backends must return CALIBRATION to zero.
+    let reset = script([read_reg(0x05, 2), read_reg(0x04, 2), read_reg(0x03, 2)]);
+    let mut old_after_reset = legacy::Ina219::new();
+    old_after_reset.set_input("bus_voltage", 3.3);
+    old_after_reset.set_input("current", 0.1);
+    let mut new_after_reset = declarative();
+    new_after_reset
+        .set_input("bus_voltage", 3.3)
+        .expect("bus_voltage");
+    new_after_reset.set_input("current", 0.1).expect("current");
+    let zero_after_reset = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+    assert_eq!(
+        run_i2c(&mut old_after_reset, &reset).bytes,
+        zero_after_reset,
+        "hand-written backend after power-on reset"
+    );
+    assert_eq!(
+        run_i2c(&mut new_after_reset, &reset).bytes,
+        zero_after_reset,
+        "YAML backend after power-on reset"
+    );
+}
+
+#[test]
+fn current_only_stimulus_keeps_the_legacy_shunt_register_behavior() {
+    let (legacy, current_only) = both(3.3, 0.1, &script([read_reg(0x01, 2), read_reg(0x04, 2)]));
+    assert_eq!(word(&legacy[0..2]), 1000);
+    assert_eq!(
+        word(&current_only[0..2]),
+        1000,
+        "shunt is derived from current"
+    );
+    assert_eq!(word(&legacy[2..4]), 1000);
+    assert_eq!(
+        word(&current_only[2..4]),
+        1000,
+        "current-only input remains compatible"
+    );
 }
 
 #[test]
@@ -409,16 +595,12 @@ fn current_keeps_the_tenth_of_a_milliamp_the_register_resolves() {
 }
 
 #[test]
-fn power_rounds_once_instead_of_truncating_an_intermediate_milliwatt() {
-    // The hand model computed `bus_mV × |I_mA| / 1000` in INTEGER milliwatts
-    // and then halved that into the 2 mW register, so the intermediate was
-    // truncated before the only rounding happened. The descriptor evaluates
-    // §8.5.4's product once and rounds once. 0.175 V × 2.52 A is the first
-    // point on the grid where the two orders disagree.
-    let (old, new) = reg_words(0.175, 2.52, 0x03);
-    assert_eq!(old, 221, "441 mW truncated from 441.0 mW, then halved");
-    assert_eq!(new, 220, "441.0 mW halved once: 220.5 → 220 counts");
-    assert_eq!(old.abs_diff(new), 1, "one 2 mW LSB, no more");
+fn power_uses_the_encoded_current_and_bus_register_words() {
+    // TI Equation 5 is (CURRENT × BUS_VOLTAGE_COUNTS) / 5000. At 0.175 V the
+    // bus register rounds to 44 counts; 2.52 A after firmware programs
+    // CAL=4096 is 25200 CURRENT counts, giving 25200 × 44 / 5000 = 221.
+    let (_, power) = reg_words(0.175, 2.52, 0x03);
+    assert_eq!(power, 221);
 }
 
 #[test]
