@@ -1496,6 +1496,7 @@ impl RiscV {
         exact_clock: bool,
         batch_start: u64,
         already_retired: u32,
+        idle_fast_forward: bool,
     ) -> SimResult<u32> {
         use super::riscv_block_cache::{
             FLAG_HAS_MEM, FLAG_HAS_STORE, FLAG_SELF_LOOP, FLAG_VERIFY_ENTRY, MAX_BLOCK_LEN,
@@ -1591,6 +1592,16 @@ impl RiscV {
                         break;
                     }
                 }
+            }
+
+            // Idle fast-forward recognizes a SYSTIMER busy-poll at its
+            // `jal x0, -12` back-edge inside `step()` (`systimer_poll_anchor`).
+            // Leave such a block to the interpreter so the detector sees it;
+            // every other block still runs from the cache.
+            if idle_fast_forward
+                && super::riscv_block_cache::ends_in_poll_back_edge(self.block_cache.steps(meta))
+            {
+                break;
             }
 
             let has_mem = (meta.flags & FLAG_HAS_MEM) != 0;
@@ -3114,13 +3125,7 @@ impl Cpu for RiscV {
         // view. Once the loop head is reached the fast path consumes the rest
         // of the batch; non-poll code pays only three cold decode probes.
         let mut masked_poll_probes = 3u8;
-        // Cached blocks retire without `step()`, which is where idle
-        // fast-forward recognizes a busy-poll loop; with idle FF on, every
-        // instruction must stay visible to that detector.
-        let block_cache_ok = config.decode_cache_enabled
-            && !config.idle_fast_forward_enabled
-            && observers.is_empty()
-            && tap.is_none();
+        let block_cache_ok = config.decode_cache_enabled && observers.is_empty() && tap.is_none();
         while i < limit {
             if i != 0 && masked_poll_probes != 0 && limit - i >= 4 {
                 masked_poll_probes -= 1;
@@ -3135,8 +3140,14 @@ impl Cpu for RiscV {
                 }
             }
             if block_cache_ok && limit - i >= 2 {
-                let retired =
-                    self.try_step_cached_blocks(bus, limit - i, exact_clock, batch_start, i)?;
+                let retired = self.try_step_cached_blocks(
+                    bus,
+                    limit - i,
+                    exact_clock,
+                    batch_start,
+                    i,
+                    config.idle_fast_forward_enabled,
+                )?;
                 if retired != 0 {
                     i += retired;
                     if exact_clock {
