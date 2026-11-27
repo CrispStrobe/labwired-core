@@ -1104,7 +1104,9 @@ fn ens160_gates_on_standard_mode_and_tracks_stimulus() {
     let b = rd(&mut d, 0x21, 5);
     assert_eq!(b[0], 4);
     assert_eq!(le16(&b[1..3]), 65_000, "TVOC at its 65000 ppb ceiling");
-    assert_eq!(le16(&b[3..5]), 1_234, "eCO2 truncates to whole ppm");
+    // I²C inputs are rounded to whole counts like every other rule engine
+    // (upstream bf77da3cee; see RuleCtx::input in rule_machine.rs).
+    assert_eq!(le16(&b[3..5]), 1_235, "eCO2 rounds to whole ppm");
     // Outside the datasheet's output range the host cannot pose a value.
     assert!(d.set_input("eco2", 100.0).is_err(), "eCO2 below 400 ppm");
     // The validity flag is the host's: warm-up reads VALIDITY = 1.
