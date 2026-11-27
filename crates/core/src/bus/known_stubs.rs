@@ -192,10 +192,6 @@ pub const KNOWN_STUBBED_PERIPHERAL_TYPES: &[(&str, &str)] = &[
         "nRF54L DPPIC window, authored placeholder. Used by: nrf54l15.",
     ),
     (
-        "nrf54l_ficr_stub",
-        "nRF54L FICR window, authored placeholder. Used by: nrf54l15.",
-    ),
-    (
         "nrf54l_regulators_stub",
         "nRF54L REGULATORS window, authored placeholder. Used by: nrf54l15.",
     ),
@@ -210,10 +206,6 @@ pub const KNOWN_STUBBED_PERIPHERAL_TYPES: &[(&str, &str)] = &[
     (
         "nrf54l_uicr_stub",
         "nRF54L UICR window, authored placeholder. Used by: nrf54l15.",
-    ),
-    (
-        "nrf54l_wdt_stub",
-        "nRF54L WDT window, authored placeholder. Used by: nrf54l15.",
     ),
     (
         "nvic",

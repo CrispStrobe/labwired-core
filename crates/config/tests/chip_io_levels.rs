@@ -68,6 +68,13 @@ fn datasheet_transcriptions() {
         ("stm32f411ceu6", 3.3, 0.3, 0.7),
         // DS10198 Table 70, 1.62 V < VDDIOx < 3.6 V, all I/Os except BOOT0.
         ("stm32l476", 3.3, 0.3, 0.7),
+        // DS13312 Rev 4 §6.3.17 Table 55, standard I/Os (including PA5).
+        ("stm32h735", 3.3, 0.3, 0.7),
+        // nRF52840 Product Specification v1.11 §6.9.3.1; nominal VDD = 3.0 V.
+        ("nrf52840", 3.0, 0.3, 0.7),
+        // RP2040 Datasheet release 13 §5.5.3.4 Table 646, IOVDD = 3.3 V:
+        // VIL(max) 0.8 V and VIH(min) 2.0 V as ratios of the rail.
+        ("rp2040", 3.3, 0.24242424242424246, 0.6060606060606061),
     ] {
         let desc = load(chip);
         assert_eq!(desc.io_voltage_v, Some(volts), "{chip}");
@@ -88,11 +95,9 @@ fn datasheet_transcriptions() {
 /// voltage route to its pads a build error instead of a guess.
 #[test]
 fn an_untranscribed_chip_declares_nothing() {
-    for chip in ["rp2040", "rv1103"] {
-        let desc = load(chip);
-        assert_eq!(desc.io_voltage_v, None, "{chip}");
-        assert_eq!(desc.gpio_input_thresholds, None, "{chip}");
-    }
+    let desc = load("rv1103");
+    assert_eq!(desc.io_voltage_v, None, "rv1103");
+    assert_eq!(desc.gpio_input_thresholds, None, "rv1103");
 }
 
 fn parse_levels(block: &str) -> Result<ChipDescriptor, serde_yaml::Error> {

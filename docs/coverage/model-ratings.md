@@ -47,7 +47,7 @@ same fields but never their source, chip YAML, binary or build paths.
 | atsamd21j18a | open | L0 | 15 | 668.0 | 1.4 | ≥1× (CI) | — |
 | nrf54lm20a | open | L1 | 31 | 921.7 | 2.0 | ≥1× (CI) | — |
 | esp32 | open | L1 | 32 | 801.5 | 1.4 | ≥1× (CI) | [doc](docs/boards/esp32.md) |
-| esp32s3 | open | L1 | 14 | 890.2 | 2.4 | ≥1× (CI) | [doc](docs/boards/esp32s3.md) |
+| esp32s3 | open | L1 | 15 | 890.2 | 2.4 | ≥1× (CI) | [doc](docs/boards/esp32s3.md) |
 | esp32s3-zero | open | L1 | 17 | 890.2 | 2.4 | ≥1× (CI) | — |
 | esp32s3-devkitc-1-n16r8-adc | open | L0 | 3 | 890.2 | 2.4 | ≥1× (CI) | — |
 | esp32-devkitc-32e-gpio-smoke | open | L1 | 3 | 801.5 | 1.4 | ≥1× (CI) | — |
@@ -148,7 +148,7 @@ same fields but never their source, chip YAML, binary or build paths.
 | ch32v005f6p6 | open | L1 | 6 | — | — | ≥1× (CI) | — |
 | ch32x035c8t6 | open | L1 | 5 | — | — | ≥1× (CI) | — |
 | ch32v006k8u6 | open | L1 | 6 | — | — | ≥1× (CI) | — |
-| ch32v203c8t6 | open | L1 | 7 | — | — | ≥1× (CI) | — |
+| ch32v203c8t6 | open | L1 | 12 | — | — | ≥1× (CI) | — |
 | ch32v003f4u6 | open | L1 | 15 | — | — | ≥1× (CI) | — |
 | ch32v003a4m6 | open | L1 | 15 | — | — | ≥1× (CI) | — |
 | at32f421g8u7 | open | L1 | 22 | 724.0 | 1.5 | ≥1× (CI) | [doc](docs/boards/at32f421g8u7.md) |
