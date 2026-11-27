@@ -350,7 +350,8 @@ mod tests {
         }
         // No RREN write: reset-enabled RR0 must accept this feed.
         w.write_u32(OFF_RR0, RR_RELOAD_KEY).unwrap();
-        for _ in 0..15 {
+        // Timeout after CRV + 1 ticks (PS §6.34.1).
+        for _ in 0..16 {
             assert!(!w.tick().irq);
         }
         assert_eq!(w.read_u32(OFF_EVENTS_TIMEOUT).unwrap(), 0);
@@ -374,6 +375,8 @@ mod tests {
         for _ in 0..4 {
             w.tick();
         }
+        assert_eq!(w.read_u32(OFF_EVENTS_TIMEOUT).unwrap(), 0);
+        w.tick();
         assert_eq!(w.read_u32(OFF_EVENTS_TIMEOUT).unwrap(), 1);
     }
 
@@ -393,7 +396,7 @@ mod tests {
             w.tick();
         }
         w.write_u32(OFF_RR0 + 4, RR_RELOAD_KEY).unwrap();
-        for _ in 0..15 {
+        for _ in 0..16 {
             w.tick();
         }
         assert_eq!(w.read_u32(OFF_EVENTS_TIMEOUT).unwrap(), 0);
@@ -403,18 +406,18 @@ mod tests {
 
     #[test]
     fn scheduled_default_rr0_feed_extends_deadline() {
-        let mut w = Nrf52Wdt::new();
+        let mut w = Nrf52Wdt::new_fast();
         w.attach_cycle_clock(CycleClock::default());
         w.write_u32(OFF_CRV, 16).unwrap();
         w.write_u32(OFF_TASKS_START, 1).unwrap();
-        assert_eq!(w.take_scheduled_events()[0].0, 15);
+        assert_eq!(w.take_scheduled_events()[0].0, 16);
         w.sync_to(12);
-        assert_eq!(w.take_scheduled_events()[0].0, 3);
+        assert_eq!(w.take_scheduled_events()[0].0, 4);
         w.write_u32(OFF_RR0, RR_RELOAD_KEY).unwrap();
-        assert_eq!(w.take_scheduled_events()[0].0, 15);
-        w.sync_to(27);
-        assert_eq!(w.read_u32(OFF_EVENTS_TIMEOUT).unwrap(), 0);
+        assert_eq!(w.take_scheduled_events()[0].0, 16);
         w.sync_to(28);
+        assert_eq!(w.read_u32(OFF_EVENTS_TIMEOUT).unwrap(), 0);
+        w.sync_to(29);
         assert_eq!(w.read_u32(OFF_EVENTS_TIMEOUT).unwrap(), 1);
         assert!(w.take_scheduled_events().is_empty());
     }
