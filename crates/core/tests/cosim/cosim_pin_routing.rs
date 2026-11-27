@@ -892,17 +892,18 @@ fn an_in_core_netlist_on_pc5_reaches_adc1_channel_15() {
     );
 }
 
-/// On an L476 PA0 is ADC1_IN5, not IN0, and its descriptor records no
-/// `analog_pins:`. The route must be refused at bind time. The old built-in
-/// F1/F4 table resolved it to channel 0, so firmware converting IN5 read a
-/// different value with nothing reporting the mismatch.
+/// The L476 `analog_pins:` map names PC0-PC5, PA0-PA7 and PB0/PB1 only; PA8
+/// has no regular ADC input. A route to a pad the map does not name must be
+/// refused at bind time rather than guessed: the old built-in F1/F4 table
+/// would have resolved it to a channel, so firmware read a different value
+/// with nothing reporting the mismatch.
 #[test]
 fn a_pad_the_descriptor_does_not_name_is_refused() {
     let bus = chip_bus("stm32l476");
     let models = [mock_model(
         100_000,
         &[],
-        &[("v_out", "board.analog.pa0_volts")],
+        &[("v_out", "board.analog.pa8_volts")],
         &[("v_out", serde_yaml::Value::from(1.65))],
     )];
     let session = CosimSession::new(&models, Path::new("."), &bus)
@@ -911,8 +912,8 @@ fn a_pad_the_descriptor_does_not_name_is_refused() {
     assert_eq!(
         session.binding_errors(),
         &[RoutingError::NoAdcChannel {
-            path: "board.analog.pa0_volts".to_string(),
-            pad: "pa0".to_string(),
+            path: "board.analog.pa8_volts".to_string(),
+            pad: "pa8".to_string(),
         }]
     );
     assert!(session.binding_errors()[0]
